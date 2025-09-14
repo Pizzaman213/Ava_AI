@@ -1,0 +1,278 @@
+# ============================================================
+# MEDIUM CONFIGURATION - CPU OPTIMIZED
+# ============================================================
+#
+# Category: CPU
+# Model Size: ~50M parameters (reduced for CPU)
+# Device: CPU (x86_64 / ARM)
+# Optimization Level: MEMORY_EFFICIENT
+# Use Case: Development, testing, and lightweight inference
+#
+# DESCRIPTION:
+# CPU-optimized configuration with reduced model size and
+# memory-efficient settings. Suitable for development,
+# testing, and deployment on CPU-only systems.
+#
+# HARDWARE REQUIREMENTS:
+# - CPU: 4+ cores recommended
+# - RAM: 16GB+ recommended
+# - No GPU required
+#
+# USAGE:
+#   python3 train.py --config configs/cpu/medium.yaml
+#   python3 run_first_optimized.py --config configs/cpu/medium.yaml
+#
+# USAGE:
+#   python3 train_simple.py --config configs/cpu/medium.yaml
+#   python3 interact.py --model outputs/medium.pt
+#
+# ============================================================
+
+model:
+  size: medium
+  vocab_size: 50257
+  hidden_size: 1024
+  num_layers: 16
+  num_attention_heads: 16
+  num_key_value_heads: 8
+  intermediate_size: 4096
+  hidden_act: swiglu
+  max_position_embeddings: 2048
+  initializer_range: 0.02
+  rms_norm_eps: 1.0e-06
+  use_cache: true
+  num_experts: 8
+  num_experts_per_tok: 1
+  expert_capacity_factor: 1.25
+  expert_routing_type: switch
+  attention_type: gqa
+  use_flash_attn: false
+  rope_theta: 10000.0
+  use_mod: false
+  mod_mode: learned
+  mod_skip_fraction: 0.2
+  use_speculative_decoding: false
+  speculative_draft_layers: 0
+  use_memory_efficient_attention: true
+  gradient_checkpointing: true
+  use_fused_kernels: false
+  # Anti-collapse features
+  hidden_dropout: 0.3
+  attention_dropout: 0.2
+  expert_dropout: 0.25
+  label_smoothing: 0.1
+  use_mod_plus_plus: true
+  use_hierarchical_moe: true
+  use_continuous_experts: true
+  use_mixture_tokenizers: true
+  use_nas_experts: false
+  use_meta_learning: true
+  use_federated_learning: false
+  use_continual_learning: true
+  use_advanced_pretraining: false
+  use_rlaif: false
+  use_sparse_experts: false
+  use_expert_cache: true
+  use_mixed_precision: true
+  use_torch_compile: false
+  use_distributed_experts: false
+  use_adversarial_training: false
+  use_interpretability: true
+  use_bias_mitigation: true
+  use_privacy_preserving: false
+  use_watermarking: false
+  use_vision_language: false
+  use_audio_language: false
+  use_code_experts: false
+  use_scientific_experts: false
+  use_tool_experts: false
+  
+  # Advanced Architecture Components
+  use_adaptive_inference: true     # Dynamic computation graphs
+  use_memory_augmented: false      # External memory mechanisms
+  
+  # Research & Development Features (mostly disabled for medium)
+  use_diverse_beam_search: false   # Diverse beam search
+  use_mixture_decoders: false      # Multiple decoder heads
+  use_streaming_generation: false  # Streaming text generation
+  use_batch_optimized: false       # Batch-optimized inference
+  use_synthetic_data: false        # Synthetic data generation
+  use_online_learning: false       # Online learning capability
+  use_multi_task_learning: false   # Multi-task learning
+  use_automated_curation: false    # Automated data curation
+  use_cross_lingual: false         # Cross-lingual transfer
+  use_edge_deployment: false       # Edge deployment optimization
+  use_ab_testing: false            # A/B testing framework
+  use_model_versioning: false      # Model versioning system
+  use_cost_optimization: false     # Cost-aware optimization
+  use_global_load_balancing: false # Global load balancing
+  
+  # Experimental Features
+  use_quantum_inspired: false      # Quantum-inspired algorithms
+  use_neuromorphic: false          # Neuromorphic computing
+  use_self_modifying: false        # Self-modifying networks
+  use_causal_reasoning: false      # Causal reasoning
+  use_visual_builder: false        # Visual model builder
+  use_automated_docs: false        # Automated documentation
+  use_interactive_debug: false     # Interactive debugging
+  use_playground: false            # Model playground
+  use_benchmarking: false          # Automated benchmarking
+data:
+  dataset_type: hf
+  train_paths:
+    - ./data/pretraining/processed_ace_full/batch_*
+  val_path: ./data/pretraining/processed_ace_full/batch_*
+  tokenizer: gpt2
+  max_length: 512
+  stride: 256
+  max_train_examples: auto
+  max_val_examples: auto
+  dataset_args:
+    text_column: text
+    streaming: true
+    num_proc: 8
+training:
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  num_epochs: 3
+  max_steps: -1
+  learning_rate: 3e-4
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1e-8
+  max_grad_norm: 1.0
+  lr_scheduler_type: cosine
+  warmup_steps: 200
+  warmup_ratio: 0.1
+  mixed_precision: false
+  gradient_checkpointing: false
+  zero_stage: 0
+  eval_steps: 200
+  eval_strategy: steps
+  save_steps: 500
+  save_total_limit: 3
+  logging_steps: 10
+  dataloader_num_workers: 6
+  dataloader_pin_memory: false
+  dataloader_prefetch_factor: 2
+  optimizer: adamw
+  device: cpu
+  scheduler: cosine
+  gradient_clip: 1.0
+  # Anti-collapse features
+  entropy_regularization_weight: 0.01
+  token_frequency_penalty_weight: 0.1
+  expert_diversity_weight: 0.01
+  adaptive_gradient_clipping: true
+  curriculum_learning: true
+  initial_sequence_length: 256
+  curriculum_warmup_steps: 1000
+distributed: false
+num_gpus: 0
+device_map: cpu
+output_dir: ./outputs
+experiment_name: moe_medium_cpu
+logging_level: INFO
+report_to:
+- tensorboard
+seed: 42
+fine_tuning:
+  use_lora: true
+  use_qlora: false
+  freeze_base_model: true
+  lora_r: 32
+  lora_alpha: 64
+  lora_dropout: 0.1
+  lora_target_modules:
+  - q_proj
+  - v_proj
+  - k_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+  lora_modules_to_save:
+  - embed_tokens
+  - lm_head
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  learning_rate: 1e-4
+  num_epochs: 5
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  dataset_name: null
+  dataset_config: null
+  text_field: text
+  max_length: 512
+  truncation: true
+  padding: max_length
+  task_type: causal_lm
+  num_labels: null
+  label_field: label
+  eval_strategy: epoch
+  eval_steps: null
+  metric_for_best_model: eval_loss
+  greater_is_better: false
+  save_strategy: epoch
+  save_total_limit: 3
+  load_best_model_at_end: true
+  early_stopping: true
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.001
+  min_delta: 0.0005
+continuous_batching:
+  enabled: true
+  max_batch_size: 16
+  min_batch_size: 1
+  batch_timeout_ms: 100
+  memory_fraction: 0.8
+  enable_sequence_packing: true
+  enable_request_reordering: true
+  enable_preemption: false
+  adaptive_batch_size: true
+  num_workers: 2
+quantization:
+  enabled: true
+  method: awq
+  bits: 8
+  group_size: 128
+  symmetric: true
+  use_cuda_kernel: false
+  calibration_samples: 64
+paged_attention:
+  enabled: true
+  block_size: 32
+  num_blocks: 256
+  max_blocks_per_seq: 128
+  enable_prefix_caching: true
+  swap_space_gb: 8
+cuda_kernels:
+  use_fused_attention: false
+  use_fused_mlp: false
+  use_fused_layernorm: false
+  use_triton: false
+  compile_kernels: false
+hierarchical_kv_cache:
+  enabled: true
+  gpu_cache_size_gb: 12.0
+  cpu_cache_size_gb: 16.0
+  nvme_cache_size_gb: 64.0
+  eviction_policy: lru
+  prefetch_distance: 2
+  async_transfers: true
+  num_async_workers: 2
+  gpu_memory_threshold: 0.9
+  cpu_memory_threshold: 0.8
+  promotion_threshold: 2
+memory_optimization:
+  gradient_checkpointing: true
+  cpu_offload: false
+  optimizer_offload: false
+  parameter_offload: false
+  activation_checkpointing: true
+  memory_efficient_attention: true
+inference:
+  use_flash_attn: false
+  torch_compile: false
+  dtype: float32

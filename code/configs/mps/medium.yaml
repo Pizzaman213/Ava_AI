@@ -1,0 +1,416 @@
+# ============================================================
+# MEDIUM CONFIGURATION - BALANCED PERFORMANCE
+# ============================================================
+#
+# Category: MPS (Apple Metal Performance Shaders)
+# Model Size: ~79M parameters
+# Device: Apple Silicon (M1/M2/M3)
+# Optimization Level: STANDARD
+# Use Case: General purpose, balanced training
+#
+# DESCRIPTION:
+# Standard configuration with comprehensive features.
+# Suitable for most production use cases with good
+# balance between performance and resource usage.
+#
+# USAGE:
+#   python3 train_with_data.py --config configs/mps/medium.yaml
+#   python3 interact.py --model outputs/medium.pt
+#
+# ============================================================
+
+# ============================================================
+# MODEL ARCHITECTURE
+# ============================================================
+
+model:
+  # ---------- Core Architecture ----------
+  size: medium                     # Model size preset
+  vocab_size: 50257               # GPT-2 tokenizer vocabulary
+  hidden_size: 512                 # Hidden dimension (optimized for MPS)
+  num_layers: 4                    # Number of transformer layers (reduced for speed)
+  intermediate_size: 1536          # FFN intermediate dimension
+  
+  # ---------- Attention Configuration ----------
+  num_attention_heads: 8          # Number of attention heads (reduced for speed)
+  num_key_value_heads: 4          # For GQA - reduces memory
+  attention_type: gqa              # Options: mha, mqa, gqa
+  use_flash_attn: false           # Flash Attention (not supported on MPS)
+  attention_dropout: 0.2           # Dropout in attention layers
+  
+  # ---------- Position Encoding ----------
+  max_position_embeddings: 512     # Maximum sequence length (reduced for speed)
+  rope_theta: 10000.0              # RoPE base frequency
+  
+  # ---------- Mixture of Experts (MoE) ----------
+  num_experts: 2                   # Minimal experts for speed
+  num_experts_per_tok: 1          # Single expert for speed
+  expert_capacity_factor: 1.25    # Capacity factor for load balancing
+  expert_routing_type: switch     # Options: switch, gshard, base
+  expert_dropout: 0.25             # Dropout for expert layers
+  
+  # ---------- Activation & Initialization ----------
+  hidden_act: swiglu               # Activation function
+  initializer_range: 0.02          # Weight initialization range
+  rms_norm_eps: 1.0e-06           # RMSNorm epsilon for stability
+  
+  # ---------- Regularization ----------
+  hidden_dropout: 0.3              # General dropout rate
+  label_smoothing: 0.1             # Label smoothing for loss regularization
+  
+  # ---------- Caching & Optimization ----------
+  use_cache: true                  # Enable KV caching for inference
+  gradient_checkpointing: true     # Trade compute for memory
+  use_memory_efficient_attention: true  # Memory-efficient attention
+  
+  # ---------- Advanced Features ----------
+  # Mixture of Depths (MoD)
+  use_mod: false                   # Disabled for consistent GPU usage
+  mod_mode: adaptive               # Options: learned, fixed, adaptive
+  mod_skip_fraction: 0.25          # Fraction of layers to skip
+  
+  # Speculative Decoding
+  use_speculative_decoding: false  # Disabled for simplicity
+  speculative_draft_layers: 2      # Number of draft layers
+  
+  # Expert System Features
+  use_hierarchical_moe: true       # Hierarchical expert routing
+  use_continuous_experts: true     # Continuous expert selection
+  use_sparse_experts: false        # Sparse expert activation
+  use_expert_cache: true           # Cache expert selections
+  
+  # Advanced Architecture Components
+  use_mod_plus_plus: true          # Enhanced MoD with confidence
+  use_memory_augmented: false      # External memory mechanisms
+  use_adaptive_inference: true     # Dynamic computation graphs
+  use_interpretability: true       # Built-in interpretability
+  
+  # Multi-Modal & Specialized Features
+  use_mixture_tokenizers: false    # Multiple tokenizer support
+  use_nas_experts: false           # Neural architecture search
+  use_meta_learning: false         # Meta-learning capabilities
+  use_federated_learning: false    # Federated learning support
+  use_continual_learning: false    # Continual learning
+  use_advanced_pretraining: false  # Advanced pretraining objectives
+  use_rlaif: false                # RL from AI feedback
+  
+  # Specialized Expert Types
+  use_code_experts: false          # Code-specialized experts
+  use_scientific_experts: false    # Science/math experts
+  use_tool_experts: false          # Tool-use experts
+  use_vision_language: false       # Vision-language capabilities
+  use_audio_language: false        # Audio-language capabilities
+  
+  # Training & Inference Features
+  use_adversarial_training: false  # Adversarial robustness
+  use_bias_mitigation: false       # Bias reduction mechanisms
+  use_privacy_preserving: false    # Privacy-preserving training
+  use_watermarking: false          # Model watermarking
+  
+  # System Integration
+  use_distributed_experts: false   # Distributed expert computation
+  use_mixed_precision: true        # Enable mixed precision training
+  use_torch_compile: false         # PyTorch 2.0 compilation
+  use_fused_kernels: false        # Fused CUDA kernels (not for MPS)
+  
+  # Research & Development Features (mostly disabled for medium)
+  use_diverse_beam_search: false   # Diverse beam search
+  use_mixture_decoders: false      # Multiple decoder heads
+  use_streaming_generation: false  # Streaming text generation
+  use_batch_optimized: false       # Batch-optimized inference
+  use_synthetic_data: false        # Synthetic data generation
+  use_online_learning: false       # Online learning capability
+  use_multi_task_learning: false   # Multi-task learning
+  use_automated_curation: false    # Automated data curation
+  use_cross_lingual: false         # Cross-lingual transfer
+  use_edge_deployment: false       # Edge deployment optimization
+  use_ab_testing: false            # A/B testing framework
+  use_model_versioning: false      # Model versioning system
+  use_cost_optimization: false     # Cost-aware optimization
+  use_global_load_balancing: false # Global load balancing
+  
+  # Experimental Features
+  use_quantum_inspired: false      # Quantum-inspired algorithms
+  use_neuromorphic: false          # Neuromorphic computing
+  use_self_modifying: false        # Self-modifying networks
+  use_causal_reasoning: false      # Causal reasoning
+  use_visual_builder: false        # Visual model builder
+  use_automated_docs: false        # Automated documentation
+  use_interactive_debug: false     # Interactive debugging
+  use_playground: false            # Model playground
+  use_benchmarking: false          # Automated benchmarking
+
+# ============================================================
+# DATA CONFIGURATION
+# ============================================================
+
+data:
+  # ---------- Dataset Settings ----------
+  dataset_type: hf                 # Dataset type (hf = HuggingFace format)
+  train_paths:                     # Training data paths
+    - ./data/pretraining/processed_ace_full/batch_*
+  val_path: ./data/pretraining/processed_ace_full/batch_*
+  
+  # ---------- Tokenization ----------
+  tokenizer: gpt2                  # Tokenizer to use
+  max_length: 512                  # Maximum sequence length
+  stride: 256                      # Stride for overlapping sequences
+  
+  # ---------- Data Loading ----------
+  max_train_examples: 1000000      # Limit training data for faster iteration
+  max_val_examples: 1000           # Limit validation data
+  
+  # ---------- Dataset Arguments ----------
+  dataset_args:
+    text_column: text              # Column name for text data
+    streaming: false               # Don't stream (load in memory)
+    num_proc: 1                    # Reduce to 1 for memory efficiency
+    keep_in_memory: false          # Don't load entire dataset in memory
+    load_from_cache_file: true    # Use cache if available
+  
+  # ---------- Data Augmentation ----------
+  noise_probability: 0.1           # Random token replacement
+  mask_probability: 0.05           # Random masking
+
+# ============================================================
+# TRAINING CONFIGURATION
+# ============================================================
+
+training:
+  # ---------- Basic Training ----------
+  batch_size: 8                    # Batch size per device
+  gradient_accumulation_steps: 4   # Gradient accumulation (effective batch = 32)
+  num_epochs: 3                    # Number of training epochs
+  max_steps: -1                    # Max steps (-1 = use epochs)
+  
+  # ---------- Learning Rate ----------
+  learning_rate: 5e-5              # Base learning rate
+  warmup_steps: 2000               # Warmup steps
+  warmup_ratio: 0.1                # Warmup ratio
+  
+  # ---------- Optimizer Configuration ----------
+  optimizer: lion                  # Optimizer: adamw, lion
+  weight_decay: 0.01               # L2 regularization
+  adam_beta1: 0.9                  # Adam beta1
+  adam_beta2: 0.95                 # Adam beta2
+  adam_epsilon: 1e-8               # Adam epsilon
+  
+  # ---------- Advanced Optimizer Features ----------
+  layerwise_lr: true               # Different LR for different layers
+  lr_layer_scale: 0.5              # Scale for layer-wise LR
+  gradient_centralization: true    # Center gradients
+  
+  # ---------- Learning Rate Scheduling ----------
+  lr_scheduler_type: cosine_with_restarts  # Scheduler type
+  scheduler: cosine                # Alternative scheduler setting
+  lr_decay_factor: 0.95            # Decay LR by 5% each restart
+  num_restarts: 3                  # Number of cosine restarts
+  
+  # ---------- Gradient Management ----------
+  max_grad_norm: 0.5               # Gradient clipping threshold
+  gradient_clip: 1.0               # Alternative gradient clipping
+  adaptive_gradient_clipping: true # Dynamic gradient clipping
+  gradient_penalty_weight: 0.001   # Penalize large gradients
+  
+  # ---------- Mixed Precision ----------
+  mixed_precision: bfloat16        # Mixed precision type
+  gradient_checkpointing: true     # Gradient checkpointing
+  zero_stage: 0                    # ZeRO optimization stage
+  
+  # ---------- Loss Functions ----------
+  # Focal Loss
+  use_focal_loss: true             # Enable focal loss
+  focal_gamma: 2.0                 # Focal loss gamma
+  focal_alpha: 0.25                # Focal loss alpha
+  focal_blend: 0.3                 # Blend with standard loss
+  
+  # ---------- Anti-Collapse Features ----------
+  entropy_regularization_weight: 0.01      # Encourage output diversity
+  token_frequency_penalty_weight: 0.1      # Penalize repetitive tokens
+  expert_diversity_weight: 0.01            # Encourage expert specialization
+  
+  # ---------- Curriculum Learning ----------
+  curriculum_learning: true        # Enable curriculum learning
+  initial_sequence_length: 256     # Start with short sequences
+  curriculum_warmup_steps: 1000    # Steps to reach full length
+  use_curriculum: false            # Alternative curriculum setting
+  curriculum_type: adaptive        # Curriculum type
+  initial_difficulty: 0.3          # Initial difficulty
+  max_difficulty: 1.0              # Maximum difficulty
+  sequence_length_curriculum: true # Enable sequence length curriculum
+  initial_seq_length: 256          # Initial sequence length
+  
+  # Progressive Sequence Growth
+  progressive_sequence_growth: true # Continue growing beyond initial
+  sequence_growth_rate: 1.5        # Growth multiplier
+  sequence_growth_interval: 5000   # Steps between growth
+  
+  # ---------- Anti-Overfitting Features ----------
+  stochastic_depth_prob: 0.1       # Randomly drop layers
+  mixout_prob: 0.1                 # Mix weights with initialization
+  use_ema: true                    # Exponential moving average
+  ema_decay: 0.999                 # EMA decay rate
+  confidence_weighting: true       # Weight loss by confidence
+  sam_enabled: false               # Sharpness-aware minimization
+  
+  # ---------- Progressive Training ----------
+  use_progressive: false           # Progressive training
+  growth_strategy: layer_stacking  # Growth strategy
+  initial_layers: 4                # Initial layers
+  growth_interval: 5000            # Growth interval
+  
+  # ---------- Safety Training ----------
+  use_constitutional: false        # Constitutional AI
+  safety_principles:              # Safety principles
+  - Be helpful, harmless, and honest
+  - Avoid harmful content
+  num_revisions: 2                # Number of revisions
+  safety_weight: 0.1              # Safety weight
+  
+  # ---------- Active Learning ----------
+  use_active_learning: false      # Active learning
+  active_learning_strategy: uncertainty  # Strategy
+  selection_batch_size: 32        # Selection batch size
+  
+  # ---------- Smart Checkpointing ----------
+  use_smart_checkpointing: true   # Smart checkpointing
+  memory_threshold: 0.8           # Memory threshold
+  min_recompute_ratio: 1.5        # Min recompute ratio
+  always_checkpoint_layers:       # Always checkpoint these
+  - attention
+  
+  # ---------- Evaluation & Checkpointing ----------
+  eval_steps: 100                 # Evaluation frequency
+  save_steps: 500                 # Checkpoint frequency
+  save_total_limit: 3             # Max checkpoints to keep
+  logging_steps: 10               # Logging frequency
+  
+  # ---------- DataLoader Settings ----------
+  parallel_loading: true          # Parallel data loading
+  num_workers: 0                  # DataLoader workers (0 for MPS)
+  drop_last: true                 # Drop incomplete batches
+  prefetch_factor: 2              # Prefetch factor
+  persistent_workers: false       # Persistent workers
+  pin_memory: false              # Pin memory (false for MPS)
+  
+  # ---------- Device Settings ----------
+  device: mps                    # Device: mps, cuda, cpu
+
+# ============================================================
+# DISTRIBUTED TRAINING
+# ============================================================
+
+distributed: false               # Enable distributed training
+num_gpus: 0                     # Number of GPUs
+device_map: mps                 # Device mapping
+
+# ============================================================
+# OUTPUT & EXPERIMENT
+# ============================================================
+
+output_dir: ./outputs            # Output directory
+experiment_name: moe_mps_medium # Experiment name
+logging_level: INFO              # Logging level
+report_to:                      # Reporting backends
+- tensorboard
+seed: 42                        # Random seed
+
+# ============================================================
+# FINE-TUNING CONFIGURATION
+# ============================================================
+
+fine_tuning:
+  # ---------- LoRA Configuration ----------
+  use_lora: true                 # Enable LoRA
+  use_qlora: false              # Enable QLoRA
+  freeze_base_model: true       # Freeze base model
+  lora_r: 16                    # LoRA rank
+  lora_alpha: 32                # LoRA alpha
+  lora_dropout: 0.25            # LoRA dropout (increased for regularization)
+  
+  # ---------- Early Stopping ----------
+  early_stopping: true          # Enable early stopping
+  early_stopping_patience: 5    # Patience
+  early_stopping_threshold: 0.001  # Threshold
+  min_delta: 0.0005            # Minimum change
+  
+  # ---------- LoRA Target Modules ----------
+  lora_target_modules:          # Target modules
+  - q_proj
+  - v_proj
+  - k_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+  
+  # ---------- Multi-LoRA ----------
+  num_lora_experts: 4           # Number of LoRA experts
+  task_embedding_dim: 0         # Task embedding dimension
+  share_base_weights: true      # Share base weights
+  
+  # ---------- Fine-tuning Training ----------
+  batch_size: 4                 # Batch size
+  gradient_accumulation_steps: 4  # Gradient accumulation
+  learning_rate: 2e-4           # Learning rate
+  num_epochs: 3                 # Number of epochs
+  warmup_ratio: 0.1             # Warmup ratio
+
+# ============================================================
+# INFERENCE CONFIGURATION
+# ============================================================
+
+inference:
+  use_speculation: false         # Speculative decoding
+  num_draft_experts: 2          # Draft experts
+  draft_expert_size_ratio: 0.2  # Draft expert size
+  draft_sequence_length: 3      # Draft sequence length
+  use_prefetching: false        # Prefetching
+  prune_before_deployment: true # Prune before deployment
+  target_sparsity: 0.3          # Target sparsity
+  prune_experts: true           # Prune experts
+  prune_attention: true         # Prune attention
+  expert_merge_threshold: 0.9   # Expert merge threshold
+  use_flash_attn: false         # Flash attention
+  torch_compile: false          # PyTorch compilation
+  dtype: float32                # Inference dtype
+
+# ============================================================
+# MEMORY OPTIMIZATION
+# ============================================================
+
+memory_optimization:
+  gradient_checkpointing: true  # Gradient checkpointing
+  cpu_offload: false            # CPU offload
+  optimizer_offload: false      # Optimizer offload
+  parameter_offload: false      # Parameter offload
+  activation_checkpointing: true # Activation checkpointing
+  memory_efficient_attention: true # Memory efficient attention
+
+# ============================================================
+# MPS OPTIMIZATION (Apple Silicon Specific)
+# ============================================================
+
+mps_optimization:
+  use_metal_performance_shaders: true  # Use Metal shaders
+  enable_unified_memory: true          # Unified memory
+  max_memory_gb: 32                    # Max memory
+  memory_fraction: 0.7                 # Memory fraction
+
+# ============================================================
+# MONITORING CONFIGURATION
+# ============================================================
+
+monitoring:
+  use_health_monitoring: false  # Health monitoring
+  check_interval: 100           # Check interval
+  enable_alerts: true           # Enable alerts
+  enable_visualization: false   # Enable visualizations
+  use_wandb: true               # Use W&B
+  wandb_project: llm-moe-training  # W&B project
+  wandb_name: null              # W&B run name
+  wandb_tags:                   # W&B tags
+  - moe
+  - mps
+  - medium
+  - overfitting-fixes

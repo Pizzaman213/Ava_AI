@@ -1,0 +1,192 @@
+{
+  "timestamp": "2025-08-30 21:26:07",
+  "passed": [
+    {
+      "name": "MoE Transformer Import",
+      "message": ""
+    },
+    {
+      "name": "Parallel Trainer Import",
+      "message": ""
+    },
+    {
+      "name": "MoE Model Creation",
+      "message": "14,476,036 parameters"
+    },
+    {
+      "name": "MoE Forward Pass",
+      "message": "Output shape: torch.Size([2, 32, 1000])"
+    },
+    {
+      "name": "Config: ultra_tiny.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: small.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: tiny.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: medium.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: ultra_tiny.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: small.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: large.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: small_tensor.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: medium.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: xlarge.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: ultra_tiny.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: small.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: large.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: tiny.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: medium.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: small_updated.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: efficient_finetuning.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: full_features.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: safe_deployment.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Config: research_sota.yaml",
+      "message": "Valid structure"
+    },
+    {
+      "name": "Training Step",
+      "message": "Loss: 4.6180"
+    },
+    {
+      "name": "Text Generation",
+      "message": "Generated 15 tokens"
+    },
+    {
+      "name": "Save Checkpoint",
+      "message": "Saved to test_checkpoint/test_model.pt"
+    },
+    {
+      "name": "Load Checkpoint",
+      "message": "Successfully loaded"
+    },
+    {
+      "name": "MPS Available",
+      "message": "Apple Silicon GPU"
+    },
+    {
+      "name": "CPU Available",
+      "message": "Always available"
+    },
+    {
+      "name": "Model on cpu",
+      "message": "Works correctly"
+    },
+    {
+      "name": "Script exists: train.py",
+      "message": "Found"
+    },
+    {
+      "name": "Script exists: train_simple.py",
+      "message": "Found"
+    },
+    {
+      "name": "Script exists: generate_data.py",
+      "message": "Found"
+    },
+    {
+      "name": "Script exists: finetune.py",
+      "message": "Found"
+    },
+    {
+      "name": "Script exists: interact.py",
+      "message": "Found"
+    }
+  ],
+  "failed": [],
+  "skipped": [
+    {
+      "name": "Enhanced Architecture Import",
+      "message": "No module named 'models'"
+    },
+    {
+      "name": "Core Config Import",
+      "message": "No module named 'core'"
+    },
+    {
+      "name": "Simple Trainer Import",
+      "message": "cannot import name 'SimpleTrainer' from 'src.training.simple_trainer' (./src/training/simple_trainer.py)"
+    },
+    {
+      "name": "Tokenizer Import",
+      "message": "No module named 'utils'"
+    },
+    {
+      "name": "Data Utils Import",
+      "message": "No module named 'utils'"
+    },
+    {
+      "name": "Gradient Checkpointing",
+      "message": "Not available"
+    },
+    {
+      "name": "CUDA Available",
+      "message": "No CUDA devices"
+    },
+    {
+      "name": "Model on mps",
+      "message": "Symbolic tensor incompatibility"
+    }
+  ],
+  "errors": [],
+  "summary": {
+    "passed": 36,
+    "failed": 0,
+    "skipped": 8,
+    "errors": 0,
+    "total": 44
+  }
+}

@@ -1,0 +1,175 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Wandb
+wandb/
+wandb/*
+wandb/**
+*.wandb
+
+# Model outputs and checkpoints
+outputs/
+outputs/*
+outputs/**
+checkpoints/
+checkpoints/*
+checkpoints/**
+models/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+best_model.pt
+checkpoint-*/
+
+# Data files
+data/
+data/*
+data/**
+*.csv
+*.tsv
+*.parquet
+*.hdf5
+*.h5
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+*.7z
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.db
+*.sqlite
+*.jsonl
+*.json.gz
+
+# Logs
+*.log
+logs/
+logs/*
+logs/**
+training.log
+*.err
+*.out
+
+# Cache and temporary files
+cache/
+**/cache/
+**/processed/
+**/processed_all/
+**/raw/
+**/tensor/
+**/vector_db/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+
+# Documentation build
+docs/_build/
+docs/build/
+site/
+
+# Testing
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Package files
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+
+# Secrets and credentials
+*.key
+*.pem
+*.crt
+*.cer
+secrets.yaml
+credentials.json
+.env.*
+
+# Large files
+*.mp4
+*.avi
+*.mov
+*.mpg
+*.mpeg
+*.wmv
+*.flv
+*.mkv
+*.webm

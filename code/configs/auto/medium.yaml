@@ -1,0 +1,294 @@
+# ============================================================
+# AUTO-DETECT MEDIUM CONFIGURATION
+# ============================================================
+#
+# Category: AUTO-DETECT
+# Device: Automatically detects CUDA/MPS/CPU
+# Optimization: ADAPTIVE
+# Use Case: Cross-platform training and inference
+#
+# DESCRIPTION:
+# Device-agnostic configuration that automatically adapts
+# to available hardware (CUDA GPU, Apple Silicon MPS, or CPU).
+# Features are enabled/disabled based on device capabilities.
+#
+# USAGE:
+#   python3 train.py --config configs/auto/medium.yaml
+#   python3 run_first_optimized.py --config configs/auto/medium.yaml
+#
+# ============================================================
+
+# ============================================================
+# MODEL ARCHITECTURE
+# ============================================================
+
+model:
+  # ---------- Core Architecture ----------
+  size: medium
+  vocab_size: 50257
+  hidden_size: 768
+  num_layers: 12
+  intermediate_size: 3072
+  
+  # ---------- Attention Configuration ----------
+  num_attention_heads: 12
+  num_key_value_heads: 6          # For GQA - reduces memory
+  attention_type: gqa
+  use_flash_attn: auto             # Auto-detect based on device
+  attention_dropout: 0.1
+  
+  # ---------- Position Encoding ----------
+  max_position_embeddings: 2048
+  rope_theta: 10000.0
+  
+  # ---------- Mixture of Experts (MoE) ----------
+  num_experts: 8
+  num_experts_per_tok: 2
+  expert_capacity_factor: 1.25
+  expert_routing_type: switch
+  expert_dropout: 0.1
+  
+  # ---------- Activation & Initialization ----------
+  hidden_act: swiglu
+  initializer_range: 0.02
+  rms_norm_eps: 1.0e-06
+  
+  # ---------- Regularization ----------
+  hidden_dropout: 0.1
+  label_smoothing: 0.0
+  
+  # ---------- Caching & Optimization ----------
+  use_cache: true
+  gradient_checkpointing: auto      # Auto based on memory
+  use_memory_efficient_attention: auto
+  
+  # ---------- Advanced Features ----------
+  use_mod: true
+  mod_mode: adaptive
+  mod_skip_fraction: 0.15
+  
+  use_speculative_decoding: false
+  speculative_draft_layers: 2
+  
+  use_hierarchical_moe: true
+  use_continuous_experts: true
+  use_sparse_experts: false
+  use_expert_cache: true
+  
+  use_mod_plus_plus: true
+  use_memory_augmented: false
+  use_adaptive_inference: true
+  use_interpretability: true
+  
+  # ---------- Device-Specific Features ----------
+  use_mixed_precision: auto         # Auto-detect capability
+  use_torch_compile: auto           # Auto based on PyTorch version
+  use_fused_kernels: auto           # CUDA only
+  
+  # ---------- Disabled Features ----------
+  use_mixture_tokenizers: false
+  use_nas_experts: false
+  use_meta_learning: false
+  use_federated_learning: false
+  use_continual_learning: false
+  use_advanced_pretraining: false
+  use_rlaif: false
+
+# ============================================================
+# DATA CONFIGURATION
+# ============================================================
+
+data:
+  dataset_type: hf
+  train_paths:
+    - ./data/pretraining/processed/train
+  val_path: ./data/pretraining/processed/validation
+  
+  tokenizer: gpt2
+  max_length: 2048
+  stride: 1024
+  
+  max_train_examples: null
+  max_val_examples: 1000
+  
+  dataset_args:
+    text_column: text
+    streaming: false
+    num_proc: auto                  # Auto-detect CPU cores
+    keep_in_memory: false
+    load_from_cache_file: true
+  
+  noise_probability: 0.0
+  mask_probability: 0.0
+
+# ============================================================
+# TRAINING CONFIGURATION
+# ============================================================
+
+training:
+  # ---------- Basic Training ----------
+  batch_size: auto                  # Auto based on memory
+  gradient_accumulation_steps: auto # Auto based on batch size
+  num_epochs: 3
+  max_steps: -1
+  
+  # ---------- Learning Rate ----------
+  learning_rate: 5e-5
+  warmup_steps: 500
+  warmup_ratio: 0.1
+  
+  # ---------- Optimizer Configuration ----------
+  optimizer: adamw
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1e-8
+  
+  # ---------- Learning Rate Scheduling ----------
+  lr_scheduler_type: cosine
+  
+  # ---------- Gradient Management ----------
+  max_grad_norm: 1.0
+  gradient_checkpointing: auto
+  
+  # ---------- Mixed Precision ----------
+  mixed_precision: auto              # Auto-detect: bf16 for CUDA/MPS, fp32 for CPU
+  
+  # ---------- Evaluation & Checkpointing ----------
+  eval_steps: 500
+  save_steps: 1000
+  save_total_limit: 3
+  logging_steps: 10
+  
+  # ---------- DataLoader Settings ----------
+  num_workers: auto                  # Auto based on device
+  drop_last: true
+  prefetch_factor: 2
+  persistent_workers: auto
+  pin_memory: auto                   # Auto based on device
+  
+  # ---------- Device Settings ----------
+  device: auto                       # Auto-detect: cuda, mps, or cpu
+
+# ============================================================
+# DEVICE AUTO-DETECTION
+# ============================================================
+
+device_config:
+  auto_detect: true
+  fallback_device: cpu
+  
+  # CUDA-specific settings (applied if CUDA detected)
+  cuda:
+    use_flash_attention: true
+    use_fused_kernels: true
+    use_torch_compile: true
+    mixed_precision: bf16
+    pin_memory: true
+    num_workers: 4
+    batch_size: 16
+    gradient_accumulation_steps: 2
+  
+  # MPS-specific settings (applied if MPS detected)
+  mps:
+    use_flash_attention: false
+    use_fused_kernels: false
+    use_torch_compile: false
+    mixed_precision: float32
+    pin_memory: false
+    num_workers: 0
+    batch_size: 8
+    gradient_accumulation_steps: 4
+    use_metal_performance_shaders: true
+    enable_unified_memory: true
+  
+  # CPU-specific settings (fallback)
+  cpu:
+    use_flash_attention: false
+    use_fused_kernels: false
+    use_torch_compile: false
+    mixed_precision: fp32
+    pin_memory: false
+    num_workers: 2
+    batch_size: 4
+    gradient_accumulation_steps: 8
+
+# ============================================================
+# OUTPUT & EXPERIMENT
+# ============================================================
+
+output_dir: ./outputs
+experiment_name: auto_medium
+logging_level: INFO
+report_to:
+  - tensorboard
+seed: 42
+
+# ============================================================
+# DISTRIBUTED TRAINING
+# ============================================================
+
+distributed: auto                    # Auto-detect multi-GPU
+num_gpus: auto                      # Auto-detect available GPUs
+device_map: auto                    # Auto device mapping
+
+# ============================================================
+# FINE-TUNING CONFIGURATION
+# ============================================================
+
+fine_tuning:
+  use_lora: true
+  use_qlora: false
+  freeze_base_model: true
+  lora_r: 8
+  lora_alpha: 32
+  lora_dropout: 0.1
+  
+  early_stopping: true
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.001
+  
+  lora_target_modules:
+    - q_proj
+    - v_proj
+    - k_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+# ============================================================
+# INFERENCE CONFIGURATION
+# ============================================================
+
+inference:
+  use_speculation: false
+  use_prefetching: true
+  prune_before_deployment: false
+  use_flash_attn: auto
+  torch_compile: auto
+  dtype: auto                        # Auto based on device
+
+# ============================================================
+# MEMORY OPTIMIZATION
+# ============================================================
+
+memory_optimization:
+  gradient_checkpointing: auto
+  cpu_offload: false
+  optimizer_offload: false
+  parameter_offload: false
+  activation_checkpointing: auto
+  memory_efficient_attention: auto
+
+# ============================================================
+# MONITORING CONFIGURATION
+# ============================================================
+
+monitoring:
+  use_wandb: false
+  wandb_project: llm-auto-training
+  wandb_tags:
+    - auto
+    - medium
+    - cross-platform
