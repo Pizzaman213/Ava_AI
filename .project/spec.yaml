@@ -23,15 +23,15 @@ layout:
 environment:
     base:
         registry: nvcr.io
-        image: nvidia/ai-workbench/python-cuda129:1.0.1
-        build_timestamp: "20250725180730"
-        name: Python with CUDA 12.9
+        image: nvidia/rapidsai/notebooks:24.10-cuda12.0-py3.11
+        build_timestamp: ""
+        name: RAPIDS with CUDA 12.0.1
         supported_architectures: []
-        cuda_version: "12.9"
-        description: A Python Base with CUDA 12.9
-        entrypoint_script: ""
+        cuda_version: 12.0.1
+        description: RAPIDS with CUDA 12.0.1
+        entrypoint_script: /home/rapids/entrypoint.sh
         labels:
-            - cuda12.9
+            - cuda12.0.1
         apps:
             - name: jupyterlab
               type: jupyterlab
@@ -51,35 +51,42 @@ environment:
                 url_command: jupyter lab list | head -n 2 | tail -n 1 | cut -f1 -d' ' | grep -v 'Currently'
         programming_languages:
             - python3
-        icon_url: https://workbench.download.nvidia.com/static/img/ai-workbench-icon-rectangle.jpg
-        image_version: 1.0.1
+        icon_url: ""
+        image_version: 24.10.00
         os: linux
         os_distro: ubuntu
         os_distro_release: "22.04"
         schema_version: v2
         user_info:
-            uid: ""
-            gid: ""
-            username: ""
+            uid: "1001"
+            gid: "1000"
+            username: rapids
         package_managers:
             - name: apt
               binary_path: /usr/bin/apt
               installed_packages:
-                - curl
-                - git
-                - git-lfs
-                - python3
-                - gcc
-                - python3-dev
-                - python3-pip
-                - vim
-            - name: pip
-              binary_path: /usr/bin/pip
+                - ""
+            - name: conda3
+              binary_path: /opt/conda/bin/conda
               installed_packages:
-                - jupyterlab==4.3.5
+                - rapids
+                - cudf
+                - cuml
+                - cugraph
+                - rmm
+                - pylibraft
+                - cuspatial
+                - cuxfilter
+                - cucim
+                - xgboost
+                - jupyterlab
+            - name: pip
+              binary_path: /opt/conda/bin/pip
+              installed_packages:
+                - jupyterlab-nvdashboard
         package_manager_environment:
-            name: ""
-            target: ""
+            name: conda
+            target: /opt/conda
     compose_file_path: ""
 execution:
     apps:
@@ -95,7 +102,7 @@ execution:
           icon_url: ""
     resources:
         gpu:
-            requested: 0
+            requested: 1
         sharedMemoryMB: 20480
     secrets: []
     mounts:
