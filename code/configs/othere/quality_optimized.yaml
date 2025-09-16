@@ -1,0 +1,161 @@
+# ============================================================
+# AVA MOE++ QUALITY-OPTIMIZED CONFIGURATION
+# ============================================================
+# Model Size: Large with many experts
+# Hardware: High-end GPU/TPU systems
+# Use Case: Maximum model quality, research
+# ============================================================
+
+# Model Architecture Configuration
+model:
+  # Core dimensions (large)
+  hidden_size: 1280
+  num_layers: 20
+  num_attention_heads: 20
+  ffn_hidden_size: 5120
+  vocab_size: 50257
+  max_position_embeddings: 4096
+
+  # MoE configuration (many experts)
+  num_experts: 64
+  top_k_experts: 8  # Use many experts
+  expert_capacity: 1.5
+
+  # Dropout and regularization
+  dropout_rate: 0.15
+  attention_dropout: 0.15
+  expert_dropout: 0.15
+
+  # Advanced features (all enabled)
+  use_expert_balancing: true
+  use_adaptive_routing: true
+  temperature: 0.8  # Lower for more focused routing
+  confidence_threshold: 0.6
+  sinkhorn_iterations: 20  # More iterations for better balance
+  aux_loss_weight: 0.05  # Stronger auxiliary losses
+  layer_norm_epsilon: 1.0e-6
+
+# Training Configuration
+training:
+  # Batch settings (moderate)
+  batch_size: 8
+  gradient_accumulation_steps: 4
+
+  # Training duration (extended)
+  num_epochs: 100
+  max_steps: -1
+
+  # Optimizer (careful tuning)
+  learning_rate: 1.0e-4
+  weight_decay: 0.05
+  adam_beta1: 0.9
+  adam_beta2: 0.98  # Higher for stability
+  adam_epsilon: 1.0e-9  # Smaller epsilon
+
+  # Learning rate schedule (complex)
+  lr_scheduler_type: cosine_with_restarts
+  warmup_steps: 10000
+  warmup_ratio: 0.2
+  num_restarts: 3
+  lr_decay_factor: 0.9
+
+  # Gradient management
+  max_grad_norm: 0.5  # Tighter clipping
+  gradient_checkpointing: true
+
+  # Mixed precision
+  mixed_precision: true
+  fp16: false
+  bf16: true  # Better numerical stability
+
+  # Regularization
+  label_smoothing: 0.1
+  stochastic_depth_prob: 0.1
+  mixout_prob: 0.1
+
+  # Evaluation and checkpointing
+  eval_steps: 100
+  save_steps: 500
+  save_total_limit: 20  # Keep many checkpoints
+  logging_steps: 10
+
+  # Data loading
+  num_workers: 8
+  prefetch_factor: 2
+  persistent_workers: true
+  pin_memory: true
+  drop_last: false  # Use all data
+
+# Data Configuration
+data:
+  # Paths
+  data_dir: /project/code/data/pretraining/processed
+
+  # Tokenization (long sequences)
+  tokenizer: gpt2
+  max_length: 4096
+  stride: 2048
+
+  # Data limits (use all data)
+  max_train_examples: null
+  max_val_examples: null
+
+  # Processing
+  num_proc: 16
+  streaming: false
+  keep_in_memory: false
+  load_from_cache_file: true
+
+  # Data augmentation
+  use_data_augmentation: true
+  noise_probability: 0.05
+  mask_probability: 0.15
+
+# Training Techniques
+techniques:
+  # Curriculum learning
+  curriculum_learning: true
+  initial_sequence_length: 512
+  sequence_growth_rate: 2.0
+  sequence_growth_interval: 10000
+
+  # Advanced training
+  use_ema: true
+  ema_decay: 0.999
+  use_sam: true  # Sharpness-aware minimization
+  sam_rho: 0.05
+
+  # Anti-overfitting
+  confidence_penalty: 0.1
+  entropy_regularization: 0.01
+  diversity_loss_weight: 0.01
+
+# Output Configuration
+output:
+  output_dir: /project/code/outputs
+  logging_dir: /project/code/outputs/logs
+  checkpoint_dir: /project/code/outputs/checkpoints
+
+# Hardware Optimization
+hardware:
+  device: cuda
+  cuda_device: 0
+  use_flash_attention: true
+  use_torch_compile: false  # May hurt quality
+  enable_tf32: false  # Full precision
+  cudnn_benchmark: false  # Deterministic
+
+# Monitoring (comprehensive)
+monitoring:
+  log_level: INFO
+  enable_tensorboard: true
+  enable_wandb: true
+  wandb_project: ava-moe-quality
+  wandb_entity: null
+  wandb_tags:
+    - quality
+    - research
+    - many-experts
+  track_gradients: true
+  track_weights: true
+  track_activations: true

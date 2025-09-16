@@ -1,0 +1,116 @@
+# ============================================================
+# AVA MOE++ DEVELOPMENT CONFIGURATION
+# ============================================================
+# Model Size: ~10M parameters (tiny)
+# Hardware: Any CPU/GPU
+# Use Case: Quick testing, debugging, development
+# ============================================================
+
+# Model Architecture Configuration
+model:
+  # Core dimensions (minimal)
+  hidden_size: 128
+  num_layers: 2
+  num_attention_heads: 4
+  ffn_hidden_size: 512
+  vocab_size: 50257
+  max_position_embeddings: 512
+
+  # MoE configuration (minimal)
+  num_experts: 2
+  top_k_experts: 1
+  expert_capacity: 1.0
+
+  # Dropout and regularization
+  dropout_rate: 0.0
+  attention_dropout: 0.0
+  expert_dropout: 0.0
+
+  # Advanced features
+  use_expert_balancing: false
+  use_adaptive_routing: false
+  temperature: 1.0
+  confidence_threshold: 0.5
+  sinkhorn_iterations: 1
+  aux_loss_weight: 0.0
+  layer_norm_epsilon: 1.0e-5
+
+# Training Configuration
+training:
+  # Batch settings
+  batch_size: 2
+  gradient_accumulation_steps: 1
+
+  # Training duration
+  num_epochs: 1
+  max_steps: 100  # Quick test
+
+  # Optimizer
+  learning_rate: 1.0e-3
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+  # Learning rate schedule
+  lr_scheduler_type: linear
+  warmup_steps: 10
+  warmup_ratio: 0.1
+
+  # Gradient management
+  max_grad_norm: 1.0
+  gradient_checkpointing: false
+
+  # Evaluation and checkpointing
+  eval_steps: 50
+  save_steps: 100
+  save_total_limit: 1
+  logging_steps: 10
+
+  # Data loading
+  num_workers: 0  # Single thread for debugging
+  prefetch_factor: 2
+  persistent_workers: false
+  pin_memory: false
+  drop_last: false
+
+# Data Configuration
+data:
+  # Paths
+  data_dir: /project/code/data/pretraining/processed
+
+  # Tokenization
+  tokenizer: gpt2
+  max_length: 256
+  stride: 128
+
+  # Data limits (very small for testing)
+  max_train_examples: 100
+  max_val_examples: 20
+
+  # Processing
+  num_proc: 1
+  streaming: false
+  keep_in_memory: true
+  load_from_cache_file: false
+
+# Output Configuration
+output:
+  output_dir: /project/code/outputs/dev
+  logging_dir: /project/code/outputs/dev/logs
+  checkpoint_dir: /project/code/outputs/dev/checkpoints
+
+# Hardware Optimization
+hardware:
+  device: auto  # Auto-detect
+  num_threads: 1
+  use_mkl: false
+  enable_jemalloc: false
+
+# Monitoring
+monitoring:
+  log_level: DEBUG  # Verbose logging
+  enable_tensorboard: false
+  enable_wandb: false
+  wandb_project: null
+  wandb_entity: null

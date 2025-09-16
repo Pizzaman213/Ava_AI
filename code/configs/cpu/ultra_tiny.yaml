@@ -35,21 +35,23 @@ model:
   # ---------- Core Architecture ----------
   size: ultra_tiny                # Model size preset
   vocab_size: 50257               # GPT-2 tokenizer vocabulary
-  hidden_size: 256                # Hidden dimension (minimal)
-  num_layers: 4                   # Number of transformer layers
-  intermediate_size: 1024         # FFN intermediate dimension
-  
+  hidden_size: 128                # Hidden dimension (ultra minimal)
+  num_layers: 2                   # Number of transformer layers (minimal)
+  intermediate_size: 512          # FFN intermediate dimension
+  ffn_hidden_size: 512            # Alternative FFN size parameter
+
   # ---------- Attention Configuration ----------
-  num_attention_heads: 4          # Number of attention heads
-  num_key_value_heads: 2          # For GQA - reduces memory
+  num_attention_heads: 2          # Number of attention heads (minimal)
+  num_key_value_heads: 1          # For GQA - reduces memory
   attention_type: standard        # Options: mha, mqa, gqa (standard for simplicity)
   use_flash_attn: false           # Flash Attention (not supported on CPU)
-  attention_dropout: 0.2          # Dropout in attention layers
-  
+  attention_dropout: 0.1          # Dropout in attention layers
+  dropout_rate: 0.1               # General dropout
+
   # ---------- Position Encoding ----------
-  max_position_embeddings: 256    # Maximum sequence length (ultra tiny)
+  max_position_embeddings: 256    # Maximum sequence length (reduced)
   rope_theta: 10000.0             # RoPE base frequency
-  
+
   # ---------- Mixture of Experts (MoE) ----------
   num_experts: 2                  # Minimal number of experts
   num_experts_per_tok: 1          # Single expert per token
@@ -161,7 +163,7 @@ data:
   
   # ---------- Tokenization ----------
   tokenizer: gpt2                 # Tokenizer to use
-  max_length: 256                 # Maximum sequence length (ultra tiny)
+  max_length: 128                 # Maximum sequence length (ultra tiny)
   stride: 128                     # Stride for overlapping sequences
   
   # ---------- Data Loading ----------
@@ -186,7 +188,7 @@ data:
 
 training:
   # ---------- Basic Training ----------
-  batch_size: 16                  # Batch size per device
+  batch_size: 4                  # Batch size per device (reduced for memory)
   gradient_accumulation_steps: 1  # No gradient accumulation for simplicity
   num_epochs: 10                  # More epochs for ultra tiny model
   max_steps: -1                   # Max steps (-1 = use epochs)

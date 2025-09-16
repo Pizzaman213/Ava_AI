@@ -1,0 +1,79 @@
+# ============================================================
+# NANO CONFIGURATION - ABSOLUTE MINIMAL
+# ============================================================
+# Model Size: ~5M parameters
+# Hardware: 4GB+ RAM
+# Use Case: Testing, extreme memory constraints
+# ============================================================
+
+# Model Architecture
+model:
+  # Core dimensions
+  hidden_size: 64                # Ultra minimal
+  num_layers: 2                  # Minimum layers
+  num_attention_heads: 2         # Minimum heads
+  ffn_hidden_size: 256          # Small FFN
+  vocab_size: 50257             # GPT-2 vocab
+  max_position_embeddings: 128   # Short sequences
+
+  # MoE configuration
+  num_experts: 2                # Just 2 experts
+  top_k_experts: 1              # Single expert per token
+  expert_capacity: 1.25
+
+  # Regularization
+  dropout_rate: 0.1
+  attention_dropout: 0.1
+  expert_dropout: 0.1
+
+  # MoE features
+  use_expert_balancing: true
+  use_adaptive_routing: true
+  temperature: 1.0
+  confidence_threshold: 0.5
+  sinkhorn_iterations: 3
+  aux_loss_weight: 0.01
+  layer_norm_epsilon: 1.0e-5
+
+# Training Configuration
+training:
+  # Batch settings
+  batch_size: 2                 # Tiny batch
+  gradient_accumulation_steps: 4
+
+  # Training duration
+  num_epochs: 5
+
+  # Optimizer
+  learning_rate: 0.001
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+  # Learning rate schedule
+  lr_scheduler_type: cosine
+  warmup_steps: 100
+
+  # Gradient management
+  max_grad_norm: 1.0
+
+  # Checkpointing
+  eval_steps: 500
+  save_steps: 1000
+  logging_steps: 100
+
+# Data Configuration
+data:
+  data_dir: /project/code/data/pretraining/processed
+  max_length: 128              # Very short sequences
+  num_workers: 0
+
+# Output Configuration
+output:
+  output_dir: /project/code/outputs
+
+# Hardware Settings
+hardware:
+  device: cpu
+  num_threads: 4

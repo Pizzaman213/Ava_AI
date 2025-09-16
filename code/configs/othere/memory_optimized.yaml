@@ -1,0 +1,131 @@
+# ============================================================
+# AVA MOE++ MEMORY-OPTIMIZED CONFIGURATION
+# ============================================================
+# Model Size: Variable (optimized for low memory)
+# Hardware: Systems with limited RAM/VRAM
+# Use Case: Training on memory-constrained systems
+# ============================================================
+
+# Model Architecture Configuration
+model:
+  # Core dimensions (reduced for memory)
+  hidden_size: 384
+  num_layers: 6
+  num_attention_heads: 6
+  ffn_hidden_size: 1536
+  vocab_size: 50257
+  max_position_embeddings: 512
+
+  # MoE configuration (minimal experts)
+  num_experts: 2
+  top_k_experts: 1
+  expert_capacity: 1.0
+
+  # Dropout and regularization
+  dropout_rate: 0.2
+  attention_dropout: 0.2
+  expert_dropout: 0.2
+
+  # Advanced features
+  use_expert_balancing: true
+  use_adaptive_routing: false
+  temperature: 1.0
+  confidence_threshold: 0.5
+  sinkhorn_iterations: 2
+  aux_loss_weight: 0.01
+  layer_norm_epsilon: 1.0e-5
+
+# Training Configuration
+training:
+  # Batch settings (minimal batch size)
+  batch_size: 1
+  gradient_accumulation_steps: 32  # Effective batch = 32
+
+  # Training duration
+  num_epochs: 10
+  max_steps: -1
+
+  # Optimizer
+  learning_rate: 5.0e-4
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+  # Learning rate schedule
+  lr_scheduler_type: cosine
+  warmup_steps: 500
+  warmup_ratio: 0.1
+
+  # Gradient management
+  max_grad_norm: 1.0
+  gradient_checkpointing: true  # Essential for memory saving
+
+  # Mixed precision (saves memory)
+  mixed_precision: true
+  fp16: true
+  bf16: false
+
+  # Evaluation and checkpointing
+  eval_steps: 1000
+  save_steps: 2000
+  save_total_limit: 2
+  logging_steps: 100
+
+  # Data loading
+  num_workers: 0  # Reduce memory overhead
+  prefetch_factor: null
+  persistent_workers: false
+  pin_memory: false
+  drop_last: true
+
+# Data Configuration
+data:
+  # Paths
+  data_dir: /project/code/data/pretraining/processed
+
+  # Tokenization (reduced sequence length)
+  tokenizer: gpt2
+  max_length: 512
+  stride: 256
+
+  # Data limits
+  max_train_examples: 10000
+  max_val_examples: 500
+
+  # Processing
+  num_proc: 1  # Single process to save memory
+  streaming: true  # Stream data instead of loading all
+  keep_in_memory: false
+  load_from_cache_file: true
+
+# Output Configuration
+output:
+  output_dir: /project/code/outputs
+  logging_dir: /project/code/outputs/logs
+  checkpoint_dir: /project/code/outputs/checkpoints
+
+# Hardware Optimization
+hardware:
+  device: auto
+  num_threads: 4
+  use_mkl: true
+  enable_jemalloc: true
+  optimize_memory: true
+
+# Memory-Specific Settings
+memory:
+  activation_checkpointing: true
+  cpu_offload: true
+  optimizer_offload: true
+  parameter_offload: false
+  gradient_accumulation_dtype: fp32
+  clear_cache_interval: 100  # Clear cache every N steps
+
+# Monitoring
+monitoring:
+  log_level: INFO
+  enable_tensorboard: false  # Disable to save memory
+  enable_wandb: false
+  wandb_project: null
+  wandb_entity: null
