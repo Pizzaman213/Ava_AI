@@ -1,23 +1,23 @@
 # ============================================================
-# AVA MOE++ MEDIUM CPU CONFIGURATION
+# AVA MOE++ BASE GPU CONFIGURATION
 # ============================================================
-# Model Size: ~200M parameters
-# Hardware: 16+ CPU cores, 32GB RAM
-# Use Case: Small-scale training, fine-tuning
+# Model Size: ~500M parameters
+# Hardware: 1x GPU with 8GB+ VRAM (RTX 3060, RTX 3070)
+# Use Case: Standard training, research, production inference
 # ============================================================
 
 # Model Architecture
 model:
   # Core dimensions
-  hidden_size: 768
-  num_layers: 12
-  num_attention_heads: 12
-  ffn_hidden_size: 3072
+  hidden_size: 1024
+  num_layers: 16
+  num_attention_heads: 16
+  ffn_hidden_size: 4096
   vocab_size: 50257
   max_position_embeddings: 2048
 
   # MoE configuration
-  num_experts: 8
+  num_experts: 16
   top_k_experts: 2
   expert_capacity: 1.25
 
@@ -31,21 +31,21 @@ model:
   use_adaptive_routing: true
   temperature: 1.0
   confidence_threshold: 0.5
-  sinkhorn_iterations: 3
+  sinkhorn_iterations: 5
   aux_loss_weight: 0.01
   layer_norm_epsilon: 1.0e-5
 
 # Training Configuration
 training:
   # Batch settings
-  batch_size: 2
-  gradient_accumulation_steps: 16
+  batch_size: 8
+  gradient_accumulation_steps: 4
 
   # Training duration
-  num_epochs: 20
+  num_epochs: 30
 
   # Optimizer
-  learning_rate: 3.0e-4
+  learning_rate: 2.0e-4
   weight_decay: 0.01
   adam_beta1: 0.9
   adam_beta2: 0.95
@@ -53,7 +53,7 @@ training:
 
   # Learning rate schedule
   lr_scheduler_type: cosine
-  warmup_steps: 1000
+  warmup_steps: 2000
 
   # Gradient management
   max_grad_norm: 1.0
@@ -61,13 +61,13 @@ training:
   # Checkpointing
   eval_steps: 500
   save_steps: 1000
-  logging_steps: 25
+  logging_steps: 10
 
 # Data Configuration
 data:
   data_dir: /project/code/data/pretraining/processed
   max_length: 2048
-  num_workers: 8
+  num_workers: 4
 
 # Output Configuration
 output:
@@ -75,5 +75,7 @@ output:
 
 # Hardware Settings
 hardware:
-  device: cpu
-  num_threads: 16
+  device: cuda
+  cuda_device_id: 0
+  mixed_precision: true
+  fp16: true

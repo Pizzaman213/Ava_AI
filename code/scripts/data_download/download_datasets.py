@@ -31,8 +31,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('download_datasets.log'),
-        logging.StreamHandler()
+        logging.StreamHandler()  # Only console output initially
     ]
 )
 logger = logging.getLogger(__name__)
@@ -53,6 +52,8 @@ CONNECTION_TIMEOUT = 30  # Connection timeout in seconds
 DOWNLOAD_TIMEOUT = 300  # Download timeout in seconds
 
 datasets_to_download = [
+    ("HuggingFaceTB/everyday-conversations-llama3.1-2k", "everyday-conversations", None),
+    ("HuggingFaceTB/cosmopedia-100k", "cosmopedia-100k", None),
     ("Open-Orca/OpenOrca", "OpenOrca", None),
     ("llamafactory/tiny-supervised-dataset", "tiny-supervised-dataset", None),
     ("nvidia/OpenMathInstruct-1", "OpenMathInstruct-1", None),
@@ -223,7 +224,8 @@ def download_with_retry(download_func, *args, **kwargs):
 def download_dataset(dataset_name, output_name, base_dir, config=None, max_samples=None):
     try:
         logger.info(f"\n{'='*60}")
-        logger.info(f"Downloading {dataset_name}...")
+        logger.info(f"Downloading {dataset_name} dataset")
+        print(f"Downloading {dataset_name} dataset", flush=True)
         logger.info(f"{'='*60}")
         
         output_dir = os.path.join(base_dir, output_name)
@@ -385,7 +387,12 @@ def download_dataset(dataset_name, output_name, base_dir, config=None, max_sampl
                                     json.dump(progress, f)
                                 
                                 if batch_num % 10 == 0:
-                                    logger.info(f"    Saved {batch_num * current_batch_size} examples...")
+                                    processed = batch_num * current_batch_size
+                                    logger.info(f"    Saved {processed} examples...")
+                                    # Output progress for the progress bar
+                                    if total_examples > 0:
+                                        percent = (processed / total_examples) * 100
+                                        print(f"Progress: {percent:.1f}% - {processed}/{total_examples} samples", flush=True)
                             else:
                                 logger.error(f"Failed to save batch {batch_num} after multiple attempts")
                     
@@ -526,6 +533,7 @@ def download_dataset(dataset_name, output_name, base_dir, config=None, max_sampl
         # Final integrity check
         if verify_dataset_integrity(output_dir, expected_splits=list(dataset.keys())):
             logger.info(f"✅ Successfully downloaded and verified {dataset_name}")
+            print(f"Complete: 100% - {dataset_name} dataset saved", flush=True)
             
             # Clean up backup if successful
             if backup_dir and os.path.exists(backup_dir):
@@ -747,11 +755,14 @@ def main():
     
     args = parser.parse_args()
     
-    # Setup logging to file
-    log_file = Path("download_datasets_" + time.strftime("%Y%m%d_%H%M%S") + ".log")
+    # Setup logging to file in outputs/logs directory
+    log_dir = Path("/project/code/outputs/logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"download_datasets_{time.strftime('%Y%m%d_%H%M%S')}.log"
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(file_handler)
+    logger.info(f"Logging to: {log_file}")
     
     # Modify settings for test mode
     if args.test_mode:

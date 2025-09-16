@@ -1,29 +1,29 @@
 # ============================================================
-# ULTRA TINY CONFIGURATION - MINIMAL CPU TRAINING
+# SMALL CONFIGURATION - BALANCED CPU PERFORMANCE
 # ============================================================
 #
 # Category: CPU
-# Model Size: ~10M parameters
+# Model Size: ~50M parameters
 # Device: CPU (x86_64/ARM64)
-# Optimization Level: MINIMAL
-# Use Case: Testing, debugging, and ultra-constrained environments
+# Optimization Level: BALANCED
+# Use Case: General purpose training on CPU hardware
 #
 # DESCRIPTION:
-# Minimal CPU configuration for testing and development.
-# Optimized for fast iteration with essential features only.
-# Perfect for proof-of-concepts, debugging, and environments
-# with very limited computational resources. Includes only
-# the most basic MoE functionality.
+# CPU-optimized configuration with balanced features.
+# Designed for CPU-only environments including cloud instances,
+# edge devices, and development machines without GPU access.
+# Includes CPU-specific optimizations and reasonable resource
+# usage for most hardware configurations.
 #
 # HARDWARE REQUIREMENTS:
-# - CPU: 2+ cores (Intel/AMD x86_64 or ARM64)
-# - RAM: 4GB+ system memory
-# - Storage: Any storage type
+# - CPU: 8+ cores (Intel/AMD x86_64 or ARM64)
+# - RAM: 16GB+ system memory
+# - Storage: SSD recommended for data loading
 # - OS: Linux, macOS, or Windows
 #
 # USAGE:
-#   python3 train_with_data.py --config configs/cpu/ultra_tiny.yaml
-#   python3 interact.py --model outputs/cpu_ultra_tiny.pt
+#   python3 train_with_data.py --config configs/cpu/small.yaml
+#   python3 interact.py --model outputs/cpu_small.pt
 #
 # ============================================================
 
@@ -33,34 +33,32 @@
 
 model:
   # ---------- Core Architecture ----------
-  size: ultra_tiny                # Model size preset
-  vocab_size: 50257               # GPT-2 tokenizer vocabulary
-  hidden_size: 128                # Hidden dimension (ultra minimal)
-  num_layers: 2                   # Number of transformer layers (minimal)
-  intermediate_size: 512          # FFN intermediate dimension
-  ffn_hidden_size: 512            # Alternative FFN size parameter
-
+  size: smallist                     # Model size preset
+  vocab_size: 200               # GPT-2 tokenizer vocabulary
+  hidden_size: 1                # Hidden dimension (CPU-optimized)
+  num_layers: 2                   # Number of transformer layers
+  intermediate_size: 30         # FFN intermediate dimension
+  
   # ---------- Attention Configuration ----------
-  num_attention_heads: 2          # Number of attention heads (minimal)
+  num_attention_heads: 1          # Number of attention heads
   num_key_value_heads: 1          # For GQA - reduces memory
-  attention_type: standard        # Options: mha, mqa, gqa (standard for simplicity)
+  attention_type: gqa             # Options: mha, mqa, gqa
   use_flash_attn: false           # Flash Attention (not supported on CPU)
-  attention_dropout: 0.1          # Dropout in attention layers
-  dropout_rate: 0.1               # General dropout
-
+  attention_dropout: 0.2          # Dropout in attention layers
+  
   # ---------- Position Encoding ----------
-  max_position_embeddings: 256    # Maximum sequence length (reduced)
+  max_position_embeddings: 10   # Maximum sequence length (CPU-friendly)
   rope_theta: 10000.0             # RoPE base frequency
-
+  
   # ---------- Mixture of Experts (MoE) ----------
-  num_experts: 2                  # Minimal number of experts
-  num_experts_per_tok: 1          # Single expert per token
-  expert_capacity_factor: 1.0     # Minimal capacity factor
+  num_experts: 2            # Number of experts (CPU-friendly)
+  num_experts_per_tok: 1          # Experts per token (minimal for CPU)
+  expert_capacity_factor: 1.25    # Capacity factor for load balancing
   expert_routing_type: switch     # Options: switch, gshard, base
   expert_dropout: 0.25            # Dropout for expert layers
   
   # ---------- Activation & Initialization ----------
-  hidden_act: gelu                # Activation function (simpler than swiglu)
+  hidden_act: swiglu              # Activation function
   initializer_range: 0.02         # Weight initialization range
   rms_norm_eps: 1.0e-06          # RMSNorm epsilon for stability
   
@@ -75,25 +73,25 @@ model:
   
   # ---------- Advanced Features ----------
   # Mixture of Depths (MoD)
-  use_mod: false                  # Disabled for ultra tiny model
-  mod_mode: none                  # Options: learned, fixed, adaptive
-  mod_skip_fraction: 0.0          # Fraction of layers to skip
+  use_mod: false                  # Disabled for CPU simplicity
+  mod_mode: adaptive              # Options: learned, fixed, adaptive
+  mod_skip_fraction: 0.2          # Fraction of layers to skip
   
   # Speculative Decoding
   use_speculative_decoding: false # Disabled for CPU
   speculative_draft_layers: 0     # Number of draft layers
   
   # Expert System Features
-  use_hierarchical_moe: false     # Disabled for ultra tiny model
-  use_continuous_experts: false   # Continuous expert selection
+  use_hierarchical_moe: true      # Hierarchical expert routing
+  use_continuous_experts: true    # Continuous expert selection
   use_sparse_experts: false       # Disabled for CPU
   use_expert_cache: true          # Cache expert selections
   
   # Advanced Architecture Components
-  use_mod_plus_plus: false        # Disabled for ultra tiny
+  use_mod_plus_plus: true         # Enhanced MoD with confidence
   use_memory_augmented: false     # External memory mechanisms
   use_adaptive_inference: true    # Dynamic computation graphs
-  use_interpretability: false     # Built-in interpretability
+  use_interpretability: true      # Built-in interpretability
   
   # Multi-Modal & Specialized Features
   use_mixture_tokenizers: false   # Multiple tokenizer support
@@ -123,13 +121,13 @@ model:
   use_torch_compile: false        # PyTorch 2.0 compilation (CPU issues)
   use_fused_kernels: false        # Fused kernels (not available on CPU)
   
-  # Research & Development Features (mostly disabled for ultra tiny)
+  # Research & Development Features
   use_diverse_beam_search: false  # Diverse beam search
   use_mixture_decoders: false     # Multiple decoder heads
   use_streaming_generation: false # Streaming text generation
-  use_batch_optimized: false      # Batch-optimized inference
-  use_synthetic_data: false       # Synthetic data generation
-  use_online_learning: false      # Online learning capability
+  use_batch_optimized: false     # Batch-optimized inference
+  use_synthetic_data: true        # Synthetic data generation
+  use_online_learning: true       # Online learning capability
   use_multi_task_learning: false  # Multi-task learning
   use_automated_curation: false   # Automated data curation
   use_cross_lingual: false        # Cross-lingual transfer
@@ -158,23 +156,23 @@ data:
   # ---------- Dataset Settings ----------
   dataset_type: hf                # Dataset type (hf = HuggingFace format)
   train_paths:                    # Training data paths
-    - ./data/pretraining/processed_ace_full/batch_*
-  val_path: ./data/pretraining/processed_ace_full/batch_*
+    - ./data/pretraining/processed/batch_*
+  val_path: ./data/pretraining/processed/batch_*
   
   # ---------- Tokenization ----------
   tokenizer: gpt2                 # Tokenizer to use
-  max_length: 128                 # Maximum sequence length (ultra tiny)
-  stride: 128                     # Stride for overlapping sequences
+  max_length: 1024                # Maximum sequence length (CPU-friendly)
+  stride: 512                     # Stride for overlapping sequences
   
   # ---------- Data Loading ----------
-  max_train_examples: 5000        # Very limited training data
-  max_val_examples: 100           # Very limited validation data
+  max_train_examples: 50000       # Reasonable training data for CPU
+  max_val_examples: 1000          # Limit validation data
   
   # ---------- Dataset Arguments ----------
   dataset_args:
     text_column: text             # Column name for text data
-    streaming: true               # Stream data for memory efficiency
-    num_proc: 1                   # Single process for simplicity
+    streaming: false              # Don't stream (load in memory)
+    num_proc: 4                   # CPU cores for data processing
     keep_in_memory: false         # Don't load entire dataset in memory
     load_from_cache_file: true    # Use cache if available
   
@@ -188,33 +186,33 @@ data:
 
 training:
   # ---------- Basic Training ----------
-  batch_size: 4                  # Batch size per device (reduced for memory)
-  gradient_accumulation_steps: 1  # No gradient accumulation for simplicity
-  num_epochs: 10                  # More epochs for ultra tiny model
+  batch_size: 4                   # Batch size per device (CPU memory limited)
+  gradient_accumulation_steps: 8  # Gradient accumulation (effective batch = 32)
+  num_epochs: 3                   # Number of training epochs
   max_steps: -1                   # Max steps (-1 = use epochs)
   
   # ---------- Learning Rate ----------
-  learning_rate: 1e-3             # Higher learning rate for tiny model
-  warmup_steps: 10                # Minimal warmup
-  warmup_ratio: 0.0               # No warmup ratio
+  learning_rate: 5e-4             # Base learning rate
+  warmup_steps: 500               # Warmup steps
+  warmup_ratio: 0.1               # Warmup ratio
   
   # ---------- Optimizer Configuration ----------
   optimizer: adamw                # AdamW optimizer (CPU-compatible)
-  weight_decay: 0.0               # No weight decay for ultra tiny
+  weight_decay: 0.01              # L2 regularization
   adam_beta1: 0.9                 # Adam beta1
-  adam_beta2: 0.999               # Adam beta2
+  adam_beta2: 0.95                # Adam beta2
   adam_epsilon: 1e-8              # Adam epsilon
   
   # ---------- Advanced Optimizer Features ----------
-  layerwise_lr: false             # Disabled for ultra tiny model
-  lr_layer_scale: 1.0             # No layer-wise scaling
+  layerwise_lr: false             # Disabled for CPU simplicity
+  lr_layer_scale: 0.5             # Scale for layer-wise LR
   gradient_centralization: false  # Disabled for CPU
   
   # ---------- Learning Rate Scheduling ----------
-  lr_scheduler_type: constant     # Constant scheduler for simplicity
+  lr_scheduler_type: cosine       # Scheduler type
   scheduler: cosine               # Alternative scheduler setting
-  lr_decay_factor: 1.0            # No decay
-  num_restarts: 0                 # No restarts
+  lr_decay_factor: 0.95           # Decay LR by 5% each restart
+  num_restarts: 1                 # Number of cosine restarts
   
   # ---------- Gradient Management ----------
   max_grad_norm: 1.0              # Gradient clipping threshold
@@ -224,12 +222,12 @@ training:
   
   # ---------- Mixed Precision ----------
   mixed_precision: false          # No mixed precision on CPU
-  gradient_checkpointing: false   # Disabled for speed on ultra tiny
+  gradient_checkpointing: true    # Gradient checkpointing
   zero_stage: 0                   # No ZeRO optimization on CPU
   
   # ---------- Loss Functions ----------
   # Focal Loss
-  use_focal_loss: false           # Disabled for ultra tiny
+  use_focal_loss: true            # Enable focal loss
   focal_gamma: 2.0                # Focal loss gamma
   focal_alpha: 0.25               # Focal loss alpha
   focal_blend: 0.3                # Blend with standard loss
@@ -241,62 +239,63 @@ training:
   
   # ---------- Curriculum Learning ----------
   curriculum_learning: true       # Enable curriculum learning
-  initial_sequence_length: 64     # Start with very short sequences
-  curriculum_warmup_steps: 200    # Very short curriculum warmup
+  initial_sequence_length: 256    # Start with short sequences
+  curriculum_warmup_steps: 1000   # Steps to reach full length
   use_curriculum: false           # Alternative curriculum setting
-  curriculum_type: linear         # Simple linear curriculum
-  initial_difficulty: 0.8         # High initial difficulty
+  curriculum_type: adaptive       # Curriculum type
+  initial_difficulty: 0.5         # Initial difficulty
   max_difficulty: 1.0             # Maximum difficulty
   sequence_length_curriculum: true # Enable sequence length curriculum
-  initial_seq_length: 64          # Initial sequence length
+  initial_seq_length: 256         # Initial sequence length
   
   # Progressive Sequence Growth
-  progressive_sequence_growth: false # Disabled for ultra tiny
+  progressive_sequence_growth: true # Continue growing beyond initial
   sequence_growth_rate: 1.5       # Growth multiplier
-  sequence_growth_interval: 1000  # Steps between growth
+  sequence_growth_interval: 5000  # Steps between growth
   
   # ---------- Anti-Overfitting Features ----------
-  stochastic_depth_prob: 0.0      # Disabled for ultra tiny
-  mixout_prob: 0.0                # Disabled
-  use_ema: false                  # Disabled for simplicity
+  stochastic_depth_prob: 0.1      # Randomly drop layers
+  mixout_prob: 0.1                # Mix weights with initialization
+  use_ema: true                   # Exponential moving average
   ema_decay: 0.999                # EMA decay rate
-  confidence_weighting: false     # Disabled
+  confidence_weighting: true      # Weight loss by confidence
   sam_enabled: false              # Sharpness-aware minimization
   
   # ---------- Progressive Training ----------
   use_progressive: false          # Progressive training
   growth_strategy: layer_stacking # Growth strategy
-  initial_layers: 2               # Initial layers
-  growth_interval: 2000           # Growth interval
+  initial_layers: 4               # Initial layers
+  growth_interval: 5000           # Growth interval
   
   # ---------- Safety Training ----------
   use_constitutional: false       # Constitutional AI
   safety_principles:              # Safety principles
   - Be helpful and harmless
+  - Avoid harmful content
   num_revisions: 1                # Number of revisions
   safety_weight: 0.1              # Safety weight
   
   # ---------- Active Learning ----------
   use_active_learning: false      # Active learning
   active_learning_strategy: uncertainty  # Strategy
-  selection_batch_size: 8         # Selection batch size
+  selection_batch_size: 16        # Selection batch size
   
   # ---------- Smart Checkpointing ----------
-  use_smart_checkpointing: false  # Disabled for ultra tiny
+  use_smart_checkpointing: true   # Smart checkpointing
   memory_threshold: 0.7           # Memory threshold
   min_recompute_ratio: 2.0        # Min recompute ratio
   always_checkpoint_layers:       # Always checkpoint these
   - attention
   
   # ---------- Evaluation & Checkpointing ----------
-  eval_steps: 50                  # Frequent evaluation
-  save_steps: 100                 # Frequent checkpointing
-  save_total_limit: 1             # Only keep latest checkpoint
-  logging_steps: 5                # Very frequent logging
+  eval_steps: 500                 # Evaluation frequency
+  save_steps: 1000                # Checkpoint frequency
+  save_total_limit: 2             # Max checkpoints to keep
+  logging_steps: 50               # Logging frequency
   
   # ---------- DataLoader Settings ----------
   parallel_loading: true          # Parallel data loading
-  num_workers: 1                  # Single DataLoader worker
+  num_workers: 4                  # DataLoader workers (match CPU cores)
   drop_last: true                 # Drop incomplete batches
   prefetch_factor: 2              # Prefetch factor
   persistent_workers: false       # Persistent workers
@@ -318,7 +317,7 @@ device_map: cpu                # Device mapping
 # ============================================================
 
 output_dir: ./outputs           # Output directory
-experiment_name: moe_cpu_ultra_tiny  # Experiment name
+experiment_name: moe_cpu_small  # Experiment name
 logging_level: INFO             # Logging level
 report_to:                     # Reporting backends
 - tensorboard
@@ -333,36 +332,33 @@ fine_tuning:
   use_lora: true                # Enable LoRA
   use_qlora: false              # QLoRA not supported on CPU
   freeze_base_model: true       # Freeze base model
-  lora_r: 8                     # LoRA rank
+  lora_r: 8                     # LoRA rank (lower for CPU)
   lora_alpha: 16                # LoRA alpha
-  lora_dropout: 0.1             # LoRA dropout
+  lora_dropout: 0.05            # LoRA dropout
   
   # ---------- Early Stopping ----------
   early_stopping: true          # Enable early stopping
-  early_stopping_patience: 3    # Patience
+  early_stopping_patience: 5    # Patience
   early_stopping_threshold: 0.001  # Threshold
   min_delta: 0.0005             # Minimum change
   
   # ---------- LoRA Target Modules ----------
-  lora_target_modules:          # Target modules (minimal)
+  lora_target_modules:          # Target modules
   - q_proj
   - v_proj
   - k_proj
   - o_proj
-  - gate_proj
-  - up_proj
-  - down_proj
   
   # ---------- Multi-LoRA ----------
-  num_lora_experts: 1           # Single LoRA expert for ultra tiny
+  num_lora_experts: 2           # Number of LoRA experts (minimal for CPU)
   task_embedding_dim: 0         # Task embedding dimension
   share_base_weights: true      # Share base weights
   
   # ---------- Fine-tuning Training ----------
-  batch_size: 16                # Batch size
-  gradient_accumulation_steps: 1  # No gradient accumulation
-  learning_rate: 5e-4           # Learning rate
-  num_epochs: 5                 # Number of epochs
+  batch_size: 2                 # Batch size
+  gradient_accumulation_steps: 8  # Gradient accumulation
+  learning_rate: 1e-4           # Learning rate
+  num_epochs: 3                 # Number of epochs
   warmup_ratio: 0.1             # Warmup ratio
 
 # ============================================================
@@ -371,15 +367,15 @@ fine_tuning:
 
 inference:
   use_speculation: false        # Speculative decoding
-  num_draft_experts: 1          # Single draft expert
-  draft_expert_size_ratio: 0.5  # Draft expert size
-  draft_sequence_length: 1      # Minimal draft sequence
+  num_draft_experts: 2          # Draft experts
+  draft_expert_size_ratio: 0.2  # Draft expert size
+  draft_sequence_length: 3      # Draft sequence length
   use_prefetching: false        # Prefetching
   prune_before_deployment: true # Prune before deployment
-  target_sparsity: 0.2          # Target sparsity
+  target_sparsity: 0.5          # Target sparsity
   prune_experts: true           # Prune experts
   prune_attention: true         # Prune attention
-  expert_merge_threshold: 0.95  # Expert merge threshold
+  expert_merge_threshold: 0.8   # Expert merge threshold
   use_flash_attn: false         # No Flash Attention on CPU
   torch_compile: false          # PyTorch compilation
   dtype: float32                # Inference dtype (float32 for CPU)
@@ -402,7 +398,7 @@ memory_optimization:
 
 cpu_optimization:
   use_mkl: true                 # Use Intel MKL if available
-  num_threads: 2                # Number of CPU threads (ultra tiny)
+  num_threads: 8                # Number of CPU threads
   enable_jemalloc: true         # Use jemalloc for memory management
   optimize_for_inference: true  # Optimize for inference
   use_openmp: true              # Use OpenMP for parallelization
@@ -413,14 +409,14 @@ cpu_optimization:
 
 monitoring:
   use_health_monitoring: false  # Health monitoring
-  check_interval: 1000          # Check interval
+  check_interval: 500           # Check interval
   enable_alerts: false          # Enable alerts
   enable_visualization: false   # Enable visualizations
-  use_wandb: false              # Disabled for ultra tiny (optional)
+  use_wandb: true               # Use W&B
   wandb_project: llm-moe-training  # W&B project
   wandb_name: null              # W&B run name
   wandb_tags:                   # W&B tags
   - moe
   - cpu
-  - ultra_tiny
-  - 10m_params
+  - small
+  - 50m_params
