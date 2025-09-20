@@ -17,6 +17,383 @@ from typing import Dict, Tuple, Any
 from .experts import ExpertBalancer, SparseExpert
 
 
+class SwitchTransformerRouting(nn.Module):
+    """
+    Switch Transformer routing implementation with capacity factors and load balancing.
+
+    This implements the routing mechanism from the Switch Transformer paper
+    with improvements for better load balancing and efficiency.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_experts: int,
+        capacity_factor: float = 1.25,
+        dropout_rate: float = 0.1,
+        jitter_eps: float = 0.1,
+        router_bias: bool = False
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_experts = num_experts
+        self.capacity_factor = capacity_factor
+        self.dropout_rate = dropout_rate
+        self.jitter_eps = jitter_eps
+
+        # Router network
+        self.router = nn.Linear(hidden_dim, num_experts, bias=router_bias)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        # Auxiliary loss tracking
+        self.register_buffer('expert_counts', torch.zeros(num_experts))
+        self.register_buffer('total_tokens', torch.tensor(0.0))
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        training: bool = True
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict]:
+        """
+        Forward pass through Switch Transformer routing.
+
+        Args:
+            hidden_states: Input tensor [batch_size, seq_len, hidden_dim]
+            training: Whether in training mode
+
+        Returns:
+            Tuple of (dispatch_tensor, combine_tensor, expert_capacity, aux_info)
+        """
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        num_tokens = batch_size * seq_len
+
+        # Flatten for routing
+        hidden_flat = hidden_states.view(-1, hidden_dim)  # [num_tokens, hidden_dim]
+
+        # Add jitter during training for better load balancing
+        if training and self.jitter_eps > 0:
+            noise = torch.empty_like(hidden_flat).uniform_(-self.jitter_eps, self.jitter_eps)
+            hidden_flat = hidden_flat + noise
+
+        # Compute routing logits
+        router_logits = self.router(hidden_flat)  # [num_tokens, num_experts]
+
+        # Apply routing
+        router_probs = F.softmax(router_logits, dim=-1)
+
+        # Get top expert for each token
+        expert_gate, expert_index = torch.max(router_probs, dim=-1)
+
+        # Compute expert capacity
+        expert_capacity = int(self.capacity_factor * num_tokens / self.num_experts)
+
+        # Create dispatch and combine tensors
+        dispatch_tensor = torch.zeros(
+            num_tokens, self.num_experts, expert_capacity,
+            dtype=hidden_flat.dtype, device=hidden_flat.device
+        )
+        combine_tensor = torch.zeros(
+            num_tokens, self.num_experts, expert_capacity,
+            dtype=hidden_flat.dtype, device=hidden_flat.device
+        )
+
+        # Track expert assignments
+        expert_usage = torch.zeros(self.num_experts, device=hidden_flat.device)
+
+        for expert_id in range(self.num_experts):
+            # Find tokens assigned to this expert
+            expert_mask = (expert_index == expert_id)
+            selected_tokens = torch.where(expert_mask)[0]
+
+            # Respect capacity constraints
+            if len(selected_tokens) > expert_capacity:
+                # Select top tokens by gate value
+                selected_gates = expert_gate[selected_tokens]
+                _, top_indices = torch.topk(selected_gates, expert_capacity)
+                selected_tokens = selected_tokens[top_indices]
+
+            if len(selected_tokens) > 0:
+                # Create dispatch tensor (binary assignment)
+                for i, token_id in enumerate(selected_tokens):
+                    dispatch_tensor[token_id, expert_id, i] = 1.0
+                    combine_tensor[token_id, expert_id, i] = expert_gate[token_id]
+
+                expert_usage[expert_id] = len(selected_tokens)
+
+        # Update statistics for load balancing loss
+        if training:
+            self.expert_counts += expert_usage.detach()
+            self.total_tokens += num_tokens
+
+        # Auxiliary information
+        aux_info = {
+            'router_probs': router_probs,
+            'expert_usage': expert_usage,
+            'load_balancing_loss': self._compute_load_balancing_loss(router_probs),
+            'router_z_loss': torch.mean(router_logits ** 2),
+            'tokens_dropped': max(0, num_tokens - dispatch_tensor.sum().item())
+        }
+
+        return dispatch_tensor, combine_tensor, expert_capacity, aux_info
+
+    def _compute_load_balancing_loss(self, router_probs: torch.Tensor) -> torch.Tensor:
+        """Compute load balancing auxiliary loss."""
+        # Probability that each expert is selected
+        prob_per_expert = router_probs.mean(dim=0)  # [num_experts]
+
+        # Fraction of tokens routed to each expert
+        routing_per_expert = router_probs.argmax(dim=-1)
+        usage_per_expert = torch.bincount(
+            routing_per_expert, minlength=self.num_experts
+        ).float() / router_probs.shape[0]
+
+        # Load balancing loss encourages uniform distribution
+        load_loss = self.num_experts * torch.sum(prob_per_expert * usage_per_expert)
+        return load_loss
+
+
+class GSERouting(nn.Module):
+    """
+    GShard Expert routing with top-2 gating and capacity factors.
+
+    This implements the routing from GShard with top-2 expert selection.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_experts: int,
+        capacity_factor: float = 2.0,
+        second_expert_policy: str = "random",
+        normalize_gate: bool = True
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_experts = num_experts
+        self.capacity_factor = capacity_factor
+        self.second_expert_policy = second_expert_policy
+        self.normalize_gate = normalize_gate
+
+        # Router network
+        self.router = nn.Linear(hidden_dim, num_experts)
+
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+        """
+        Forward pass through GShard routing.
+
+        Args:
+            hidden_states: Input tensor [batch_size, seq_len, hidden_dim]
+
+        Returns:
+            Tuple of (routing_weights, expert_indices, aux_info)
+        """
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        hidden_flat = hidden_states.view(-1, hidden_dim)
+
+        # Compute router logits
+        router_logits = self.router(hidden_flat)  # [num_tokens, num_experts]
+        router_probs = F.softmax(router_logits, dim=-1)
+
+        # Get top-2 experts
+        top2_probs, top2_indices = torch.topk(router_probs, k=2, dim=-1)
+
+        # Normalize top-2 probabilities
+        if self.normalize_gate:
+            top2_probs = top2_probs / top2_probs.sum(dim=-1, keepdim=True)
+
+        # Apply capacity constraints
+        expert_capacity = int(self.capacity_factor * hidden_flat.shape[0] / self.num_experts)
+
+        # Create routing tensors
+        routing_weights = torch.zeros_like(router_probs)
+        for i in range(2):  # For top-2
+            expert_id = top2_indices[:, i]
+            # Simple capacity enforcement - could be more sophisticated
+            routing_weights.scatter_(1, expert_id.unsqueeze(1), top2_probs[:, i].unsqueeze(1))
+
+        aux_info = {
+            'router_probs': router_probs,
+            'top2_probs': top2_probs,
+            'top2_indices': top2_indices,
+            'expert_capacity': expert_capacity
+        }
+
+        return routing_weights, top2_indices, aux_info
+
+
+class HashingExpertRouting(nn.Module):
+    """
+    Hash-based expert routing for deterministic load balancing.
+
+    This routing method uses hashing to deterministically assign tokens
+    to experts, ensuring perfect load balancing.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_experts: int,
+        num_hash_functions: int = 4,
+        hash_type: str = "learned"
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_experts = num_experts
+        self.num_hash_functions = num_hash_functions
+        self.hash_type = hash_type
+
+        if hash_type == "learned":
+            # Learnable hash functions
+            self.hash_functions = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim // 4),
+                    nn.ReLU(),
+                    nn.Linear(hidden_dim // 4, 1)
+                ) for _ in range(num_hash_functions)
+            ])
+        else:
+            # Fixed random hash functions
+            self.register_buffer('hash_weights', torch.randn(num_hash_functions, hidden_dim))
+
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+        """
+        Forward pass through hash-based routing.
+
+        Args:
+            hidden_states: Input tensor [batch_size, seq_len, hidden_dim]
+
+        Returns:
+            Tuple of (routing_weights, expert_indices, aux_info)
+        """
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        hidden_flat = hidden_states.view(-1, hidden_dim)
+        num_tokens = hidden_flat.shape[0]
+
+        if self.hash_type == "learned":
+            # Compute learned hash values
+            hash_values = []
+            for hash_fn in self.hash_functions:
+                hash_val = hash_fn(hidden_flat).squeeze(-1)  # [num_tokens]
+                hash_values.append(hash_val)
+            hash_tensor = torch.stack(hash_values, dim=1)  # [num_tokens, num_hash_functions]
+        else:
+            # Compute fixed hash values
+            hash_tensor = torch.matmul(hidden_flat, self.hash_weights.T)  # [num_tokens, num_hash_functions]
+
+        # Convert hash values to expert assignments
+        expert_assignments = torch.remainder(
+            torch.sum(hash_tensor, dim=1).long(), self.num_experts
+        )
+
+        # Create one-hot routing weights
+        routing_weights = F.one_hot(expert_assignments, self.num_experts).float()
+
+        aux_info = {
+            'hash_values': hash_tensor,
+            'expert_assignments': expert_assignments,
+            'load_balance': torch.bincount(expert_assignments, minlength=self.num_experts).float()
+        }
+
+        return routing_weights, expert_assignments.unsqueeze(1), aux_info
+
+
+class StochasticExpertRouting(nn.Module):
+    """
+    Stochastic expert routing with exploration-exploitation trade-off.
+
+    This routing method balances between exploitation (using best experts)
+    and exploration (trying different experts) for better learning.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_experts: int,
+        exploration_rate: float = 0.1,
+        temperature: float = 1.0,
+        use_gumbel: bool = True
+    ):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_experts = num_experts
+        self.exploration_rate = exploration_rate
+        self.temperature = temperature
+        self.use_gumbel = use_gumbel
+
+        # Router network
+        self.router = nn.Linear(hidden_dim, num_experts)
+
+        # Exploration policy
+        self.exploration_network = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 4, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, hidden_states: torch.Tensor, training: bool = True) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
+        """
+        Forward pass through stochastic routing.
+
+        Args:
+            hidden_states: Input tensor [batch_size, seq_len, hidden_dim]
+            training: Whether in training mode
+
+        Returns:
+            Tuple of (routing_weights, expert_indices, aux_info)
+        """
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        hidden_flat = hidden_states.view(-1, hidden_dim)
+
+        # Compute routing logits
+        router_logits = self.router(hidden_flat)  # [num_tokens, num_experts]
+
+        # Compute exploration probabilities
+        exploration_probs = self.exploration_network(hidden_flat).squeeze(-1)  # [num_tokens]
+
+        if training:
+            if self.use_gumbel:
+                # Gumbel-Softmax for differentiable sampling
+                gumbel_noise = -torch.log(-torch.log(torch.rand_like(router_logits) + 1e-8) + 1e-8)
+                router_logits = router_logits + gumbel_noise
+
+            # Sample routing decisions
+            routing_probs = F.softmax(router_logits / self.temperature, dim=-1)
+
+            # Decide between exploitation and exploration
+            exploit_mask = torch.bernoulli(1 - exploration_probs * self.exploration_rate)
+
+            # Exploitation: use learned routing
+            exploit_indices = torch.multinomial(routing_probs, 1).squeeze(-1)
+
+            # Exploration: random assignment
+            explore_indices = torch.randint(0, self.num_experts, (hidden_flat.shape[0],), device=hidden_flat.device)
+
+            # Combine based on exploration decision
+            expert_indices = torch.where(exploit_mask.bool(), exploit_indices, explore_indices)
+
+        else:
+            # During inference, use deterministic routing (argmax)
+            expert_indices = torch.argmax(router_logits, dim=-1)
+            routing_probs = F.softmax(router_logits, dim=-1)
+
+        # Create routing weights
+        routing_weights = F.one_hot(expert_indices, self.num_experts).float()
+
+        # If using soft routing, use the probabilities
+        if self.use_gumbel and training:
+            routing_weights = routing_probs
+
+        aux_info = {
+            'router_logits': router_logits,
+            'exploration_probs': exploration_probs,
+            'expert_indices': expert_indices,
+            'routing_entropy': -torch.sum(routing_probs * torch.log(routing_probs + 1e-8), dim=-1).mean()
+        }
+
+        return routing_weights, expert_indices.unsqueeze(1), aux_info
+
+
 class ExpertSelector(nn.Module):
     """
     Intelligent expert selection with confidence-based dynamic routing.

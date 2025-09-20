@@ -85,10 +85,30 @@ models/
 best_model.pt
 checkpoint-*/
 
-# Data files
+# Data files and datasets
 data/
 data/*
 data/**
+datasets/
+datasets/*
+datasets/**
+
+# Dataset download script outputs
+download_summary.json
+download_cache.json
+data_manifest.json
+.errors/
+.errors/*
+.errors/**
+
+# HuggingFace cache
+.cache/
+.cache/*
+.cache/**
+~/.cache/huggingface/
+**/huggingface/
+
+# Specific dataset formats and archives
 *.csv
 *.tsv
 *.parquet
@@ -107,6 +127,84 @@ data/**
 *.sqlite
 *.jsonl
 *.json.gz
+*.arrow
+*.feather
+
+# Dataset-specific folders (from download script)
+# Pre-training datasets
+databricks_databricks-dolly-15k/
+tatsu-lab_alpaca/
+yahma_alpaca-cleaned/
+vicgalle_alpaca-gpt4/
+OpenAssistant_oasst1/
+OpenAssistant_oasst2/
+openwebtext/
+EleutherAI_pile/
+togethercomputer_RedPajama-Data-1T/
+HuggingFaceFW_fineweb/
+HuggingFaceFW_fineweb-edu/
+tiiuae_falcon-refinedweb/
+wikipedia/
+cc_news/
+bookcorpus/
+
+# RAG and knowledge datasets
+allenai_c4/
+natural_questions/
+multi_news/
+xsum/
+cnn_dailymail/
+pubmed_qa/
+scientific_papers/
+
+# Multi-task learning datasets
+gsm8k/
+hendrycks_competition_math/
+glue/
+glue_sst2/
+squad/
+squad_v2/
+allenai_ai2_arc/
+winogrande/
+hellaswag/
+
+# Code datasets
+HuggingFaceH4_CodeAlpaca_20K/
+sahil2801_CodeAlpaca-20k/
+iamtarun_python_code_instructions_18k_alpaca/
+bigcode_self-oss-instruct-sc2-exec-filter-50k/
+m-a-p_CodeFeedback-Filtered-Instruction/
+github-code/
+
+# Conversational datasets
+HuggingFaceH4_ultrachat_200k/
+HuggingFaceH4_no_robots/
+lmsys_lmsys-chat-1m/
+daily_dialog/
+empathetic_dialogues/
+AlekseyKorshuk_persona-chat/
+
+# Safety and evaluation datasets
+Anthropic_hh-rlhf/
+HuggingFaceH4_ultrafeedback_binarized/
+ShareGPT4Omni_ShareGPT4V/
+
+# Synthetic and specialized datasets
+roneneldan_TinyStories/
+HuggingFaceTB_cosmopedia-100k/
+philschmid_dolly-15k-oai-style/
+garage-bAInd_Open-Platypus/
+WizardLM_WizardLM_evol_instruct_V2_196k/
+medalpaca_medical_meadow_medical_flashcards/
+bigscience_P3/
+bigscience_xP3/
+Muennighoff_natural-instructions/
+allenai_prosocial-dialog/
+HuggingFaceH4_self_instruct/
+
+# Any dataset folder following the naming pattern (org_name or org_dataset-name)
+*_*-*/
+*_*/
 
 # Logs
 *.log
