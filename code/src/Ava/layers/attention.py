@@ -125,6 +125,81 @@ class EnhancedMultiheadAttention(nn.Module):
             return output, None
 
 
+class ALiBiPositionEmbedding(nn.Module):
+    """
+    Attention with Linear Biases (ALiBi) for position encoding.
+
+    ALiBi adds linear biases to attention scores based on distance,
+    providing better extrapolation to longer sequences than learned embeddings.
+
+    Args:
+        num_heads (int): Number of attention heads
+        max_seq_len (int): Maximum sequence length for precomputed slopes
+
+    Example:
+        >>> alibi = ALiBiPositionEmbedding(num_heads=12, max_seq_len=2048)
+        >>> bias = alibi(seq_len=100)
+    """
+
+    def __init__(self, num_heads: int, max_seq_len: int = 2048):
+        super().__init__()
+        self.num_heads = num_heads
+        self.max_seq_len = max_seq_len
+
+        # Precompute slopes for each head
+        slopes = self._get_slopes(num_heads)
+        self.register_buffer('slopes', slopes)
+
+        # Precompute bias matrix for efficiency
+        self._precompute_bias_matrix()
+
+    def _get_slopes(self, num_heads: int) -> torch.Tensor:
+        """Compute slopes for ALiBi biases."""
+        def get_slopes_power_of_2(n):
+            start = (2**(-2**-(math.log2(n)-3)))
+            ratio = start
+            return [start*ratio**i for i in range(n)]
+
+        if math.log2(num_heads).is_integer():
+            return torch.tensor(get_slopes_power_of_2(num_heads), dtype=torch.float32)
+        else:
+            closest_power_of_2 = 2**math.floor(math.log2(num_heads))
+            slopes_a = get_slopes_power_of_2(closest_power_of_2)
+            slopes_b = self._get_slopes(2 * closest_power_of_2)[0::2][:num_heads - closest_power_of_2]
+            return torch.tensor(slopes_a + slopes_b, dtype=torch.float32)
+
+    def _precompute_bias_matrix(self):
+        """Precompute bias matrix for common sequence lengths."""
+        seq_len = self.max_seq_len
+        # Create position matrix
+        positions = torch.arange(seq_len).unsqueeze(0) - torch.arange(seq_len).unsqueeze(1)
+        positions = positions.abs()
+
+        # Apply slopes to get biases
+        biases = positions.unsqueeze(0) * self.slopes.unsqueeze(1).unsqueeze(2)
+        self.register_buffer('precomputed_biases', -biases)
+
+    def forward(self, seq_len: int) -> torch.Tensor:
+        """
+        Get ALiBi biases for given sequence length.
+
+        Args:
+            seq_len: Sequence length
+
+        Returns:
+            Bias tensor of shape [num_heads, seq_len, seq_len]
+        """
+        if seq_len <= self.max_seq_len:
+            return self.precomputed_biases[:, :seq_len, :seq_len]
+        else:
+            # Compute biases for longer sequences on-the-fly
+            positions = torch.arange(seq_len, device=self.slopes.device)
+            positions = positions.unsqueeze(0) - positions.unsqueeze(1)
+            positions = positions.abs()
+            biases = positions.unsqueeze(0) * self.slopes.unsqueeze(1).unsqueeze(2)
+            return -biases
+
+
 class RotaryPositionEmbedding(nn.Module):
     """
     Rotary Position Embedding (RoPE) for improved position encoding.

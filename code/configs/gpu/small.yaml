@@ -221,8 +221,12 @@ training:
   adaptive_gradient_clipping: true # Dynamic gradient clipping
   gradient_penalty_weight: 0.001  # Penalize large gradients
   
-  # ---------- Mixed Precision ----------
-  mixed_precision: fp16           # Mixed precision type (fp16 for older GPUs)
+  # ---------- Mixed Precision & FP8 ----------
+  mixed_precision: fp16           # Mixed precision type (fp16 for older GPUs, fp8 for H100+)
+  use_fp8_training: false         # Enable FP8 training (requires H100/H200)
+  fp8_format: e4m3                # FP8 forward pass format
+  fp8_grad_format: e5m2           # FP8 gradient format
+  use_transformer_engine: false   # NVIDIA Transformer Engine (requires H100+)
   gradient_checkpointing: true    # Gradient checkpointing
   zero_stage: 3                   # ZeRO optimization stage
   
@@ -310,9 +314,22 @@ training:
 # DISTRIBUTED TRAINING
 # ============================================================
 
-distributed: false              # Enable distributed training
-num_gpus: 1                    # Number of GPUs
-device_map: auto               # Device mapping
+# ============================================================
+# DISTRIBUTED TRAINING - ENHANCED
+# ============================================================
+
+distributed:
+  enabled: false                # Enable distributed training
+  backend: nccl                 # NCCL backend for GPU communication
+
+  # ---------- Multi-GPU Configuration ----------
+  num_gpus: 1                   # Number of GPUs
+  device_map: auto              # Device mapping
+
+  # ---------- NVLINK Optimization (Multi-GPU) ----------
+  use_nvlink_optimization: false # NVLINK optimization
+  nccl_tree_threshold: 0        # Force tree algorithm for NVLINK
+  gradient_as_bucket_view: true # Bucket view optimization
 
 # ============================================================
 # OUTPUT & EXPERIMENT
@@ -408,6 +425,14 @@ cuda_optimization:
   optimize_memory_layout: true  # Optimize memory layout
   use_cuda_graphs: true         # Use CUDA graphs
   kernel_fusion: true           # Enable kernel fusion
+
+  # ---------- 2025 Advanced Features ----------
+  use_triton_kernels: false     # Replace CUDA with Triton kernels
+  torch_compile_mode: default   # PyTorch compilation mode
+  use_flash_attn_v3: false      # FlashAttention-3 (requires compatible hardware)
+  enable_nvlink_optimization: false # NVLINK optimization for multi-GPU
+  use_memory_pool: true         # Advanced CUDA memory pool
+  memory_pool_size: 4096        # Memory pool size in MB
 
 # ============================================================
 # MONITORING CONFIGURATION
