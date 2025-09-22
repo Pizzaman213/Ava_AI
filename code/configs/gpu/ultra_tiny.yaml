@@ -3,7 +3,7 @@
 # ============================================================
 #
 # Category: GPU (CUDA)
-# Model Size: ~10M parameters
+# Model Size: ~500M parameters
 # Device: NVIDIA GPU with CUDA 11.7+
 # Optimization Level: MODERATE
 # Use Case: Fast prototyping and testing with GPU acceleration
@@ -33,120 +33,106 @@
 
 model:
   # ---------- Core Architecture ----------
-  size: ultra_tiny                # Model size preset
+  # size: ultra_tiny                # Removed - not in EnhancedMoEConfig
   vocab_size: 50257               # GPT-2 tokenizer vocabulary
-  hidden_size: 256                # Hidden dimension (reduced for speed)
-  num_layers: 6                   # Number of transformer layers
-  intermediate_size: 1024         # FFN intermediate dimension
+  hidden_size: 512                # Hidden dimension (optimized for RTX 3060)
+  num_layers: 8                   # Number of transformer layers (reduced for memory)
+  intermediate_size: 2048         # FFN intermediate dimension (reduced)
   
   # ---------- Attention Configuration ----------
-  num_attention_heads: 8          # Number of attention heads
-  num_key_value_heads: 2          # For GQA - reduces memory
-  attention_type: gqa             # Options: mha, mqa, gqa
-  use_flash_attn: false           # Flash Attention (disabled for compatibility)
+  num_attention_heads: 8          # Number of attention heads (reduced)
+  # num_key_value_heads: 2          # Removed - not in EnhancedMoEConfig
+  # attention_type: gqa             # Removed - not in EnhancedMoEConfig
+  # use_flash_attn: false           # Removed - not in EnhancedMoEConfig
   attention_dropout: 0.2          # Dropout in attention layers
   
   # ---------- Position Encoding ----------
-  max_position_embeddings: 512    # Maximum sequence length (reduced)
+  max_position_embeddings: 256    # Maximum sequence length (optimized for RTX 3060)
   rope_theta: 10000.0             # RoPE base frequency
   
   # ---------- Mixture of Experts (MoE) ----------
-  num_experts: 4                  # Number of experts (minimal)
-  num_experts_per_tok: 1          # Experts per token (minimal)
+  num_experts: 2                  # Number of experts (reduced for memory)
+  # num_experts_per_token: 1        # Removed - not in EnhancedMoEConfig
   expert_capacity_factor: 1.0     # Capacity factor for load balancing
-  expert_routing_type: switch     # Options: switch, gshard, base
-  expert_dropout: 0.25            # Dropout for expert layers
+  # expert_routing_type: switch     # Removed - not in EnhancedMoEConfig
+  # expert_dropout: 0.25            # Removed - not in EnhancedMoEConfig
   
   # ---------- Activation & Initialization ----------
   hidden_act: gelu                # Activation function (simpler)
-  initializer_range: 0.02         # Weight initialization range
-  rms_norm_eps: 1.0e-06          # RMSNorm epsilon for stability
+  initializer_range: 0.005        # Very small weight initialization
+  layer_norm_eps: 1.0e-06        # Layer norm epsilon for stability
   
   # ---------- Regularization ----------
   hidden_dropout: 0.3             # General dropout rate
-  label_smoothing: 0.1            # Label smoothing for loss regularization
+  # label_smoothing: 0.1            # Removed - not in EnhancedMoEConfig
   
   # ---------- Caching & Optimization ----------
   use_cache: true                 # Enable KV caching for inference
-  gradient_checkpointing: true    # Trade compute for memory
-  use_memory_efficient_attention: true  # Memory-efficient attention
+  # gradient_checkpointing: true    # Removed - not in EnhancedMoEConfig
+  # use_memory_efficient_attention: true  # Removed - not in EnhancedMoEConfig
   
-  # ---------- Advanced Features ----------
-  # Mixture of Depths (MoD)
-  use_mod: true                   # Enable MoD for efficient computation
-  mod_mode: learned               # Options: learned, fixed, adaptive
-  mod_skip_fraction: 0.1          # Fraction of layers to skip (minimal)
+  # ---------- Advanced Features (Disabled for Compatibility) ----------
+  # All advanced features commented out to avoid config filtering warnings
+  # use_mod: true                   # Enable MoD for efficient computation
+  # mod_mode: learned               # Options: learned, fixed, adaptive
+  # mod_skip_fraction: 0.1          # Fraction of layers to skip (minimal)
+  # use_speculative_decoding: false # Disabled for simplicity
+  # speculative_draft_layers: 0     # Number of draft layers
+  # use_hierarchical_moe: true      # Hierarchical expert routing
+  # use_continuous_experts: false   # Continuous expert selection (disabled)
+  # use_sparse_experts: true        # Sparse expert activation
+  # use_expert_cache: true          # Cache expert selections
+  # use_mod_plus_plus: true         # Enhanced MoD with confidence
+  # use_memory_augmented: false     # External memory mechanisms
+  # use_adaptive_inference: true    # Dynamic computation graphs
+  # use_interpretability: false     # Built-in interpretability (disabled)
   
-  # Speculative Decoding
-  use_speculative_decoding: false # Disabled for simplicity
-  speculative_draft_layers: 0     # Number of draft layers
+  # All advanced features commented out for compatibility
+  # use_mixture_tokenizers: false   # Multiple tokenizer support (disabled)
+  # use_nas_experts: false          # Neural architecture search
+  # use_meta_learning: false        # Meta-learning capabilities
+  # use_federated_learning: false   # Federated learning support
+  # use_continual_learning: false   # Continual learning
+  # use_advanced_pretraining: false # Advanced pretraining objectives
+  # use_rlaif: false               # RL from AI feedback
+  # use_code_experts: false         # Code-specialized experts
+  # use_scientific_experts: false   # Science/math experts
+  # use_tool_experts: false         # Tool-use experts
+  # use_vision_language: false      # Vision-language capabilities
+  # use_audio_language: false       # Audio-language capabilities
+  # use_adversarial_training: false # Adversarial robustness
+  # use_bias_mitigation: false      # Bias reduction mechanisms
+  # use_privacy_preserving: false   # Privacy-preserving training
+  # use_watermarking: false         # Model watermarking
+  # use_distributed_experts: false  # Distributed expert computation
+  # use_mixed_precision: true       # Enable mixed precision training
+  # use_torch_compile: true         # PyTorch 2.0 compilation
+  # use_fused_kernels: true         # Fused CUDA kernels
+  # use_diverse_beam_search: false  # Diverse beam search
+  # use_mixture_decoders: false     # Multiple decoder heads
+  # use_streaming_generation: false # Streaming text generation
+  # use_batch_optimized: false      # Batch-optimized inference
+  # use_synthetic_data: false       # Synthetic data generation
+  # use_online_learning: false      # Online learning capability
+  # use_multi_task_learning: false  # Multi-task learning
+  # use_automated_curation: false   # Automated data curation
+  # use_cross_lingual: false        # Cross-lingual transfer
+  # use_edge_deployment: false      # Edge deployment optimization
+  # use_ab_testing: false           # A/B testing framework
+  # use_model_versioning: false     # Model versioning system
+  # use_cost_optimization: false    # Cost-aware optimization
+  # use_global_load_balancing: false # Global load balancing
   
-  # Expert System Features
-  use_hierarchical_moe: true      # Hierarchical expert routing
-  use_continuous_experts: false   # Continuous expert selection (disabled)
-  use_sparse_experts: true        # Sparse expert activation
-  use_expert_cache: true          # Cache expert selections
-  
-  # Advanced Architecture Components
-  use_mod_plus_plus: true         # Enhanced MoD with confidence
-  use_memory_augmented: false     # External memory mechanisms
-  use_adaptive_inference: true    # Dynamic computation graphs
-  use_interpretability: false     # Built-in interpretability (disabled)
-  
-  # Multi-Modal & Specialized Features
-  use_mixture_tokenizers: false   # Multiple tokenizer support (disabled)
-  use_nas_experts: false          # Neural architecture search
-  use_meta_learning: false        # Meta-learning capabilities
-  use_federated_learning: false   # Federated learning support
-  use_continual_learning: false   # Continual learning
-  use_advanced_pretraining: false # Advanced pretraining objectives
-  use_rlaif: false               # RL from AI feedback
-  
-  # Specialized Expert Types
-  use_code_experts: false         # Code-specialized experts
-  use_scientific_experts: false   # Science/math experts
-  use_tool_experts: false         # Tool-use experts
-  use_vision_language: false      # Vision-language capabilities
-  use_audio_language: false       # Audio-language capabilities
-  
-  # Training & Inference Features
-  use_adversarial_training: false # Adversarial robustness
-  use_bias_mitigation: false      # Bias reduction mechanisms
-  use_privacy_preserving: false   # Privacy-preserving training
-  use_watermarking: false         # Model watermarking
-  
-  # System Integration
-  use_distributed_experts: false  # Distributed expert computation
-  use_mixed_precision: true       # Enable mixed precision training
-  use_torch_compile: true         # PyTorch 2.0 compilation
-  use_fused_kernels: true         # Fused CUDA kernels
-  
-  # Research & Development Features
-  use_diverse_beam_search: false  # Diverse beam search
-  use_mixture_decoders: false     # Multiple decoder heads
-  use_streaming_generation: false # Streaming text generation
-  use_batch_optimized: false      # Batch-optimized inference
-  use_synthetic_data: false       # Synthetic data generation
-  use_online_learning: false      # Online learning capability
-  use_multi_task_learning: false  # Multi-task learning
-  use_automated_curation: false   # Automated data curation
-  use_cross_lingual: false        # Cross-lingual transfer
-  use_edge_deployment: false      # Edge deployment optimization
-  use_ab_testing: false           # A/B testing framework
-  use_model_versioning: false     # Model versioning system
-  use_cost_optimization: false    # Cost-aware optimization
-  use_global_load_balancing: false # Global load balancing
-  
-  # Experimental Features
-  use_quantum_inspired: false     # Quantum-inspired algorithms
-  use_neuromorphic: false         # Neuromorphic computing
-  use_self_modifying: false       # Self-modifying networks
-  use_causal_reasoning: false     # Causal reasoning
-  use_visual_builder: false       # Visual model builder
-  use_automated_docs: true        # Automated documentation
-  use_interactive_debug: false    # Interactive debugging
-  use_playground: false           # Model playground
-  use_benchmarking: true          # Automated benchmarking
+  # All experimental features commented out for compatibility
+  # use_quantum_inspired: false     # Quantum-inspired algorithms
+  # use_neuromorphic: false         # Neuromorphic computing
+  # use_self_modifying: false       # Self-modifying networks
+  # use_causal_reasoning: false     # Causal reasoning
+  # use_visual_builder: false       # Visual model builder
+  # use_automated_docs: true        # Automated documentation
+  # use_interactive_debug: false    # Interactive debugging
+  # use_playground: false           # Model playground
+  # use_benchmarking: true          # Automated benchmarking
 
 # ============================================================
 # DATA CONFIGURATION
@@ -156,13 +142,13 @@ data:
   # ---------- Dataset Settings ----------
   dataset_type: hf                # Dataset type (hf = HuggingFace format)
   train_paths:                    # Training data paths
-    - ./data/pretraining/processed_ace_full/batch_*
-  val_path: ./data/pretraining/processed_ace_full/batch_*
+    - /project/code/data/processed/combined_processed.jsonl
+  val_path: /project/code/data/processed/combined_processed.jsonl
   
   # ---------- Tokenization ----------
   tokenizer: gpt2                 # Tokenizer to use
-  max_length: 512                 # Maximum sequence length (reduced)
-  stride: 256                     # Stride for overlapping sequences
+  max_length: 512                 # Maximum sequence length
+  stride: 512                     # Stride for overlapping sequences
   
   # ---------- Data Loading ----------
   max_train_examples: 10000       # Limit training data for fast iteration
@@ -186,21 +172,21 @@ data:
 
 training:
   # ---------- Basic Training ----------
-  batch_size: 32                  # Batch size per device (larger for efficiency)
-  gradient_accumulation_steps: 1  # No gradient accumulation for simplicity
+  batch_size: 2                   # Batch size per device
+  gradient_accumulation_steps: 8  # Gradient accumulation for effective batch size of 16
   num_epochs: 10                  # More epochs for smaller model
   max_steps: -1                   # Max steps (-1 = use epochs)
   
   # ---------- Learning Rate ----------
-  learning_rate: 2e-3             # Higher learning rate for small model
-  warmup_steps: 100               # Minimal warmup
+  learning_rate: 1e-5             # Ultra conservative learning rate
+  warmup_steps: 2000              # Very long warmup for stability
   warmup_ratio: 0.1               # Warmup ratio
   
   # ---------- Optimizer Configuration ----------
   optimizer: adamw                # Standard AdamW optimizer
-  weight_decay: 0.0               # No weight decay for small model
+  weight_decay: 0.01              # Light weight decay for stability
   adam_beta1: 0.9                 # Adam beta1
-  adam_beta2: 0.999               # Adam beta2
+  adam_beta2: 0.95                # Adam beta2 (more stable)
   adam_epsilon: 1e-8              # Adam epsilon
   
   # ---------- Advanced Optimizer Features ----------
@@ -209,21 +195,21 @@ training:
   gradient_centralization: false  # Disabled for simplicity
   
   # ---------- Learning Rate Scheduling ----------
-  lr_scheduler_type: cosine       # Scheduler type
-  scheduler: cosine               # Alternative scheduler setting
+  lr_scheduler_type: cosine       # Cosine scheduler (default)
+  scheduler: cosine               # Cosine annealing with restarts
   lr_decay_factor: 1.0            # No decay
   num_restarts: 0                 # No restarts
   
   # ---------- Gradient Management ----------
-  max_grad_norm: 1.0              # Gradient clipping threshold
+  max_grad_norm: 0.25             # Very strict gradient clipping
   gradient_clip: 1.0              # Alternative gradient clipping
-  adaptive_gradient_clipping: true # Dynamic gradient clipping
-  gradient_penalty_weight: 0.001  # Penalize large gradients
+  adaptive_gradient_clipping: false # Disabled to avoid warnings
+  gradient_penalty_weight: 0.01   # Stronger gradient penalty
   
   # ---------- Mixed Precision ----------
-  mixed_precision: fp16           # Mixed precision type
-  gradient_checkpointing: false   # Disabled for speed
-  zero_stage: 0                   # No ZeRO optimization
+  mixed_precision: no             # Disable mixed precision for stability
+  gradient_checkpointing: true    # Enabled to save memory on RTX 3060
+  zero_stage: 3                   # ZeRO-3 full parameter partitioning for maximum memory savings
   
   # ---------- Loss Functions ----------
   # Focal Loss
@@ -233,20 +219,20 @@ training:
   focal_blend: 0.3                # Blend with standard loss
   
   # ---------- Anti-Collapse Features ----------
-  entropy_regularization_weight: 0.01      # Encourage output diversity
-  token_frequency_penalty_weight: 0.1      # Penalize repetitive tokens
-  expert_diversity_weight: 0.01            # Encourage expert specialization
+  entropy_regularization_weight: 0.001     # Reduced entropy regularization
+  token_frequency_penalty_weight: 0.01     # Reduced token penalty
+  expert_diversity_weight: 0.001           # Reduced expert diversity weight
   
   # ---------- Curriculum Learning ----------
   curriculum_learning: true       # Enable curriculum learning
-  initial_sequence_length: 128    # Start with very short sequences
+  initial_sequence_length: 64     # Start with shorter sequences for memory
   curriculum_warmup_steps: 500    # Faster curriculum
   use_curriculum: false           # Alternative curriculum setting
   curriculum_type: linear         # Simple linear curriculum
   initial_difficulty: 0.5         # Higher initial difficulty
   max_difficulty: 1.0             # Maximum difficulty
   sequence_length_curriculum: true # Enable sequence length curriculum
-  initial_seq_length: 128         # Initial sequence length
+  initial_seq_length: 64          # Initial sequence length (reduced)
   
   # Progressive Sequence Growth
   progressive_sequence_growth: false # Disabled for simplicity

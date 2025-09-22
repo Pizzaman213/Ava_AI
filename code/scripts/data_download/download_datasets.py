@@ -24,7 +24,7 @@ import traceback
 import psutil
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -94,12 +94,14 @@ DATASETS_CONFIG = {
     # RAG KNOWLEDGE BASES
     # ================================
     # Large-scale Text Datasets (High Token Count)
-    "allenai/c4": {
-        "splits": ["train"], "subset": "en", "streaming_safe": True, "max_samples": 100000,
-        "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
-        "description": "Colossal Clean Crawled Corpus - cleaned web text for language modeling",
-        "example_command": "python download_datasets.py --dataset 'allenai/c4' --max-samples 10000"
-    },
+    ###
+    #"allenai/c4": {
+    #    "splits": ["train"], "subset": "en", "streaming_safe": True, "max_samples": 100000,
+    #    "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
+    #    "description": "Colossal Clean Crawled Corpus - cleaned web text for language modeling",
+    #    "example_command": "python download_datasets.py --dataset 'allenai/c4' --max-samples 10000"
+    #},
+    ###
     "openwebtext": {
         "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 50000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
@@ -428,84 +430,82 @@ DATASETS_CONFIG = {
 
 # Retry strategies for different failure modes
 RETRY_STRATEGIES = [
-    # Strategy 1: No auth token (for public datasets)
-    {
-        "name": "no_token",
-        "params": {
-            "num_proc": 1
-        }
-    },
-    # Strategy 2: Standard download with token
-    {
-        "name": "standard_with_token",
-        "params": {
-            "token": True,
-            "num_proc": 4
-        }
-    },
-    # Strategy 3: Streaming mode for large datasets
+    # Strategy 1: Streaming mode (primary strategy)
     {
         "name": "streaming_mode",
         "params": {
             "streaming": True,
-            "num_proc": 1
+            "cache_dir": None,
+            "download_mode": "force_redownload"
         }
     },
-    # Strategy 4: Single process for compatibility
-    {
-        "name": "single_process",
-        "params": {
-            "num_proc": 1,
-            "token": True
-        }
-    },
-    # Strategy 5: Streaming with token
+    # Strategy 2: Streaming with token
     {
         "name": "streaming_with_token",
         "params": {
             "streaming": True,
-            "token": True
+            "token": True,
+            "cache_dir": None,
+            "download_mode": "force_redownload"
         }
     },
-    # Strategy 5: Force redownload
+    # Strategy 3: No cache standard download
     {
-        "name": "force_redownload",
+        "name": "no_cache_download",
         "params": {
+            "cache_dir": None,
             "download_mode": "force_redownload",
             "num_proc": 1
         }
     },
-    # Strategy 6: Trust remote code
+    # Strategy 4: No cache with token
     {
-        "name": "trust_remote",
+        "name": "no_cache_with_token",
         "params": {
-            "trust_remote_code": True,
+            "token": True,
+            "cache_dir": None,
+            "download_mode": "force_redownload",
             "num_proc": 1
         }
     },
-    # Strategy 7: No multiprocessing
+    # Strategy 5: Streaming trust remote
     {
-        "name": "no_multiproc",
+        "name": "streaming_trust_remote",
         "params": {
-            "num_proc": None
+            "streaming": True,
+            "trust_remote_code": True,
+            "cache_dir": None,
+            "download_mode": "force_redownload"
         }
     },
-    # Strategy 8: Minimal parameters
+    # Strategy 6: Trust remote no cache
     {
-        "name": "minimal",
-        "params": {}
-    },
-    # Strategy 9: Cache only (for offline)
-    {
-        "name": "cache_only",
+        "name": "trust_remote_no_cache",
         "params": {
-            "download_mode": "reuse_cache_if_exists"
+            "trust_remote_code": True,
+            "cache_dir": None,
+            "download_mode": "force_redownload",
+            "num_proc": 1
+        }
+    },
+    # Strategy 7: Minimal streaming
+    {
+        "name": "minimal_streaming",
+        "params": {
+            "streaming": True
+        }
+    },
+    # Strategy 8: Fallback no cache
+    {
+        "name": "fallback_no_cache",
+        "params": {
+            "cache_dir": None
         }
     }
 ]
 
 class DatasetDownloader:
-    def __init__(self, output_dir: str = "/project/data/pretraining/raw",
+    def __init__(self, output_dir: str = "/project/code/data",
                  max_samples: Optional[int] = None):
         """Initialize the dataset downloader"""
         self.output_dir = Path(output_dir)
@@ -537,13 +537,11 @@ class DatasetDownloader:
 
         # Check if dataset is marked as large
         is_large = config.get("large", False)
-        streaming_safe = config.get("streaming_safe", True)
 
         # Check memory for large datasets
-        available_gb, usage_percent = self.check_memory()
+        available_gb, _ = self.check_memory()
         if is_large and available_gb < 10:
             print(f"⚠️  Low memory ({available_gb:.1f}GB available), using streaming mode")
-            streaming_safe = True
 
         # Try different strategies
         for strategy_idx, strategy in enumerate(RETRY_STRATEGIES):
@@ -559,9 +557,11 @@ class DatasetDownloader:
                 else:
                     dataset_args = [dataset_name]
 
-                # Force streaming for large datasets on low memory
-                if is_large and available_gb < 10:
-                    params["streaming"] = True
+                # Always use streaming and no cache
+                params["streaming"] = True
+                params["cache_dir"] = None
+                if "download_mode" not in params:
+                    params["download_mode"] = "force_redownload"
 
                 # Handle different splits
                 for split in config.get("splits", ["train"]):
@@ -572,84 +572,29 @@ class DatasetDownloader:
                         if strategy_idx > 0:  # Only add delay after first attempt
                             time.sleep(2)
 
-                        # Download the dataset
-                        if params.get("streaming", False):
-                            # Streaming mode
-                            dataset = self.load_dataset(*dataset_args, split=split, **params)
+                        # Download the dataset (always streaming)
+                        # Streaming mode
+                        dataset = self.load_dataset(*dataset_args, split=split, **params)
 
-                            # Save streaming dataset
-                            output_path = self.output_dir / dataset_name.replace("/", "_") / split
-                            output_path.mkdir(parents=True, exist_ok=True)
+                        # Save streaming dataset
+                        output_path = self.output_dir / dataset_name.replace("/", "_") / split
+                        output_path.mkdir(parents=True, exist_ok=True)
 
-                            # Stream and save samples
-                            samples = []
-                            max_to_download = self.max_samples if self.max_samples else 100000
+                        # Stream and save samples
+                        samples = []
+                        max_to_download = self.max_samples if self.max_samples else 100000
 
-                            print(f"  Streaming up to {max_to_download} samples...")
-                            for idx, sample in enumerate(tqdm(dataset, total=max_to_download)):
-                                samples.append(sample)
-                                if idx >= max_to_download - 1:
-                                    break
+                        print(f"  Streaming up to {max_to_download} samples...")
+                        for idx, sample in enumerate(tqdm(dataset, total=max_to_download)):
+                            samples.append(sample)
+                            if idx >= max_to_download - 1:
+                                break
 
-                            # Save as JSON
-                            with open(output_path / "data.json", "w") as f:
-                                json.dump(samples, f)
+                        # Save as JSON
+                        with open(output_path / "data.json", "w") as f:
+                            json.dump(samples, f)
 
-                            print(f"  ✓ Saved {len(samples)} samples to {output_path}")
-
-                        else:
-                            # Regular download
-                            dataset = self.load_dataset(*dataset_args, split=split, **params)
-
-                            # Apply sample limit if specified
-                            if self.max_samples:
-                                try:
-                                    if hasattr(dataset, '__len__') and len(dataset) > self.max_samples:
-                                        if hasattr(dataset, 'select'):
-                                            dataset = dataset.select(range(self.max_samples))
-                                except (TypeError, AttributeError):
-                                    # Handle iterable datasets that don't support len() or select()
-                                    pass
-
-                            # Save dataset
-                            output_path = self.output_dir / dataset_name.replace("/", "_") / split
-                            output_path.mkdir(parents=True, exist_ok=True)
-
-                            # Save in arrow format if possible
-                            try:
-                                if hasattr(dataset, 'save_to_disk'):
-                                    dataset.save_to_disk(str(output_path))
-                            except (AttributeError, TypeError):
-                                pass
-
-                            # Also save as JSON for compatibility
-                            try:
-                                if hasattr(dataset, 'to_json'):
-                                    dataset.to_json(str(output_path / "data.json"))
-                                else:
-                                    # Fallback for iterable datasets
-                                    import json
-                                    samples = []
-                                    for i, sample in enumerate(dataset):
-                                        if self.max_samples and i >= self.max_samples:
-                                            break
-                                        samples.append(sample)
-
-                                    with open(output_path / "data.json", "w") as f:
-                                        json.dump(samples, f)
-                            except Exception as e:
-                                print(f"  ⚠️ Could not save as JSON: {e}")
-
-                            # Get length safely
-                            try:
-                                if hasattr(dataset, '__len__'):
-                                    dataset_len = len(dataset)
-                                else:
-                                    dataset_len = self.max_samples or "unknown"
-                            except (TypeError, AttributeError):
-                                dataset_len = "unknown"
-
-                            print(f"  ✓ Saved {dataset_len} samples to {output_path}")
+                        print(f"  ✓ Saved {len(samples)} samples to {output_path}")
 
                     except Exception as e:
                         print(f"  ✗ Failed to download split {split}: {str(e)}")
@@ -866,7 +811,7 @@ Examples:
 
     # Output configuration
     parser.add_argument("--output-dir", default="/project/code/data",
-                      help="Output directory for datasets")
+                      help="Output directory for datasets (streaming, no caching)")
     parser.add_argument("--max-samples", type=int, default=None,
                       help="Maximum samples per dataset")
 

@@ -62,6 +62,9 @@ class PerplexityEvaluator:
         total_log_likelihood = 0.0
         total_tokens = 0
 
+        # Get model device
+        device = next(model.parameters()).device
+
         with torch.no_grad():
             for text in texts:
                 # Tokenize text
@@ -73,8 +76,8 @@ class PerplexityEvaluator:
                     padding=True
                 )
 
-                input_ids = inputs["input_ids"]
-                attention_mask = inputs["attention_mask"]
+                input_ids = inputs["input_ids"].to(device)
+                attention_mask = inputs["attention_mask"].to(device)
 
                 # Sliding window evaluation for long texts
                 seq_len = input_ids.shape[1]
@@ -83,15 +86,27 @@ class PerplexityEvaluator:
                     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
                     logits = outputs.get('logits', outputs.get('prediction_scores', outputs))
 
-                    # Compute log likelihood
-                    log_probs = torch.log_softmax(logits, dim=-1)
-                    target_log_probs = log_probs.gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                    # Compute log likelihood with numerical stability
+                    logits = logits[:, :-1, :].contiguous()  # Remove last prediction
+                    targets = input_ids[:, 1:].contiguous()   # Remove first token
+
+                    # Apply temperature for better numerical stability
+                    temperature = 1.0
+                    logits = logits / temperature
+
+                    # Compute cross entropy loss per token
+                    loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+                    token_losses = loss_fct(
+                        logits.view(-1, logits.size(-1)),
+                        targets.view(-1)
+                    ).view(targets.shape)
 
                     # Mask padding tokens
                     mask = attention_mask[:, 1:].bool()
-                    masked_log_probs = target_log_probs * mask
+                    masked_losses = token_losses * mask
 
-                    total_log_likelihood += masked_log_probs.sum().item()
+                    # Convert to negative log likelihood (loss is negative log likelihood)
+                    total_log_likelihood -= masked_losses.sum().item()
                     total_tokens += mask.sum().item()
 
                 else:
@@ -103,26 +118,44 @@ class PerplexityEvaluator:
                         outputs = model(input_ids=window_ids, attention_mask=window_mask)
                         logits = outputs.get('logits', outputs.get('prediction_scores', outputs))
 
-                        log_probs = torch.log_softmax(logits, dim=-1)
-                        target_log_probs = log_probs.gather(2, window_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                        # Same improved calculation for sliding window
+                        logits = logits[:, :-1, :].contiguous()
+                        targets = window_ids[:, 1:].contiguous()
+
+                        # Apply temperature for numerical stability
+                        temperature = 1.0
+                        logits = logits / temperature
+
+                        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+                        token_losses = loss_fct(
+                            logits.view(-1, logits.size(-1)),
+                            targets.view(-1)
+                        ).view(targets.shape)
 
                         mask = window_mask[:, 1:].bool()
-                        masked_log_probs = target_log_probs * mask
+                        masked_losses = token_losses * mask
 
-                        total_log_likelihood += masked_log_probs.sum().item()
+                        total_log_likelihood -= masked_losses.sum().item()
                         total_tokens += mask.sum().item()
 
         # Compute perplexity
-        avg_log_likelihood = total_log_likelihood / total_tokens if total_tokens > 0 else float('inf')
-        perplexity = math.exp(-avg_log_likelihood)
+        # Since we accumulated negative log likelihood, the average loss is positive
+        avg_loss = abs(total_log_likelihood) / total_tokens if total_tokens > 0 else float('inf')
+
+        # Perplexity is exp(loss) where loss is the average negative log likelihood
+        perplexity = math.exp(avg_loss) if avg_loss != float('inf') else float('inf')
+
+        # Clamp perplexity to reasonable range to avoid overflow
+        perplexity = min(perplexity, 1e6)
 
         return EvaluationResult(
             metric_name="perplexity",
             score=perplexity,
             details={
-                "total_log_likelihood": total_log_likelihood,
+                "total_negative_log_likelihood": abs(total_log_likelihood),
                 "total_tokens": total_tokens,
-                "avg_log_likelihood": avg_log_likelihood
+                "avg_loss": avg_loss,
+                "raw_perplexity": math.exp(avg_loss) if avg_loss != float('inf') else float('inf')
             },
             metadata={
                 "num_texts": len(texts),

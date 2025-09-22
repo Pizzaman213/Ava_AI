@@ -1,1 +1,3 @@
  nodejs
+build-essential
+tmux

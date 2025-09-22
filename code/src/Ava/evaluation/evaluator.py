@@ -353,6 +353,9 @@ class PerplexityEvaluator:
             # Mask padding tokens
             labels[attention_mask == 0] = -100
 
+            # Ensure labels are on the same device as input_ids
+            labels = labels.to(self.device)
+
             # Forward pass
             outputs = self.model(
                 input_ids=input_ids,
