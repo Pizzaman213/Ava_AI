@@ -156,8 +156,8 @@ data:
   # ---------- Dataset Settings ----------
   dataset_type: hf                # Dataset type (hf = HuggingFace format)
   train_paths:                    # Training data paths
-    - ./data/pretraining/processed/batch_*
-  val_path: ./data/pretraining/processed/batch_*
+    - /project/code/data/processed/combined_processed.jsonl
+  val_path: /project/code/data/processed/combined_processed.jsonl
   
   # ---------- Tokenization ----------
   tokenizer: gpt2                 # Tokenizer to use

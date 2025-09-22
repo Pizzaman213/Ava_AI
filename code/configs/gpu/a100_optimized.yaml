@@ -25,13 +25,13 @@ model:
 
   # Attention optimizations
   use_flash_attention: true
-  attention_type: "standard"  # or "block_sparse" for very long sequences
+  # attention_type: "standard"  # or "block_sparse" for very long sequences
   causal_attention: true
   attention_window_size: 2048  # For sliding window attention
   sequence_parallel: true  # Enable for sequences > 4096
 
   # Memory optimizations
-  gradient_checkpointing: true
+  # gradient_checkpointing: true
   checkpoint_policy: "selective"  # Balance memory vs compute
   memory_efficient_attention: true
 
@@ -58,18 +58,19 @@ training:
 
   # Training steps
   max_steps: 500000
-  warmup_steps: 10000
+  warmup_steps: 1000              # Extended warmup0
   eval_steps: 5000
   save_steps: 10000
 
   # Optimization settings
-  max_grad_norm: 1.0
-  label_smoothing: 0.1
+  max_grad_norm: 0.5              # Stricter gradient clipping
+  # label_smoothing: 0.1
 
   # Mixed precision settings for A100
   mixed_precision: "bf16"  # BF16 is optimal for A100
   enable_tf32: true  # 10x speedup on matrix operations
   use_cuda_graphs: true  # Reduce kernel launch overhead
+  zero_stage: 3  # ZeRO-3 full parameter partitioning for maximum memory savings
 
   # torch.compile settings
   enable_torch_compile: true
@@ -240,7 +241,7 @@ inference:
   max_batch_size: 64
   max_sequence_length: 2048
   use_kv_cache: true
-  use_speculative_decoding: false
+  # use_speculative_decoding: false
 
   # Serving configuration
   serving_backend: "vllm"  # Optimized for A100

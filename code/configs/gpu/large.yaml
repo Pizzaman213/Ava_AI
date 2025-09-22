@@ -24,7 +24,7 @@ model:
   # Regularization
   dropout_rate: 0.1
   attention_dropout: 0.1
-  expert_dropout: 0.1
+  # expert_dropout: 0.1
 
   # MoE features
   use_expert_balancing: true
@@ -53,7 +53,7 @@ training:
 
   # Learning rate schedule
   lr_scheduler_type: cosine_with_restarts
-  warmup_steps: 5000
+  warmup_steps: 1000              # Extended warmup              # Extended warmup0
 
   # Gradient management
   max_grad_norm: 0.5
@@ -65,7 +65,7 @@ training:
 
 # Data Configuration
 data:
-  data_dir: /project/code/data/pretraining/processed
+  data_dir: /project/code/data/processed
   max_length: 4096
   num_workers: 8
 
@@ -79,4 +79,5 @@ hardware:
   cuda_device_id: 0
   mixed_precision: true
   bf16: true
-  gradient_checkpointing: true
+  # gradient_checkpointing: true
+  zero_stage: 3  # ZeRO-3 full parameter partitioning for maximum memory savings

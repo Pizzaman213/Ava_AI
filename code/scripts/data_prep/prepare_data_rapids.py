@@ -88,7 +88,7 @@ except ImportError:
 class LocalDataProcessor:
     """Local data processor - works offline with minimal dependencies"""
 
-    def __init__(self, output_dir: str = "/project/data/pretraining/processed",
+    def __init__(self, output_dir: str = "/project/code/data/processed",
                  use_gpu: bool = False, use_multiprocessing: bool = True):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -107,21 +107,30 @@ class LocalDataProcessor:
         else:
             print(f"💻 Basic CPU processing mode with {self.cpu_count} cores")
 
-    def discover_datasets(self, raw_data_dir: str = "/project/data/pretraining/raw") -> List[str]:
+    def discover_datasets(self, raw_data_dir: str = "/project/code/data") -> List[str]:
         """Discover all available datasets (supports multiple formats)"""
         raw_path = Path(raw_data_dir)
         datasets = []
 
         for item in raw_path.iterdir():
             if item.is_dir() and not item.name.startswith('.'):
-                # Check for HuggingFace format
+                # Skip the processed output directory
+                if item.name == 'processed':
+                    continue
+
+                # Skip download summary file
+                if item.name == 'download_summary.json':
+                    continue
+
+                # Check for HuggingFace format (arrow files)
                 if any(item.glob("*/data-*.arrow")) or any(item.glob("data-*.arrow")):
                     datasets.append(str(item))
-                # Check for JSON/JSONL files
-                elif any(item.glob("*.json")) or any(item.glob("*.jsonl")):
+                # Check for JSON/JSONL files (including in subdirectories)
+                elif (any(item.glob("*.json")) or any(item.glob("*.jsonl")) or
+                      any(item.glob("*/*.json")) or any(item.glob("*/*.jsonl"))):
                     datasets.append(str(item))
                 # Check for text files
-                elif any(item.glob("*.txt")):
+                elif any(item.glob("*.txt")) or any(item.glob("*/*.txt")):
                     datasets.append(str(item))
 
         return sorted(datasets)
@@ -183,9 +192,10 @@ class LocalDataProcessor:
                     instructions = df['instruction'].fillna('')
                     inputs = df.get('input', cudf.Series([''] * len(df), dtype='str'))
                     outputs = df.get('output', cudf.Series([''] * len(df), dtype='str'))
+                    responses = df.get('response', cudf.Series([''] * len(df), dtype='str'))
 
                     # GPU string concatenation
-                    combined = instructions + " " + inputs + " " + outputs
+                    combined = instructions + " " + inputs + " " + outputs + " " + responses
                     extracted_texts = combined.to_pandas().tolist()
 
                 return [str(text).strip() for text in extracted_texts if str(text).strip()]
@@ -194,27 +204,98 @@ class LocalDataProcessor:
                 print(f"GPU processing failed, falling back to CPU: {e}")
                 # Fall through to CPU processing
 
-        # CPU fallback
+        # CPU fallback - more comprehensive extraction
         extracted_texts = []
         for sample in samples:
-            text_fields = ['text', 'content', 'output', 'response', 'instruction',
-                          'input', 'question', 'answer', 'dialogue', 'conversation']
+            # Priority text fields
+            text_fields = ['text', 'content', 'output', 'response', 'completion',
+                          'answer', 'dialogue', 'conversation', 'message']
 
+            # Check for direct text fields first
+            found_text = False
             for field in text_fields:
                 if field in sample and sample[field]:
-                    extracted_texts.append(str(sample[field]).strip())
-                    break
-            else:
-                # Handle instruction-response format
+                    text = str(sample[field]).strip()
+                    if text:
+                        extracted_texts.append(text)
+                        found_text = True
+                        break
+
+            # If no direct field, try combinations
+            if not found_text:
+                # Handle instruction-based formats
                 if 'instruction' in sample:
-                    instruction = str(sample.get('instruction', ''))
-                    input_text = str(sample.get('input', ''))
-                    output_text = str(sample.get('output', ''))
-                    combined = f"{instruction} {input_text} {output_text}".strip()
+                    parts = []
+                    if sample.get('instruction'):
+                        parts.append(str(sample['instruction']))
+                    if sample.get('input'):
+                        parts.append(str(sample['input']))
+                    if sample.get('output'):
+                        parts.append(str(sample['output']))
+                    if sample.get('response'):
+                        parts.append(str(sample['response']))
+                    if sample.get('context'):
+                        parts.append(str(sample['context']))
+
+                    combined = " ".join(parts).strip()
                     if combined:
                         extracted_texts.append(combined)
+                        found_text = True
 
-        return [text for text in extracted_texts if text]
+                # Handle QA formats
+                elif 'question' in sample and 'answer' in sample:
+                    q = str(sample.get('question', '')).strip()
+                    a = str(sample.get('answer', '')).strip()
+                    if q and a:
+                        extracted_texts.append(f"{q} {a}")
+                        found_text = True
+
+                # Handle conversation/dialogue formats
+                elif 'utterances' in sample:
+                    # For persona-chat style
+                    utterances = sample.get('utterances', [])
+                    if isinstance(utterances, list):
+                        for utt in utterances:
+                            if isinstance(utt, dict):
+                                if 'history' in utt:
+                                    history = utt.get('history', [])
+                                    if isinstance(history, list):
+                                        extracted_texts.extend([str(h) for h in history if h])
+                                if 'candidates' in utt:
+                                    candidates = utt.get('candidates', [])
+                                    if isinstance(candidates, list) and candidates:
+                                        # Take first candidate as the response
+                                        extracted_texts.append(str(candidates[0]))
+                            elif isinstance(utt, str):
+                                extracted_texts.append(utt)
+                        found_text = True
+
+                # Handle messages/conversations
+                elif 'messages' in sample:
+                    messages = sample.get('messages', [])
+                    if isinstance(messages, list):
+                        for msg in messages:
+                            if isinstance(msg, dict) and 'content' in msg:
+                                extracted_texts.append(str(msg['content']))
+                            elif isinstance(msg, str):
+                                extracted_texts.append(msg)
+                        found_text = True
+
+                # Handle chosen/rejected pairs (RLHF datasets)
+                elif 'chosen' in sample or 'rejected' in sample:
+                    if sample.get('chosen'):
+                        extracted_texts.append(str(sample['chosen']))
+                    if sample.get('rejected'):
+                        extracted_texts.append(str(sample['rejected']))
+                    found_text = True
+
+                # Last resort - concatenate all string values
+                if not found_text:
+                    for key, value in sample.items():
+                        if isinstance(value, str) and value.strip() and len(value) > 10:
+                            extracted_texts.append(value.strip())
+
+        return [text for text in extracted_texts if text and len(text.strip()) > 10]
 
     def process_dataset_batch(self, dataset_path: str, batch_size: int = 10000) -> Iterator[List[str]]:
         """Process dataset in batches - supports multiple formats"""
@@ -266,11 +347,11 @@ class LocalDataProcessor:
                 # File-based processing (JSON, JSONL, TXT)
                 print(f"    Processing files in: {dataset_path.name}")
 
-                # Find all data files
-                json_files = list(dataset_path.glob("*.json"))
-                jsonl_files = list(dataset_path.glob("*.jsonl"))
-                txt_files = list(dataset_path.glob("*.txt"))
-                parquet_files = list(dataset_path.glob("*.parquet"))
+                # Find all data files (including in subdirectories)
+                json_files = list(dataset_path.glob("*.json")) + list(dataset_path.glob("*/*.json"))
+                jsonl_files = list(dataset_path.glob("*.jsonl")) + list(dataset_path.glob("*/*.jsonl"))
+                txt_files = list(dataset_path.glob("*.txt")) + list(dataset_path.glob("*/*.txt"))
+                parquet_files = list(dataset_path.glob("*.parquet")) + list(dataset_path.glob("*/*.parquet"))
 
                 all_files = json_files + jsonl_files + txt_files + parquet_files
 
@@ -448,7 +529,7 @@ class LocalDataProcessor:
                 'total_words': sum(word_counts)
             }
 
-    def process_all_datasets(self, raw_data_dir: str = "/project/data/pretraining/raw",
+    def process_all_datasets(self, raw_data_dir: str = "/project/code/data",
                            max_samples_per_dataset: Optional[int] = None,
                            max_total_tokens: Optional[int] = None):
         """Process all datasets with GPU acceleration"""
@@ -578,11 +659,131 @@ class LocalDataProcessor:
         print(f"  🚀 GPU acceleration: {'✓' if self.use_gpu else '✗'}")
         print(f"  📂 Output directory: {self.output_dir}")
 
+    def process_specific_datasets(self, dataset_paths: List[str],
+                                max_samples_per_dataset: Optional[int] = None,
+                                max_total_tokens: Optional[int] = None):
+        """Process specific datasets with GPU acceleration"""
+
+        print(f"Found {len(dataset_paths)} datasets to process")
+
+        all_texts = []
+        dataset_stats = {}
+        total_tokens_so_far = 0
+        processing_stats = {
+            'datasets_processed': 0,
+            'total_samples': 0,
+            'total_tokens': 0,
+            'failed_datasets': []
+        }
+
+        # Process each dataset
+        for dataset_path in tqdm(dataset_paths, desc="Processing datasets"):
+            dataset_name = Path(dataset_path).name
+            print(f"\n🔄 Processing: {dataset_name}")
+
+            try:
+                dataset_texts = []
+                sample_count = 0
+
+                # Process in GPU-accelerated batches
+                for text_batch in self.process_dataset_batch(dataset_path, batch_size=10000):
+                    if not text_batch:
+                        continue
+
+                    # Apply per-dataset sample limit
+                    if max_samples_per_dataset and sample_count >= max_samples_per_dataset:
+                        break
+
+                    # Clean and process texts
+                    processed_texts = self.clean_texts_gpu(text_batch)
+                    valid_texts = [t for t in processed_texts if t and len(t.strip()) > 50]
+
+                    dataset_texts.extend(valid_texts)
+                    sample_count += len(valid_texts)
+
+                    # Apply global token limit
+                    if max_total_tokens:
+                        estimated_tokens = sum(len(t.split()) for t in valid_texts)
+                        total_tokens_so_far += estimated_tokens
+                        if total_tokens_so_far >= max_total_tokens:
+                            print(f"  ⚡ Reached token limit ({max_total_tokens:,}), stopping")
+                            break
+
+                if dataset_texts:
+                    # Compute dataset statistics
+                    stats = self.compute_text_stats_gpu(dataset_texts)
+                    dataset_stats[dataset_name] = stats
+
+                    # Save individual dataset
+                    output_file = self.output_dir / f"{dataset_name}_processed.jsonl"
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        for text in dataset_texts:
+                            f.write(json.dumps({'text': text}) + '\n')
+
+                    all_texts.extend(dataset_texts)
+                    processing_stats['datasets_processed'] += 1
+                    processing_stats['total_samples'] += len(dataset_texts)
+                    processing_stats['total_tokens'] += stats.get('total_words', 0)
+
+                    print(f"  ✓ Processed {len(dataset_texts):,} texts")
+                    print(f"  📊 Avg length: {stats.get('avg_length', 0):.1f} chars")
+                    print(f"  💬 Total words: {stats.get('total_words', 0):,}")
+
+                    if max_total_tokens and total_tokens_so_far >= max_total_tokens:
+                        break
+                else:
+                    print(f"  ⚠️ No valid texts found in {dataset_name}")
+
+            except Exception as e:
+                print(f"  ✗ Failed to process {dataset_name}: {e}")
+                processing_stats['failed_datasets'].append(dataset_name)
+                continue
+
+        # Save combined dataset
+        print(f"\n💾 Saving combined dataset...")
+        combined_file = self.output_dir / "combined_processed.jsonl"
+        with open(combined_file, 'w', encoding='utf-8') as f:
+            for text in tqdm(all_texts, desc="Writing combined dataset"):
+                f.write(json.dumps({'text': text}) + '\n')
+
+        # Compute overall statistics
+        if all_texts:
+            overall_stats = self.compute_text_stats_gpu(all_texts)
+        else:
+            overall_stats = {}
+
+        # Save comprehensive statistics
+        stats_summary = {
+            'processing_timestamp': time.time(),
+            'processing_stats': processing_stats,
+            'dataset_stats': dataset_stats,
+            'overall_stats': overall_stats,
+            'gpu_accelerated': self.use_gpu,
+            'output_files': {
+                'combined': str(combined_file),
+                'individual_datasets': [str(self.output_dir / f"{name}_processed.jsonl")
+                                      for name in dataset_stats.keys()]
+            }
+        }
+
+        with open(self.output_dir / "processing_stats.json", 'w') as f:
+            json.dump(stats_summary, f, indent=2)
+
+        # Print summary
+        print(f"\n🎉 Processing Complete!")
+        print(f"  📊 Datasets processed: {processing_stats['datasets_processed']}")
+        print(f"  📝 Total samples: {processing_stats['total_samples']:,}")
+        print(f"  📚 Total texts: {overall_stats.get('total_texts', 0):,}")
+        print(f"  📏 Avg text length: {overall_stats.get('avg_length', 0):.1f} chars")
+        print(f"  💬 Total words: {overall_stats.get('total_words', 0):,}")
+        print(f"  🚀 GPU acceleration: {'✓' if self.use_gpu else '✗'}")
+        print(f"  📂 Output directory: {self.output_dir}")
+
 def main():
     parser = argparse.ArgumentParser(description="Local Data Preparation - Works Offline")
-    parser.add_argument("--raw-data-dir", default="/project/data/pretraining/raw",
+    parser.add_argument("--raw-data-dir", default="/project/code/data",
                        help="Directory containing raw datasets")
-    parser.add_argument("--output-dir", default="/project/data/pretraining/processed",
+    parser.add_argument("--output-dir", default="/project/code/data/processed",
                        help="Output directory for processed data")
     parser.add_argument("--max-samples", type=int, default=None,
                        help="Maximum samples per dataset")
@@ -594,11 +795,56 @@ def main():
                        help="Disable multiprocessing")
     parser.add_argument("--batch-size", type=int, default=5000,
                        help="Batch size for processing")
+    parser.add_argument("--datasets", nargs="*", default=None,
+                       help="Specific datasets to process (default: all datasets)")
+    parser.add_argument("--list-datasets", action="store_true",
+                       help="List available datasets and exit")
 
     args = parser.parse_args()
 
     print("🔄 Starting Local Data Preparation")
     print("="*50)
+
+    # Initialize processor to discover datasets
+    temp_processor = LocalDataProcessor()
+    available_datasets = temp_processor.discover_datasets(args.raw_data_dir)
+
+    if args.list_datasets:
+        print(f"\n📋 Available datasets in {args.raw_data_dir}:")
+        if available_datasets:
+            for i, dataset in enumerate(available_datasets, 1):
+                dataset_name = Path(dataset).name
+                print(f"  {i}. {dataset_name}")
+        else:
+            print("  No datasets found!")
+        return
+
+    if args.datasets:
+        # Process specific datasets
+        selected_datasets = []
+        for dataset_name in args.datasets:
+            # Find matching dataset path
+            matching = [d for d in available_datasets if Path(d).name == dataset_name or d.endswith(dataset_name)]
+            if matching:
+                selected_datasets.extend(matching)
+            else:
+                print(f"⚠️  Dataset '{dataset_name}' not found")
+
+        if not selected_datasets:
+            print("❌ No valid datasets selected")
+            return
+
+        print(f"\n📋 Processing {len(selected_datasets)} selected datasets:")
+        for dataset in selected_datasets:
+            print(f"  - {Path(dataset).name}")
+    else:
+        # Process all datasets (default behavior)
+        selected_datasets = None
+        print(f"\n📋 Processing ALL {len(available_datasets)} available datasets:")
+        for dataset in available_datasets:
+            print(f"  - {Path(dataset).name}")
+        print("\n💡 Use --datasets <name1> <name2> to process specific datasets only")
+        print("💡 Use --list-datasets to see all available datasets")
 
     # Initialize processor
     processor = LocalDataProcessor(
@@ -607,12 +853,21 @@ def main():
         use_multiprocessing=not args.no_multiprocessing
     )
 
-    # Process all datasets
-    processor.process_all_datasets(
-        raw_data_dir=args.raw_data_dir,
-        max_samples_per_dataset=args.max_samples,
-        max_total_tokens=args.max_tokens
-    )
+    # Process datasets
+    if args.datasets and 'selected_datasets' in locals() and selected_datasets:
+        # Process specific datasets
+        processor.process_specific_datasets(
+            selected_datasets,
+            max_samples_per_dataset=args.max_samples,
+            max_total_tokens=args.max_tokens
+        )
+    else:
+        # Process all datasets (default)
+        processor.process_all_datasets(
+            raw_data_dir=args.raw_data_dir,
+            max_samples_per_dataset=args.max_samples,
+            max_total_tokens=args.max_tokens
+        )
 
 if __name__ == "__main__":
     main()

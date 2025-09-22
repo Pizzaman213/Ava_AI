@@ -65,7 +65,7 @@ training:
 
 # Data Configuration
 data:
-  data_dir: /project/code/data/pretraining/processed
+  data_dir: /project/code/data/processed
   max_length: 1024
   num_workers: 4
 

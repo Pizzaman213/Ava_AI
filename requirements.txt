@@ -67,4 +67,5 @@ sphinx>=7.2.0
 sphinx-rtd-theme>=2.0.0
 myst-parser>=2.0.0
 jupyterlab>3.0
-deepspeed>=0.14.0
+mpi4py
+deepspeed

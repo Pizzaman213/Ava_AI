@@ -56,8 +56,15 @@ class StreamingDataset(IterableDataset):
         # Also check direct files
         direct_arrow = sorted(self.data_dir.glob(f"{self.split}_*.arrow"))
         direct_parquet = sorted(self.data_dir.glob(f"{self.split}_*.parquet"))
+        direct_jsonl = sorted(self.data_dir.glob(f"{self.split}_*.jsonl"))
         files.extend(direct_arrow)
         files.extend(direct_parquet)
+        files.extend(direct_jsonl)
+
+        # If no split-specific files found, look for any JSONL files
+        if not files:
+            all_jsonl = sorted(self.data_dir.glob("*.jsonl"))
+            files.extend(all_jsonl)
 
         print(f"📂 Found {len(files)} data files for {self.split} split")
         return files
@@ -88,6 +95,18 @@ class StreamingDataset(IterableDataset):
                         for text in df['text']:
                             if text and len(str(text).strip()) > 10:
                                 yield str(text)
+
+            elif file_path.suffix == '.jsonl':
+                # Read JSONL file line by line
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line.strip())
+                            text = data.get('text', '')
+                            if text and len(str(text).strip()) > 10:
+                                yield str(text)
+                        except json.JSONDecodeError:
+                            continue
 
         except Exception as e:
             print(f"⚠️ Error reading {file_path}: {e}")
