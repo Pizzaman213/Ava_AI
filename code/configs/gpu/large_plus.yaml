@@ -1,0 +1,123 @@
+# GPU Large-Plus Configuration
+# Large-plus GPU training configuration for Ava MoE++
+# Target: ~800M parameters, 20GB+ VRAM, RTX 4080/RTX 3090/RTX A6000
+# Optimized for: High-end training and professional models
+
+model:
+  # Core Architecture
+  hidden_size: 960
+  num_layers: 24
+  num_attention_heads: 15
+  intermediate_size: 3840
+  vocab_size: 50257
+  max_position_embeddings: 2048
+
+  # MoE Configuration
+  num_experts: 24
+  num_experts_per_token: 3
+  expert_capacity_factor: 1.25
+  router_type: "switch"
+  router_aux_loss_coef: 0.01
+  router_jitter_noise: 0.01
+
+  # Attention & Position Encoding
+  use_cache: true
+  rope_theta: 10000.0
+  attention_dropout: 0.06
+  hidden_dropout: 0.06
+
+  # Regularization
+  layer_norm_eps: 1e-5
+  initializer_range: 0.02
+  hidden_act: "gelu"
+
+  # Enhanced Features (enabled for large-plus model)
+  use_moh: true
+  use_moa: true
+  use_rag: false
+  use_cross_attention: true
+  num_cross_attention_layers: 2
+  use_episodic_memory: false
+
+training:
+  # Batch Configuration
+  batch_size: 2
+  gradient_accumulation_steps: 16
+  max_gradient_norm: 1.0
+
+  # Training Duration
+  num_epochs: 6
+  max_steps: -1
+  warmup_steps: 2000
+
+  # Learning Rate & Optimizer
+  learning_rate: 1.2e-4
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-8
+  lr_scheduler_type: "cosine"
+
+  # Mixed Precision & Performance
+  mixed_precision: "bf16"
+  dataloader_num_workers: 8
+  gradient_checkpointing: true
+
+  # Evaluation & Logging
+  eval_strategy: "steps"
+  eval_steps: 250
+  save_strategy: "steps"
+  save_steps: 500
+  logging_steps: 25
+
+  # Early Stopping
+  early_stopping_patience: 4
+  early_stopping_threshold: 0.005
+
+  # Advanced Training Features
+  use_ema: true
+  ema_decay: 0.999
+  label_smoothing: 0.05
+
+data:
+  # Dataset Configuration
+  data_dir: "data/train"
+  max_length: 2048
+  max_train_examples: -1
+  max_eval_examples: 2000
+
+  # Preprocessing
+  tokenizer_name: "gpt2"
+  padding_side: "right"
+  truncation: true
+
+  # Data Loading
+  train_batch_size: 2
+  eval_batch_size: 4
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+
+# Hardware Configuration
+device: "auto"
+fp16: false
+bf16: true
+
+# Memory Optimization
+gradient_checkpointing: true
+use_cpu_offload: false
+pin_memory: true
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-gpu-large-plus"
+  tags: ["gpu", "large-plus", "800M", "professional"]
+
+# Advanced Features
+compilation:
+  enabled: false
+  backend: "inductor"
+
+# Hardware Requirements
+# VRAM: 20GB minimum, 22GB recommended
+# Compatible GPUs: RTX 4080, RTX 3090, RTX A6000, RTX 4080 Super

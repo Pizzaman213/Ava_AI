@@ -62,12 +62,20 @@ python3 scripts/generation/interactive_generate.py
 - **SwiGLU activation** and advanced optimizers
 
 ### Training Features
+- **Multi-Column Data Loading** - Support for complex datasets with mixed data types
 - Distributed training support (DDP, FSDP)
 - Mixed precision training (FP16/BF16)
 - Gradient checkpointing for memory efficiency
 - RLHF (Reinforcement Learning from Human Feedback) support
 - Dynamic batch sizing and gradient accumulation
 - Curriculum learning and progressive training
+
+### Data Processing Features
+- **Multi-Column Data Support** - Handle text, numeric, categorical, image, and tensor columns
+- **Flexible Combine Strategies** - Concatenate, template-based, or separate column processing
+- **HuggingFace Dataset Integration** - Direct loading from HuggingFace Hub
+- **Streaming Data Loading** - Memory-efficient processing of large datasets
+- **Custom Column Configurations** - Configurable preprocessing, validation, and augmentation
 
 ### Platform Support
 - ✅ **CPU** - Optimized for local development
@@ -275,6 +283,105 @@ python3 scripts/generation/interact.py \
     --top-p 0.9
 ```
 
+### Multi-Column Data Processing
+
+The framework now supports advanced multi-column data loading for complex datasets with mixed data types.
+
+#### Supported Column Types
+- **Text**: Natural language text with configurable tokenization
+- **Numeric**: Numerical data with normalization support
+- **Categorical**: Categorical data with vocabulary mapping
+- **Image**: Image data with preprocessing pipelines
+- **Tensor**: Pre-computed tensor data
+- **Embedding**: Pre-computed embeddings
+
+#### Combine Strategies
+- **Concatenate**: Merge all input columns into a single sequence
+- **Template**: Use custom templates to format multiple columns
+- **Separate**: Keep columns separate for multi-input models
+
+#### Multi-Column Training Examples
+
+##### Basic Multi-Column Training
+```bash
+# Train with simple text columns
+python3 scripts/training/train.py \
+    --config configs/gpu/small.yaml \
+    --use-multi-column \
+    --column-names text \
+    --column-types text \
+    --column-roles input \
+    --data-dir /project/code/processed
+```
+
+##### Instruction-Response Format
+```bash
+# Train with instruction-response pairs using templates
+python3 scripts/training/train.py \
+    --config configs/gpu/small.yaml \
+    --use-multi-column \
+    --column-names instruction,response \
+    --column-types text,text \
+    --column-roles input,target \
+    --combine-strategy template \
+    --column-template "Instruction: {instruction}\nResponse: {response}"
+```
+
+##### Multi-Input with Mixed Data Types
+```bash
+# Train with text, categorical, and numeric columns
+python3 scripts/training/train.py \
+    --config configs/gpu/small.yaml \
+    --use-multi-column \
+    --column-names text_input,category,difficulty \
+    --column-types text,categorical,numeric \
+    --column-roles input,auxiliary,auxiliary \
+    --combine-strategy separate
+```
+
+##### HuggingFace Dataset Integration
+```bash
+# Load directly from HuggingFace Hub
+python3 scripts/training/train.py \
+    --config configs/gpu/small.yaml \
+    --use-multi-column \
+    --hf-dataset squad \
+    --column-names context,question,answer \
+    --column-types text,text,text \
+    --column-roles input,input,target
+```
+
+#### Multi-Column Configuration Files
+
+Create reusable configurations for complex datasets:
+
+```yaml
+# configs/multi_column_tests/instruction_response.yaml
+columns:
+  - name: instruction
+    type: text
+    role: input
+    max_length: 128
+    required: true
+  - name: response
+    type: text
+    role: target
+    max_length: 256
+    required: true
+
+combine_strategy: template
+template: "Instruction: {instruction}\nResponse: {response}"
+max_samples: 1000
+validation_enabled: true
+```
+
+Use with:
+```bash
+python3 scripts/training/train.py \
+    --config configs/gpu/small.yaml \
+    --dataset-config configs/multi_column_tests/instruction_response.yaml
+```
+
 ### Data Preparation
 
 #### Download High-Quality Datasets
@@ -325,13 +432,12 @@ python3 scripts/data_generation/generate_pretraining_data.py \
 python3 scripts/data_prep/prepare_quick_data.py
 
 # Or manual processing with full control
-python3 scripts/data_prep/prepare_data.py \
-    --input-path data/pretraining/raw/quick_test \
-    --output-dir data/pretraining/processed \
-    --input-format json \
-    --output-format jsonl \
-    --max-length 512 \
-    --fast-mode  # Skip filtering for speed
+python3 scripts/data_prep/prepare_data_rapids.py \
+    --raw-data-dir data \
+    --output-dir /project/code/processed \
+    --max-samples 50000 \
+    --max-tokens 10000000 \
+    --format-strategy multi_column
 ```
 
 #### Training with Downloaded Data
@@ -340,6 +446,7 @@ python3 scripts/data_prep/prepare_data.py \
 python3 scripts/training/train_with_data.py --config configs/small_model.yaml
 
 # It will search for data in:
+# - /project/code/processed/*.jsonl (new default location)
 # - data/pretraining/processed/train/*.json
 # - data/pretraining/raw/*/train/*.json
 # - data/train/*.json

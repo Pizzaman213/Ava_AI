@@ -1,6 +1,0 @@
-{
-  "dataset_name": "math-preference",
-  "num_samples": 2418,
-  "total_tokens": 131324,
-  "avg_tokens_per_sample": 54.31100082712986
-}

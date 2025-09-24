@@ -228,56 +228,221 @@ inference:
 
 ## Configuration Presets
 
-### Development/Testing
+### GPU Configurations
 
+#### Tiny Configuration (~100M parameters)
 ```yaml
-# configs/dev.yaml
-model:
-  hidden_size: 128
-  num_layers: 2
-  num_experts: 2
-
-training:
-  batch_size: 2
-  num_epochs: 1
-  eval_steps: 10
-  save_steps: 50
-```
-
-### Small Model (50M)
-
-```yaml
-# configs/cpu/small.yaml
+# configs/gpu/tiny.yaml
 model:
   hidden_size: 512
   num_layers: 8
   num_attention_heads: 8
   num_experts: 4
-  ffn_hidden_size: 2048
+  num_experts_per_token: 1
+
+  # Basic features only
+  use_moh: false
+  use_rag: false
+  use_episodic_memory: false
+
+training:
+  batch_size: 4
+  mixed_precision: "fp16"
+
+data_loading:
+  streaming: true  # Enable streaming for large datasets
 ```
 
-### Medium Model (200M)
-
+#### Small Configuration (~150M parameters)
 ```yaml
-# configs/cpu/medium.yaml
+# configs/gpu/small.yaml
 model:
-  hidden_size: 768
+  hidden_size: 576
   num_layers: 12
-  num_attention_heads: 12
+  num_attention_heads: 9
   num_experts: 8
-  ffn_hidden_size: 3072
+  num_experts_per_token: 2
+
+  # Enhanced features
+  use_moh: true
+  use_episodic_memory: true
+  memory_size: 500
+
+enhanced_features:
+  losses:
+    focal_loss: true
+    adaptive_loss_scaling: true
+  quantization:
+    use_nvfp4: true
 ```
 
-### Large Model (1.5B)
+#### Medium Configuration (~300M parameters)
+```yaml
+# configs/gpu/medium.yaml
+model:
+  hidden_size: 704
+  num_layers: 16
+  num_attention_heads: 11
+  num_experts: 14
+  num_experts_per_token: 2
 
+  # Advanced features
+  use_moh: true
+  use_cross_attention: true
+  use_episodic_memory: true
+  memory_size: 800
+
+enhanced_features:
+  architecture:
+    use_moh: true
+    use_cross_attention: true
+```
+
+#### Large Configuration (~1.5B parameters)
 ```yaml
 # configs/gpu/large.yaml
 model:
-  hidden_size: 1536
+  hidden_size: 1280
   num_layers: 24
-  num_attention_heads: 24
-  num_experts: 16
-  ffn_hidden_size: 6144
+  num_attention_heads: 20
+  num_experts: 32
+  num_experts_per_token: 4
+
+  # All features enabled
+  use_moh: true
+  use_moa: true
+  use_rag: true
+  use_cross_attention: true
+  use_episodic_memory: true
+  memory_size: 2000
+
+deepspeed:
+  enabled: true
+  zero_stage: 2
+  precision: "bf16"
+
+enhanced_features:
+  rag:
+    enabled: true
+  losses:
+    focal_loss: true
+    contrastive_loss: true
+    diversity_loss: true
+  gradient:
+    gradient_surgery: true
+```
+
+### Distributed Configurations
+
+#### DeepSpeed ZeRO-1
+```yaml
+# configs/distributed/deepspeed_zero1.yaml
+deepspeed:
+  enabled: true
+  zero_stage: 1
+  cpu_offload: false
+  precision: "bf16"
+  train_batch_size: 128
+  micro_batch_size: 4
+  gradient_accumulation_steps: 32
+```
+
+#### DeepSpeed ZeRO-3 with CPU Offload
+```yaml
+# configs/distributed/deepspeed_zero3.yaml
+deepspeed:
+  enabled: true
+  zero_stage: 3
+  cpu_offload: true
+  nvme_offload: false
+  precision: "bf16"
+  activation_checkpointing: true
+  partition_activations: true
+  overlap_comm: true
+```
+
+### Research Configurations
+
+#### RAG-Enabled Configuration
+```yaml
+# configs/research/rag_enabled.yaml
+enhanced_features:
+  rag:
+    enabled: true
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: 10
+    rag_fusion_type: "attention"
+    use_advanced_retrieval: true
+
+  architecture:
+    use_cross_attention: true
+    num_cross_attention_layers: 4
+```
+
+#### NVFP4 Quantization Configuration
+```yaml
+# configs/research/quantization_nvfp4.yaml
+enhanced_features:
+  quantization:
+    use_nvfp4: true
+    bit_width: 4
+    hadamard_transform: true
+    quantization_block_size: 64
+
+    # Quantization-aware training
+    quantization_aware: true
+    use_hadamard_transforms: true
+```
+
+### Hardware-Specific Configurations
+
+#### A100 80GB Configuration
+```yaml
+# configs/hardware/a100_80gb.yaml
+model:
+  hidden_size: 1280
+  num_layers: 28
+  max_position_embeddings: 4096  # Longer sequences
+
+deepspeed:
+  enabled: true
+  zero_stage: 2
+  precision: "bf16"  # A100 optimized
+
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 70.0  # Use most of 80GB
+  a100_memory_optimization: true
+
+compilation:
+  enabled: true
+  backend: "inductor"
+```
+
+#### H100 80GB Configuration
+```yaml
+# configs/hardware/h100_80gb.yaml
+model:
+  hidden_size: 1536
+  num_layers: 32
+  max_position_embeddings: 8192  # Very long sequences
+
+deepspeed:
+  enabled: true
+  zero_stage: 3
+  precision: "fp8"  # H100's specialty
+  fp8_enabled: true
+
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 75.0
+  h100_memory_optimization: true
+  use_hbm3_optimization: true
+
+fp8_training:
+  enabled: true
+  fp8_format: "e4m3"
+  fp8_recipe: "DelayedScaling"
 ```
 
 ## Creating Custom Configurations

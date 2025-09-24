@@ -1,9 +1,11 @@
 # Training Guide
 
-Comprehensive guide for training Ava MoE++ models.
+Comprehensive guide for training Ava MoE++ models with DeepSpeed integration and enhanced features.
 
 ## Table of Contents
 - [Basic Training](#basic-training)
+- [DeepSpeed Integration](#deepspeed-integration)
+- [Enhanced Features](#enhanced-features)
 - [Data Preparation](#data-preparation)
 - [Configuration](#configuration)
 - [Advanced Training](#advanced-training)
@@ -16,28 +18,211 @@ Comprehensive guide for training Ava MoE++ models.
 ### Simple Training Command
 
 ```bash
+# Basic CPU training
 python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+    --config configs/gpu/small.yaml \
     --epochs 10 \
     --batch-size 4
+
+# GPU training with enhanced features
+python scripts/training/train.py \
+    --config configs/gpu/medium.yaml \
+    --epochs 10 \
+    --batch-size 8 \
+    --use-moh \
+    --use-episodic-memory
 ```
 
 ### Full Training Command with All Options
 
 ```bash
 python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+    --config configs/gpu/large.yaml \
     --data-dir /project/code/data/pretraining/processed \
-    --max-length 512 \
+    --max-length 1024 \
     --batch-size 4 \
     --epochs 10 \
-    --learning-rate 5e-4 \
-    --gradient-accumulation 4 \
+    --learning-rate 2e-4 \
+    --gradient-accumulation 8 \
     --output-dir /project/code/outputs \
     --save-every 500 \
-    --device cpu \
-    --num-workers 4 \
-    --seed 42
+    --device auto \
+    --num-workers 8 \
+    --seed 42 \
+    --use-deepspeed \
+    --zero-stage 2 \
+    --use-rag \
+    --use-advanced-losses \
+    --use-gradient-surgery \
+    --ultra-fast-mode
+```
+
+## DeepSpeed Integration
+
+### DeepSpeed ZeRO Training
+
+DeepSpeed ZeRO enables training much larger models by sharding optimizer states, gradients, and parameters:
+
+#### ZeRO Stage 1 (Optimizer Sharding)
+```bash
+# Basic DeepSpeed training with optimizer sharding
+python scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero1.yaml \
+    --use-deepspeed \
+    --zero-stage 1
+
+# Multi-GPU training
+deepspeed --num_gpus=2 scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero1.yaml \
+    --use-deepspeed
+```
+
+#### ZeRO Stage 2 (Optimizer + Gradient Sharding)
+```bash
+# More memory efficient training
+deepspeed --num_gpus=4 scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero2.yaml \
+    --use-deepspeed \
+    --zero-stage 2
+```
+
+#### ZeRO Stage 3 (Full Parameter Sharding)
+```bash
+# Maximum memory efficiency for very large models
+deepspeed --num_gpus=8 scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero3.yaml \
+    --use-deepspeed \
+    --zero-stage 3 \
+    --cpu-offload
+```
+
+### DeepSpeed Features
+
+#### CPU/NVMe Offloading
+```bash
+# Offload optimizer states to CPU
+python scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero3.yaml \
+    --use-deepspeed \
+    --cpu-offload
+
+# Offload to NVMe for even larger models
+python scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero3.yaml \
+    --use-deepspeed \
+    --nvme-offload
+```
+
+#### Mixed Precision Training
+```bash
+# FP16 training
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --use-deepspeed \
+    --fp16
+
+# BF16 training (better numerical stability)
+python scripts/training/train.py \
+    --config configs/hardware/a100_80gb.yaml \
+    --use-deepspeed \
+    --bf16
+
+# FP8 training (H100 only)
+python scripts/training/train.py \
+    --config configs/hardware/h100_80gb.yaml \
+    --use-deepspeed \
+    --fp8
+```
+
+## Enhanced Features
+
+### RAG (Retrieval Augmented Generation)
+```bash
+# Enable RAG system
+python scripts/training/train.py \
+    --config configs/research/rag_enabled.yaml \
+    --use-rag \
+    --knowledge-base-path data/knowledge_base
+```
+
+### NVFP4 Quantization
+```bash
+# 4-bit quantization for memory efficiency
+python scripts/training/train.py \
+    --config configs/research/quantization_nvfp4.yaml \
+    --use-nvfp4 \
+    --bit-width 4
+```
+
+### MoH (Mixture of Heads)
+```bash
+# Enable specialized attention heads
+python scripts/training/train.py \
+    --config configs/gpu/medium.yaml \
+    --use-moh \
+    --moh-num-heads 8
+```
+
+### Advanced Loss Functions
+```bash
+# Enable focal loss for hard example focus
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --use-focal-loss \
+    --focal-gamma 2.0
+
+# Enable contrastive loss for better representations
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --use-contrastive-loss
+
+# Enable diversity loss for expert specialization
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --use-diversity-loss
+```
+
+### Gradient Surgery
+```bash
+# Enable PCGrad for multi-task learning
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --use-gradient-surgery \
+    --gradient-surgery-method pcgrad
+
+# Enable CAGrad for conflict-aware optimization
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --use-gradient-surgery \
+    --gradient-surgery-method cagrad
+```
+
+### Episodic Memory
+```bash
+# Enable continual learning with episodic memory
+python scripts/training/train.py \
+    --config configs/gpu/medium.yaml \
+    --use-episodic-memory \
+    --memory-size 1000 \
+    --replay-ratio 0.3
+```
+
+### Performance Modes
+```bash
+# Ultra-fast mode for rapid prototyping
+python scripts/training/train.py \
+    --config configs/gpu/small.yaml \
+    --ultra-fast-mode
+
+# Express mode for production training
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --express-mode
+
+# Minimal progress mode for long training runs
+python scripts/training/train.py \
+    --config configs/hardware/a100_80gb.yaml \
+    --minimal-progress
 ```
 
 ## Data Preparation
@@ -99,11 +284,13 @@ df[['text']].to_parquet("/project/code/data/pretraining/processed/train_data.par
 
 ### Data Requirements
 
-- **Format**: Parquet files with a 'text' column
-- **Size**: At least 1000 samples recommended
-- **Length**: Texts should be meaningful (>50 tokens)
+- **Format**: Parquet files with a 'text' column or multi-column datasets
+- **Size**: At least 1000 samples recommended (10K+ for enhanced features)
+- **Length**: Texts should be meaningful (>50 tokens, up to 8192 for H100)
 - **Quality**: Clean, deduplicated text
 - **Split**: 90% train, 10% validation
+- **Streaming**: Support for large datasets with streaming data loading
+- **Multi-Column**: Support for complex dataset structures with multiple columns
 
 ## Configuration
 
@@ -127,12 +314,34 @@ training:
 
 ### Configuration Presets
 
-| Config | Use Case | Parameters | Memory | Training Speed |
-|--------|----------|------------|--------|----------------|
-| `cpu/small.yaml` | Testing/Development | 50M | 8GB | Fast |
-| `cpu/medium.yaml` | Small datasets | 200M | 16GB | Medium |
-| `gpu/base.yaml` | Standard training | 500M | 12GB VRAM | Fast |
-| `gpu/large.yaml` | Production | 1.5B | 24GB VRAM | Medium |
+#### GPU Configurations
+| Config | Parameters | VRAM | Features | Use Case |
+|--------|------------|------|----------|----------|
+| `gpu/tiny.yaml` | ~100M | 6-8GB | Basic + Streaming | Entry-level development |
+| `gpu/small.yaml` | ~150M | 8-10GB | MoH + Memory + Quantization | Development & research |
+| `gpu/medium.yaml` | ~300M | 12-16GB | MoH + Cross-attention | Moderate research |
+| `gpu/large.yaml` | ~1.5B | 24GB+ | All features + DeepSpeed | Production training |
+| `gpu/xl.yaml` | ~900M | 22GB+ | Advanced features | Large-scale research |
+| `gpu/1b.yaml` | ~1B | 24GB+ | Full feature set | State-of-the-art |
+
+#### Distributed Configurations
+| Config | ZeRO Stage | Memory Savings | Min GPUs | Use Case |
+|--------|------------|----------------|----------|----------|
+| `distributed/deepspeed_zero1.yaml` | 1 | ~4x optimizer | 2-8 GPUs | Optimizer sharding |
+| `distributed/deepspeed_zero2.yaml` | 2 | ~8x opt+grad | 4-16 GPUs | Large model training |
+| `distributed/deepspeed_zero3.yaml` | 3 | ~64x parameters | 8+ GPUs | Ultra-large models |
+
+#### Research Configurations
+| Config | Focus | Features | Use Case |
+|--------|-------|----------|----------|
+| `research/rag_enabled.yaml` | RAG Research | Retrieval + Cross-attention | Knowledge-grounded generation |
+| `research/quantization_nvfp4.yaml` | Quantization | 4-bit NVFP4 | Memory-efficient deployment |
+
+#### Hardware Configurations
+| Config | Hardware | Memory | Special Features |
+|--------|----------|--------|------------------|
+| `hardware/a100_80gb.yaml` | A100 80GB | 80GB HBM2e | BF16, Tensor Cores, 70GB pool |
+| `hardware/h100_80gb.yaml` | H100 80GB | 80GB HBM3 | FP8, 4th Gen Tensor Cores |
 
 ### Custom Configuration
 
@@ -156,36 +365,56 @@ training:
 ### Resume from Checkpoint
 
 ```bash
+# Resume standard training
 python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+    --config configs/gpu/small.yaml \
     --resume /project/code/outputs/checkpoint_epoch_5.pt
+
+# Resume DeepSpeed training
+deepspeed --num_gpus=4 scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero2.yaml \
+    --use-deepspeed \
+    --resume /project/code/outputs/deepspeed_checkpoint
 ```
 
 ### Multi-Stage Training
 
 ```bash
-# Stage 1: Warm-up with small batches
+# Stage 1: Warm-up with basic features
 python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+    --config configs/gpu/small.yaml \
     --epochs 5 \
     --batch-size 2 \
     --learning-rate 1e-4
 
-# Stage 2: Main training
+# Stage 2: Main training with enhanced features
 python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+    --config configs/gpu/medium.yaml \
     --resume outputs/checkpoint_epoch_5.pt \
     --epochs 10 \
     --batch-size 8 \
-    --learning-rate 5e-4
+    --learning-rate 5e-4 \
+    --use-moh \
+    --use-episodic-memory
 
-# Stage 3: Fine-tuning
-python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+# Stage 3: Advanced training with DeepSpeed
+deepspeed --num_gpus=4 scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero2.yaml \
     --resume outputs/checkpoint_epoch_15.pt \
+    --epochs 15 \
+    --use-deepspeed \
+    --use-rag \
+    --use-advanced-losses
+
+# Stage 4: Fine-tuning with gradient surgery
+python scripts/training/train.py \
+    --config configs/gpu/large.yaml \
+    --resume outputs/checkpoint_epoch_30.pt \
     --epochs 5 \
     --batch-size 4 \
-    --learning-rate 1e-5
+    --learning-rate 1e-5 \
+    --use-gradient-surgery \
+    --gradient-surgery-method cagrad
 ```
 
 ### Curriculum Learning
@@ -232,10 +461,26 @@ watch -n 10 ls -lah /project/code/outputs/
 ### Training Metrics
 
 Track these key metrics:
+
+#### Core Metrics
 - **Loss**: Should decrease over time
 - **Perplexity**: Lower is better (good: <20)
 - **Learning Rate**: Check warmup and decay
 - **Gradient Norm**: Should be stable (<10)
+
+#### Enhanced Metrics
+- **Expert Utilization**: Should be balanced across experts
+- **Memory Usage**: Monitor episodic memory efficiency
+- **RAG Retrieval Accuracy**: Quality of retrieved knowledge
+- **Gradient Surgery Conflicts**: Number of conflicting gradients resolved
+- **Auxiliary Loss Components**: Focal, contrastive, diversity losses
+- **DeepSpeed Memory Savings**: Actual vs. theoretical savings
+
+#### Performance Metrics
+- **Throughput**: Tokens/second with enhanced features
+- **Memory Pool Utilization**: Efficiency of memory management
+- **Expert Load Balance**: Distribution of expert usage
+- **Quantization Efficiency**: Memory reduction with NVFP4
 
 ### Using TensorBoard
 
@@ -267,50 +512,97 @@ logger.info(f"Epoch {epoch}, Loss: {loss:.4f}")
 
 ### Memory Optimization
 
-1. **Gradient Checkpointing** (enabled by default)
+1. **DeepSpeed ZeRO Stages**
+   ```bash
+   # ZeRO-1: Optimizer sharding (~4x memory savings)
+   --use-deepspeed --zero-stage 1
+
+   # ZeRO-2: Optimizer + gradient sharding (~8x memory savings)
+   --use-deepspeed --zero-stage 2
+
+   # ZeRO-3: Full parameter sharding (~64x memory savings)
+   --use-deepspeed --zero-stage 3
+   ```
+
+2. **CPU/NVMe Offloading**
+   ```bash
+   # Offload optimizer states to CPU
+   --use-deepspeed --zero-stage 3 --cpu-offload
+
+   # Offload to NVMe for ultra-large models
+   --use-deepspeed --zero-stage 3 --nvme-offload
+   ```
+
+3. **NVFP4 Quantization**
+   ```bash
+   # 4-bit quantization (4x memory reduction)
+   --use-nvfp4 --bit-width 4
+   ```
+
+4. **Memory Pool Management**
+   ```yaml
+   memory:
+     enable_memory_pool: true
+     pool_size_gb: 20.0
+     clear_cache_frequency: 25
+   ```
+
+5. **Traditional Optimizations**
    ```yaml
    model:
      gradient_checkpointing: true
-   ```
-
-2. **Reduce Batch Size**
-   ```bash
-   --batch-size 1 --gradient-accumulation 16
-   ```
-
-3. **Reduce Sequence Length**
-   ```bash
-   --max-length 256
-   ```
-
-4. **Use Smaller Model**
-   ```bash
-   --config configs/cpu/small.yaml
+   training:
+     batch_size: 1
+     gradient_accumulation_steps: 16
+   data:
+     max_length: 256
    ```
 
 ### Speed Optimization
 
-1. **Increase Batch Size** (if memory allows)
+1. **Performance Modes**
    ```bash
-   --batch-size 16
+   # Ultra-fast mode (3x speed increase)
+   --ultra-fast-mode
+
+   # Express mode (2x speed increase)
+   --express-mode
+
+   # Minimal progress mode (reduce logging overhead)
+   --minimal-progress
    ```
 
-2. **Use Multiple Workers**
+2. **Hardware-Specific Optimizations**
    ```bash
-   --num-workers 8
+   # A100 optimized configuration
+   --config configs/hardware/a100_80gb.yaml --bf16
+
+   # H100 optimized with FP8
+   --config configs/hardware/h100_80gb.yaml --fp8
    ```
 
-3. **Disable Unnecessary Features**
+3. **Compilation and Optimization**
    ```yaml
-   model:
-     use_cache: false  # During training
-     use_memory_efficient_attention: false  # If not needed
+   compilation:
+     enabled: true
+     backend: "inductor"
+     fullgraph: true
+     dynamic: false
    ```
 
-4. **Mixed Precision** (GPU only)
+4. **Streaming Data Loading**
    ```yaml
-   training:
-     mixed_precision: true
+   data_loading:
+     streaming: true
+     buffer_size: 20000
+     distributed: true
+   ```
+
+5. **Traditional Optimizations**
+   ```bash
+   --batch-size 16  # If memory allows
+   --num-workers 16  # More workers for data loading
+   --fp16  # Mixed precision training
    ```
 
 ### Quality Optimization
@@ -346,29 +638,44 @@ logger.info(f"Epoch {epoch}, Loss: {loss:.4f}")
 
 #### Out of Memory (OOM)
 ```bash
-# Solution 1: Reduce batch size
---batch-size 1
+# Solution 1: Use DeepSpeed ZeRO
+--use-deepspeed --zero-stage 3 --cpu-offload
 
-# Solution 2: Enable gradient accumulation
---batch-size 1 --gradient-accumulation 8
+# Solution 2: Enable NVFP4 quantization
+--use-nvfp4 --bit-width 4
 
-# Solution 3: Reduce model size
---config configs/cpu/small.yaml
+# Solution 3: Reduce batch size with gradient accumulation
+--batch-size 1 --gradient-accumulation 16
 
-# Solution 4: Reduce sequence length
---max-length 256
+# Solution 4: Use smaller model configuration
+--config configs/gpu/tiny.yaml
+
+# Solution 5: Reduce sequence length
+--max-length 512
+
+# Solution 6: Enable memory pool management
+# (configured in YAML with enable_memory_pool: true)
 ```
 
 #### Slow Training
 ```bash
-# Solution 1: Check data loading
---num-workers 0  # Test without multiprocessing
+# Solution 1: Enable performance modes
+--ultra-fast-mode  # or --express-mode
 
-# Solution 2: Reduce logging frequency
---log-level WARNING
+# Solution 2: Use hardware-optimized configs
+--config configs/hardware/a100_80gb.yaml
 
-# Solution 3: Use smaller validation set
-# Edit max_val_samples in train.py
+# Solution 3: Enable streaming data loading
+# (configured in YAML with streaming: true)
+
+# Solution 4: Reduce logging and validation frequency
+--log-level WARNING --minimal-progress
+
+# Solution 5: Optimize data loading
+--num-workers 16 --prefetch-factor 4
+
+# Solution 6: Enable compilation (PyTorch 2.0+)
+# (configured in YAML with compilation enabled)
 ```
 
 #### Loss Not Decreasing
@@ -413,16 +720,26 @@ python scripts/training/train.py \
 
 Validate your setup:
 ```python
-# Check data
+# Check data using multi-column loader
 python -c "
-from src.Ava.data import create_dataloaders
+from src.Ava.multi_column_data import create_multi_column_dataloader
 from transformers import AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained('gpt2')
 tokenizer.pad_token = tokenizer.eos_token
-train_loader, val_loader = create_dataloaders(
-    tokenizer=tokenizer,
-    batch_size=1,
-    max_train_samples=10
+
+# Default configuration for simple text data
+config = {
+    'columns': [{'name': 'text', 'type': 'text', 'role': 'input', 'max_length': 512}],
+    'combine_strategy': 'concatenate',
+    'max_samples': 10,
+    'validation_enabled': True
+}
+
+train_loader = create_multi_column_dataloader(
+    config=config, tokenizer=tokenizer, batch_size=1, split='train'
+)
+val_loader = create_multi_column_dataloader(
+    config=config, tokenizer=tokenizer, batch_size=1, split='val'
 )
 print(f'Train batches: {len(train_loader)}')
 print(f'Val batches: {len(val_loader)}')

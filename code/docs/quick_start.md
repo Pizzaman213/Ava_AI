@@ -111,15 +111,31 @@ Then type prompts and see generated text!
 
 ### Training
 ```bash
-# Small model (50M params) - good for testing
-python scripts/training/train.py --config configs/cpu/small.yaml
+# Tiny model (100M params) - entry-level development
+python scripts/training/train.py --config configs/gpu/tiny.yaml
 
-# Medium model (200M params) - better quality
-python scripts/training/train.py --config configs/cpu/medium.yaml
+# Small model (150M params) - development with enhanced features
+python scripts/training/train.py --config configs/gpu/small.yaml --use-moh --use-episodic-memory
+
+# Medium model (300M params) - research with cross-attention
+python scripts/training/train.py --config configs/gpu/medium.yaml --use-moh --use-cross-attention
+
+# Large model (1.5B params) - production with all features
+python scripts/training/train.py --config configs/gpu/large.yaml --use-deepspeed --use-rag
+
+# DeepSpeed multi-GPU training
+deepspeed --num_gpus=4 scripts/training/train.py \
+    --config configs/distributed/deepspeed_zero2.yaml \
+    --use-deepspeed
+
+# Hardware-optimized training (A100)
+python scripts/training/train.py \
+    --config configs/hardware/a100_80gb.yaml \
+    --use-deepspeed --bf16
 
 # Resume from checkpoint
 python scripts/training/train.py \
-    --config configs/cpu/small.yaml \
+    --config configs/gpu/small.yaml \
     --resume /project/code/outputs/checkpoint_epoch_5.pt
 ```
 

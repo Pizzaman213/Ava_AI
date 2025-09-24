@@ -1,0 +1,199 @@
+# H100 80GB Optimized Configuration
+# Hardware-specific config optimized for NVIDIA H100 80GB
+# Maximizes H100's FP8 capabilities, 4th Gen Tensor Cores, and HBM3 memory
+
+model:
+  # Ultra-large architecture for H100 capabilities
+  hidden_size: 1536
+  num_layers: 32
+  num_attention_heads: 24
+  intermediate_size: 6144
+  vocab_size: 50257
+  max_position_embeddings: 8192  # H100 can handle very long sequences
+
+  # MoE Configuration (ultra-aggressive for H100)
+  num_experts: 64
+  num_experts_per_token: 8
+  expert_capacity_factor: 2.5
+  router_type: "gshard"
+
+  # Enhanced Features (all enabled, H100 optimized)
+  use_moh: true
+  use_moa: true
+  use_rag: true
+  use_cross_attention: true
+  num_cross_attention_layers: 8
+  use_episodic_memory: true
+  memory_size: 5000
+
+  # H100-specific optimizations
+  deepspeed_activation_checkpointing: true
+  deepspeed_partition_activations: true
+  deepspeed_moe_param_groups: true
+
+training:
+  batch_size: 6     # Larger batch for H100
+  gradient_accumulation_steps: 8
+  max_gradient_norm: 1.0
+  num_epochs: 3
+  warmup_steps: 5000
+  learning_rate: 4e-5  # Lower for very large model
+  weight_decay: 0.01
+  mixed_precision: "fp8"   # H100's specialty
+  gradient_checkpointing: true
+
+# DeepSpeed (H100 optimized)
+deepspeed:
+  enabled: true
+  zero_stage: 3     # H100 can handle ZeRO-3 better
+  cpu_offload: false
+  nvme_offload: false
+  precision: "fp8"         # H100's key advantage
+  gradient_accumulation_steps: 8
+  train_batch_size: 48
+  micro_batch_size: 6
+  activation_checkpointing: true
+  partition_activations: true
+
+  # H100-specific DeepSpeed settings
+  fp8_enabled: true
+  fp8_margin: 0
+  fp8_interval: 1
+  fp8_amax_history_len: 1024
+  fp8_amax_compute_algo: "max"
+
+# Enhanced Features (H100 can handle maximum complexity)
+enhanced_features:
+  architecture:
+    use_moh: true
+    use_moa: true
+    use_cross_attention: true
+    use_alibi: true
+    expert_routing_type: "gshard"
+
+  rag:
+    enabled: true
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: 20
+    rag_fusion_type: "attention"
+    use_advanced_retrieval: true
+
+  losses:
+    focal_loss: true
+    contrastive_loss: true
+    diversity_loss: true
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+
+  gradient:
+    gradient_surgery: true
+    adaptive_gradient_surgery: true
+    gradient_surgery_method: "cagrad"
+
+  memory:
+    use_episodic_memory: true
+    memory_capacity: 5000
+    memory_selection_strategy: "importance"
+    memory_replay_ratio: 0.4
+
+  quantization:
+    quantization_aware: false  # FP8 is the quantization
+    use_nvfp4: false
+    # Instead use H100's native FP8
+    use_fp8: true
+    fp8_format: "e4m3"
+
+# Data Loading (H100 optimized for throughput)
+data_loading:
+  streaming: true
+  buffer_size: 50000
+  distributed: true
+  multi_column: true
+
+data:
+  data_dir: "data/train"
+  max_length: 8192        # Very long sequences for H100
+  tokenizer_name: "gpt2"
+  train_batch_size: 6
+  eval_batch_size: 12
+  dataloader_num_workers: 24  # H100 can handle high throughput
+
+# Performance (H100 ultra-high performance)
+performance:
+  ultra_fast_mode: false
+  fast_progress: false
+  minimal_progress: true
+  express_mode: false
+  no_sync: false
+
+# Memory (ultra-aggressive utilization of 80GB HBM3)
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 75.0      # Use almost all 80GB
+  gradient_checkpointing: true
+  memory_threshold_gb: 75.0
+  enable_cpu_offload: false
+  clear_cache_frequency: 10  # More frequent for H100 speed
+
+  # H100-specific memory optimizations
+  h100_memory_optimization: true
+  use_memory_efficient_attention: true
+  optimize_for_h100: true
+  use_hbm3_optimization: true
+
+# Compilation (H100 benefits greatly from compilation)
+compilation:
+  enabled: true
+  backend: "inductor"
+  fullgraph: true      # H100 can handle full graph compilation
+  dynamic: false       # Static for maximum performance
+  fp8_compilation: true
+
+# FP8 Training Configuration (H100 specific)
+fp8_training:
+  enabled: true
+  fp8_format: "e4m3"
+  fp8_recipe: "DelayedScaling"
+  fp8_amax_history_len: 1024
+  fp8_amax_compute_algo: "max"
+  fp8_override_linear_precision: false
+
+# Evaluation
+evaluation:
+  eval_during_training: true
+  eval_metrics: "perplexity,bleu,rouge,bertscore,throughput"
+  comprehensive_eval: true
+
+# Output
+output:
+  output_dir: "outputs/h100_80gb"
+  save_total_limit: 1  # Save space for maximum model size
+
+# Run Management
+run_management:
+  experiment_name: "ava-h100-80gb-fp8-optimized"
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-h100-80gb"
+  tags: ["hardware", "h100", "80gb", "fp8", "4th-gen-tensor-cores", "hbm3"]
+  notes: "H100 80GB optimized with FP8, ultra-large model, maximum throughput"
+  group: "h100-optimized"
+
+# Hardware-Specific Settings
+hardware:
+  gpu_type: "H100-SXM5-80GB"
+  tensor_cores: "4th Gen"
+  fp8_support: true
+  memory_type: "HBM3"
+  memory_bandwidth: "3TB/s"
+  nvlink_support: "4th Gen"
+  compute_capability: "9.0"
+
+# Hardware Requirements
+# GPU: NVIDIA H100 80GB (SXM5)
+# Memory: 80GB HBM3
+# Compute Capability: 9.0
+# Tensor Cores: 4th Gen with FP8 support
+# Use case: State-of-the-art training with FP8 precision and maximum throughput

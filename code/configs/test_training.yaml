@@ -1,0 +1,73 @@
+# Minimal Test Configuration for Training Validation
+# Ultra-small settings for quick testing
+
+model:
+  # Tiny model for fast testing
+  hidden_size: 128
+  num_layers: 2
+  num_attention_heads: 4
+  intermediate_size: 256
+  vocab_size: 50257
+  max_position_embeddings: 512
+
+  # Minimal MoE Configuration
+  num_experts: 2
+  num_experts_per_token: 1
+  expert_capacity_factor: 1.0
+  router_type: "switch"
+  router_aux_loss_coef: 0.01
+
+  # Disable advanced features for basic test
+  use_moh: false
+  use_moa: false
+  use_rag: false
+  use_cross_attention: false
+
+training:
+  # Very small batch and quick training
+  batch_size: 2
+  gradient_accumulation_steps: 1
+  max_gradient_norm: 1.0
+
+  # Quick test - just 10 steps
+  num_epochs: 1
+  max_steps: 10
+  warmup_steps: 2
+
+  # Standard learning rate settings
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  lr_scheduler_type: "linear"
+
+  # Basic precision
+  mixed_precision: "fp16"
+  gradient_checkpointing: false
+
+  # Frequent logging for testing
+  eval_strategy: "steps"
+  eval_steps: 5
+  save_strategy: "no"
+  logging_steps: 1
+
+data:
+  # Use available dataset
+  data_dir: "data/tatsu-lab_alpaca"
+  max_length: 512
+  max_train_examples: 20
+  max_eval_examples: 10
+
+  tokenizer_name: "gpt2"
+  padding_side: "right"
+  truncation: true
+
+  train_batch_size: 2
+  eval_batch_size: 2
+  dataloader_drop_last: false
+
+# Hardware
+device: "auto"
+fp16: true
+
+# Disable wandb for test
+wandb:
+  enabled: false

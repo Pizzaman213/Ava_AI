@@ -13,6 +13,17 @@ import numpy as np
 from dataclasses import dataclass
 import math
 
+# TorchAO integration for hardware-accelerated NVFP4
+TORCHAO_AVAILABLE = False
+try:
+    from torchao.quantization import quantize_
+    from torchao.prototype.mx_formats import NVFP4InferenceConfig
+    from torchao.quantization.qat import QATConfig
+    TORCHAO_AVAILABLE = True
+    print("✓ TorchAO available - Hardware-accelerated NVFP4 enabled")
+except ImportError:
+    print("⚠️ TorchAO not available - using custom NVFP4 implementation")
+
 
 @dataclass
 class QuantizationConfig:
@@ -23,6 +34,11 @@ class QuantizationConfig:
     reduce_range: bool = False
     observer_type: str = "histogram"
     calibration_steps: int = 100
+    # NVFP4 specific settings
+    use_nvfp4: bool = False
+    nvfp4_block_size: int = 16
+    stochastic_rounding: bool = False
+    use_hadamard_transform: bool = False
 
 
 class LinearQuantized(nn.Module):
@@ -192,6 +208,113 @@ class LinearQuantized(nn.Module):
         return output
 
 
+class LinearNVFP4(nn.Module):
+    """
+    NVFP4 quantized linear layer for training and inference.
+
+    Supports weight and activation quantization using NVFP4 format
+    with micro-block scaling and stochastic rounding.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        block_size: int = 16,
+        stochastic_rounding: bool = False,
+        use_hadamard_transform: bool = False
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.block_size = block_size
+        self.stochastic_rounding = stochastic_rounding
+        self.use_hadamard_transform = use_hadamard_transform
+
+        # NVFP4 quantizer
+        self.nvfp4_quantizer = NVFP4Quantization(
+            block_size=block_size,
+            stochastic_rounding=stochastic_rounding
+        )
+
+        # Weight parameters
+        self.weight = nn.Parameter(torch.randn(out_features, in_features))
+        if bias:
+            self.bias = nn.Parameter(torch.zeros(out_features))
+        else:
+            self.register_parameter('bias', None)
+
+        # Quantized weight storage
+        self.register_buffer('quantized_weight', torch.zeros(out_features, in_features, dtype=torch.uint8))
+        self.register_buffer('weight_scales', torch.zeros(1, dtype=torch.uint8))
+
+        # Training/inference mode
+        self.training_mode = True
+        self.calibrated = False
+
+    def quantize_weights(self):
+        """Quantize weights to NVFP4 format."""
+        with torch.no_grad():
+            quantized, scales = self.nvfp4_quantizer.quantize_tensor_nvfp4(self.weight)
+            self.quantized_weight.copy_(quantized.to(torch.uint8))
+            self.weight_scales = scales
+            self.calibrated = True
+
+    def dequantize_weights(self) -> torch.Tensor:
+        """Dequantize weights back to float."""
+        if not self.calibrated:
+            return self.weight
+
+        return self.nvfp4_quantizer.dequantize_tensor_nvfp4(
+            self.quantized_weight,
+            self.weight_scales,
+            self.weight.shape
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass with NVFP4 quantization."""
+        # Apply Hadamard transform if enabled
+        if self.use_hadamard_transform:
+            x = self.nvfp4_quantizer.hadamard_transform(x)
+
+        if self.training and self.training_mode:
+            # Training mode: use fake quantization
+            # Quantize and immediately dequantize for gradient flow
+            quantized_weight, _ = self.nvfp4_quantizer.quantize_tensor_nvfp4(self.weight)
+            dequantized_weight = self.nvfp4_quantizer.dequantize_tensor_nvfp4(
+                quantized_weight,
+                torch.zeros(1, dtype=torch.uint8),  # Dummy scales for fake quantization
+                self.weight.shape
+            )
+
+            # Also quantize activations during training
+            if x.requires_grad:
+                quantized_x, _ = self.nvfp4_quantizer.quantize_tensor_nvfp4(x)
+                x = self.nvfp4_quantizer.dequantize_tensor_nvfp4(
+                    quantized_x,
+                    torch.zeros(1, dtype=torch.uint8),
+                    x.shape
+                )
+
+            output = F.linear(x, dequantized_weight, self.bias)
+        else:
+            # Inference mode: use stored quantized weights
+            if self.calibrated:
+                dequantized_weight = self.dequantize_weights()
+            else:
+                dequantized_weight = self.weight
+
+            output = F.linear(x, dequantized_weight, self.bias)
+
+        return output
+
+    def extra_repr(self) -> str:
+        return f'in_features={self.in_features}, out_features={self.out_features}, ' \
+               f'bias={self.bias is not None}, block_size={self.block_size}, ' \
+               f'stochastic_rounding={self.stochastic_rounding}'
+
+
 class QuantizationObserver:
     """
     Observer for collecting statistics during calibration.
@@ -342,20 +465,38 @@ class ModelQuantizer:
             full_name = f"{prefix}.{name}" if prefix else name
 
             if isinstance(module, nn.Linear) and not any(skip in full_name for skip in self.skip_layers):
-                # Replace with quantized linear layer
-                quantized_layer = LinearQuantized(
-                    module.in_features,
-                    module.out_features,
-                    bias=(module.bias is not None),
-                    bit_width=self.config.bit_width,
-                    symmetric=self.config.symmetric,
-                    per_channel=self.config.per_channel
-                )
+                # Choose quantization type based on config
+                if self.config.use_nvfp4:
+                    # Replace with NVFP4 quantized linear layer
+                    quantized_layer = LinearNVFP4(
+                        module.in_features,
+                        module.out_features,
+                        bias=(module.bias is not None),
+                        block_size=self.config.nvfp4_block_size,
+                        stochastic_rounding=self.config.stochastic_rounding,
+                        use_hadamard_transform=self.config.use_hadamard_transform
+                    )
 
-                # Copy original weights for calibration
-                quantized_layer.quantize_weight(module.weight.data)
-                if module.bias is not None:
-                    quantized_layer.quantized_bias.copy_(module.bias.data.round().int())
+                    # Copy original weights
+                    quantized_layer.weight.data.copy_(module.weight.data)
+                    if module.bias is not None:
+                        quantized_layer.bias.data.copy_(module.bias.data)
+
+                else:
+                    # Replace with traditional quantized linear layer
+                    quantized_layer = LinearQuantized(
+                        module.in_features,
+                        module.out_features,
+                        bias=(module.bias is not None),
+                        bit_width=self.config.bit_width,
+                        symmetric=self.config.symmetric,
+                        per_channel=self.config.per_channel
+                    )
+
+                    # Copy original weights for calibration
+                    quantized_layer.quantize_weight(module.weight.data)
+                    if module.bias is not None:
+                        quantized_layer.quantized_bias.copy_(module.bias.data.round().int())
 
                 setattr(quantized_model, name, quantized_layer)
 
@@ -526,6 +667,278 @@ class DynamicQuantization:
             {nn.Linear},
             dtype=torch.qint8 if self.bit_width == 8 else torch.quint8
         )
+
+        return quantized_model
+
+
+class NVFP4Quantization:
+    """
+    NVIDIA NVFP4 4-bit floating-point quantization for training and inference.
+
+    Implements NVFP4 format with micro-block scaling (16-element blocks),
+    E4M3 scale factors, and stochastic rounding for training.
+    """
+
+    def __init__(self, block_size: int = 16, stochastic_rounding: bool = False):
+        self.block_size = block_size
+        self.stochastic_rounding = stochastic_rounding
+
+        # NVFP4 format: E2M1 (2 exponent bits, 1 mantissa bit)
+        self.exponent_bits = 2
+        self.mantissa_bits = 1
+        self.bias = 1  # 2^(exp_bits-1) - 1
+
+        # E4M3 scale format for higher precision scaling
+        self.scale_exp_bits = 4
+        self.scale_mantissa_bits = 3
+        self.scale_bias = 7  # 2^(4-1) - 1
+
+    def hadamard_transform(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply Hadamard transform to reshape tensor distributions."""
+        # Simplified 2x2 Hadamard transform for demonstration
+        # In practice, use larger matrices for better distribution reshaping
+        original_shape = x.shape
+        if x.numel() % 2 != 0:
+            # Pad for even number of elements
+            x = F.pad(x.flatten(), (0, 1))
+
+        x_reshaped = x.view(-1, 2)
+        # 2x2 Hadamard matrix: [[1, 1], [1, -1]] / sqrt(2)
+        h_matrix = torch.tensor([[1.0, 1.0], [1.0, -1.0]], device=x.device) / math.sqrt(2)
+        transformed = torch.matmul(x_reshaped, h_matrix.T)
+
+        # Reshape back and trim padding if needed
+        result = transformed.flatten()[:torch.numel(torch.zeros(original_shape))]
+        return result.view(original_shape)
+
+    def encode_fp4_e2m1(self, value: float) -> int:
+        """Encode a float value to NVFP4 E2M1 format (4 bits)."""
+        if value == 0.0:
+            return 0
+
+        # Handle special cases
+        if math.isnan(value) or math.isinf(value):
+            return 0  # Map to zero for stability
+
+        sign = 0 if value >= 0 else 1
+        abs_value = abs(value)
+
+        # Find the best exponent and mantissa representation
+        best_encoded = 0
+        best_error = float('inf')
+
+        # Try all possible 4-bit encodings (16 values)
+        for encoded in range(16):
+            decoded = self.decode_fp4_e2m1(encoded)
+            error = abs(abs_value - abs(decoded))
+            if error < best_error:
+                best_error = error
+                best_encoded = encoded
+
+        return best_encoded
+
+    def decode_fp4_e2m1(self, encoded: int) -> float:
+        """Decode NVFP4 E2M1 4-bit value to float."""
+        if encoded == 0:
+            return 0.0
+
+        # Extract bits: SEEE (sign + 3 value bits for E2M1)
+        sign = (encoded >> 3) & 1
+        exp_mant = encoded & 0x7  # 3 bits for exponent and mantissa
+
+        if exp_mant == 0:
+            return 0.0
+
+        # Simple mapping for E2M1 format
+        # Values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0
+        value_map = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
+        value = value_map[min(exp_mant, len(value_map) - 1)]
+
+        return -value if sign else value
+
+    def encode_e4m3_scale(self, scale: float) -> int:
+        """Encode scale factor in E4M3 format (8 bits)."""
+        if scale <= 0:
+            return 0
+
+        # Find closest E4M3 representation
+        log_scale = math.log2(scale)
+        exp = max(0, min(15, int(log_scale) + self.scale_bias))  # 4-bit exponent
+
+        # Extract mantissa
+        mantissa_val = scale / (2.0 ** (exp - self.scale_bias))
+        mantissa = int((mantissa_val - 1.0) * 8) if mantissa_val >= 1.0 else 0
+        mantissa = max(0, min(7, mantissa))  # 3-bit mantissa
+
+        return (exp << 3) | mantissa
+
+    def decode_e4m3_scale(self, encoded: int) -> float:
+        """Decode E4M3 scale factor to float."""
+        if encoded == 0:
+            return 0.0
+
+        exp = (encoded >> 3) & 0xF  # 4 bits
+        mantissa = encoded & 0x7   # 3 bits
+
+        # Decode E4M3: value = (1 + mantissa/8) * 2^(exp - bias)
+        mantissa_val = 1.0 + mantissa / 8.0
+        scale = mantissa_val * (2.0 ** (exp - self.scale_bias))
+
+        return scale
+
+    def stochastic_round(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply stochastic rounding to reduce bias."""
+        if not self.stochastic_rounding:
+            return torch.round(x)
+
+        # Stochastic rounding: probability proportional to fractional part
+        floor_x = torch.floor(x)
+        frac_x = x - floor_x
+
+        # Generate random values
+        random_vals = torch.rand_like(frac_x)
+
+        # Round up where random value < fractional part
+        return floor_x + (random_vals < frac_x).float()
+
+    def quantize_tensor_nvfp4(self, tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Quantize tensor to NVFP4 format with micro-block scaling.
+
+        Returns:
+            Tuple of (quantized_values, scale_factors)
+        """
+        original_shape = tensor.shape
+        tensor_flat = tensor.flatten()
+
+        # Pad to multiple of block_size
+        pad_size = (self.block_size - (tensor_flat.numel() % self.block_size)) % self.block_size
+        if pad_size > 0:
+            tensor_flat = F.pad(tensor_flat, (0, pad_size))
+
+        # Reshape to blocks
+        tensor_blocks = tensor_flat.view(-1, self.block_size)
+        num_blocks = tensor_blocks.size(0)
+
+        # Compute scale factors per block (E4M3 precision)
+        block_max = torch.max(torch.abs(tensor_blocks), dim=1)[0]
+        # Scale to utilize full NVFP4 range (max value ~6.0)
+        scale_factors = block_max / 6.0
+        scale_factors = torch.clamp(scale_factors, min=1e-7)  # Avoid zeros
+
+        # Quantize each block
+        quantized_blocks = torch.zeros_like(tensor_blocks, dtype=torch.uint8)
+
+        for i in range(num_blocks):
+            block = tensor_blocks[i]
+            scale = scale_factors[i]
+
+            # Normalize by scale factor
+            normalized_block = block / scale
+
+            # Apply stochastic rounding if enabled
+            normalized_block = self.stochastic_round(normalized_block)
+
+            # Encode to 4-bit NVFP4
+            for j in range(self.block_size):
+                val = normalized_block[j].item()
+                encoded = self.encode_fp4_e2m1(val)
+                quantized_blocks[i, j] = encoded
+
+        # Encode scale factors to E4M3
+        encoded_scales = torch.zeros(num_blocks, dtype=torch.uint8)
+        for i in range(num_blocks):
+            encoded_scales[i] = self.encode_e4m3_scale(scale_factors[i].item())
+
+        # Trim back to original size
+        quantized_flat = quantized_blocks.flatten()[:tensor.numel()]
+
+        return quantized_flat.view(original_shape), encoded_scales
+
+    def dequantize_tensor_nvfp4(
+        self,
+        quantized: torch.Tensor,
+        encoded_scales: torch.Tensor,
+        original_shape: torch.Size
+    ) -> torch.Tensor:
+        """Dequantize NVFP4 tensor back to float."""
+        quantized_flat = quantized.flatten()
+
+        # Pad to multiple of block_size
+        pad_size = (self.block_size - (quantized_flat.numel() % self.block_size)) % self.block_size
+        if pad_size > 0:
+            quantized_flat = F.pad(quantized_flat, (0, pad_size))
+
+        quantized_blocks = quantized_flat.view(-1, self.block_size)
+        num_blocks = quantized_blocks.size(0)
+
+        # Decode scale factors from E4M3
+        scale_factors = torch.zeros(num_blocks, device=quantized.device)
+        for i in range(len(encoded_scales)):
+            scale_factors[i] = self.decode_e4m3_scale(encoded_scales[i].item())
+
+        # Dequantize each block
+        dequantized_blocks = torch.zeros_like(quantized_blocks, dtype=torch.float32)
+
+        for i in range(num_blocks):
+            scale = scale_factors[i]
+
+            for j in range(self.block_size):
+                encoded_val = quantized_blocks[i, j].item()
+                decoded_val = self.decode_fp4_e2m1(encoded_val)
+                dequantized_blocks[i, j] = decoded_val * scale
+
+        # Reshape and trim back to original size
+        dequantized_flat = dequantized_blocks.flatten()[:torch.numel(torch.zeros(original_shape))]
+        return dequantized_flat.view(original_shape)
+
+
+class TorchAONVFP4Wrapper:
+    """
+    Wrapper for TorchAO NVFP4 implementation.
+
+    Provides hardware-accelerated NVFP4 training and inference
+    when TorchAO is available.
+    """
+
+    def __init__(self, use_qat: bool = True):
+        if not TORCHAO_AVAILABLE:
+            raise ImportError("TorchAO is not available. Install with: pip install torchao")
+
+        self.use_qat = use_qat
+        self.base_config = NVFP4InferenceConfig()
+
+        if use_qat:
+            self.qat_config_prepare = QATConfig(self.base_config, step="prepare")
+            self.qat_config_convert = QATConfig(self.base_config, step="convert")
+
+    def prepare_model_for_training(self, model: nn.Module) -> nn.Module:
+        """Prepare model for NVFP4 quantization-aware training."""
+        if not self.use_qat:
+            raise ValueError("QAT not enabled for this wrapper")
+
+        print("🔄 Preparing model for NVFP4 training with TorchAO...")
+        quantized_model = quantize_(model, self.qat_config_prepare)
+        print("✅ Model prepared for NVFP4 training")
+
+        return quantized_model
+
+    def convert_model_after_training(self, model: nn.Module) -> nn.Module:
+        """Convert model to final NVFP4 format after training."""
+        if not self.use_qat:
+            raise ValueError("QAT not enabled for this wrapper")
+
+        print("🔄 Converting model to final NVFP4 format...")
+        final_model = quantize_(model, self.qat_config_convert)
+        print("✅ Model converted to NVFP4 format")
+
+        return final_model
+
+    def quantize_model_for_inference(self, model: nn.Module) -> nn.Module:
+        """Quantize model directly for NVFP4 inference."""
+        print("🔄 Quantizing model for NVFP4 inference...")
+        quantized_model = quantize_(model, self.base_config)
+        print("✅ Model quantized for NVFP4 inference")
 
         return quantized_model
 
