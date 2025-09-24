@@ -1,0 +1,1 @@
+{"schema":"v1","records":[{"type":"ENVIRONMENT","operation":"CREATED","data":[{"data":"Added packages through apt package manager:  openmpi-bin, openmpi-common, libopenmpi-dev","mime":"text/plain"}],"important":null}]}
