@@ -1,0 +1,152 @@
+# RAG (Retrieval Augmented Generation) Research Configuration
+# Specialized config for testing and optimizing RAG system
+# Focus on retrieval-augmented training and inference
+
+model:
+  # Optimized architecture for RAG
+  hidden_size: 768
+  num_layers: 16
+  num_attention_heads: 12
+  intermediate_size: 3072
+  vocab_size: 50257
+  max_position_embeddings: 2048
+
+  # MoE Configuration (moderate for RAG focus)
+  num_experts: 16
+  num_experts_per_token: 2
+  expert_capacity_factor: 1.0
+  router_type: "switch"
+
+  # RAG-focused features
+  use_moh: false
+  use_moa: false
+  use_rag: true              # Primary focus
+  use_cross_attention: true  # Essential for RAG
+  num_cross_attention_layers: 6  # More cross-attention for retrieval
+  use_episodic_memory: false
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  max_gradient_norm: 1.0
+  num_epochs: 8
+  warmup_steps: 1500
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  mixed_precision: "bf16"
+
+# Enhanced Features (RAG-focused)
+enhanced_features:
+  architecture:
+    use_moh: false
+    use_moa: false
+    use_cross_attention: true
+    expert_routing_type: "switch"
+
+  # RAG System (fully configured)
+  rag:
+    enabled: true
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: 10        # More retrieval for research
+    rag_fusion_type: "attention"   # Advanced fusion
+    encoder_dim: 768
+    retrieval_dim: 256
+    use_faiss_index: true
+    faiss_index_type: "IVF"
+    retrieval_batch_size: 64
+    similarity_threshold: 0.7
+    rerank_retrieved: true
+
+  # Losses optimized for RAG
+  losses:
+    focal_loss: false
+    contrastive_loss: true     # Good for retrieval
+    diversity_loss: false
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+    # RAG-specific losses
+    retrieval_loss_weight: 0.1
+    generation_loss_weight: 0.9
+
+  # Other features (minimal to focus on RAG)
+  gradient:
+    gradient_surgery: false
+    adaptive_gradient_surgery: false
+
+  memory:
+    use_episodic_memory: false
+
+  quantization:
+    quantization_aware: false
+    use_nvfp4: false
+
+# Data Loading (RAG-optimized)
+data_loading:
+  streaming: true
+  buffer_size: 5000
+  distributed: false
+  multi_column: true     # Good for retrieval datasets
+
+  # RAG-specific data settings
+  include_retrieval_targets: true
+  retrieval_corpus_path: "data/retrieval_corpus"
+
+data:
+  data_dir: "data/rag_train"
+  max_length: 2048
+  tokenizer_name: "gpt2"
+  train_batch_size: 4
+  eval_batch_size: 8
+
+# Performance (research-focused)
+performance:
+  ultra_fast_mode: false
+  fast_progress: true
+  minimal_progress: false
+  express_mode: true
+  no_sync: false
+
+# Memory settings
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 12.0
+  gradient_checkpointing: true
+  memory_threshold_gb: 12.0
+  clear_cache_frequency: 100
+
+# Evaluation (RAG-specific metrics)
+evaluation:
+  eval_during_training: true
+  eval_metrics: "perplexity,bleu,rouge,retrieval_accuracy,retrieval_recall"
+  comprehensive_eval: true
+
+  # RAG-specific evaluation
+  eval_retrieval_quality: true
+  eval_generation_quality: true
+  eval_faithfulness: true
+
+# Output
+output:
+  output_dir: "outputs/rag_research"
+  save_total_limit: 5
+  save_retrieval_examples: true
+
+# Run Management
+run_management:
+  experiment_name: "ava-rag-research"
+  run_id: null
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-rag-research"
+  tags: ["research", "rag", "retrieval", "cross-attention", "knowledge-base"]
+  notes: "RAG system research with optimized retrieval and cross-attention"
+  group: "rag-research"
+  job_type: "research"
+
+# Hardware Requirements
+# VRAM: 16GB+ for model + retrieval index
+# RAM: 32GB+ for knowledge base and retrieval corpus
+# Storage: Fast SSD for knowledge base and retrieval corpus
+# Use case: RAG system research, retrieval-augmented training

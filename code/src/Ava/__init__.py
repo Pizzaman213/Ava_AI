@@ -88,6 +88,15 @@ from .memory import (
     AdaptiveMemoryManager, ExperienceReplay
 )
 
+# Configuration Management
+from .config import (
+    EnhancedTrainingConfig, TrainingConfigManager,
+    ArchitectureConfig, RAGConfig, LossConfig, GradientConfig,
+    EvaluationConfig, QuantizationConfig, EpisodicMemoryConfig,
+    DataConfig, MultiColumnDataConfig, TrainingConfig,
+    OutputConfig, RunManagementConfig, WandBConfig, PerformanceConfig
+)
+
 # Serving
 from .serving.fastapi_server import LLMServer
 
@@ -210,6 +219,24 @@ __all__ = [
     "MemoryRetriever",
     "AdaptiveMemoryManager",
     "ExperienceReplay",
+
+    # Configuration Management
+    "EnhancedTrainingConfig",
+    "TrainingConfigManager",
+    "ArchitectureConfig",
+    "RAGConfig",
+    "LossConfig",
+    "GradientConfig",
+    "EvaluationConfig",
+    "QuantizationConfig",
+    "EpisodicMemoryConfig",
+    "DataConfig",
+    "MultiColumnDataConfig",
+    "TrainingConfig",
+    "OutputConfig",
+    "RunManagementConfig",
+    "WandBConfig",
+    "PerformanceConfig",
 
     # Serving
     "LLMServer",

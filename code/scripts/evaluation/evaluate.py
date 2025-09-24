@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.append('/project/code')
 
 from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
-from src.Ava.data import create_dataloaders
+from src.Ava.multi_column_data import create_multi_column_dataloader
 from src.Ava.evaluation import ModelEvaluator, PerplexityEvaluator
 from src.Ava.utils import setup_logging, load_checkpoint
 from transformers import AutoTokenizer
@@ -127,15 +127,25 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained('gpt2')
     tokenizer.pad_token = tokenizer.eos_token
 
-    # Create dataloaders
+    # Create dataloaders using multi-column loader
     logger.info(f"Loading validation data from {args.data_dir}")
-    _, val_loader = create_dataloaders(
+    default_config = {
+        'columns': [
+            {'name': 'text', 'type': 'text', 'role': 'input', 'max_length': args.max_length}
+        ],
+        'combine_strategy': 'concatenate',
+        'max_samples': args.max_batches * args.batch_size if args.max_batches else None,
+        'validation_enabled': True
+    }
+
+    val_loader = create_multi_column_dataloader(
+        config=default_config,
         tokenizer=tokenizer,
         batch_size=args.batch_size,
-        max_length=args.max_length,
         data_dir=args.data_dir,
-        num_workers=4,
-        max_val_samples=args.max_batches * args.batch_size if args.max_batches else None
+        split='val',
+        streaming=False,
+        num_workers=0
     )
 
     # Initialize evaluator

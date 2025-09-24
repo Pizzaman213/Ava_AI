@@ -2,7 +2,7 @@
 
 ## EnhancedMoEModel
 
-Main model class implementing the MoE++ architecture.
+Main model class implementing the MoE++ architecture with DeepSpeed integration and enhanced features.
 
 ```python
 from src.Ava.models import EnhancedMoEModel, EnhancedMoEConfig

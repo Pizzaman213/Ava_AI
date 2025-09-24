@@ -1,19 +1,19 @@
-# GPU Small Configuration - Enhanced
-# Small-scale GPU training configuration for Ava MoE++
-# Target: ~150M parameters, 8GB+ VRAM, RTX 2070/RTX 3050/RX 6600
-# Optimized for: Small GPU experiments and development with enhanced features
+# GPU Tiny Configuration - Enhanced
+# Entry-level GPU training configuration for Ava MoE++
+# Target: ~100M parameters, 6GB+ VRAM, RTX 2060/GTX 1060 6GB
+# Optimized for: Entry-level GPU training and experimentation with enhanced features
 
 model:
-  # Core Architecture
-  hidden_size: 576
-  num_layers: 12
-  num_attention_heads: 9
-  intermediate_size: 2304
+  # Core Architecture - 100M Parameter Target
+  hidden_size: 384
+  num_layers: 8
+  num_attention_heads: 6
+  intermediate_size: 1536
   vocab_size: 50257
   max_position_embeddings: 1024
 
-  # MoE Configuration
-  num_experts: 10
+  # MoE Configuration - Reduced for 100M params
+  num_experts: 4
   num_experts_per_token: 2
   expert_capacity_factor: 1.0
   router_type: "switch"
@@ -31,32 +31,31 @@ model:
   initializer_range: 0.02
   hidden_act: "gelu"
 
-  # Enhanced Features (some enabled for small model)
-  use_moh: true   # Enable MoH for small model
-  use_moa: false  # Keep MoA disabled for memory
+  # Enhanced Features (basic features for tiny model)
+  use_moh: false
+  use_moa: false
   use_rag: false
   use_cross_attention: false
-  use_episodic_memory: true
-  memory_size: 500
+  use_episodic_memory: false
 
   # DeepSpeed compatibility
-  deepspeed_activation_checkpointing: true
+  deepspeed_activation_checkpointing: false
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
 
 training:
-  # Batch Configuration
-  batch_size: 6
-  gradient_accumulation_steps: 6
+  # Batch Configuration - Optimized for 100M model
+  batch_size: 4
+  gradient_accumulation_steps: 2
   max_gradient_norm: 1.0
 
   # Training Duration
-  num_epochs: 12
+  num_epochs: 15
   max_steps: -1
-  warmup_steps: 900
+  warmup_steps: 800
 
   # Learning Rate & Optimizer
-  learning_rate: 2.5e-4
+  learning_rate: 3e-4
   weight_decay: 0.01
   beta1: 0.9
   beta2: 0.95
@@ -70,13 +69,13 @@ training:
 
   # Evaluation & Logging
   eval_strategy: "steps"
-  eval_steps: 750
+  eval_steps: 1000
   save_strategy: "steps"
-  save_steps: 1500
-  logging_steps: 75
+  save_steps: 2000
+  logging_steps: 100
 
   # Early Stopping
-  early_stopping_patience: 4
+  early_stopping_patience: 5
   early_stopping_threshold: 0.01
 
 data:
@@ -92,82 +91,77 @@ data:
   truncation: true
 
   # Data Loading
-  train_batch_size: 6
-  eval_batch_size: 12
+  train_batch_size: 8
+  eval_batch_size: 16
   dataloader_drop_last: true
   dataloader_pin_memory: true
 
 # Enhanced Configuration Sections
 
-# DeepSpeed Configuration (basic ZeRO for small model)
+# DeepSpeed Configuration (disabled for tiny model)
 deepspeed:
-  enabled: false  # Can enable for multi-GPU
-  zero_stage: 1   # ZeRO-1 for optimizer sharding
+  enabled: false
+  zero_stage: 0
   cpu_offload: false
   nvme_offload: false
   precision: "fp16"
-  gradient_accumulation_steps: 6
-  train_batch_size: 36  # 6 * 6
-  micro_batch_size: 6
-  activation_checkpointing: true
+  gradient_accumulation_steps: 4
+  train_batch_size: 32  # 8 * 4
+  micro_batch_size: 8
 
 # Enhanced Features Configuration
 enhanced_features:
-  # Architecture enhancements (moderate for small)
+  # Architecture enhancements (minimal for tiny)
   architecture:
-    use_moh: true        # Mixture of Heads enabled
-    use_moa: false       # Keep disabled for memory
+    use_moh: false
+    use_moa: false
     use_cross_attention: false
     use_alibi: false
     expert_routing_type: "switch"
 
-  # RAG System (disabled for small)
+  # RAG System (disabled for tiny)
   rag:
     enabled: false
     knowledge_base_path: null
     max_retrieved_docs: 5
     rag_fusion_type: "concatenate"
 
-  # Advanced Loss Functions (more enabled for small)
+  # Advanced Loss Functions (basic for tiny)
   losses:
-    focal_loss: true     # Enable focal loss
+    focal_loss: false
     contrastive_loss: false
-    diversity_loss: true
+    diversity_loss: true  # Helps with expert utilization
     auxiliary_loss: true
-    adaptive_loss_scaling: true
+    adaptive_loss_scaling: false
 
-  # Gradient Surgery (basic for small)
+  # Gradient Surgery (disabled for tiny)
   gradient:
-    gradient_surgery: true
+    gradient_surgery: false
     adaptive_gradient_surgery: false
     gradient_surgery_method: "pcgrad"
 
-  # Episodic Memory (enabled for small)
+  # Episodic Memory (disabled for tiny)
   memory:
-    use_episodic_memory: true
+    use_episodic_memory: false
     memory_capacity: 500
     memory_selection_strategy: "importance"
     memory_importance_threshold: 0.7
     memory_adaptation_rate: 0.01
-    memory_performance_window: 100
-    memory_replay_ratio: 0.1
-    memory_replay_strategy: "importance"
 
-  # Quantization (enable for memory efficiency)
+  # Quantization (basic options for memory efficiency)
   quantization:
-    quantization_aware: true
+    quantization_aware: false
     use_nvfp4: false
     bit_width: 8
     nvfp4_block_size: 64
-    stochastic_rounding: true
-    use_hadamard_transform: false
+    stochastic_rounding: false
 
 # Data Loading Configuration
 data_loading:
-  # Streaming data (good for development)
+  # Streaming data (good for limited VRAM)
   streaming: true
-  buffer_size: 1000
-  max_samples: 100000
+  buffer_size: 500
+  max_samples: 50000
 
   # Multi-column data
   multi_column: false
@@ -178,38 +172,38 @@ data_loading:
 
 # Performance Configuration
 performance:
-  # Performance modes (balanced for development)
+  # Performance modes (fast for development)
   ultra_fast_mode: false
   fast_progress: true
   minimal_progress: false
-  express_mode: true  # Good for development
+  express_mode: false
   no_sync: false
 
 # Memory Optimization
 memory:
-  # Memory optimizer settings
+  # A100 memory optimizer settings
   enable_memory_pool: true
-  pool_size_gb: 6.0
-  gradient_checkpointing: true
-  memory_threshold_gb: 6.0
+  pool_size_gb: null  # Auto-detect
+  gradient_checkpointing: false
+  memory_threshold_gb: 4.0  # Conservative for 6GB GPUs
   enable_cpu_offload: false
-  clear_cache_frequency: 100
+  clear_cache_frequency: 200
 
 # Evaluation Configuration
 evaluation:
   eval_during_training: true
-  eval_metrics: "perplexity,bleu"
+  eval_metrics: "perplexity"
   comprehensive_eval: false
 
 # Output Configuration
 output:
-  output_dir: "outputs/small"
-  save_total_limit: 5
+  output_dir: "outputs/tiny"
+  save_total_limit: 3
   save_on_each_node: false
 
 # Run Management
 run_management:
-  experiment_name: "ava-small-enhanced"
+  experiment_name: "ava-tiny-enhanced"
   run_id: null
   resume_from_checkpoint: null
 
@@ -221,18 +215,18 @@ bf16: false
 # Monitoring (Enhanced)
 wandb:
   enabled: true
-  project: "ava-moe-gpu-small-enhanced"
-  tags: ["gpu", "small", "150M", "development", "enhanced", "moh", "episodic-memory"]
+  project: "ava-moe-gpu-tiny-enhanced"
+  tags: ["gpu", "tiny", "100M", "entry-level", "enhanced"]
   entity: null
   name: null
-  notes: "Enhanced small model with MoH, episodic memory, and advanced losses"
-  group: "small-models"
+  notes: "Enhanced tiny model with streaming data and basic optimizations"
+  group: "tiny-models"
   job_type: "train"
   offline: false
-  cache_size: 2000
-  cache_flush_interval: 50
+  cache_size: 1000
+  cache_flush_interval: 100
 
 # Hardware Requirements
-# VRAM: 8GB minimum, 10GB recommended
-# Compatible GPUs: RTX 2070, RTX 3060, RTX 3050 8GB, RX 6600 XT
-# Features: MoH, episodic memory, focal loss, gradient surgery, quantization
+# VRAM: 6GB minimum, 8GB recommended
+# Compatible GPUs: RTX 2060, GTX 1060 6GB, RTX 3050, RX 580 8GB
+# Features: Streaming data loading, basic loss functions, memory optimization

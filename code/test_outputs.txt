@@ -1,0 +1,15 @@
+Prompt: The meaning of life is
+Response: 
+--------------------------------------------------
+Prompt: In the beginning there was
+Response:  of
+--------------------------------------------------
+Prompt: Artificial intelligence will
+Response: :, a a's to
+--------------------------------------------------
+Prompt: The best way to learn programming is
+Response: � that's on the of a.
+--------------------------------------------------
+Prompt: Today's weather forecast shows
+Response: .
+--------------------------------------------------

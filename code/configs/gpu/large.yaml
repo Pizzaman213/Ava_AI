@@ -1,83 +1,264 @@
-# ============================================================
-# AVA MOE++ LARGE GPU CONFIGURATION
-# ============================================================
-# Model Size: ~1.5B parameters
-# Hardware: 1x GPU with 24GB+ VRAM (RTX 3090, RTX 4090, A100)
-# Use Case: Large-scale training, high-quality generation
-# ============================================================
+# GPU Large Configuration - Enhanced with DeepSpeed
+# Large-scale GPU training configuration for Ava MoE++
+# Target: ~1.5B parameters, 24GB+ VRAM, RTX 3090+ GPU
+# Optimized for: Large-scale training, production models, and DeepSpeed distributed training
 
-# Model Architecture
 model:
-  # Core dimensions
-  hidden_size: 1536
+  # Core Architecture
+  hidden_size: 1024
   num_layers: 24
-  num_attention_heads: 24
-  ffn_hidden_size: 6144
+  num_attention_heads: 16
+  intermediate_size: 4096
   vocab_size: 50257
-  max_position_embeddings: 4096
+  max_position_embeddings: 2048
 
-  # MoE configuration
+  # MoE Configuration
   num_experts: 32
-  top_k_experts: 4
-  expert_capacity: 1.25
+  num_experts_per_token: 4
+  expert_capacity_factor: 1.5
+  router_type: "switch"
+  router_aux_loss_coef: 0.01
+  router_jitter_noise: 0.01
+
+  # Attention & Position Encoding
+  use_cache: true
+  rope_theta: 10000.0
+  attention_dropout: 0.05
+  hidden_dropout: 0.05
 
   # Regularization
-  dropout_rate: 0.1
-  attention_dropout: 0.1
-  # expert_dropout: 0.1
+  layer_norm_eps: 1e-5
+  initializer_range: 0.02
+  hidden_act: "gelu"
 
-  # MoE features
-  use_expert_balancing: true
-  use_adaptive_routing: true
-  temperature: 1.0
-  confidence_threshold: 0.5
-  sinkhorn_iterations: 10
-  aux_loss_weight: 0.01
-  layer_norm_epsilon: 1.0e-5
+  # Enhanced Features (fully enabled for large model)
+  use_moh: true
+  use_moa: true
+  use_rag: true              # Enable RAG for large model
+  use_cross_attention: true
+  num_cross_attention_layers: 4
+  use_episodic_memory: true
+  memory_size: 2000
 
-# Training Configuration
+  # DeepSpeed compatibility (full support)
+  deepspeed_activation_checkpointing: true
+  deepspeed_partition_activations: true
+  deepspeed_moe_param_groups: true
+
 training:
-  # Batch settings
-  batch_size: 4
-  gradient_accumulation_steps: 8
+  # Batch Configuration
+  batch_size: 2
+  gradient_accumulation_steps: 16
+  max_gradient_norm: 1.0
 
-  # Training duration
-  num_epochs: 50
+  # Training Duration
+  num_epochs: 5
+  max_steps: -1
+  warmup_steps: 2000
 
-  # Optimizer
-  learning_rate: 1.0e-4
+  # Learning Rate & Optimizer
+  learning_rate: 1e-4
   weight_decay: 0.01
-  adam_beta1: 0.9
-  adam_beta2: 0.95
-  adam_epsilon: 1.0e-8
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-8
+  lr_scheduler_type: "cosine"
 
-  # Learning rate schedule
-  lr_scheduler_type: cosine_with_restarts
-  warmup_steps: 1000              # Extended warmup              # Extended warmup0
+  # Mixed Precision & Performance
+  mixed_precision: "bf16"
+  dataloader_num_workers: 8
+  gradient_checkpointing: true
 
-  # Gradient management
-  max_grad_norm: 0.5
-
-  # Checkpointing
-  eval_steps: 250
+  # Evaluation & Logging
+  eval_strategy: "steps"
+  eval_steps: 200
+  save_strategy: "steps"
   save_steps: 500
-  logging_steps: 5
+  logging_steps: 25
 
-# Data Configuration
+  # Early Stopping
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.005
+
+  # Advanced Training Features
+  use_ema: true
+  ema_decay: 0.999
+  label_smoothing: 0.1
+
 data:
-  data_dir: /project/code/data/processed
-  max_length: 4096
-  num_workers: 8
+  # Dataset Configuration
+  data_dir: "data/train"
+  max_length: 2048
+  max_train_examples: -1
+  max_eval_examples: 2000
+
+  # Preprocessing
+  tokenizer_name: "gpt2"
+  padding_side: "right"
+  truncation: true
+
+  # Data Loading
+  train_batch_size: 2
+  eval_batch_size: 4
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+
+# Hardware Configuration
+device: "auto"
+fp16: false
+bf16: true
+
+# Memory Optimization
+gradient_checkpointing: true
+use_cpu_offload: false
+pin_memory: true
+
+# Monitoring (Enhanced)
+wandb:
+  enabled: true
+  project: "ava-moe-gpu-large-enhanced"
+  tags: ["gpu", "large", "1.5B", "production", "enhanced", "deepspeed", "rag", "nvfp4"]
+  entity: null
+  name: null
+  notes: "Enhanced large model with DeepSpeed, RAG, all advanced features, NVFP4 quantization"
+  group: "large-models"
+  job_type: "train"
+  offline: false
+  cache_size: 2000
+  cache_flush_interval: 25
+
+# Hardware Requirements (Updated)
+# VRAM: 24GB minimum, 40GB+ recommended for full features
+# Compatible GPUs: RTX 3090, RTX 4090, A6000, A100 40GB/80GB, H100
+# Features: DeepSpeed ZeRO-2, RAG, MoH+MoA, episodic memory, NVFP4, all losses
+
+# Advanced Features
+compilation:
+  enabled: false
+  backend: "inductor"
+
+quantization:
+  enabled: false
+  bits: 8
+
+# Enhanced Configuration Sections
+
+# DeepSpeed Configuration (full ZeRO-2 for large model)
+deepspeed:
+  enabled: true           # Enable DeepSpeed for large model
+  zero_stage: 2          # ZeRO-2 for optimizer + gradient sharding
+  cpu_offload: false     # Can enable for larger models
+  nvme_offload: false
+  precision: "bf16"
+  gradient_accumulation_steps: 16
+  train_batch_size: 32   # 2 * 16
+  micro_batch_size: 2
+  activation_checkpointing: true
+  partition_activations: true
+  gradient_clipping: 1.0
+
+# Enhanced Features Configuration (all features enabled)
+enhanced_features:
+  # Architecture enhancements (fully enabled)
+  architecture:
+    use_moh: true
+    use_moa: true
+    use_cross_attention: true
+    use_alibi: false
+    expert_routing_type: "switch"
+
+  # RAG System (enabled for large model)
+  rag:
+    enabled: true
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: 5
+    rag_fusion_type: "concatenate"
+
+  # Advanced Loss Functions (all enabled)
+  losses:
+    focal_loss: true
+    contrastive_loss: true
+    diversity_loss: true
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+
+  # Gradient Surgery (advanced enabled)
+  gradient:
+    gradient_surgery: true
+    adaptive_gradient_surgery: true
+    gradient_surgery_method: "pcgrad"
+
+  # Episodic Memory (fully enabled)
+  memory:
+    use_episodic_memory: true
+    memory_capacity: 2000
+    memory_selection_strategy: "importance"
+    memory_importance_threshold: 0.6
+    memory_adaptation_rate: 0.01
+    memory_performance_window: 200
+    memory_replay_ratio: 0.2
+    memory_replay_strategy: "importance"
+
+  # Quantization (advanced options)
+  quantization:
+    quantization_aware: true
+    use_nvfp4: true         # Enable NVFP4 for large model
+    bit_width: 4
+    nvfp4_block_size: 64
+    stochastic_rounding: true
+    use_hadamard_transform: true
+
+# Data Loading Configuration
+data_loading:
+  # Streaming data (essential for large models)
+  streaming: true
+  buffer_size: 10000
+  max_samples: -1  # No limit
+
+  # Multi-column data (enabled for advanced datasets)
+  multi_column: true
+  use_multi_column: false  # Set to true if using multi-column datasets
+
+  # Distributed (enabled for multi-GPU)
+  distributed: true
+
+# Performance Configuration
+performance:
+  # Performance modes (optimized for production)
+  ultra_fast_mode: false
+  fast_progress: false
+  minimal_progress: true    # Less verbose for production
+  express_mode: true
+  no_sync: false
+
+# Memory Optimization (aggressive for large model)
+memory:
+  # A100 memory optimizer settings
+  enable_memory_pool: true
+  pool_size_gb: 20.0       # Use most of 24GB
+  gradient_checkpointing: true
+  memory_threshold_gb: 20.0
+  enable_cpu_offload: false
+  clear_cache_frequency: 50
+
+# Evaluation Configuration
+evaluation:
+  eval_during_training: true
+  eval_metrics: "perplexity,bleu,rouge"
+  comprehensive_eval: true
 
 # Output Configuration
 output:
-  output_dir: /project/code/outputs
+  output_dir: "outputs/large"
+  save_total_limit: 3
+  save_on_each_node: false
 
-# Hardware Settings
-hardware:
-  device: cuda
-  cuda_device_id: 0
-  mixed_precision: true
-  bf16: true
-  # gradient_checkpointing: true
-  zero_stage: 3  # ZeRO-3 full parameter partitioning for maximum memory savings
+# Run Management
+run_management:
+  experiment_name: "ava-large-enhanced"
+  run_id: null
+  resume_from_checkpoint: null
+
+distributed:
+  enabled: true           # Enable for multi-GPU
+  backend: "nccl"

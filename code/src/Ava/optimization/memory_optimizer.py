@@ -15,6 +15,13 @@ import logging
 from contextlib import contextmanager
 import gc
 
+# DeepSpeed imports (optional)
+try:
+    import deepspeed
+    DEEPSPEED_AVAILABLE = True
+except ImportError:
+    DEEPSPEED_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +46,12 @@ class A100MemoryOptimizer:
         memory_threshold_gb: float = 30.0,  # A100 has 40GB or 80GB
         enable_cpu_offload: bool = False,
         profile_memory: bool = False,
-        clear_cache_frequency: int = 100  # Clear cache every N steps
+        clear_cache_frequency: int = 100,  # Clear cache every N steps
+        # DeepSpeed integration
+        deepspeed_engine: Optional[Any] = None,
+        deepspeed_zero_stage: int = 0,
+        deepspeed_cpu_offload: bool = False,
+        deepspeed_nvme_offload: bool = False
     ):
         """
         Initialize memory optimizer.
@@ -77,6 +89,23 @@ class A100MemoryOptimizer:
         # Step counter for cache clearing
         self.step_count = 0
 
+        # DeepSpeed integration
+        self.deepspeed_engine = deepspeed_engine
+        self.deepspeed_zero_stage = deepspeed_zero_stage
+        self.deepspeed_cpu_offload = deepspeed_cpu_offload
+        self.deepspeed_nvme_offload = deepspeed_nvme_offload
+        self.is_deepspeed_enabled = deepspeed_engine is not None
+
+        # GPU info
+        if torch.cuda.is_available():
+            self.device_name = torch.cuda.get_device_name(0)
+            self.total_memory = torch.cuda.get_device_properties(0).total_memory
+            self.is_a100_80gb = "A100" in self.device_name and self.total_memory > 70e9
+        else:
+            self.device_name = "CPU"
+            self.total_memory = 0
+            self.is_a100_80gb = False
+
         # Setup memory pool if enabled
         if enable_memory_pool and torch.cuda.is_available():
             self._setup_memory_pool()
@@ -106,19 +135,26 @@ class A100MemoryOptimizer:
 
     def _setup_memory_pool(self):
         """Setup CUDA memory pool for A100."""
-        if self.pool_size_gb:
-            # Set explicit memory pool size
-            fraction = self.pool_size_gb / (torch.cuda.get_device_properties(0).total_memory / (1024**3))
-            fraction = min(fraction, 0.95)  # Leave some memory for safety
-        else:
-            # Auto-configure based on GPU
-            if self.is_a100_80gb:
-                fraction = 0.9  # Use 90% of 80GB
+        try:
+            if self.pool_size_gb:
+                # Set explicit memory pool size
+                total_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if total_memory_gb <= 0:
+                    raise ValueError("Invalid GPU memory size detected")
+                fraction = self.pool_size_gb / total_memory_gb
+                fraction = min(fraction, 0.95)  # Leave some memory for safety
             else:
-                fraction = 0.85  # Use 85% of 40GB
+                # Auto-configure based on GPU
+                if self.is_a100_80gb:
+                    fraction = 0.9  # Use 90% of 80GB
+                else:
+                    fraction = 0.85  # Use 85% of 40GB
 
-        torch.cuda.set_per_process_memory_fraction(fraction)
-        torch.cuda.empty_cache()
+            torch.cuda.set_per_process_memory_fraction(fraction)
+            torch.cuda.empty_cache()
+        except Exception as e:
+            logger.warning(f"Failed to setup memory pool: {e}")
+            # Fall back to default settings
 
         # Configure memory allocator for A100
         if hasattr(torch.cuda, 'memory_pool'):
@@ -347,23 +383,35 @@ class A100MemoryOptimizer:
         """Get current GPU memory usage in GB."""
         if not torch.cuda.is_available():
             return 0.0
-        return torch.cuda.memory_allocated() / (1024 ** 3)
+        try:
+            return torch.cuda.memory_allocated() / (1024 ** 3)
+        except Exception as e:
+            logger.warning(f"Failed to get current memory usage: {e}")
+            return 0.0
 
     def get_memory_summary(self) -> Dict[str, Any]:
         """Get comprehensive memory usage summary."""
         if not torch.cuda.is_available():
             return {}
 
-        return {
-            "allocated_gb": torch.cuda.memory_allocated() / (1024 ** 3),
-            "reserved_gb": torch.cuda.memory_reserved() / (1024 ** 3),
-            "free_gb": (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated()) / (1024 ** 3),
-            "peak_allocated_gb": torch.cuda.max_memory_allocated() / (1024 ** 3),
-            "peak_reserved_gb": torch.cuda.max_memory_reserved() / (1024 ** 3),
-            "checkpointed_layers": len(self.memory_stats["checkpointed_layers"]),
-            "offloaded_layers": len(self.memory_stats["offloaded_layers"]),
-            "cache_clears": self.memory_stats["cache_clears"]
-        }
+        try:
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            allocated = torch.cuda.memory_allocated()
+            reserved = torch.cuda.memory_reserved()
+
+            return {
+                "allocated_gb": allocated / (1024 ** 3),
+                "reserved_gb": reserved / (1024 ** 3),
+                "free_gb": (total_memory - allocated) / (1024 ** 3),
+                "peak_allocated_gb": torch.cuda.max_memory_allocated() / (1024 ** 3),
+                "peak_reserved_gb": torch.cuda.max_memory_reserved() / (1024 ** 3),
+                "checkpointed_layers": len(self.memory_stats["checkpointed_layers"]),
+                "offloaded_layers": len(self.memory_stats["offloaded_layers"]),
+                "cache_clears": self.memory_stats["cache_clears"]
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get memory summary: {e}")
+            return {"error": str(e)}
 
     def reset_peak_memory(self):
         """Reset peak memory statistics."""
@@ -371,6 +419,125 @@ class A100MemoryOptimizer:
             torch.cuda.reset_peak_memory_stats()
             torch.cuda.empty_cache()
         self.memory_stats["peak_memory_gb"] = 0.0
+
+    def get_deepspeed_memory_stats(self) -> Dict[str, Any]:
+        """Get DeepSpeed-specific memory statistics."""
+        if not self.is_deepspeed_enabled:
+            return self.get_memory_summary()
+
+        stats = self.get_memory_summary()
+
+        # Add DeepSpeed-specific information
+        if self.deepspeed_engine and hasattr(self.deepspeed_engine, 'monitor'):
+            try:
+                monitor = self.deepspeed_engine.monitor
+                ds_stats = monitor.get_memory_usage()
+                stats.update({
+                    "deepspeed_zero_stage": self.deepspeed_zero_stage,
+                    "cpu_offload_enabled": self.deepspeed_cpu_offload,
+                    "nvme_offload_enabled": self.deepspeed_nvme_offload,
+                    "deepspeed_memory": ds_stats
+                })
+            except Exception as e:
+                logger.warning(f"Failed to get DeepSpeed memory stats: {e}")
+
+        return stats
+
+    def optimize_for_deepspeed(self, model: torch.nn.Module) -> None:
+        """Apply DeepSpeed-specific memory optimizations."""
+        if not self.is_deepspeed_enabled or not DEEPSPEED_AVAILABLE:
+            logger.info("DeepSpeed not enabled, skipping DeepSpeed optimizations")
+            return
+
+        logger.info("Applying DeepSpeed memory optimizations...")
+
+        # Configure gradient checkpointing for DeepSpeed
+        if self.enable_gradient_checkpointing:
+            try:
+                if hasattr(model, 'enable_deepspeed_checkpointing'):
+                    model.enable_deepspeed_checkpointing()
+                else:
+                    # Apply generic gradient checkpointing
+                    self._apply_deepspeed_checkpointing(model)
+
+                logger.info("✅ DeepSpeed gradient checkpointing enabled")
+            except Exception as e:
+                logger.warning(f"DeepSpeed gradient checkpointing failed: {e}")
+
+        # Optimize memory allocation patterns for ZeRO
+        if self.deepspeed_zero_stage > 0:
+            self._optimize_zero_memory_patterns()
+
+        logger.info("✅ DeepSpeed memory optimizations applied")
+
+    def _apply_deepspeed_checkpointing(self, model: torch.nn.Module) -> None:
+        """Apply DeepSpeed-style gradient checkpointing."""
+        if not DEEPSPEED_AVAILABLE:
+            return
+
+        # Apply checkpointing to transformer layers
+        for name, module in model.named_modules():
+            if any(layer_type in name.lower() for layer_type in ['layer', 'block', 'transformer']):
+                if hasattr(module, 'forward'):
+                    # Wrap with DeepSpeed checkpointing
+                    try:
+                        module.forward = deepspeed.checkpointing.checkpoint(module.forward)
+                        self.memory_stats["checkpointed_layers"].append(name)
+                        logger.debug(f"Applied DeepSpeed checkpointing to {name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to apply DeepSpeed checkpointing to {name}: {e}")
+
+    def _optimize_zero_memory_patterns(self) -> None:
+        """Optimize memory allocation patterns for ZeRO."""
+        logger.info(f"Optimizing memory patterns for ZeRO stage {self.deepspeed_zero_stage}")
+
+        # Clear cache to reset memory fragmentation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        # Adjust cache clearing frequency based on ZeRO stage
+        if self.deepspeed_zero_stage >= 2:
+            # More aggressive cache clearing for ZeRO-2 and ZeRO-3
+            self.clear_cache_frequency = max(50, self.clear_cache_frequency // 2)
+
+        # Reduce memory pool size if using CPU offloading
+        if self.deepspeed_cpu_offload:
+            logger.info("CPU offload detected, reducing GPU memory pool")
+            if self.pool_size_gb:
+                self.pool_size_gb = min(self.pool_size_gb, 20.0)  # Reduce to 20GB max
+
+    def handle_deepspeed_oom(self) -> bool:
+        """Handle DeepSpeed-specific OOM scenarios."""
+        if not self.is_deepspeed_enabled:
+            return False
+
+        logger.warning("🚨 DeepSpeed OOM detected, attempting recovery...")
+
+        try:
+            # 1. Clear all caches
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+
+            # 2. If using ZeRO-3, trigger parameter gathering cleanup
+            if self.deepspeed_zero_stage == 3 and self.deepspeed_engine:
+                if hasattr(self.deepspeed_engine, 'free_parameter_partitions'):
+                    self.deepspeed_engine.free_parameter_partitions()
+
+            # 3. Force garbage collection
+            gc.collect()
+
+            # 4. Reset memory pool if enabled
+            if self.enable_memory_pool:
+                self._setup_memory_pool()
+
+            logger.info("✅ DeepSpeed OOM recovery attempted")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ DeepSpeed OOM recovery failed: {e}")
+            return False
 
 
 class GradientAccumulator:
@@ -441,8 +608,12 @@ class GradientAccumulator:
                 self.scaler.unscale_(optimizer)
 
             # Clip gradients
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), self.max_grad_norm)
-            metrics["grad_norm"] = grad_norm.item()
+            try:
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), self.max_grad_norm)
+                metrics["grad_norm"] = grad_norm.item() if grad_norm is not None else 0.0
+            except Exception as e:
+                logger.warning(f"Gradient clipping failed: {e}")
+                metrics["grad_norm"] = 0.0
 
             # Optimizer step
             if self.use_gradient_scaling:

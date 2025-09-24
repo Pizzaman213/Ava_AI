@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Local Data Preparation Script
-High-performance data processing for LLM training - works offline with minimal dependencies
+Enhanced Multi-Column Data Preparation Script
+High-performance data processing with multi-column format understanding for LLM training
 """
 
 import json
@@ -84,28 +84,47 @@ try:
 
 except ImportError:
     RAPIDS_AVAILABLE = False
+    # Create dummy cudf and cp modules for type checking
+    cudf = None
+    cp = None
 
 class LocalDataProcessor:
-    """Local data processor - works offline with minimal dependencies"""
+    """Enhanced data processor with multi-column format understanding"""
 
-    def __init__(self, output_dir: str = "/project/code/data/processed",
-                 use_gpu: bool = False, use_multiprocessing: bool = True):
+    def __init__(self, output_dir: str = "/project/code/processed",
+                 use_gpu: bool = False, use_multiprocessing: bool = True,
+                 format_strategy: str = "auto"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.use_gpu = use_gpu and RAPIDS_AVAILABLE
         self.use_multiprocessing = use_multiprocessing
         self.cpu_count = mp.cpu_count()
+        self.format_strategy = format_strategy
+
+        # Multi-column format templates
+        self.format_templates = {
+            "instruction_response": "### Instruction:\n{instruction}\n\n### Context:\n{context}\n\n### Response:\n{response}",
+            "qa_context": "Context: {context}\n\nQuestion: {question}\n\nAnswer: {answer}",
+            "conversation": "Human: {input}\n\nAssistant: {output}",
+            "code_instruction": "# Problem: {instruction}\n# Language: {language}\n\n```{language}\n{code}\n```",
+            "preference": "Prompt: {prompt}\n\nChosen: {chosen}\n\nRejected: {rejected}"
+        }
 
         if self.use_gpu and RAPIDS_AVAILABLE:
             try:
-                gpu_count = cp.cuda.runtime.getDeviceCount()
-                print(f"🚀 GPU acceleration enabled with {gpu_count} GPU(s)")
+                if cp is not None:
+                    gpu_count = cp.cuda.runtime.getDeviceCount()
+                    print(f"🚀 GPU acceleration enabled with {gpu_count} GPU(s)")
+                else:
+                    print("🚀 GPU acceleration enabled")
             except:
                 print("🚀 GPU acceleration enabled")
         elif PANDAS_AVAILABLE:
             print(f"💻 Enhanced CPU processing mode with {self.cpu_count} cores")
         else:
             print(f"💻 Basic CPU processing mode with {self.cpu_count} cores")
+
+        print(f"📝 Format strategy: {format_strategy}")
 
     def discover_datasets(self, raw_data_dir: str = "/project/code/data") -> List[str]:
         """Discover all available datasets (supports multiple formats)"""
@@ -164,138 +183,203 @@ class LocalDataProcessor:
             print(f"Failed to load {file_path}: {e}")
             return []
 
+    def detect_dataset_format(self, samples: List[Dict]) -> str:
+        """Detect the format of a dataset based on its structure"""
+        if not samples:
+            return "unknown"
+
+        sample = samples[0]
+
+        # Check for instruction-response format (Alpaca/Dolly style)
+        if 'instruction' in sample and 'response' in sample:
+            return "instruction_response"
+
+        # Check for QA with context format
+        if 'question' in sample and 'answer' in sample and 'context' in sample:
+            return "qa_context"
+
+        # Check for conversation format (OpenAssistant style)
+        if 'messages' in sample or ('input' in sample and 'output' in sample):
+            return "conversation"
+
+        # Check for preference learning format
+        if 'chosen' in sample and 'rejected' in sample:
+            return "preference"
+
+        # Check for code instruction format
+        if any(key in sample for key in ['code', 'solution', 'programming_language']):
+            return "code_instruction"
+
+        # Default to simple text
+        return "simple_text"
+
+    def format_multi_column_sample(self, sample: Dict, format_type: str = None) -> str:
+        """Format a sample using multi-column templates"""
+        if format_type is None:
+            format_type = self.detect_dataset_format([sample])
+
+        if format_type == "instruction_response":
+            return self.format_templates["instruction_response"].format(
+                instruction=sample.get('instruction', ''),
+                context=sample.get('context', ''),
+                response=sample.get('response', '')
+            )
+
+        elif format_type == "qa_context":
+            return self.format_templates["qa_context"].format(
+                context=sample.get('context', ''),
+                question=sample.get('question', ''),
+                answer=sample.get('answer', '')
+            )
+
+        elif format_type == "conversation":
+            if 'messages' in sample:
+                # Handle OpenAssistant-style messages
+                messages = sample.get('messages', [])
+                formatted = ""
+                for msg in messages:
+                    role = msg.get('role', 'unknown')
+                    content = msg.get('content', '')
+                    if role == 'human':
+                        formatted += f"Human: {content}\n\n"
+                    elif role == 'assistant':
+                        formatted += f"Assistant: {content}\n\n"
+                return formatted.strip()
+            else:
+                # Simple input/output format
+                return self.format_templates["conversation"].format(
+                    input=sample.get('input', ''),
+                    output=sample.get('output', '')
+                )
+
+        elif format_type == "preference":
+            return self.format_templates["preference"].format(
+                prompt=sample.get('prompt', ''),
+                chosen=sample.get('chosen', ''),
+                rejected=sample.get('rejected', '')
+            )
+
+        elif format_type == "code_instruction":
+            language = sample.get('programming_language', sample.get('language', 'python'))
+            return self.format_templates["code_instruction"].format(
+                instruction=sample.get('instruction', sample.get('problem', '')),
+                language=language,
+                code=sample.get('code', sample.get('solution', ''))
+            )
+
+        else:
+            # Fallback to simple text extraction
+            return self.extract_simple_text(sample)
+
+    def extract_simple_text(self, sample: Dict) -> str:
+        """Extract text from a sample using simple heuristics"""
+        # Priority text fields
+        text_fields = ['text', 'content', 'output', 'response', 'completion',
+                      'answer', 'dialogue', 'conversation', 'message']
+
+        for field in text_fields:
+            if field in sample and sample[field]:
+                return str(sample[field]).strip()
+
+        # Fallback: concatenate all string values
+        text_parts = []
+        for key, value in sample.items():
+            if isinstance(value, str) and value.strip() and len(value) > 10:
+                text_parts.append(value.strip())
+
+        return " ".join(text_parts) if text_parts else ""
+
     def extract_text_efficiently(self, samples: List[Dict]) -> List[str]:
-        """Extract text from samples with GPU acceleration"""
+        """Extract and format text from samples with multi-column understanding"""
         if not samples:
             return []
 
-        if self.use_gpu:
-            # Convert to cuDF for GPU processing
+        # Detect the dataset format
+        format_type = self.detect_dataset_format(samples) if self.format_strategy == "auto" else self.format_strategy
+        print(f"    📋 Detected format: {format_type}")
+
+        if self.use_gpu and len(samples) > 1000:
+            # Use GPU for large batches
             try:
-                df = cudf.DataFrame(samples)
+                return self._extract_text_gpu(samples, format_type)
+            except Exception as e:
+                print(f"    GPU processing failed, falling back to CPU: {e}")
 
-                # Try common text fields
-                text_fields = ['text', 'content', 'output', 'response', 'instruction',
-                              'input', 'question', 'answer', 'dialogue', 'conversation']
+        # CPU processing with multi-column formatting
+        extracted_texts = []
+        for sample in samples:
+            try:
+                if format_type != "simple_text":
+                    formatted_text = self.format_multi_column_sample(sample, format_type)
+                else:
+                    formatted_text = self.extract_simple_text(sample)
 
-                extracted_texts = []
+                if formatted_text and len(formatted_text.strip()) > 10:
+                    extracted_texts.append(formatted_text.strip())
+            except Exception as e:
+                # Fallback to simple extraction on error
+                simple_text = self.extract_simple_text(sample)
+                if simple_text and len(simple_text.strip()) > 10:
+                    extracted_texts.append(simple_text.strip())
+
+        return extracted_texts
+
+    def _extract_text_gpu(self, samples: List[Dict], format_type: str) -> List[str]:
+        """GPU-accelerated text extraction and formatting"""
+        if not self.use_gpu or cudf is None:
+            return []
+
+        try:
+            df = cudf.DataFrame(samples)
+            extracted_texts = []
+
+            if format_type == "instruction_response":
+                # GPU string operations for instruction-response format
+                instructions = df.get('instruction', cudf.Series([''] * len(df))).fillna('')
+                contexts = df.get('context', cudf.Series([''] * len(df))).fillna('')
+                responses = df.get('response', cudf.Series([''] * len(df))).fillna('')
+
+                # Format using template
+                template = self.format_templates["instruction_response"]
+                # Note: GPU template formatting would require custom kernels
+                # For now, convert to pandas for template formatting
+                for i in range(len(df)):
+                    formatted = template.format(
+                        instruction=instructions.iloc[i],
+                        context=contexts.iloc[i],
+                        response=responses.iloc[i]
+                    )
+                    extracted_texts.append(formatted)
+
+            elif format_type == "qa_context":
+                questions = df.get('question', cudf.Series([''] * len(df))).fillna('')
+                answers = df.get('answer', cudf.Series([''] * len(df))).fillna('')
+                contexts = df.get('context', cudf.Series([''] * len(df))).fillna('')
+
+                template = self.format_templates["qa_context"]
+                for i in range(len(df)):
+                    formatted = template.format(
+                        question=questions.iloc[i],
+                        answer=answers.iloc[i],
+                        context=contexts.iloc[i]
+                    )
+                    extracted_texts.append(formatted)
+
+            else:
+                # Fallback to simple GPU text extraction
+                text_fields = ['text', 'content', 'output', 'response']
                 for field in text_fields:
                     if field in df.columns:
-                        # GPU-accelerated string operations
                         valid_texts = df[field].dropna()
                         if len(valid_texts) > 0:
                             extracted_texts.extend(valid_texts.to_pandas().tolist())
                             break
 
-                # Handle instruction-response pairs on GPU
-                if not extracted_texts and 'instruction' in df.columns:
-                    instructions = df['instruction'].fillna('')
-                    inputs = df.get('input', cudf.Series([''] * len(df), dtype='str'))
-                    outputs = df.get('output', cudf.Series([''] * len(df), dtype='str'))
-                    responses = df.get('response', cudf.Series([''] * len(df), dtype='str'))
+            return [str(text).strip() for text in extracted_texts if str(text).strip()]
 
-                    # GPU string concatenation
-                    combined = instructions + " " + inputs + " " + outputs + " " + responses
-                    extracted_texts = combined.to_pandas().tolist()
-
-                return [str(text).strip() for text in extracted_texts if str(text).strip()]
-
-            except Exception as e:
-                print(f"GPU processing failed, falling back to CPU: {e}")
-                # Fall through to CPU processing
-
-        # CPU fallback - more comprehensive extraction
-        extracted_texts = []
-        for sample in samples:
-            # Priority text fields
-            text_fields = ['text', 'content', 'output', 'response', 'completion',
-                          'answer', 'dialogue', 'conversation', 'message']
-
-            # Check for direct text fields first
-            found_text = False
-            for field in text_fields:
-                if field in sample and sample[field]:
-                    text = str(sample[field]).strip()
-                    if text:
-                        extracted_texts.append(text)
-                        found_text = True
-                        break
-
-            # If no direct field, try combinations
-            if not found_text:
-                # Handle instruction-based formats
-                if 'instruction' in sample:
-                    parts = []
-                    if sample.get('instruction'):
-                        parts.append(str(sample['instruction']))
-                    if sample.get('input'):
-                        parts.append(str(sample['input']))
-                    if sample.get('output'):
-                        parts.append(str(sample['output']))
-                    if sample.get('response'):
-                        parts.append(str(sample['response']))
-                    if sample.get('context'):
-                        parts.append(str(sample['context']))
-
-                    combined = " ".join(parts).strip()
-                    if combined:
-                        extracted_texts.append(combined)
-                        found_text = True
-
-                # Handle QA formats
-                elif 'question' in sample and 'answer' in sample:
-                    q = str(sample.get('question', '')).strip()
-                    a = str(sample.get('answer', '')).strip()
-                    if q and a:
-                        extracted_texts.append(f"{q} {a}")
-                        found_text = True
-
-                # Handle conversation/dialogue formats
-                elif 'utterances' in sample:
-                    # For persona-chat style
-                    utterances = sample.get('utterances', [])
-                    if isinstance(utterances, list):
-                        for utt in utterances:
-                            if isinstance(utt, dict):
-                                if 'history' in utt:
-                                    history = utt.get('history', [])
-                                    if isinstance(history, list):
-                                        extracted_texts.extend([str(h) for h in history if h])
-                                if 'candidates' in utt:
-                                    candidates = utt.get('candidates', [])
-                                    if isinstance(candidates, list) and candidates:
-                                        # Take first candidate as the response
-                                        extracted_texts.append(str(candidates[0]))
-                            elif isinstance(utt, str):
-                                extracted_texts.append(utt)
-                        found_text = True
-
-                # Handle messages/conversations
-                elif 'messages' in sample:
-                    messages = sample.get('messages', [])
-                    if isinstance(messages, list):
-                        for msg in messages:
-                            if isinstance(msg, dict) and 'content' in msg:
-                                extracted_texts.append(str(msg['content']))
-                            elif isinstance(msg, str):
-                                extracted_texts.append(msg)
-                        found_text = True
-
-                # Handle chosen/rejected pairs (RLHF datasets)
-                elif 'chosen' in sample or 'rejected' in sample:
-                    if sample.get('chosen'):
-                        extracted_texts.append(str(sample['chosen']))
-                    if sample.get('rejected'):
-                        extracted_texts.append(str(sample['rejected']))
-                    found_text = True
-
-                # Last resort - concatenate all string values
-                if not found_text:
-                    for key, value in sample.items():
-                        if isinstance(value, str) and value.strip() and len(value) > 10:
-                            extracted_texts.append(value.strip())
-
-        return [text for text in extracted_texts if text and len(text.strip()) > 10]
+        except Exception as e:
+            print(f"    GPU text extraction failed: {e}")
+            return []
 
     def process_dataset_batch(self, dataset_path: str, batch_size: int = 10000) -> Iterator[List[str]]:
         """Process dataset in batches - supports multiple formats"""
@@ -414,7 +498,7 @@ class LocalDataProcessor:
         if not texts:
             return []
 
-        if self.use_gpu and len(texts) > 1000:  # Use GPU for large batches
+        if self.use_gpu and len(texts) > 1000 and cudf is not None:  # Use GPU for large batches
             try:
                 # Convert to cuDF Series for GPU string operations
                 text_series = cudf.Series(texts)
@@ -473,7 +557,7 @@ class LocalDataProcessor:
         if not texts:
             return {}
 
-        if self.use_gpu:
+        if self.use_gpu and cudf is not None:
             try:
                 text_series = cudf.Series(texts)
 
@@ -695,7 +779,7 @@ class LocalDataProcessor:
                         break
 
                     # Clean and process texts
-                    processed_texts = self.clean_texts_gpu(text_batch)
+                    processed_texts = self.clean_text_gpu(text_batch)
                     valid_texts = [t for t in processed_texts if t and len(t.strip()) > 50]
 
                     dataset_texts.extend(valid_texts)
@@ -783,7 +867,7 @@ def main():
     parser = argparse.ArgumentParser(description="Local Data Preparation - Works Offline")
     parser.add_argument("--raw-data-dir", default="/project/code/data",
                        help="Directory containing raw datasets")
-    parser.add_argument("--output-dir", default="/project/code/data/processed",
+    parser.add_argument("--output-dir", default="/project/code/processed",
                        help="Output directory for processed data")
     parser.add_argument("--max-samples", type=int, default=None,
                        help="Maximum samples per dataset")
@@ -799,6 +883,10 @@ def main():
                        help="Specific datasets to process (default: all datasets)")
     parser.add_argument("--list-datasets", action="store_true",
                        help="List available datasets and exit")
+    parser.add_argument("--format-strategy",
+                       choices=["auto", "instruction_response", "qa_context", "conversation", "preference", "code_instruction", "simple_text"],
+                       default="auto",
+                       help="Data formatting strategy (default: auto-detect)")
 
     args = parser.parse_args()
 
@@ -850,7 +938,8 @@ def main():
     processor = LocalDataProcessor(
         output_dir=args.output_dir,
         use_gpu=args.gpu,
-        use_multiprocessing=not args.no_multiprocessing
+        use_multiprocessing=not args.no_multiprocessing,
+        format_strategy=args.format_strategy
     )
 
     # Process datasets

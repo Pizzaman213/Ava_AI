@@ -1,0 +1,541 @@
+"""
+Training Metrics System
+
+This module provides comprehensive training metrics collection, processing,
+and analysis for enhanced monitoring and debugging.
+"""
+
+import time
+import torch
+import psutil
+from typing import Dict, Any, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from collections import defaultdict, deque
+from enum import Enum
+import numpy as np
+
+
+class MetricType(Enum):
+    """Types of metrics that can be tracked."""
+    LOSS = "loss"
+    LEARNING_RATE = "learning_rate"
+    GRADIENT = "gradient"
+    MEMORY = "memory"
+    TIMING = "timing"
+    SYSTEM = "system"
+    TRAINING = "training"
+    EVALUATION = "evaluation"
+
+
+@dataclass
+class MetricConfig:
+    """Configuration for metrics collection."""
+    # Collection settings
+    collect_gradients: bool = True
+    collect_memory: bool = True
+    collect_system: bool = False
+    collect_timing: bool = True
+
+    # History settings
+    history_size: int = 1000
+    detailed_history_size: int = 100
+
+    # Frequency settings
+    gradient_freq: int = 100          # Collect gradients every N steps
+    memory_freq: int = 50             # Collect memory every N steps
+    system_freq: int = 500            # Collect system metrics every N steps
+
+    # Analysis settings
+    enable_trend_analysis: bool = True
+    trend_window_size: int = 50
+    enable_anomaly_detection: bool = True
+    anomaly_threshold: float = 3.0    # Standard deviations for anomaly
+
+
+@dataclass
+class TrainingStep:
+    """Container for training step information."""
+    step: int
+    epoch: int
+    batch_idx: int
+    timestamp: float
+    loss: float
+    learning_rate: float
+    grad_norm: Optional[float] = None
+    memory_allocated: Optional[float] = None
+    memory_cached: Optional[float] = None
+    batch_time: Optional[float] = None
+    forward_time: Optional[float] = None
+    backward_time: Optional[float] = None
+    optimizer_time: Optional[float] = None
+    additional_metrics: Dict[str, Any] = field(default_factory=dict)
+
+
+class TrainingMetricsCollector:
+    """
+    Comprehensive training metrics collector and analyzer.
+
+    Features:
+    - Real-time metrics collection
+    - Performance analytics
+    - Memory monitoring
+    - Gradient analysis
+    - Trend detection
+    - Anomaly detection
+    """
+
+    def __init__(self, config: MetricConfig):
+        """
+        Initialize training metrics collector.
+
+        Args:
+            config: Metrics collection configuration
+        """
+        self.config = config
+
+        # Metrics storage
+        self.metrics_history = deque(maxlen=config.history_size)
+        self.detailed_history = deque(maxlen=config.detailed_history_size)
+
+        # Running statistics
+        self.running_stats = defaultdict(lambda: {
+            'count': 0, 'sum': 0.0, 'sum_sq': 0.0,
+            'min': float('inf'), 'max': float('-inf'),
+            'recent': deque(maxlen=config.trend_window_size)
+        })
+
+        # Timing trackers
+        self.timing_contexts = {}
+        self.step_start_time = None
+
+        # Counters
+        self.total_steps = 0
+        self.collection_start_time = time.time()
+
+        # Analysis results
+        self.trends = {}
+        self.anomalies = []
+
+    def start_step(self, step: int, epoch: int, batch_idx: int) -> None:
+        """Start tracking a training step."""
+        self.step_start_time = time.time()
+        self.current_step_info = {
+            'step': step,
+            'epoch': epoch,
+            'batch_idx': batch_idx,
+            'start_time': self.step_start_time
+        }
+
+    def end_step(self, loss: float, learning_rate: float, **kwargs) -> TrainingStep:
+        """
+        End tracking a training step and create step record.
+
+        Args:
+            loss: Training loss for this step
+            learning_rate: Current learning rate
+            **kwargs: Additional metrics
+
+        Returns:
+            TrainingStep object with collected metrics
+        """
+        if self.step_start_time is None:
+            self.step_start_time = time.time()
+
+        end_time = time.time()
+        step_duration = end_time - self.step_start_time
+
+        # Create training step record
+        step_info = TrainingStep(
+            step=self.current_step_info.get('step', self.total_steps),
+            epoch=self.current_step_info.get('epoch', 0),
+            batch_idx=self.current_step_info.get('batch_idx', 0),
+            timestamp=end_time,
+            loss=loss,
+            learning_rate=learning_rate,
+            batch_time=step_duration,
+            additional_metrics=kwargs
+        )
+
+        # Collect additional metrics
+        self._collect_memory_metrics(step_info)
+        if self.total_steps % self.config.system_freq == 0:
+            self._collect_system_metrics(step_info)
+
+        # Update statistics
+        self._update_statistics(step_info)
+
+        # Store in history
+        self.metrics_history.append(step_info)
+        if self.total_steps % 10 == 0:  # Store detailed every 10 steps
+            self.detailed_history.append(step_info)
+
+        # Analysis
+        if self.config.enable_trend_analysis:
+            self._analyze_trends(step_info)
+        if self.config.enable_anomaly_detection:
+            self._detect_anomalies(step_info)
+
+        self.total_steps += 1
+        self.step_start_time = None
+
+        return step_info
+
+    def collect_gradient_metrics(self, model: torch.nn.Module) -> Dict[str, float]:
+        """
+        Collect gradient-related metrics.
+
+        Args:
+            model: PyTorch model
+
+        Returns:
+            Dictionary of gradient metrics
+        """
+        if not self.config.collect_gradients or self.total_steps % self.config.gradient_freq != 0:
+            return {}
+
+        try:
+            total_norm = 0.0
+            param_count = 0
+            grad_norms = []
+            zero_grads = 0
+
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    grad_norm = param.grad.data.norm(2).item()
+                    total_norm += grad_norm ** 2
+                    grad_norms.append(grad_norm)
+                    param_count += 1
+                else:
+                    zero_grads += 1
+
+            if param_count > 0:
+                total_norm = total_norm ** 0.5
+                grad_norms = np.array(grad_norms)
+
+                metrics = {
+                    'grad_norm_total': total_norm,
+                    'grad_norm_mean': grad_norms.mean(),
+                    'grad_norm_std': grad_norms.std(),
+                    'grad_norm_max': grad_norms.max(),
+                    'grad_norm_min': grad_norms.min(),
+                    'params_with_grad': param_count,
+                    'params_zero_grad': zero_grads,
+                    'grad_norm_ratio': grad_norms.max() / max(grad_norms.mean(), 1e-8)
+                }
+
+                return metrics
+
+        except Exception:
+            pass
+
+        return {}
+
+    def _collect_memory_metrics(self, step_info: TrainingStep) -> None:
+        """Collect memory usage metrics."""
+        if not self.config.collect_memory or self.total_steps % self.config.memory_freq != 0:
+            return
+
+        try:
+            if torch.cuda.is_available():
+                allocated = torch.cuda.memory_allocated() / 1024**3
+                cached = torch.cuda.memory_reserved() / 1024**3
+                step_info.memory_allocated = allocated
+                step_info.memory_cached = cached
+
+        except Exception:
+            pass
+
+    def _collect_system_metrics(self, step_info: TrainingStep) -> None:
+        """Collect system resource metrics."""
+        if not self.config.collect_system:
+            return
+
+        try:
+            memory = psutil.virtual_memory()
+            cpu_percent = psutil.cpu_percent(interval=None)
+
+            step_info.additional_metrics.update({
+                'system_memory_percent': memory.percent,
+                'system_cpu_percent': cpu_percent
+            })
+
+        except Exception:
+            pass
+
+    def _update_statistics(self, step_info: TrainingStep) -> None:
+        """Update running statistics for all metrics."""
+        # Core metrics
+        metrics_to_track = {
+            'loss': step_info.loss,
+            'learning_rate': step_info.learning_rate
+        }
+
+        # Optional metrics
+        if step_info.grad_norm is not None:
+            metrics_to_track['grad_norm'] = step_info.grad_norm
+        if step_info.memory_allocated is not None:
+            metrics_to_track['memory_allocated'] = step_info.memory_allocated
+        if step_info.batch_time is not None:
+            metrics_to_track['batch_time'] = step_info.batch_time
+
+        # Additional metrics
+        metrics_to_track.update(step_info.additional_metrics)
+
+        # Update running stats
+        for name, value in metrics_to_track.items():
+            if isinstance(value, (int, float)) and not np.isnan(value):
+                stats = self.running_stats[name]
+                stats['count'] += 1
+                stats['sum'] += value
+                stats['sum_sq'] += value ** 2
+                stats['min'] = min(stats['min'], value)
+                stats['max'] = max(stats['max'], value)
+                stats['recent'].append(value)
+
+    def _analyze_trends(self, step_info: TrainingStep) -> None:
+        """Analyze trends in metrics."""
+        for metric_name, stats in self.running_stats.items():
+            if len(stats['recent']) >= self.config.trend_window_size:
+                recent_values = list(stats['recent'])
+
+                # Simple linear trend
+                x = np.arange(len(recent_values))
+                y = np.array(recent_values)
+
+                try:
+                    slope = np.polyfit(x, y, 1)[0]
+                    self.trends[metric_name] = {
+                        'slope': slope,
+                        'direction': 'increasing' if slope > 0 else 'decreasing' if slope < 0 else 'stable',
+                        'magnitude': abs(slope),
+                        'updated_at': step_info.step
+                    }
+                except:
+                    pass
+
+    def _detect_anomalies(self, step_info: TrainingStep) -> None:
+        """Detect anomalies in metrics."""
+        for metric_name, stats in self.running_stats.items():
+            if stats['count'] >= 10:  # Need sufficient history
+                mean = stats['sum'] / stats['count']
+                variance = (stats['sum_sq'] / stats['count']) - (mean ** 2)
+                std = variance ** 0.5 if variance > 0 else 0
+
+                # Get current value
+                current_value = None
+                if metric_name == 'loss':
+                    current_value = step_info.loss
+                elif metric_name == 'learning_rate':
+                    current_value = step_info.learning_rate
+                elif metric_name in step_info.additional_metrics:
+                    current_value = step_info.additional_metrics[metric_name]
+
+                # Check for anomaly
+                if current_value is not None and std > 0:
+                    z_score = abs(current_value - mean) / std
+                    if z_score > self.config.anomaly_threshold:
+                        anomaly = {
+                            'step': step_info.step,
+                            'metric': metric_name,
+                            'value': current_value,
+                            'mean': mean,
+                            'std': std,
+                            'z_score': z_score,
+                            'timestamp': step_info.timestamp
+                        }
+                        self.anomalies.append(anomaly)
+
+                        # Keep only recent anomalies
+                        if len(self.anomalies) > 100:
+                            self.anomalies = self.anomalies[-50:]
+
+    def get_current_statistics(self) -> Dict[str, Any]:
+        """Get current statistics for all tracked metrics."""
+        stats_summary = {}
+
+        for metric_name, stats in self.running_stats.items():
+            if stats['count'] > 0:
+                mean = stats['sum'] / stats['count']
+                variance = (stats['sum_sq'] / stats['count']) - (mean ** 2)
+                std = variance ** 0.5 if variance > 0 else 0
+
+                stats_summary[metric_name] = {
+                    'count': stats['count'],
+                    'mean': mean,
+                    'std': std,
+                    'min': stats['min'],
+                    'max': stats['max'],
+                    'latest': stats['recent'][-1] if stats['recent'] else None
+                }
+
+        return stats_summary
+
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """Get overall performance summary."""
+        if not self.metrics_history:
+            return {}
+
+        current_time = time.time()
+        total_time = current_time - self.collection_start_time
+
+        # Calculate rates
+        steps_per_second = self.total_steps / total_time if total_time > 0 else 0
+
+        # Get recent metrics
+        recent_steps = list(self.metrics_history)[-min(100, len(self.metrics_history)):]
+        recent_losses = [step.loss for step in recent_steps if step.loss is not None]
+
+        summary = {
+            'total_steps': self.total_steps,
+            'total_time_minutes': total_time / 60,
+            'steps_per_second': steps_per_second,
+            'steps_per_minute': steps_per_second * 60,
+            'current_loss': recent_losses[-1] if recent_losses else None,
+            'loss_trend': self.trends.get('loss', {}).get('direction', 'unknown'),
+            'recent_anomalies': len([a for a in self.anomalies if current_time - a['timestamp'] < 300]),  # Last 5 minutes
+            'memory_usage_gb': self.metrics_history[-1].memory_allocated if self.metrics_history and self.metrics_history[-1].memory_allocated else None
+        }
+
+        # Add trend information
+        if self.trends:
+            summary['trends'] = {name: trend['direction'] for name, trend in self.trends.items()}
+
+        return summary
+
+    def get_recent_anomalies(self, last_n: int = 10) -> List[Dict[str, Any]]:
+        """Get recent anomalies."""
+        return self.anomalies[-last_n:] if self.anomalies else []
+
+    def get_metric_history(self, metric_name: str, last_n: Optional[int] = None) -> List[Tuple[int, float]]:
+        """Get history for a specific metric."""
+        history = []
+        steps_to_check = self.metrics_history if last_n is None else list(self.metrics_history)[-last_n:]
+
+        for step in steps_to_check:
+            value = None
+            if metric_name == 'loss':
+                value = step.loss
+            elif metric_name == 'learning_rate':
+                value = step.learning_rate
+            elif metric_name == 'grad_norm':
+                value = step.grad_norm
+            elif metric_name == 'memory_allocated':
+                value = step.memory_allocated
+            elif metric_name == 'batch_time':
+                value = step.batch_time
+            elif metric_name in step.additional_metrics:
+                value = step.additional_metrics[metric_name]
+
+            if value is not None:
+                history.append((step.step, value))
+
+        return history
+
+    def create_timing_context(self, name: str):
+        """Create a timing context manager."""
+        return TimingContext(self, name)
+
+    def record_timing(self, name: str, duration: float) -> None:
+        """Record a timing measurement."""
+        self.running_stats[f'timing_{name}']['recent'].append(duration)
+
+    def reset_statistics(self) -> None:
+        """Reset all statistics."""
+        self.running_stats.clear()
+        self.trends.clear()
+        self.anomalies.clear()
+        self.total_steps = 0
+        self.collection_start_time = time.time()
+
+    def get_state_dict(self) -> Dict[str, Any]:
+        """Get collector state for checkpointing."""
+        return {
+            'total_steps': self.total_steps,
+            'collection_start_time': self.collection_start_time,
+            'running_stats': {
+                name: {
+                    'count': stats['count'],
+                    'sum': stats['sum'],
+                    'sum_sq': stats['sum_sq'],
+                    'min': stats['min'],
+                    'max': stats['max']
+                }
+                for name, stats in self.running_stats.items()
+            },
+            'trends': self.trends,
+            'recent_anomalies': self.anomalies[-10:] if self.anomalies else []
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Load collector state from checkpoint."""
+        self.total_steps = state_dict.get('total_steps', 0)
+        self.collection_start_time = state_dict.get('collection_start_time', time.time())
+        self.trends = state_dict.get('trends', {})
+        self.anomalies = state_dict.get('recent_anomalies', [])
+
+        # Restore running stats
+        saved_stats = state_dict.get('running_stats', {})
+        for name, stats in saved_stats.items():
+            self.running_stats[name].update(stats)
+            # Initialize recent deque
+            self.running_stats[name]['recent'] = deque(maxlen=self.config.trend_window_size)
+
+
+class TimingContext:
+    """Context manager for timing operations."""
+
+    def __init__(self, collector: TrainingMetricsCollector, name: str):
+        self.collector = collector
+        self.name = name
+        self.start_time = None
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.start_time:
+            duration = time.time() - self.start_time
+            self.collector.record_timing(self.name, duration)
+
+
+# Convenience functions for creating configurations
+def create_comprehensive_metrics_config() -> MetricConfig:
+    """Create configuration for comprehensive metrics collection."""
+    return MetricConfig(
+        collect_gradients=True,
+        collect_memory=True,
+        collect_system=True,
+        collect_timing=True,
+        gradient_freq=50,
+        memory_freq=25,
+        system_freq=100,
+        enable_trend_analysis=True,
+        enable_anomaly_detection=True
+    )
+
+
+def create_fast_metrics_config() -> MetricConfig:
+    """Create configuration optimized for speed."""
+    return MetricConfig(
+        collect_gradients=False,
+        collect_memory=True,
+        collect_system=False,
+        collect_timing=True,
+        memory_freq=100,
+        gradient_freq=1000,
+        enable_trend_analysis=False,
+        enable_anomaly_detection=False
+    )
+
+
+def create_minimal_metrics_config() -> MetricConfig:
+    """Create minimal metrics configuration."""
+    return MetricConfig(
+        collect_gradients=False,
+        collect_memory=False,
+        collect_system=False,
+        collect_timing=False,
+        enable_trend_analysis=False,
+        enable_anomaly_detection=False
+    )

@@ -1,19 +1,19 @@
-# GPU Medium Configuration
-# Medium-scale GPU training configuration for Ava MoE++
-# Target: ~300M parameters, 12GB+ VRAM, RTX 3060 Ti/RTX 2080 Ti/RX 6800 XT
-# Optimized for: Moderate training and research
+# GPU Small-Medium Configuration
+# Small-to-medium GPU training configuration for Ava MoE++
+# Target: ~200M parameters, 10GB+ VRAM, RTX 3060/RTX 2080/RX 6700 XT
+# Optimized for: Light training and prototyping
 
 model:
   # Core Architecture
-  hidden_size: 704
-  num_layers: 16
-  num_attention_heads: 11
-  intermediate_size: 2816
+  hidden_size: 640
+  num_layers: 14
+  num_attention_heads: 10
+  intermediate_size: 2560
   vocab_size: 50257
   max_position_embeddings: 1536
 
   # MoE Configuration
-  num_experts: 14
+  num_experts: 12
   num_experts_per_token: 2
   expert_capacity_factor: 1.0
   router_type: "switch"
@@ -31,32 +31,26 @@ model:
   initializer_range: 0.02
   hidden_act: "gelu"
 
-  # Enhanced Features (moderate for medium model)
-  use_moh: true    # Enable MoH
-  use_moa: false   # Keep disabled for memory
+  # Enhanced Features (selective for small-medium model)
+  use_moh: false
+  use_moa: false
   use_rag: false
-  use_cross_attention: true  # Enable cross-attention
-  use_episodic_memory: true
-  memory_size: 800
-
-  # DeepSpeed compatibility
-  deepspeed_activation_checkpointing: true
-  deepspeed_partition_activations: false
-  deepspeed_moe_param_groups: true
+  use_cross_attention: false
+  use_episodic_memory: false
 
 training:
   # Batch Configuration
-  batch_size: 4
-  gradient_accumulation_steps: 8
+  batch_size: 5
+  gradient_accumulation_steps: 7
   max_gradient_norm: 1.0
 
   # Training Duration
   num_epochs: 10
   max_steps: -1
-  warmup_steps: 1200
+  warmup_steps: 1000
 
   # Learning Rate & Optimizer
-  learning_rate: 2e-4
+  learning_rate: 2.2e-4
   weight_decay: 0.01
   beta1: 0.9
   beta2: 0.95
@@ -70,13 +64,13 @@ training:
 
   # Evaluation & Logging
   eval_strategy: "steps"
-  eval_steps: 500
+  eval_steps: 600
   save_strategy: "steps"
-  save_steps: 1000
-  logging_steps: 50
+  save_steps: 1200
+  logging_steps: 60
 
   # Early Stopping
-  early_stopping_patience: 3
+  early_stopping_patience: 4
   early_stopping_threshold: 0.01
 
 data:
@@ -92,8 +86,8 @@ data:
   truncation: true
 
   # Data Loading
-  train_batch_size: 4
-  eval_batch_size: 8
+  train_batch_size: 5
+  eval_batch_size: 10
   dataloader_drop_last: true
   dataloader_pin_memory: true
 
@@ -105,9 +99,9 @@ bf16: false
 # Monitoring
 wandb:
   enabled: true
-  project: "ava-moe-gpu-medium"
-  tags: ["gpu", "medium", "300M", "research"]
+  project: "ava-moe-gpu-small-medium"
+  tags: ["gpu", "small-medium", "200M", "prototyping"]
 
 # Hardware Requirements
-# VRAM: 12GB minimum, 14GB recommended
-# Compatible GPUs: RTX 3060 Ti, RTX 2080 Ti, RTX 3070, RX 6800 XT
+# VRAM: 10GB minimum, 12GB recommended
+# Compatible GPUs: RTX 3060 12GB, RTX 2080 Ti, RX 6700 XT

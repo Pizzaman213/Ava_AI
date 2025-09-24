@@ -1,0 +1,128 @@
+# GPU XL Configuration
+# Extra-large GPU training configuration for Ava MoE++
+# Target: ~900M parameters, 22GB+ VRAM, RTX 3090/RTX 4090/RTX A6000/H100
+# Optimized for: Extra-large models and cutting-edge research
+
+model:
+  # Core Architecture
+  hidden_size: 1024
+  num_layers: 26
+  num_attention_heads: 16
+  intermediate_size: 4096
+  vocab_size: 50257
+  max_position_embeddings: 2048
+
+  # MoE Configuration
+  num_experts: 28
+  num_experts_per_token: 3
+  expert_capacity_factor: 1.5
+  router_type: "switch"
+  router_aux_loss_coef: 0.01
+  router_jitter_noise: 0.01
+
+  # Attention & Position Encoding
+  use_cache: true
+  rope_theta: 10000.0
+  attention_dropout: 0.05
+  hidden_dropout: 0.05
+
+  # Regularization
+  layer_norm_eps: 1e-5
+  initializer_range: 0.02
+  hidden_act: "gelu"
+
+  # Enhanced Features (enabled for XL model)
+  use_moh: true
+  use_moa: true
+  use_rag: false
+  use_cross_attention: true
+  num_cross_attention_layers: 3
+  use_episodic_memory: true
+  memory_size: 1000
+
+training:
+  # Batch Configuration
+  batch_size: 2
+  gradient_accumulation_steps: 16
+  max_gradient_norm: 1.0
+
+  # Training Duration
+  num_epochs: 6
+  max_steps: -1
+  warmup_steps: 2200
+
+  # Learning Rate & Optimizer
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-8
+  lr_scheduler_type: "cosine"
+
+  # Mixed Precision & Performance
+  mixed_precision: "bf16"
+  dataloader_num_workers: 8
+  gradient_checkpointing: true
+
+  # Evaluation & Logging
+  eval_strategy: "steps"
+  eval_steps: 200
+  save_strategy: "steps"
+  save_steps: 400
+  logging_steps: 20
+
+  # Early Stopping
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.005
+
+  # Advanced Training Features
+  use_ema: true
+  ema_decay: 0.999
+  label_smoothing: 0.1
+
+data:
+  # Dataset Configuration
+  data_dir: "data/train"
+  max_length: 2048
+  max_train_examples: -1
+  max_eval_examples: 2500
+
+  # Preprocessing
+  tokenizer_name: "gpt2"
+  padding_side: "right"
+  truncation: true
+
+  # Data Loading
+  train_batch_size: 2
+  eval_batch_size: 4
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+
+# Hardware Configuration
+device: "auto"
+fp16: false
+bf16: true
+
+# Memory Optimization
+gradient_checkpointing: true
+use_cpu_offload: false
+pin_memory: true
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-gpu-xl"
+  tags: ["gpu", "xl", "900M", "cutting-edge"]
+
+# Advanced Features
+compilation:
+  enabled: false
+  backend: "inductor"
+
+quantization:
+  enabled: false
+  bits: 8
+
+# Hardware Requirements
+# VRAM: 22GB minimum, 24GB recommended
+# Compatible GPUs: RTX 3090, RTX 4090, RTX A6000, H100 PCIe

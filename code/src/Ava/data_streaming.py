@@ -6,13 +6,20 @@ Efficiently handles large datasets without loading everything into memory
 import os
 import json
 import torch
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import IterableDataset, DataLoader, DistributedSampler
 from pathlib import Path
 from typing import Optional, Iterator, Dict, List, Tuple
 import pyarrow as pa
 import pyarrow.parquet as pq
 import random
 from itertools import cycle, islice
+
+# Distributed training imports
+try:
+    import torch.distributed as dist
+    DISTRIBUTED_AVAILABLE = True
+except ImportError:
+    DISTRIBUTED_AVAILABLE = False
 
 
 class StreamingDataset(IterableDataset):
@@ -66,7 +73,7 @@ class StreamingDataset(IterableDataset):
             all_jsonl = sorted(self.data_dir.glob("*.jsonl"))
             files.extend(all_jsonl)
 
-        print(f"📂 Found {len(files)} data files for {self.split} split")
+        print(f"Found {len(files)} data files for {self.split} split")
         return files
 
     def _read_file(self, file_path: Path) -> Iterator[str]:
@@ -199,11 +206,29 @@ def create_streaming_dataloaders(
     data_dir: str,
     num_workers: int = 0,
     max_samples: Optional[int] = None,
-    buffer_size: int = 1000
+    buffer_size: int = 1000,
+    distributed: bool = None,
+    world_size: Optional[int] = None,
+    rank: Optional[int] = None
 ) -> Tuple[DataLoader, DataLoader]:
-    """Create streaming train and validation dataloaders"""
+    """Create streaming train and validation dataloaders with distributed support"""
 
-    print(f"🌊 Creating streaming dataloaders...")
+    # Auto-detect distributed training
+    if distributed is None:
+        distributed = DISTRIBUTED_AVAILABLE and (
+            'WORLD_SIZE' in os.environ or
+            (world_size is not None and world_size > 1)
+        )
+
+    if distributed and DISTRIBUTED_AVAILABLE:
+        if world_size is None:
+            world_size = int(os.environ.get('WORLD_SIZE', 1))
+        if rank is None:
+            rank = int(os.environ.get('RANK', 0))
+
+        print(f"🌐 Creating distributed streaming dataloaders (rank {rank}/{world_size})")
+    else:
+        print(f"Creating streaming dataloaders...")
 
     # Create streaming datasets
     train_dataset = StreamingDataset(
@@ -224,22 +249,44 @@ def create_streaming_dataloaders(
         buffer_size=buffer_size // 10
     )
 
-    # Create dataloaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=torch.cuda.is_available()
-    )
+    # Create dataloaders with distributed support
+    dataloader_kwargs = {
+        'batch_size': batch_size,
+        'num_workers': num_workers,
+        'pin_memory': torch.cuda.is_available(),
+        'drop_last': True  # Important for distributed training
+    }
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=torch.cuda.is_available()
-    )
+    # For IterableDataset, we don't use DistributedSampler,
+    # but we need to handle distributed iteration in the dataset itself
+    if distributed and DISTRIBUTED_AVAILABLE:
+        # Modify datasets for distributed iteration
+        train_dataset = DistributedStreamingDataset(train_dataset, world_size, rank)
+        val_dataset = DistributedStreamingDataset(val_dataset, world_size, rank)
+
+    train_loader = DataLoader(train_dataset, **dataloader_kwargs)
+    val_loader = DataLoader(val_dataset, **dataloader_kwargs)
 
     return train_loader, val_loader
+
+
+class DistributedStreamingDataset(IterableDataset):
+    """Wrapper for distributed streaming dataset"""
+
+    def __init__(self, base_dataset: StreamingDataset, world_size: int, rank: int):
+        self.base_dataset = base_dataset
+        self.world_size = world_size
+        self.rank = rank
+
+    def __iter__(self):
+        # Create iterator from base dataset
+        base_iter = iter(self.base_dataset)
+
+        # Skip samples to ensure each rank gets different data
+        # This is a simple round-robin distribution
+        for i, sample in enumerate(base_iter):
+            if i % self.world_size == self.rank:
+                yield sample
 
 
 class InfiniteStreamingDataset(IterableDataset):

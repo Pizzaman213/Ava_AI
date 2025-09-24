@@ -95,13 +95,13 @@ DATASETS_CONFIG = {
     # ================================
     # Large-scale Text Datasets (High Token Count)
     ###
-    #"allenai/c4": {
-    #    "splits": ["train"], "subset": "en", "streaming_safe": True, "max_samples": 100000,
-    #    "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
-    #    "description": "Colossal Clean Crawled Corpus - cleaned web text for language modeling",
-    #    "example_command": "python download_datasets.py --dataset 'allenai/c4' --max-samples 10000"
-    #},
-    ###
+    "allenai/c4": {
+        "splits": ["train"], "subset": "en", "streaming_safe": True, "max_samples": 100000,
+        "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
+        "description": "Colossal Clean Crawled Corpus - cleaned web text for language modeling",
+        "example_command": "python download_datasets.py --dataset 'allenai/c4' --max-samples 10000"
+    },
+    
     "openwebtext": {
         "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 50000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
@@ -133,7 +133,7 @@ DATASETS_CONFIG = {
         "example_command": "python download_datasets.py --dataset 'togethercomputer/RedPajama-Data-1T' --max-samples 1000"
     },
     "HuggingFaceFW/fineweb": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 75000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 100000,
         "categories": ["rag", "web"], "tokens": "very_high", "large": True,
         "description": "High-quality web text filtered from CommonCrawl",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceFW/fineweb' --max-samples 5000"

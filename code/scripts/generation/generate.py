@@ -60,16 +60,34 @@ class GenerationPipeline:
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         print(f"🔧 Using device: {self.device}")
 
+        # Check if this is a DeepSpeed checkpoint
+        is_deepspeed = 'mp_rank_00_model_states.pt' in model_path or model_path.endswith('/step_257000')
+
+        # Handle DeepSpeed checkpoint path
+        if model_path.endswith('/step_257000'):
+            deepspeed_path = Path(model_path) / 'step_257000' / 'mp_rank_00_model_states.pt'
+            meta_path = Path(model_path) / 'model.pt'
+        else:
+            deepspeed_path = Path(model_path) if is_deepspeed else None
+            meta_path = Path(model_path).parent.parent / 'model.pt' if is_deepspeed else None
+
         # Load configuration
         if config_path:
             with open(config_path, 'r') as f:
                 config_dict = yaml.safe_load(f)
             model_config = config_dict.get('model', {})
+        elif is_deepspeed and meta_path and meta_path.exists():
+            # Load config from metadata checkpoint for DeepSpeed
+            meta_checkpoint = torch.load(meta_path, map_location=self.device, weights_only=False)
+            if 'config' in meta_checkpoint:
+                model_config = meta_checkpoint['config'].get('model', meta_checkpoint['config'])
+            else:
+                raise ValueError("No configuration found in metadata. Please provide --config-path")
         else:
             # Try to load config from checkpoint
-            checkpoint = torch.load(model_path, map_location=self.device)
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
             if 'config' in checkpoint:
-                model_config = checkpoint['config']
+                model_config = checkpoint['config'].get('model', checkpoint['config'])
             else:
                 raise ValueError("No configuration found. Please provide --config-path")
 
@@ -79,10 +97,20 @@ class GenerationPipeline:
         self.model = EnhancedMoEModel(self.config)
 
         # Load checkpoint
-        if Path(model_path).exists():
-            checkpoint = torch.load(model_path, map_location=self.device)
+        if is_deepspeed and deepspeed_path and deepspeed_path.exists():
+            print(f"🔄 Loading DeepSpeed checkpoint from {deepspeed_path}")
+            ds_checkpoint = torch.load(deepspeed_path, map_location=self.device, weights_only=False)
+            if 'module' in ds_checkpoint:
+                self.model.load_state_dict(ds_checkpoint['module'])
+                print(f"✅ DeepSpeed model loaded from {deepspeed_path}")
+            else:
+                raise ValueError("Invalid DeepSpeed checkpoint format")
+        elif Path(model_path).exists():
+            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
             if 'model_state_dict' in checkpoint:
                 self.model.load_state_dict(checkpoint['model_state_dict'])
+            elif 'module' in checkpoint:  # DeepSpeed format
+                self.model.load_state_dict(checkpoint['module'])
             else:
                 self.model.load_state_dict(checkpoint)
             print(f"✅ Model loaded from {model_path}")
