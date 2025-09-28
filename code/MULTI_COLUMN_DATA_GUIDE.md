@@ -28,17 +28,17 @@ The multi-column data loader supports training on datasets with multiple columns
 
 ## Key Features
 
-### 🎯 Multi-Column Data Loading
+###  Multi-Column Data Loading
 Support for datasets with multiple columns of different data types, processed according to their specific requirements.
 
-### 📊 Flexible Combine Strategies
+###  Flexible Combine Strategies
 Three different ways to combine multiple columns:
 
 1. **Concatenate**: Merge all input columns into a single sequence
 2. **Template**: Use custom templates to format multiple columns
 3. **Separate**: Keep columns separate for multi-input models
 
-### 🔧 Configurable Processing
+###  Configurable Processing
 Each column can have its own:
 - Data type and role (input, target, auxiliary, weight)
 - Maximum length and normalization settings
@@ -46,7 +46,7 @@ Each column can have its own:
 - Preprocessing and augmentation rules
 - Validation constraints
 
-### 🚀 HuggingFace Integration
+###  HuggingFace Integration
 Direct loading from HuggingFace Hub with automatic column mapping and streaming support.
 
 ## Basic Usage
@@ -192,7 +192,7 @@ python3 scripts/training/train.py \
     --buffer-size 5000
 ```
 
-### 📝 Smart Formatting Templates
+###  Smart Formatting Templates
 
 Each format uses optimized templates for better training:
 

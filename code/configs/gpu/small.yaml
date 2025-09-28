@@ -4,39 +4,40 @@
 # Optimized for: Small GPU experiments and development with enhanced features
 
 model:
-  # Core Architecture
-  hidden_size: 576
-  num_layers: 12
-  num_attention_heads: 9
-  intermediate_size: 2304
+  # Core Architecture (DeepSeek-V3 style, smaller for stable training)
+  hidden_size: 384
+  num_layers: 6
+  num_attention_heads: 6
+  intermediate_size: 1024
   vocab_size: 50257
-  max_position_embeddings: 1024
+  max_position_embeddings: 2048
 
-  # MoE Configuration
-  num_experts: 10
-  num_experts_per_token: 2
-  expert_capacity_factor: 1.0
-  router_type: "switch"
-  router_aux_loss_coef: 0.01
+  # MoE Configuration (DeepSeek-V3 style, reduced for memory)
+  num_experts: 4
+  num_experts_per_token: 1
+  expert_capacity_factor: 1.25
+  router_type: "deepseek"  # DeepSeek routing
+  router_aux_loss_coef: 0.001
   router_jitter_noise: 0.01
 
-  # Attention & Position Encoding
+  # Attention & Position Encoding (DeepSeek-V3 style)
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.1
-  hidden_dropout: 0.1
+  attention_dropout: 0.0  # DeepSeek-V3 uses no dropout
+  hidden_dropout: 0.0
+  use_flash_attention: true
 
   # Regularization
   layer_norm_eps: 1e-5
   initializer_range: 0.02
   hidden_act: "gelu"
 
-  # Enhanced Features (some enabled for small model)
-  use_moh: true   # Enable MoH for small model
-  use_moa: false  # Keep MoA disabled for memory
+  # Enhanced Features (DeepSeek-V3 style - minimal complexity)
+  use_moh: false  # Disabled for DeepSeek alignment
+  use_moa: false  # Disabled for DeepSeek alignment
   use_rag: false
   use_cross_attention: false
-  use_episodic_memory: true
+  use_episodic_memory: false  # Disabled for DeepSeek alignment
   memory_size: 500
 
   # DeepSpeed compatibility
@@ -48,23 +49,24 @@ training:
   # Batch Configuration
   batch_size: 6
   gradient_accumulation_steps: 6
-  max_gradient_norm: 1.0
+  max_gradient_norm: 1.0  # DeepSeek-V3 standard gradient clipping
 
   # Training Duration
   num_epochs: 12
   max_steps: -1
-  warmup_steps: 900
+  warmup_steps: 2000  # DeepSeek-V3 style warmup
 
-  # Learning Rate & Optimizer
-  learning_rate: 2.5e-4
-  weight_decay: 0.01
+  # Learning Rate & Optimizer (DeepSeek-V3 style)
+  learning_rate: 4.2e-4  # DeepSeek-V3 actual learning rate
+  weight_decay: 0.1  # Higher weight decay like DeepSeek-V3
   beta1: 0.9
   beta2: 0.95
   eps: 1e-8
-  lr_scheduler_type: "cosine"
+  lr_scheduler_type: "cosine"  # DeepSeek-V3 uses cosine
+  lr_end: 4.2e-5  # 10% of peak LR for cosine decay
 
-  # Mixed Precision & Performance
-  mixed_precision: "fp16"
+  # Mixed Precision & Performance (DeepSeek-V3 prefers bf16)
+  mixed_precision: "bf16"
   dataloader_num_workers: 4
   gradient_checkpointing: false
 
@@ -80,10 +82,10 @@ training:
   early_stopping_threshold: 0.01
 
 data:
-  # Dataset Configuration
-  data_dir: "data/train"
-  max_length: 1024
-  max_train_examples: -1
+  # Dataset Configuration (DeepSeek-V3 style - gradual learning)
+  data_dir: "/project/code/data/processed"
+  max_length: 2048
+  max_train_examples: 50000  # Limit to 50k examples per epoch
   max_eval_examples: 1000
 
   # Preprocessing
@@ -113,13 +115,13 @@ deepspeed:
 
 # Enhanced Features Configuration
 enhanced_features:
-  # Architecture enhancements (moderate for small)
+  # Architecture enhancements (DeepSeek-V3 alignment)
   architecture:
-    use_moh: true        # Mixture of Heads enabled
-    use_moa: false       # Keep disabled for memory
+    use_moh: false       # Disabled for DeepSeek alignment
+    use_moa: false       # Disabled for DeepSeek alignment
     use_cross_attention: false
     use_alibi: false
-    expert_routing_type: "switch"
+    expert_routing_type: "deepseek"  # Use DeepSeek routing
 
   # RAG System (disabled for small)
   rag:
@@ -128,34 +130,34 @@ enhanced_features:
     max_retrieved_docs: 5
     rag_fusion_type: "concatenate"
 
-  # Advanced Loss Functions (more enabled for small)
+  # Advanced Loss Functions (DeepSeek-V3 style)
   losses:
-    focal_loss: true     # Enable focal loss
+    focal_loss: false     # Keep simple for DeepSeek alignment
     contrastive_loss: false
-    diversity_loss: true
-    auxiliary_loss: true
-    adaptive_loss_scaling: true
+    diversity_loss: false
+    auxiliary_loss: true  # DeepSeek-V3 uses auxiliary loss for MoE
+    adaptive_loss_scaling: false
 
-  # Gradient Surgery (basic for small)
+  # Gradient Surgery (DeepSeek alignment - simplified)
   gradient:
-    gradient_surgery: true
+    gradient_surgery: false  # Keep training simple like DeepSeek
     adaptive_gradient_surgery: false
     gradient_surgery_method: "pcgrad"
 
-  # Episodic Memory (enabled for small)
+  # Episodic Memory (DeepSeek alignment - disabled)
   memory:
-    use_episodic_memory: true
+    use_episodic_memory: false  # DeepSeek doesn't use episodic memory
     memory_capacity: 500
     memory_selection_strategy: "importance"
     memory_importance_threshold: 0.7
     memory_adaptation_rate: 0.01
     memory_performance_window: 100
-    memory_replay_ratio: 0.1
-    memory_replay_strategy: "importance"
+    memory_replay_ratio: 0.01
+    memory_replay_strategy: "random"
 
-  # Quantization (enable for memory efficiency)
+  # Quantization (disabled for diagnosis)
   quantization:
-    quantization_aware: true
+    quantization_aware: false  # Disabled during diagnosis
     use_nvfp4: false
     bit_width: 8
     nvfp4_block_size: 64
@@ -215,17 +217,17 @@ run_management:
 
 # Hardware Configuration
 device: "auto"
-fp16: true
-bf16: false
+fp16: false  # DeepSeek-V3 uses bf16 primarily
+bf16: true
 
 # Monitoring (Enhanced)
 wandb:
   enabled: true
   project: "ava-moe-gpu-small-enhanced"
-  tags: ["gpu", "small", "150M", "development", "enhanced", "moh", "episodic-memory"]
+  tags: ["gpu", "small", "150M", "deepseek-v3", "aligned", "simple"]
   entity: null
   name: null
-  notes: "Enhanced small model with MoH, episodic memory, and advanced losses"
+  notes: "DeepSeek-V3 aligned training with higher LR, bf16, and clean architecture"
   group: "small-models"
   job_type: "train"
   offline: false

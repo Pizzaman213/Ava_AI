@@ -1,0 +1,54 @@
+{
+  "processing_timestamp": 1759030271.3688986,
+  "processing_stats": {
+    "datasets_processed": 1,
+    "total_samples": 4,
+    "total_tokens": 68,
+    "failed_datasets": []
+  },
+  "enhanced_processing_stats": {
+    "total_samples_processed": 6,
+    "samples_accepted": 4,
+    "samples_rejected": 0,
+    "encoding_fixes": 0,
+    "quality_improvements": 0,
+    "rejection_reasons": {}
+  },
+  "dataset_stats": {
+    "sample_dataset": {
+      "total_texts": 4,
+      "avg_length": 68.5,
+      "min_length": 45,
+      "max_length": 83,
+      "total_characters": 274,
+      "avg_words": 9.5,
+      "total_words": 38
+    }
+  },
+  "overall_stats": {
+    "total_texts": 4,
+    "avg_length": 68.5,
+    "min_length": 45,
+    "max_length": 83,
+    "total_characters": 274,
+    "avg_words": 9.5,
+    "total_words": 38
+  },
+  "quality_report": {},
+  "quality_filtering_enabled": false,
+  "quality_threshold": 0.3,
+  "gpu_accelerated": false,
+  "libraries_available": {
+    "pandas": true,
+    "rapids": true,
+    "langdetect": false,
+    "chardet": false,
+    "ftfy": true
+  },
+  "output_files": {
+    "combined": "/project/test_output_no_filter/combined_processed.jsonl",
+    "individual_datasets": [
+      "/project/test_output_no_filter/sample_dataset_processed.jsonl"
+    ]
+  }
+}

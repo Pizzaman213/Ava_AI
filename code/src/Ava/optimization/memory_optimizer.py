@@ -460,7 +460,7 @@ class A100MemoryOptimizer:
                     # Apply generic gradient checkpointing
                     self._apply_deepspeed_checkpointing(model)
 
-                logger.info("✅ DeepSpeed gradient checkpointing enabled")
+                logger.info(" DeepSpeed gradient checkpointing enabled")
             except Exception as e:
                 logger.warning(f"DeepSpeed gradient checkpointing failed: {e}")
 
@@ -468,7 +468,7 @@ class A100MemoryOptimizer:
         if self.deepspeed_zero_stage > 0:
             self._optimize_zero_memory_patterns()
 
-        logger.info("✅ DeepSpeed memory optimizations applied")
+        logger.info(" DeepSpeed memory optimizations applied")
 
     def _apply_deepspeed_checkpointing(self, model: torch.nn.Module) -> None:
         """Apply DeepSpeed-style gradient checkpointing."""
@@ -512,7 +512,7 @@ class A100MemoryOptimizer:
         if not self.is_deepspeed_enabled:
             return False
 
-        logger.warning("🚨 DeepSpeed OOM detected, attempting recovery...")
+        logger.warning(" DeepSpeed OOM detected, attempting recovery...")
 
         try:
             # 1. Clear all caches
@@ -532,11 +532,11 @@ class A100MemoryOptimizer:
             if self.enable_memory_pool:
                 self._setup_memory_pool()
 
-            logger.info("✅ DeepSpeed OOM recovery attempted")
+            logger.info(" DeepSpeed OOM recovery attempted")
             return True
 
         except Exception as e:
-            logger.error(f"❌ DeepSpeed OOM recovery failed: {e}")
+            logger.error(f" DeepSpeed OOM recovery failed: {e}")
             return False
 
 

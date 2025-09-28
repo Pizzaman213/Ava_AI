@@ -556,9 +556,9 @@ if invalid_fields:
 # Create configuration
 try:
     config = EnhancedMoEConfig(**{k: v for k, v in model_config.items() if k in valid_fields})
-    print("✓ Configuration is valid")
+    print(" Configuration is valid")
 except Exception as e:
-    print(f"✗ Configuration error: {e}")
+    print(f" Configuration error: {e}")
 ```
 
 ## Best Practices

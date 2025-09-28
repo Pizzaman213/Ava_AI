@@ -82,7 +82,7 @@ class GPUMemoryManager:
                     # Aggressive cleanup if requested
                     total_memory = self._get_total_gpu_memory()
                     if total_memory > 0 and (aggressive or stats['before_cached'] > self.emergency_threshold * total_memory):
-                        print("🔄 Performing aggressive GPU cleanup...")
+                        print(" Performing aggressive GPU cleanup...")
                         try:
                             torch.cuda.ipc_collect()
                         except Exception as e:
@@ -118,10 +118,10 @@ class GPUMemoryManager:
 
                 # Check if emergency cleanup is still needed
                 if stats['after_cached'] > 1.0:
-                    print(f"⚠️ High cache usage detected: {stats['after_cached']:.2f}GB still cached")
+                    print(f" High cache usage detected: {stats['after_cached']:.2f}GB still cached")
 
         except Exception as e:
-            print(f"⚠️ Error during GPU cleanup: {e}")
+            print(f" Error during GPU cleanup: {e}")
             stats['error'] = str(e)
 
         return stats
@@ -184,7 +184,7 @@ class GPUMemoryManager:
                     utilization = allocated / total
 
                     if utilization > threshold:
-                        print(f"⚠️ High GPU memory usage: {utilization*100:.1f}% (>{threshold*100:.1f}%)")
+                        print(f" High GPU memory usage: {utilization*100:.1f}% (>{threshold*100:.1f}%)")
                         return True
 
         except Exception as e:
@@ -194,11 +194,11 @@ class GPUMemoryManager:
 
     def emergency_cleanup(self) -> None:
         """Perform emergency cleanup when memory is critically low."""
-        print("🚨 Emergency GPU memory cleanup initiated!")
+        print(" Emergency GPU memory cleanup initiated!")
 
         # Multiple rounds of aggressive cleanup
         for i in range(5):
-            print(f"🔄 Emergency cleanup round {i+1}/5")
+            print(f" Emergency cleanup round {i+1}/5")
             self.cleanup_gpu_memory(aggressive=True)
 
             # Check if cleanup was successful
@@ -208,11 +208,11 @@ class GPUMemoryManager:
 
             time.sleep(0.5)
         else:
-            print("⚠️ Emergency cleanup completed, but memory usage still high")
+            print(" Emergency cleanup completed, but memory usage still high")
 
     def signal_handler(self, signum: int, frame) -> None:
         """Handle interruption signals (Ctrl+C, etc.) with proper GPU cleanup."""
-        print(f"\n🛑 Received signal {signum}. Performing cleanup...")
+        print(f"\n Received signal {signum}. Performing cleanup...")
         self.cleanup_gpu_memory(aggressive=True)
         print("Cleanup completed. Exiting...")
         exit(0)

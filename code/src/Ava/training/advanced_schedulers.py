@@ -535,7 +535,7 @@ class AdaptiveLRScheduler(_LRScheduler):
 
     def _increase_lr(self):
         """Increase learning rate (recovery)."""
-        for param_group in enumerate(self.optimizer.param_groups):
+        for i, param_group in enumerate(self.optimizer.param_groups):
             old_lr = param_group['lr']
             new_lr = old_lr * self.recovery_factor
 

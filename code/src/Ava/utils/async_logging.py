@@ -235,7 +235,7 @@ class AsyncLogger:
                 self.logging_stats[f'errors_{error_type}'] = self.logging_stats.get(f'errors_{error_type}', 0) + 1
                 # Only print critical errors, suppress network/socket errors
                 if not any(keyword in str(e).lower() for keyword in ['socket', 'network', 'connection', 'timeout']):
-                    print(f"⚠️ Async logging error ({error_type}): {e}")
+                    print(f" Async logging error ({error_type}): {e}")
                 pass
 
         # Final processing
@@ -334,7 +334,7 @@ class AsyncLogger:
             # Handle specific network errors by falling back to offline mode
             if any(keyword in str(e).lower() for keyword in ['socket', 'network', 'connection', 'timeout', 'unreachable']):
                 if not self.wandb_offline:
-                    print("🔄 WandB network error detected, switching to offline mode")
+                    print(" WandB network error detected, switching to offline mode")
                     self.wandb_offline = True
                     try:
                         import os
@@ -369,7 +369,7 @@ class AsyncLogger:
 
         try:
             if len(cache_to_flush) > 50:  # Only print for significant cache flushes
-                print(f"📤 Uploading {len(cache_to_flush)} cached metrics to WandB...")
+                print(f" Uploading {len(cache_to_flush)} cached metrics to WandB...")
 
             # Group by step
             step_metrics = defaultdict(dict)
@@ -404,7 +404,7 @@ class AsyncLogger:
             print(f"Successfully uploaded {successful_count} metric batches to WandB")
 
         except Exception as e:
-            print(f"⚠️ Network error uploading to WandB: {e}")
+            print(f" Network error uploading to WandB: {e}")
             # Exponential backoff
             self.network_retry_delay = min(self.network_retry_delay * 1.5, self.config.wandb_max_retry_delay)
 

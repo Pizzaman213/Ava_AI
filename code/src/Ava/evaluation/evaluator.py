@@ -140,7 +140,17 @@ class ModelEvaluator:
         if compute_perplexity:
             avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
             metrics['loss'] = avg_loss
-            metrics['perplexity'] = np.exp(avg_loss)
+
+            # Clamp loss before exp to prevent overflow
+            # exp(88.7) ≈ 1e38, close to float max
+            if avg_loss > 88.0:
+                import warnings
+                warnings.warn(f"Loss ({avg_loss:.2f}) is very high, clamping to 88.0 to prevent perplexity overflow")
+                avg_loss_clamped = 88.0
+            else:
+                avg_loss_clamped = avg_loss
+
+            metrics['perplexity'] = np.exp(avg_loss_clamped)
 
         if compute_accuracy:
             metrics['accuracy'] = correct_predictions / total_predictions if total_predictions > 0 else 0

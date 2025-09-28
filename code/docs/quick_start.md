@@ -37,8 +37,8 @@ Expected output:
    Model has 7,111,434 parameters
 3. Creating dataloaders...
 4. Testing one training step...
-   ✓ Training step successful!
-✅ All tests passed!
+    Training step successful!
+ All tests passed!
 ```
 
 ## 2. Prepare Data
@@ -222,4 +222,4 @@ python scripts/generation/generate.py --help
 python scripts/evaluation/evaluate.py --help
 ```
 
-Happy training! 🚀
+Happy training! 

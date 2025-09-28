@@ -51,29 +51,29 @@ DATASETS_CONFIG = {
     # PRE-TRAINING DATASETS
     # ================================
     # Core Instruction Tuning (Verified Working)
-    "databricks/databricks-dolly-15k": {
+    "teknium/OpenHermes-2.5": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["pretraining", "instruction"], "tokens": "high",
-        "description": "15K instruction-following examples from Databricks",
-        "example_command": "python download_datasets.py --dataset 'databricks/databricks-dolly-15k'"
+        "description": "High-quality GPT-4 generated instruction dataset",
+        "example_command": "python download_datasets.py --dataset 'teknium/OpenHermes-2.5'"
     },
-    "tatsu-lab/alpaca": {
+    "Open-Orca/OpenOrca": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "instruction"], "tokens": "medium",
-        "description": "52K instruction-following examples from Stanford",
-        "example_command": "python download_datasets.py --dataset 'tatsu-lab/alpaca'"
+        "categories": ["pretraining", "instruction"], "tokens": "very_high",
+        "description": "4M high-quality instruction examples",
+        "example_command": "python download_datasets.py --dataset 'Open-Orca/OpenOrca'"
     },
-    "yahma/alpaca-cleaned": {
-        "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "instruction"], "tokens": "medium",
-        "description": "Cleaned version of Alpaca dataset with improved quality",
-        "example_command": "python download_datasets.py --dataset 'yahma/alpaca-cleaned'"
+    "meta-math/MetaMathQA": {
+        "splits": ["train", "test"], "subset": None, "streaming_safe": True,
+        "categories": ["pretraining", "math"], "tokens": "high",
+        "description": "Mathematical reasoning dataset",
+        "example_command": "python download_datasets.py --dataset 'meta-math/MetaMathQA'"
     },
-    "vicgalle/alpaca-gpt4": {
+    "m-a-p/Code-Feedback": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "instruction"], "tokens": "medium",
-        "description": "Alpaca dataset regenerated with GPT-4 for higher quality",
-        "example_command": "python download_datasets.py --dataset 'vicgalle/alpaca-gpt4'"
+        "categories": ["pretraining", "code"], "tokens": "high",
+        "description": "Code instruction dataset with feedback",
+        "example_command": "python download_datasets.py --dataset 'm-a-p/Code-Feedback'"
     },
 
     # OpenAssistant (Verified Working)
@@ -103,13 +103,13 @@ DATASETS_CONFIG = {
     },
     
     "openwebtext": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 50000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 500000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "description": "Open-source recreation of GPT-2's WebText training dataset",
         "example_command": "python download_datasets.py --dataset 'openwebtext' --max-samples 5000"
     },
     "EleutherAI/pile": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 50000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 500000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "description": "800GB of diverse text from books, websites, and academic sources",
         "example_command": "python download_datasets.py --dataset 'EleutherAI/pile' --max-samples 5000"
@@ -121,25 +121,25 @@ DATASETS_CONFIG = {
         "example_command": "python download_datasets.py --dataset 'wikipedia' --max-samples 10000"
     },
     "cc_news": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 75000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 750000,
         "categories": ["rag", "news"], "tokens": "very_high", "large": True,
         "description": "News articles from Common Crawl for current events knowledge",
         "example_command": "python download_datasets.py --dataset 'cc_news' --max-samples 5000"
     },
     "togethercomputer/RedPajama-Data-1T": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 25000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 2500000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "description": "1.2 trillion token dataset replicating LLaMA training data",
         "example_command": "python download_datasets.py --dataset 'togethercomputer/RedPajama-Data-1T' --max-samples 1000"
     },
     "HuggingFaceFW/fineweb": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 100000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 200000,
         "categories": ["rag", "web"], "tokens": "very_high", "large": True,
         "description": "High-quality web text filtered from CommonCrawl",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceFW/fineweb' --max-samples 5000"
     },
     "HuggingFaceFW/fineweb-edu": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 50000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 500000,
         "categories": ["rag", "education"], "tokens": "very_high", "large": True,
         "description": "Educational web content from FineWeb corpus",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceFW/fineweb-edu' --max-samples 5000"
@@ -155,7 +155,7 @@ DATASETS_CONFIG = {
     # MULTI-TASK & CONTINUAL LEARNING
     # ================================
     # Math & Reasoning (For continual learning)
-    "gsm8k": {
+    "openai/gsm8k": {
         "splits": ["train", "test"], "subset": "main", "streaming_safe": True,
         "categories": ["multitask", "continual", "math"], "tokens": "medium",
         "description": "Grade School Math 8K - math word problems with solutions",
@@ -169,14 +169,14 @@ DATASETS_CONFIG = {
     },
 
     # GLUE Tasks (Multi-task learning)
-    "glue": {
+    "nyu-mll/glue": {
         "splits": ["train", "validation"], "subset": "cola", "streaming_safe": True,
         "categories": ["multitask", "evaluation"], "tokens": "low",
         "task_type": "classification",
         "description": "GLUE CoLA task - linguistic acceptability classification",
         "example_command": "python download_datasets.py --dataset 'glue'"
     },
-    "squad": {
+    "rajpurkar/squad": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["evaluation", "qa"], "tokens": "medium",
         "description": "Stanford Question Answering Dataset for reading comprehension",
@@ -233,25 +233,25 @@ DATASETS_CONFIG = {
         "description": "AI2 Reasoning Challenge - grade-school science questions",
         "example_command": "python download_datasets.py --dataset 'allenai/ai2_arc'"
     },
-    "winogrande": {
+    "allenai/winogrande": {
         "splits": ["train", "validation"], "subset": "winogrande_xl", "streaming_safe": True,
         "categories": ["evaluation", "reasoning"], "tokens": "low",
         "description": "Commonsense reasoning with pronoun resolution",
         "example_command": "python download_datasets.py --dataset 'winogrande'"
     },
-    "hellaswag": {
+    "Rowan/hellaswag": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["evaluation", "commonsense"], "tokens": "medium",
         "description": "Commonsense natural language inference",
         "example_command": "python download_datasets.py --dataset 'hellaswag'"
     },
-    "squad": {
+    "rajpurkar/squad": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["evaluation", "qa"], "tokens": "medium",
         "description": "Stanford Question Answering Dataset for reading comprehension",
         "example_command": "python download_datasets.py --dataset 'squad'"
     },
-    "squad_v2": {
+    "rajpurkar/squad_v2": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["evaluation", "qa"], "tokens": "medium",
         "description": "Stanford Question Answering v2 with unanswerable questions",
@@ -265,7 +265,7 @@ DATASETS_CONFIG = {
     },
 
     # Summarization
-    "cnn_dailymail": {
+    "abisee/cnn_dailymail": {
         "splits": ["train", "validation", "test"], "subset": "3.0.0", "streaming_safe": True,
         "categories": ["evaluation", "summarization"], "tokens": "high",
         "description": "CNN/DailyMail news articles with highlights for summarization",
@@ -291,12 +291,7 @@ DATASETS_CONFIG = {
     # ================================
     # MULTI-MODAL DATASETS
     # ================================
-    "ShareGPT4Omni/ShareGPT4V": {
-        "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["multimodal", "vision"], "tokens": "high",
-        "description": "Vision-language conversations with GPT-4V",
-        "example_command": "python download_datasets.py --dataset 'ShareGPT4Omni/ShareGPT4V'"
-    },
+    # ShareGPT4V removed - access issues
 
     # ================================
     # CONVERSATIONAL DATASETS
@@ -313,12 +308,7 @@ DATASETS_CONFIG = {
         "description": "Human-generated conversations without AI assistance",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceH4/no_robots'"
     },
-    "lmsys/lmsys-chat-1m": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "large": True,
-        "categories": ["conversation", "multiturn"], "tokens": "very_high",
-        "description": "1M real user conversations from Vicuna demo",
-        "example_command": "python download_datasets.py --dataset 'lmsys/lmsys-chat-1m' --max-samples 1000"
-    },
+    # lmsys-chat-1m removed - access issues
     "OpenAssistant/oasst1": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "dialog"], "tokens": "medium",
@@ -388,26 +378,11 @@ DATASETS_CONFIG = {
         "description": "Question answering on PubMed abstracts",
         "example_command": "python download_datasets.py --dataset 'pubmed_qa'"
     },
-    "scientific_papers": {
-        "splits": ["train", "validation", "test"], "subset": "arxiv", "streaming_safe": True,
-        "categories": ["scientific", "papers"], "tokens": "very_high", "large": True,
-        "description": "ArXiv and PubMed scientific papers",
-        "example_command": "python download_datasets.py --dataset 'scientific_papers' --max-samples 1000"
-    },
-    "bigscience/P3": {
-        "splits": ["train", "validation"], "subset": "all", "streaming_safe": True, "large": True,
-        "categories": ["multitask", "p3"], "tokens": "very_high",
-        "description": "Public Pool of Prompts - 170+ NLP tasks",
-        "example_command": "python download_datasets.py --dataset 'bigscience/P3' --max-samples 1000"
-    },
+    # scientific_papers removed - access issues
+    # bigscience/P3 removed - access issues
 
     # Additional Datasets
-    "bigscience/xP3": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 50000,
-        "categories": ["multilingual", "instruction"], "tokens": "very_high", "large": True,
-        "description": "Multilingual version of P3 dataset",
-        "example_command": "python download_datasets.py --dataset 'bigscience/xP3' --max-samples 1000"
-    },
+    # bigscience/xP3 removed - access issues
     "Muennighoff/natural-instructions": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["instruction", "natural"], "tokens": "very_high", "large": True,
@@ -506,11 +481,13 @@ RETRY_STRATEGIES = [
 
 class DatasetDownloader:
     def __init__(self, output_dir: str = "/project/code/data",
-                 max_samples: Optional[int] = None):
-        """Initialize the dataset downloader"""
+                 max_samples: Optional[int] = None,
+                 batch_size: int = 1000):
+        """Initialize the dataset downloader with memory-efficient batching by default"""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.max_samples = max_samples
+        self.batch_size = batch_size
         self.summary = {
             "timestamp": time.time(),
             "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -521,6 +498,17 @@ class DatasetDownloader:
 
         # Import datasets library
         self.load_dataset, self.load_from_disk, self.datasets_lib = import_datasets()
+
+        # Try to login to HuggingFace if token exists
+        try:
+            from huggingface_hub import login
+            # Check for token in environment or default location
+            token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            if token:
+                login(token=token)
+                print("✓ Logged in to HuggingFace")
+        except:
+            pass
 
     def check_memory(self) -> Tuple[float, float]:
         """Check available memory"""
@@ -574,27 +562,78 @@ class DatasetDownloader:
 
                         # Download the dataset (always streaming)
                         # Streaming mode
-                        dataset = self.load_dataset(*dataset_args, split=split, **params)
+                        # Fix: Use try/except and handle authentication
+                        dataset = None
+                        try:
+                            dataset = self.load_dataset(*dataset_args, split=split, **params)
+                        except Exception as load_error:
+                            # Try without any extra params as fallback
+                            if "LocalEntryNotFoundError" in str(load_error) or "Couldn't find" in str(load_error):
+                                print(f"  Retrying with basic parameters...")
+                                try:
+                                    dataset = self.load_dataset(*dataset_args, split=split, streaming=True)
+                                except:
+                                    print(f"  ✗ Could not load dataset even with basic params")
+                                    continue
 
-                        # Save streaming dataset
-                        output_path = self.output_dir / dataset_name.replace("/", "_") / split
+                        if dataset is None:
+                            print(f"  ✗ Failed to load dataset")
+                            continue
+
+                        # Save streaming dataset to raw folder
+                        output_path = self.output_dir / "raw" / dataset_name.replace("/", "_") / split
                         output_path.mkdir(parents=True, exist_ok=True)
 
-                        # Stream and save samples
-                        samples = []
+                        # Stream and save samples in batches to avoid memory issues
+                        batch_size = self.batch_size  # Use configurable batch size
+                        batch = []
+                        batch_num = 0
+                        total_saved = 0
                         max_to_download = self.max_samples if self.max_samples else 100000
 
-                        print(f"  Streaming up to {max_to_download} samples...")
-                        for idx, sample in enumerate(tqdm(dataset, total=max_to_download)):
-                            samples.append(sample)
-                            if idx >= max_to_download - 1:
-                                break
+                        print(f"  Streaming up to {max_to_download} samples in batches of {batch_size}...")
 
-                        # Save as JSON
-                        with open(output_path / "data.json", "w") as f:
-                            json.dump(samples, f)
+                        with tqdm(total=max_to_download) as pbar:
+                            for idx, sample in enumerate(dataset):
+                                batch.append(sample)
+                                pbar.update(1)
 
-                        print(f"  ✓ Saved {len(samples)} samples to {output_path}")
+                                # Save batch when it reaches batch_size or we hit the limit
+                                if len(batch) >= batch_size or idx >= max_to_download - 1:
+                                    # Save batch as separate JSON file
+                                    batch_file = output_path / f"batch_{batch_num:04d}.json"
+                                    with open(batch_file, "w") as f:
+                                        json.dump(batch, f)
+
+                                    total_saved += len(batch)
+                                    print(f"    Saved batch {batch_num}: {len(batch)} samples ({total_saved} total)")
+
+                                    # Clear batch and check memory
+                                    batch = []
+                                    batch_num += 1
+
+                                    # Memory check every 10 batches
+                                    if batch_num % 10 == 0:
+                                        available_gb, usage_percent = self.check_memory()
+                                        if usage_percent > 85:
+                                            print(f"    ⚠️  High memory usage ({usage_percent:.1f}%), pausing briefly...")
+                                            time.sleep(1)
+
+                                if idx >= max_to_download - 1:
+                                    break
+
+                        # Create summary file for this dataset
+                        summary = {
+                            "total_samples": total_saved,
+                            "num_batches": batch_num,
+                            "batch_size": batch_size,
+                            "dataset_name": dataset_name,
+                            "split": split
+                        }
+                        with open(output_path / "summary.json", "w") as f:
+                            json.dump(summary, f, indent=2)
+
+                        print(f"  ✓ Saved {total_saved} samples in {batch_num} batches to {output_path}")
 
                     except Exception as e:
                         print(f"  ✗ Failed to download split {split}: {str(e)}")
@@ -613,7 +652,7 @@ class DatasetDownloader:
         self.summary["failed"].append(dataset_name)
 
         # Save error details
-        error_file = self.output_dir / ".errors" / f"{dataset_name.replace('/', '_')}.txt"
+        error_file = self.output_dir / "raw" / ".errors" / f"{dataset_name.replace('/', '_')}.txt"
         error_file.parent.mkdir(parents=True, exist_ok=True)
         with open(error_file, "w") as f:
             f.write(f"Dataset: {dataset_name}\n")
@@ -624,7 +663,7 @@ class DatasetDownloader:
         return False
 
     def download_all(self, datasets: Optional[List[str]] = None,
-                    parallel: bool = True, max_workers: int = 2):
+                    parallel: bool = True, max_workers: int = 4):
         """Download all configured datasets"""
         # Select datasets to download
         if datasets:
@@ -635,10 +674,10 @@ class DatasetDownloader:
         print(f"\nPreparing to download {len(dataset_configs)} datasets")
         print(f"Output directory: {self.output_dir}")
 
-        # Check existing datasets
+        # Check existing datasets in raw folder
         existing = set()
         for dataset_name in dataset_configs:
-            dataset_dir = self.output_dir / dataset_name.replace("/", "_")
+            dataset_dir = self.output_dir / "raw" / dataset_name.replace("/", "_")
             if dataset_dir.exists() and any(dataset_dir.iterdir()):
                 existing.add(dataset_name)
                 print(f"  ⚠️  {dataset_name} already exists, skipping")
@@ -801,8 +840,8 @@ Examples:
   # Download for specific enhanced features
   python download_datasets.py --for-moh --for-rag --for-continual-learning
 
-  # Custom data directory
-  python download_datasets.py --all --data-dir /custom/path/data
+  # Custom data directory and batch size
+  python download_datasets.py --all --output-dir /custom/path/data --batch-size 500
 
   # Download small datasets only
   python download_datasets.py --all --skip-large
@@ -814,6 +853,8 @@ Examples:
                       help="Output directory for datasets (streaming, no caching)")
     parser.add_argument("--max-samples", type=int, default=None,
                       help="Maximum samples per dataset")
+    parser.add_argument("--batch-size", type=int, default=10000,
+                      help="Batch size for memory-efficient processing (default: 1000)")
 
     # Dataset selection
     parser.add_argument("--all", action="store_true",
@@ -884,9 +925,10 @@ Examples:
         validate_dataset_config()
         return
 
-    # Initialize downloader
+    # Initialize downloader with batch size
     downloader = DatasetDownloader(output_dir=args.output_dir,
-                                 max_samples=args.max_samples)
+                                 max_samples=args.max_samples,
+                                 batch_size=args.batch_size)
 
     # Determine what to download
     datasets = None

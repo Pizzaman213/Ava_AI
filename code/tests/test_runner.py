@@ -210,9 +210,9 @@ class AdvancedTestRunner:
             print(f"  Duration: {duration:.2f}s")
 
             if failed > 0 or errors > 0:
-                print(f"  ❌ FAILED")
+                print(f"   FAILED")
             else:
-                print(f"  ✅ PASSED")
+                print(f"   PASSED")
 
             return result
 
@@ -238,7 +238,7 @@ class AdvancedTestRunner:
 
     def run_all_tests(self, selected_suites: List[str] = None) -> TestReport:
         """Run all test suites and generate comprehensive report"""
-        print("🚀 Starting Advanced LLM Training Test Suite")
+        print(" Starting Advanced LLM Training Test Suite")
         print(f"Output directory: {self.output_dir}")
 
         start_time = time.time()
@@ -257,10 +257,10 @@ class AdvancedTestRunner:
                 result = self.run_test_suite(module_name)
                 suite_results.append(result)
             except KeyboardInterrupt:
-                print("\n⚠️  Test execution interrupted by user")
+                print("\n  Test execution interrupted by user")
                 break
             except Exception as e:
-                print(f"\n❌ Unexpected error running {module_name}: {e}")
+                print(f"\n Unexpected error running {module_name}: {e}")
                 continue
 
         total_duration = time.time() - start_time
@@ -315,11 +315,11 @@ class AdvancedTestRunner:
         perf_path = os.path.join(self.output_dir, "performance_analysis.json")
         self.generate_performance_analysis(report, perf_path)
 
-        print(f"\n📊 Reports generated:")
-        print(f"  📋 Summary: {txt_path}")
-        print(f"  🌐 HTML: {html_path}")
-        print(f"  📄 JSON: {json_path}")
-        print(f"  📈 Performance: {perf_path}")
+        print(f"\n Reports generated:")
+        print(f"   Summary: {txt_path}")
+        print(f"   HTML: {html_path}")
+        print(f"   JSON: {json_path}")
+        print(f"   Performance: {perf_path}")
 
     def generate_html_report(self, report: TestReport, output_path: str):
         """Generate HTML test report"""
@@ -350,7 +350,7 @@ class AdvancedTestRunner:
 </head>
 <body>
     <div class="header">
-        <h1>🚀 Advanced LLM Training Test Report</h1>
+        <h1> Advanced LLM Training Test Report</h1>
         <p><strong>Timestamp:</strong> {report.timestamp}</p>
         <p><strong>Duration:</strong> {report.total_duration:.2f} seconds</p>
         <p><strong>Device:</strong> {report.config.get('device', 'Unknown')}</p>
@@ -394,7 +394,7 @@ class AdvancedTestRunner:
 
         # Add test suite details
         for suite in report.test_suites:
-            suite_status = "✅ PASSED" if (suite.failed + suite.errors) == 0 else "❌ FAILED"
+            suite_status = " PASSED" if (suite.failed + suite.errors) == 0 else " FAILED"
             html_content += f"""
     <div class="suite">
         <div class="suite-header">
@@ -406,10 +406,10 @@ class AdvancedTestRunner:
             for test in suite.results:
                 status_class = f"test-{test.status.lower()}"
                 status_icon = {
-                    'PASS': '✅',
-                    'FAIL': '❌',
-                    'ERROR': '⚠️',
-                    'SKIP': '⏭️'
+                    'PASS': '',
+                    'FAIL': '',
+                    'ERROR': '',
+                    'SKIP': '⏭'
                 }.get(test.status, '?')
 
                 html_content += f"""
@@ -550,20 +550,20 @@ Test Suite Results:
     def print_final_summary(self, report: TestReport):
         """Print final test summary"""
         print(f"\n{'='*80}")
-        print("🎯 FINAL TEST SUMMARY")
+        print(" FINAL TEST SUMMARY")
         print(f"{'='*80}")
 
         # Overall status
         if report.total_failed == 0 and report.total_errors == 0:
-            status = "✅ ALL TESTS PASSED"
+            status = " ALL TESTS PASSED"
             status_color = "\033[92m"  # Green
         else:
-            status = "❌ SOME TESTS FAILED"
+            status = " SOME TESTS FAILED"
             status_color = "\033[91m"  # Red
 
         print(f"{status_color}{status}\033[0m")
 
-        print(f"\n📊 Results:")
+        print(f"\n Results:")
         print(f"  Total Tests: {report.total_tests}")
         print(f"  Passed: {report.total_passed}")
         print(f"  Failed: {report.total_failed}")
@@ -573,9 +573,9 @@ Test Suite Results:
         print(f"  Total Duration: {report.total_duration:.2f} seconds")
 
         # Suite breakdown
-        print(f"\n📋 Suite Breakdown:")
+        print(f"\n Suite Breakdown:")
         for suite in report.test_suites:
-            suite_status = "✅" if (suite.failed + suite.errors) == 0 else "❌"
+            suite_status = "" if (suite.failed + suite.errors) == 0 else ""
             print(f"  {suite_status} {suite.name}: "
                   f"{suite.passed}/{suite.total_tests} passed ({suite.duration:.1f}s)")
 
@@ -585,13 +585,13 @@ Test Suite Results:
             failed_tests.extend([t for t in suite.results if t.status in ['FAIL', 'ERROR']])
 
         if failed_tests:
-            print(f"\n❌ Failed Tests ({len(failed_tests)}):")
+            print(f"\n Failed Tests ({len(failed_tests)}):")
             for test in failed_tests[:10]:  # Show first 10
                 print(f"  - {test.name}: {test.error_message}")
             if len(failed_tests) > 10:
                 print(f"  ... and {len(failed_tests) - 10} more")
 
-        print(f"\n📁 Reports saved to: {self.output_dir}")
+        print(f"\n Reports saved to: {self.output_dir}")
         print("="*80)
 
 
@@ -646,10 +646,10 @@ def main():
             sys.exit(0)
 
     except KeyboardInterrupt:
-        print("\n⚠️  Test execution interrupted by user")
+        print("\n  Test execution interrupted by user")
         sys.exit(130)
     except Exception as e:
-        print(f"\n❌ Test runner failed: {e}")
+        print(f"\n Test runner failed: {e}")
         traceback.print_exc()
         sys.exit(1)
 

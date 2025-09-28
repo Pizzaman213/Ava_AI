@@ -1,4 +1,4 @@
-# 🚀 Advanced LLM Training Framework
+#  Advanced LLM Training Framework
 
 [![Tests](https://img.shields.io/badge/Tests-36%2F44%20Passing-brightgreen)](tests/test_all_codebase_features.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -7,7 +7,7 @@
 
 A state-of-the-art framework for training Large Language Models (LLMs) with **Mixture of Experts (MoE)**, advanced attention mechanisms, and comprehensive optimization techniques.
 
-## 🎯 Fastest Setup - One Command
+##  Fastest Setup - One Command
 
 ```bash
 # Run everything with one script (setup, download data, train)
@@ -21,7 +21,7 @@ This single script will:
 4. Prepare data for training
 5. Train the model with optimized configuration
 
-## 🎯 Quick Start in 5 Minutes (Manual Steps)
+##  Quick Start in 5 Minutes (Manual Steps)
 
 ```bash
 # 1. Setup (30 seconds)
@@ -41,7 +41,7 @@ python3 scripts/training/train_with_data.py --config configs/small_model.yaml --
 python3 scripts/generation/interactive_generate.py
 ```
 
-## 📋 Table of Contents
+##  Table of Contents
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -51,7 +51,7 @@ python3 scripts/generation/interactive_generate.py
 - [Testing](#testing)
 - [Contributing](#contributing)
 
-## ✨ Features
+##  Features
 
 ### Core Capabilities
 - **Mixture of Experts (MoE++)** with hierarchical routing
@@ -78,12 +78,12 @@ python3 scripts/generation/interactive_generate.py
 - **Custom Column Configurations** - Configurable preprocessing, validation, and augmentation
 
 ### Platform Support
-- ✅ **CPU** - Optimized for local development
-- ✅ **CUDA/GPU** - Full GPU acceleration
-- ✅ **Apple Silicon (MPS)** - Native M1/M2/M3 support
-- ✅ **Multi-GPU** - Distributed training
+-  **CPU** - Optimized for local development
+-  **CUDA/GPU** - Full GPU acceleration
+-  **Apple Silicon (MPS)** - Native M1/M2/M3 support
+-  **Multi-GPU** - Distributed training
 
-## 🛠️ Installation
+##  Installation
 
 ### Prerequisites
 - Python 3.8+
@@ -115,7 +115,7 @@ pip install -e .
 python3 setup_folders.py
 ```
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### 1. Setup Environment
 ```bash
@@ -176,68 +176,68 @@ python3 scripts/generation/test_generate.py
 python3 scripts/generation/quick_test.py
 ```
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 .
-├── configs/                     # Configuration files
-│   ├── cpu/                    # CPU-optimized configs
-│   │   ├── ultra_tiny.yaml    # Minimal (testing)
-│   │   ├── tiny.yaml          # Small model
-│   │   └── medium.yaml        # Medium model
-│   ├── gpu/                    # GPU-optimized configs
-│   │   ├── small.yaml         # Small GPU model
-│   │   ├── medium.yaml        # Standard training
-│   │   ├── large.yaml         # Large model
-│   │   └── xlarge.yaml        # Extra large model
-│   ├── mps/                    # Apple Silicon configs
-│   │   ├── tiny.yaml          # M1/M2 small
-│   │   ├── small.yaml         # M1/M2 standard
-│   │   └── medium.yaml        # M3 optimized
-│   └── advanced/               # Advanced configs
-│       ├── full_features.yaml # All features enabled
-│       └── research_sota.yaml # SOTA configuration
-│
-├── src/                         # Source code
-│   ├── model/                  # Model architecture
-│   │   ├── moe_transformer.py # MoE implementation
-│   │   ├── experts.py         # Expert layers
-│   │   ├── attention.py       # Attention mechanisms
-│   │   └── mod.py             # Mixture of Depths
-│   ├── training/               # Training utilities
-│   ├── optimization/           # Optimizers
-│   └── utils/                  # Helper utilities
-│
-├── scripts/                     # Executable scripts
-│   ├── training/               # Training scripts
-│   │   ├── train.py           # Main training
-│   │   ├── train_simple.py    # Simplified training
-│   │   ├── train_advanced.py  # Advanced features
-│   │   ├── finetune.py        # Fine-tuning
-│   │   └── train_rlhf.py      # RLHF training
-│   ├── generation/             # Generation scripts
-│   │   └── interact.py        # Interactive chat
-│   ├── data/                   # Data scripts
-│   │   └── generate_data.py   # Generate training data
-│   ├── evaluation/             # Evaluation scripts
-│   └── utils/                  # Utility scripts
-│
-├── tests/                       # Test suite
-│   └── test_all_codebase_features.py
-│
-├── data/                        # Training data (not in repo)
-├── outputs/                     # Model outputs
-├── checkpoints/                 # Model checkpoints
-├── docs/                        # Documentation
-│
-├── setup.py                     # Package setup
-├── requirements.txt             # Main dependencies
-├── requirements-macos.txt       # macOS specific
-├── requirements_cpu.txt         # CPU-only deps
-└── README.md                    # This file
+ configs/                     # Configuration files
+    cpu/                    # CPU-optimized configs
+       ultra_tiny.yaml    # Minimal (testing)
+       tiny.yaml          # Small model
+       medium.yaml        # Medium model
+    gpu/                    # GPU-optimized configs
+       small.yaml         # Small GPU model
+       medium.yaml        # Standard training
+       large.yaml         # Large model
+       xlarge.yaml        # Extra large model
+    mps/                    # Apple Silicon configs
+       tiny.yaml          # M1/M2 small
+       small.yaml         # M1/M2 standard
+       medium.yaml        # M3 optimized
+    advanced/               # Advanced configs
+        full_features.yaml # All features enabled
+        research_sota.yaml # SOTA configuration
+
+ src/                         # Source code
+    model/                  # Model architecture
+       moe_transformer.py # MoE implementation
+       experts.py         # Expert layers
+       attention.py       # Attention mechanisms
+       mod.py             # Mixture of Depths
+    training/               # Training utilities
+    optimization/           # Optimizers
+    utils/                  # Helper utilities
+
+ scripts/                     # Executable scripts
+    training/               # Training scripts
+       train.py           # Main training
+       train_simple.py    # Simplified training
+       train_advanced.py  # Advanced features
+       finetune.py        # Fine-tuning
+       train_rlhf.py      # RLHF training
+    generation/             # Generation scripts
+       interact.py        # Interactive chat
+    data/                   # Data scripts
+       generate_data.py   # Generate training data
+    evaluation/             # Evaluation scripts
+    utils/                  # Utility scripts
+
+ tests/                       # Test suite
+    test_all_codebase_features.py
+
+ data/                        # Training data (not in repo)
+ outputs/                     # Model outputs
+ checkpoints/                 # Model checkpoints
+ docs/                        # Documentation
+
+ setup.py                     # Package setup
+ requirements.txt             # Main dependencies
+ requirements-macos.txt       # macOS specific
+ requirements_cpu.txt         # CPU-only deps
+ README.md                    # This file
 ```
 
-## 💻 Usage
+##  Usage
 
 ### Training Models
 
@@ -456,7 +456,7 @@ python3 scripts/training/train_with_data.py --config configs/small_model.yaml
 # Final model saved as: outputs/run_*/final_model.pt
 ```
 
-## ⚙️ Configuration
+##  Configuration
 
 ### Configuration Structure
 ```yaml
@@ -499,7 +499,7 @@ optimization:
 | `mps/small.yaml` | 125M | 8GB | M1/M2 Macs |
 | `advanced/full_features.yaml` | Variable | Variable | Feature testing |
 
-## 🧪 Testing
+##  Testing
 
 ### Run Tests
 ```bash
@@ -514,15 +514,15 @@ python3 tests/test_all_codebase_features.py --features
 ```
 
 ### Test Coverage
-- ✅ **36 tests passing** - Core functionality verified
-- ✅ **Model Creation** - 14.4M parameter MoE model
-- ✅ **Training Loop** - Forward/backward passes
-- ✅ **Generation** - Text generation with beam search
-- ✅ **Checkpointing** - Save/load functionality
-- ✅ **Configurations** - All 20 configs validated
-- ✅ **Device Support** - CPU/GPU/MPS compatibility
+-  **36 tests passing** - Core functionality verified
+-  **Model Creation** - 14.4M parameter MoE model
+-  **Training Loop** - Forward/backward passes
+-  **Generation** - Text generation with beam search
+-  **Checkpointing** - Save/load functionality
+-  **Configurations** - All 20 configs validated
+-  **Device Support** - CPU/GPU/MPS compatibility
 
-## 🎯 Training Guide & Best Practices
+##  Training Guide & Best Practices
 
 ### Data Requirements for Meaningful Results
 
@@ -692,7 +692,7 @@ python3 scripts/training/train_with_data.py \
 - **Dynamic Batching** - Efficient resource utilization
 - **MPS Optimization** - Native Apple Silicon acceleration
 
-## 🤝 Contributing
+##  Contributing
 
 We welcome contributions! Please follow these guidelines:
 
@@ -709,7 +709,7 @@ We welcome contributions! Please follow these guidelines:
 - Include unit tests for new features
 - Update documentation as needed
 
-## 📚 Documentation
+##  Documentation
 
 - [Training Guide](docs/training_guide.md)
 - [Configuration Reference](docs/configuration.md)
@@ -717,18 +717,18 @@ We welcome contributions! Please follow these guidelines:
 - [Architecture Overview](docs/architecture.md)
 - [Performance Tuning](docs/performance.md)
 
-## 📄 License
+##  License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - PyTorch team for the excellent framework
 - Flash Attention authors for memory-efficient attention
 - Hugging Face for transformer implementations
 - The open-source ML community
 
-## 📮 Support
+##  Support
 
 - **Issues**: [GitHub Issues](https://github.com/yourusername/llm-framework/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/yourusername/llm-framework/discussions)
@@ -736,4 +736,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ for the AI community**
+**Built with  for the AI community**

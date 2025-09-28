@@ -287,7 +287,7 @@ class RunManager:
                        is_best: bool = False,
                        additional_data: Optional[Dict[str, Any]] = None):
         """
-        Save a model checkpoint with run context.
+        Save a model checkpoint with run context using atomic write pattern.
 
         Args:
             model_state: Model state dictionary
@@ -298,6 +298,9 @@ class RunManager:
             is_best: Whether this is the best checkpoint so far
             additional_data: Additional data to save with checkpoint
         """
+        import shutil
+        import os
+
         checkpoint_data = {
             'run_id': self.run_id,
             'epoch': epoch,
@@ -312,26 +315,71 @@ class RunManager:
         if additional_data:
             checkpoint_data.update(additional_data)
 
-        # Save latest checkpoint
-        latest_path = self.run_dir / 'checkpoints/latest_model.pt'
-        torch.save(checkpoint_data, latest_path)
+        # Check available disk space before saving (require at least 2GB free)
+        checkpoint_dir = self.run_dir / 'checkpoints'
+        stat = os.statvfs(checkpoint_dir)
+        free_space_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
 
-        # Save step-specific checkpoint
+        if free_space_gb < 2.0:
+            self.log('error', f"Insufficient disk space: {free_space_gb:.2f}GB free, need at least 2GB")
+            raise RuntimeError(f"Insufficient disk space for checkpoint: {free_space_gb:.2f}GB available")
+
+        # Save latest checkpoint atomically
+        latest_path = self.run_dir / 'checkpoints/latest_model.pt'
+        self._atomic_save(checkpoint_data, latest_path)
+
+        # Save step-specific checkpoint atomically
         step_dir = self.run_dir / f'checkpoints/step_{step}'
         step_dir.mkdir(exist_ok=True)
         step_path = step_dir / 'model.pt'
-        torch.save(checkpoint_data, step_path)
+        self._atomic_save(checkpoint_data, step_path)
 
         # Save best checkpoint if applicable
         if is_best:
             best_path = self.run_dir / 'checkpoints/best_model.pt'
-            torch.save(checkpoint_data, best_path)
+            self._atomic_save(checkpoint_data, best_path)
             self.log('training', f"Saved new best checkpoint with loss {loss:.6f}")
 
             # Update run metadata
             self._update_best_loss(loss)
 
         self.log('training', f"Saved checkpoint at step {step} (epoch {epoch})")
+
+    def _atomic_save(self, checkpoint_data: Dict[str, Any], final_path: Path):
+        """
+        Atomically save checkpoint using temp file + rename pattern.
+
+        Args:
+            checkpoint_data: Checkpoint data to save
+            final_path: Final destination path
+        """
+        import tempfile
+        import shutil
+
+        # Create temp file in same directory to ensure same filesystem
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=final_path.parent,
+            prefix='.tmp_checkpoint_',
+            suffix='.pt'
+        )
+
+        try:
+            # Close the file descriptor, we'll use torch.save
+            os.close(temp_fd)
+
+            # Save to temp file
+            torch.save(checkpoint_data, temp_path)
+
+            # Atomic rename (only works on same filesystem)
+            shutil.move(temp_path, final_path)
+
+        except Exception as e:
+            # Clean up temp file on failure
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+            raise RuntimeError(f"Failed to save checkpoint atomically: {e}") from e
 
     def _update_best_loss(self, loss: float):
         """Update the best validation loss in run metadata."""

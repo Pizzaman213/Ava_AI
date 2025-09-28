@@ -100,7 +100,7 @@ data_loading:
   distributed: false
 
 data:
-  data_dir: "data/train"
+  data_dir: "/project/code/data/processed"
   max_length: 2048
   tokenizer_name: "gpt2"
   train_batch_size: 4

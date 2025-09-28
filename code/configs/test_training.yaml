@@ -51,7 +51,7 @@ training:
 
 data:
   # Use available dataset
-  data_dir: "data/tatsu-lab_alpaca"
+  data_dir: "/project/code/data/processed"
   max_length: 512
   max_train_examples: 20
   max_eval_examples: 10

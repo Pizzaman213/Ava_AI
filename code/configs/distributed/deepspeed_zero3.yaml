@@ -125,7 +125,7 @@ data_loading:
   multi_column: true
 
 data:
-  data_dir: "data/train"
+  data_dir: "/project/code/data/processed"
   max_length: 4096
   tokenizer_name: "gpt2"
   train_batch_size: 1

@@ -43,11 +43,11 @@ def create_sample_config():
 
 def main():
     """Demonstrate modular training components."""
-    print("🚀 Modular Training Components Example")
+    print(" Modular Training Components Example")
     print("=" * 50)
 
     # 1. Create Configuration Manager
-    print("\n📋 1. Setting up Training Configuration")
+    print("\n 1. Setting up Training Configuration")
     config_manager = TrainingConfigManager()
 
     # Create argument parser and simulate command line args
@@ -68,15 +68,15 @@ def main():
     # Validate configuration
     validation_messages = config_manager.validate_config(training_config)
     for message in validation_messages:
-        print(f"⚠️ {message}")
+        print(f" {message}")
 
     # Get feature summary
     feature_summary = config_manager.get_feature_summary(training_config)
-    print(f"✅ Enabled features ({feature_summary['total_features']}): {', '.join(feature_summary['enabled_features'])}")
-    print(f"⚡ Performance mode: {feature_summary['performance_mode']}")
+    print(f" Enabled features ({feature_summary['total_features']}): {', '.join(feature_summary['enabled_features'])}")
+    print(f" Performance mode: {feature_summary['performance_mode']}")
 
     # 2. Initialize Model and Tokenizer
-    print("\n🤖 2. Initializing Model and Tokenizer")
+    print("\n 2. Initializing Model and Tokenizer")
 
     # Create model config
     model_config = EnhancedMoEConfig(
@@ -97,11 +97,11 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
 
-    print(f"✅ Model initialized: {sum(p.numel() for p in model.parameters())/1e6:.1f}M parameters")
-    print(f"✅ Device: {device}")
+    print(f" Model initialized: {sum(p.numel() for p in model.parameters())/1e6:.1f}M parameters")
+    print(f" Device: {device}")
 
     # 3. Initialize Enhanced Modular Trainer
-    print("\n🎯 3. Initializing Enhanced Modular Trainer")
+    print("\n 3. Initializing Enhanced Modular Trainer")
 
     trainer = EnhancedModularTrainer(
         model=model,
@@ -111,17 +111,17 @@ def main():
     )
 
     # 4. Setup Training
-    print("\n⚙️ 4. Setting up Training Components")
+    print("\n 4. Setting up Training Components")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
     setup_info = trainer.setup_training(optimizer)
 
-    print("✅ Training setup:")
+    print(" Training setup:")
     for key, value in setup_info.items():
         print(f"  - {key}: {value}")
 
     # 5. Demonstrate Training Step
-    print("\n🏃 5. Demonstrating Training Step")
+    print("\n 5. Demonstrating Training Step")
 
     # Create dummy batch
     batch_size = 2
@@ -140,7 +140,7 @@ def main():
         batch_idx=0
     )
 
-    print("✅ Training step completed:")
+    print(" Training step completed:")
     print(f"  - Loss: {step_results['loss']:.4f}")
     print(f"  - Learning Rate: {step_results['learning_rate']:.2e}")
     print(f"  - Grad Norm: {step_results['grad_norm']:.4f}")
@@ -148,10 +148,10 @@ def main():
     print(f"  - Backward Time: {step_results['backward_time']*1000:.1f}ms")
 
     # 6. Get Training Statistics
-    print("\n📊 6. Training Statistics")
+    print("\n 6. Training Statistics")
 
     stats = trainer.get_training_statistics()
-    print("✅ Current training statistics:")
+    print(" Current training statistics:")
     for key, value in stats.items():
         if isinstance(value, dict):
             print(f"  - {key}:")
@@ -164,45 +164,45 @@ def main():
             print(f"  - {key}: {value}")
 
     # 7. Performance Monitoring
-    print("\n⚡ 7. Performance Monitoring")
+    print("\n 7. Performance Monitoring")
 
     perf_summary = trainer.performance_manager.get_performance_summary()
-    print("✅ Performance configuration:")
+    print(" Performance configuration:")
     print(f"  - Mode: {perf_summary['mode']}")
     print(f"  - Active optimizations: {', '.join(perf_summary['active_optimizations'])}")
     print(f"  - Expected benefits: {', '.join(perf_summary['expected_benefits'])}")
 
     # 8. GPU Memory Statistics
-    print("\n💾 8. GPU Memory Management")
+    print("\n 8. GPU Memory Management")
 
     memory_stats = trainer.gpu_manager.get_memory_stats()
     if 'total_memory_gb' in memory_stats:
-        print(f"✅ GPU Memory:")
+        print(f" GPU Memory:")
         print(f"  - Total: {memory_stats['total_memory_gb']:.1f}GB")
         print(f"  - Allocated: {memory_stats['allocated_gb']:.2f}GB")
         print(f"  - Reserved: {memory_stats['reserved_gb']:.2f}GB")
         print(f"  - Utilization: {memory_stats['utilization_percent']:.1f}%")
 
     # 9. Cleanup
-    print("\n🧹 9. Cleanup")
+    print("\n 9. Cleanup")
     trainer.cleanup()
 
     print("\n" + "=" * 50)
-    print("✅ Modular Training Components Demo Completed!")
+    print(" Modular Training Components Demo Completed!")
     print("\nKey Benefits of Modular Architecture:")
-    print("  ✨ Better code organization and maintainability")
-    print("  ✨ Reusable components across different training scripts")
-    print("  ✨ Easier testing and debugging of individual features")
-    print("  ✨ Flexible configuration and feature toggling")
-    print("  ✨ Improved separation of concerns")
+    print("   Better code organization and maintainability")
+    print("   Reusable components across different training scripts")
+    print("   Easier testing and debugging of individual features")
+    print("   Flexible configuration and feature toggling")
+    print("   Improved separation of concerns")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n⚠️ Interrupted by user")
+        print("\n Interrupted by user")
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n Error: {e}")
         import traceback
         traceback.print_exc()
