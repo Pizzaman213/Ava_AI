@@ -1,8 +1,8 @@
-# 🚀 Enhanced Ava MoE++ Configuration System
+#  Enhanced Ava MoE++ Configuration System
 
 > **Comprehensive configurations for state-of-the-art training with DeepSpeed, RAG, quantization, and advanced AI features**
 
-## 📖 Table of Contents
+##  Table of Contents
 
 - [Directory Structure](#-directory-structure)
 - [Enhanced Features](#-enhanced-features)
@@ -15,61 +15,61 @@
 
 ---
 
-## 📁 Directory Structure
+##  Directory Structure
 
 ```
 configs/
-├── 📂 gpu/                    # Single-GPU configurations
-│   ├── tiny.yaml              # 100M params, 6-8GB VRAM
-│   ├── small.yaml             # 150M params, 8-10GB VRAM
-│   ├── medium.yaml            # 300M params, 12-16GB VRAM
-│   ├── large.yaml             # 1.5B params, 24GB+ VRAM
-│   ├── xl.yaml                # 900M params, 22GB+ VRAM
-│   └── 1b.yaml                # 1B params, 24GB+ VRAM
-├── 📂 distributed/           # Multi-GPU DeepSpeed configurations
-│   ├── deepspeed_zero1.yaml   # ZeRO-1: Optimizer sharding
-│   ├── deepspeed_zero2.yaml   # ZeRO-2: Optimizer + gradient sharding
-│   └── deepspeed_zero3.yaml   # ZeRO-3: Full parameter sharding
-├── 📂 research/              # Research-focused configurations
-│   ├── rag_enabled.yaml       # RAG system research
-│   └── quantization_nvfp4.yaml # NVFP4 quantization research
-├── 📂 hardware/              # Hardware-specific optimizations
-│   ├── a100_80gb.yaml         # NVIDIA A100 80GB optimized
-│   └── h100_80gb.yaml         # NVIDIA H100 80GB optimized
-└── test_training.yaml        # Quick testing configuration
+  gpu/                    # Single-GPU configurations
+    tiny.yaml              # 100M params, 6-8GB VRAM
+    small.yaml             # 150M params, 8-10GB VRAM
+    medium.yaml            # 300M params, 12-16GB VRAM
+    large.yaml             # 1.5B params, 24GB+ VRAM
+    xl.yaml                # 900M params, 22GB+ VRAM
+    1b.yaml                # 1B params, 24GB+ VRAM
+  distributed/           # Multi-GPU DeepSpeed configurations
+    deepspeed_zero1.yaml   # ZeRO-1: Optimizer sharding
+    deepspeed_zero2.yaml   # ZeRO-2: Optimizer + gradient sharding
+    deepspeed_zero3.yaml   # ZeRO-3: Full parameter sharding
+  research/              # Research-focused configurations
+    rag_enabled.yaml       # RAG system research
+    quantization_nvfp4.yaml # NVFP4 quantization research
+  hardware/              # Hardware-specific optimizations
+    a100_80gb.yaml         # NVIDIA A100 80GB optimized
+    h100_80gb.yaml         # NVIDIA H100 80GB optimized
+ test_training.yaml        # Quick testing configuration
 ```
 
 ---
 
-## 🔥 Enhanced Features
+##  Enhanced Features
 
-### 🧠 **Core AI Enhancements**
+###  **Core AI Enhancements**
 | Feature | Description | Benefits |
 |---------|-------------|----------|
-| **🚄 DeepSpeed Integration** | ZeRO stages 1-3 with CPU/NVMe offloading | Up to 64x memory savings |
-| **📚 RAG System** | Retrieval Augmented Generation | Knowledge-grounded responses |
-| **🎯 Advanced Losses** | Focal, contrastive, diversity losses | Better training dynamics |
-| **⚔️ Gradient Surgery** | PCGrad, GradDrop, CAGrad | Multi-task learning optimization |
-| **🧠 Episodic Memory** | Continual learning with replay | Prevents catastrophic forgetting |
-| **🗜️ NVFP4 Quantization** | 4-bit quantization with transforms | 4x memory reduction |
+| ** DeepSpeed Integration** | ZeRO stages 1-3 with CPU/NVMe offloading | Up to 64x memory savings |
+| ** RAG System** | Retrieval Augmented Generation | Knowledge-grounded responses |
+| ** Advanced Losses** | Focal, contrastive, diversity losses | Better training dynamics |
+| ** Gradient Surgery** | PCGrad, GradDrop, CAGrad | Multi-task learning optimization |
+| ** Episodic Memory** | Continual learning with replay | Prevents catastrophic forgetting |
+| ** NVFP4 Quantization** | 4-bit quantization with transforms | 4x memory reduction |
 
-### 🏗️ **Architecture Enhancements**
+###  **Architecture Enhancements**
 | Feature | Description | Use Case |
 |---------|-------------|----------|
-| **🎭 MoH (Mixture of Heads)** | Specialized attention heads | Dynamic attention patterns |
-| **⚡ MoA (Mixture of Activations)** | Dynamic activation functions | Adaptive computation |
-| **🔄 Cross-Attention** | Enhanced context modeling | Multi-modal learning |
-| **📏 ALiBi** | Attention with Linear Biases | Length generalization |
+| ** MoH (Mixture of Heads)** | Specialized attention heads | Dynamic attention patterns |
+| ** MoA (Mixture of Activations)** | Dynamic activation functions | Adaptive computation |
+| ** Cross-Attention** | Enhanced context modeling | Multi-modal learning |
+| ** ALiBi** | Attention with Linear Biases | Length generalization |
 
-### ⚡ **Performance Optimizations**
+###  **Performance Optimizations**
 | Feature | Description | Speed Gain |
 |---------|-------------|------------|
-| **🚀 Performance Modes** | Ultra-fast, express, minimal progress | Up to 3x faster |
-| **💾 Memory Management** | A100/H100 optimized pools | 90%+ utilization |
-| **🌊 Streaming Data** | Large dataset handling | Unlimited dataset size |
-| **📊 Multi-Column Data** | Complex dataset structures | Rich data formats |
+| ** Performance Modes** | Ultra-fast, express, minimal progress | Up to 3x faster |
+| ** Memory Management** | A100/H100 optimized pools | 90%+ utilization |
+| ** Streaming Data** | Large dataset handling | Unlimited dataset size |
+| ** Multi-Column Data** | Complex dataset structures | Rich data formats |
 
-## 📋 Configuration Categories
+##  Configuration Categories
 
 ### GPU Configs (`/gpu/`)
 
@@ -104,7 +104,7 @@ configs/
 | `a100_80gb.yaml` | A100 80GB | 80GB HBM2e | BF16, Tensor Cores, 70GB pool |
 | `h100_80gb.yaml` | H100 80GB | 80GB HBM3 | FP8, 4th Gen Tensor Cores |
 
-## 🚀 Usage Examples
+##  Usage Examples
 
 ### Basic Development
 ```bash
@@ -131,7 +131,7 @@ python scripts/training/train.py --config configs/hardware/a100_80gb.yaml --use-
 python scripts/training/train.py --config configs/research/quantization_nvfp4.yaml --use-nvfp4
 ```
 
-## ⚙️ Configuration Structure
+##  Configuration Structure
 
 Each enhanced config contains these sections:
 
@@ -185,7 +185,7 @@ memory:
   pool_size_gb: 20.0
 ```
 
-## 🔧 Command Line Integration
+##  Command Line Integration
 
 All configs support command-line overrides:
 
@@ -203,17 +203,17 @@ python train.py --config configs/gpu/small.yaml --ultra-fast-mode --express-mode
 python train.py --config configs/gpu/large.yaml --use-nvfp4 --bit-width 4
 ```
 
-## 📊 Feature Compatibility Matrix
+##  Feature Compatibility Matrix
 
 | Model Size | MoH | MoA | RAG | Memory | DeepSpeed | NVFP4 | Recommended |
 |------------|-----|-----|-----|--------|-----------|-------|-------------|
-| Tiny (100M) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Development |
-| Small (150M) | ✅ | ❌ | ❌ | ✅ | ZeRO-1 | ❌ | Research |
-| Medium (300M) | ✅ | ❌ | ❌ | ✅ | ZeRO-1 | ✅ | Advanced research |
-| Large (1.5B) | ✅ | ✅ | ✅ | ✅ | ZeRO-2 | ✅ | Production |
-| XL/1B+ | ✅ | ✅ | ✅ | ✅ | ZeRO-3 | ✅ | State-of-the-art |
+| Tiny (100M) |  |  |  |  |  |  | Development |
+| Small (150M) |  |  |  |  | ZeRO-1 |  | Research |
+| Medium (300M) |  |  |  |  | ZeRO-1 |  | Advanced research |
+| Large (1.5B) |  |  |  |  | ZeRO-2 |  | Production |
+| XL/1B+ |  |  |  |  | ZeRO-3 |  | State-of-the-art |
 
-## 🎯 Quick Start Recommendations
+##  Quick Start Recommendations
 
 1. **New Users**: Start with `configs/gpu/tiny.yaml`
 2. **Development**: Use `configs/gpu/small.yaml`

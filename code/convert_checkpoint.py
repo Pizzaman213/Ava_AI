@@ -35,7 +35,7 @@ def convert_deepspeed_checkpoint(deepspeed_path, output_path):
     # Save the converted checkpoint
     print(f"Saving converted checkpoint to {output_path}...")
     torch.save(checkpoint, output_path)
-    print("✅ Conversion complete!")
+    print(" Conversion complete!")
 
     return checkpoint
 

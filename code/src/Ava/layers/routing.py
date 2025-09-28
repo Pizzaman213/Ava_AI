@@ -84,8 +84,16 @@ class SwitchTransformerRouting(nn.Module):
         # Get top expert for each token
         expert_gate, expert_index = torch.max(router_probs, dim=-1)
 
-        # Compute expert capacity
-        expert_capacity = int(self.capacity_factor * num_tokens / self.num_experts)
+        # Compute expert capacity with minimum of 1 to prevent zero capacity
+        expert_capacity = max(1, int(self.capacity_factor * num_tokens / self.num_experts))
+
+        # Warn if capacity is very low
+        if expert_capacity < 4 and num_tokens > 0:
+            import warnings
+            warnings.warn(
+                f"Very low expert capacity ({expert_capacity}) for {num_tokens} tokens and {self.num_experts} experts. "
+                f"Consider increasing batch size or capacity_factor ({self.capacity_factor})."
+            )
 
         # Create dispatch and combine tensors
         dispatch_tensor = torch.zeros(
@@ -125,13 +133,24 @@ class SwitchTransformerRouting(nn.Module):
             self.expert_counts += expert_usage.detach()
             self.total_tokens += num_tokens
 
+        # Calculate tokens dropped
+        tokens_dropped = max(0, num_tokens - dispatch_tensor.sum().item())
+
+        # Warn if significant tokens dropped
+        if tokens_dropped > num_tokens * 0.1:  # More than 10% dropped
+            import warnings
+            warnings.warn(
+                f"High token drop rate: {tokens_dropped}/{num_tokens} ({100*tokens_dropped/num_tokens:.1f}%) tokens dropped. "
+                f"Consider increasing capacity_factor or num_experts_per_token."
+            )
+
         # Auxiliary information
         aux_info = {
             'router_probs': router_probs,
             'expert_usage': expert_usage,
             'load_balancing_loss': self._compute_load_balancing_loss(router_probs),
             'router_z_loss': torch.mean(router_logits ** 2),
-            'tokens_dropped': max(0, num_tokens - dispatch_tensor.sum().item())
+            'tokens_dropped': tokens_dropped
         }
 
         return dispatch_tensor, combine_tensor, expert_capacity, aux_info

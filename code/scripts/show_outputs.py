@@ -26,17 +26,17 @@ def main():
     output_dir = Path('/project/code/outputs')
 
     if not output_dir.exists():
-        print("❌ Output directory does not exist: /project/code/outputs")
+        print(" Output directory does not exist: /project/code/outputs")
         return
 
     print("=" * 60)
-    print("📊 OUTPUTS SUMMARY")
+    print(" OUTPUTS SUMMARY")
     print("=" * 60)
-    print(f"📁 Output Directory: {output_dir}")
+    print(f" Output Directory: {output_dir}")
     print()
 
     # Find checkpoints
-    print("🔹 Model Checkpoints:")
+    print(" Model Checkpoints:")
     checkpoints = list(output_dir.glob("**/*.pt")) + list(output_dir.glob("**/*.pth"))
     if checkpoints:
         for ckpt in sorted(checkpoints)[:10]:  # Show max 10
@@ -50,7 +50,7 @@ def main():
     print()
 
     # Find log files
-    print("🔹 Training Logs:")
+    print(" Training Logs:")
     logs = list(output_dir.glob("**/*.log"))
     if logs:
         for log in sorted(logs, key=lambda x: x.stat().st_mtime, reverse=True)[:5]:
@@ -65,7 +65,7 @@ def main():
     print()
 
     # Find metrics files
-    print("🔹 Evaluation Metrics:")
+    print(" Evaluation Metrics:")
     metrics = list(output_dir.glob("**/metrics*.json"))
     if metrics:
         for metric_file in sorted(metrics, key=lambda x: x.stat().st_mtime, reverse=True)[:5]:
@@ -86,7 +86,7 @@ def main():
     print()
 
     # Find generated text files
-    print("🔹 Generated Outputs:")
+    print(" Generated Outputs:")
     gen_files = list(output_dir.glob("**/generated*.txt")) + list(output_dir.glob("**/output*.txt"))
     if gen_files:
         for gen in sorted(gen_files, key=lambda x: x.stat().st_mtime, reverse=True)[:5]:
@@ -104,14 +104,14 @@ def main():
     total_files = sum(1 for f in output_dir.rglob("*") if f.is_file())
     total_dirs = sum(1 for d in output_dir.rglob("*") if d.is_dir())
 
-    print("📈 Statistics:")
+    print(" Statistics:")
     print(f"   • Total files: {total_files}")
     print(f"   • Total directories: {total_dirs}")
     print(f"   • Total size: {format_size(total_size)}")
     print()
 
     # Recent runs
-    print("🔹 Recent Training Runs:")
+    print(" Recent Training Runs:")
     run_dirs = sorted([d for d in output_dir.glob("run_*") if d.is_dir()],
                       key=lambda x: x.stat().st_mtime, reverse=True)
     if run_dirs:
@@ -126,7 +126,7 @@ def main():
 
     print()
     print("=" * 60)
-    print("✅ Use these paths with generation and evaluation scripts:")
+    print(" Use these paths with generation and evaluation scripts:")
     print("   python scripts/generation/generate.py --model-path outputs/best_model.pt")
     print("   python scripts/evaluation/evaluate.py --model-path outputs/best_model.pt")
     print("=" * 60)

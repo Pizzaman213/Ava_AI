@@ -1,26 +1,26 @@
 # Ava MoE++ Documentation Index
 
-## 📖 Documentation Structure
+##  Documentation Structure
 
 ```
 /project/code/docs/
-├── README.md              # Main documentation overview
-├── index.md              # This file - documentation index
-├── quick_start.md        # 5-minute getting started guide
-├── training_guide.md     # Complete training instructions
-├── architecture.md       # Model architecture details
-├── configuration.md      # Configuration guide
-└── api/                  # API reference
-    └── models.md        # Model API documentation
+ README.md              # Main documentation overview
+ index.md              # This file - documentation index
+ quick_start.md        # 5-minute getting started guide
+ training_guide.md     # Complete training instructions
+ architecture.md       # Model architecture details
+ configuration.md      # Configuration guide
+ api/                  # API reference
+     models.md        # Model API documentation
 ```
 
-## 🚀 Getting Started
+##  Getting Started
 
 1. **[Quick Start Guide](quick_start.md)** - Get running in 5 minutes
 2. **[Training Guide](training_guide.md)** - Detailed training instructions
 3. **[Configuration Guide](configuration.md)** - Understanding YAML configs
 
-## 📚 Core Documentation
+##  Core Documentation
 
 ### Architecture & Design
 - **[Model Architecture](architecture.md)** - Detailed architecture overview
@@ -41,33 +41,33 @@
 - **[Configuration Presets](configuration.md#configuration-presets)** - Pre-made configs
 - **[Custom Configurations](configuration.md#creating-custom-configurations)** - Making your own
 
-## 📁 Project Structure Reference
+##  Project Structure Reference
 
 ```
 /project/code/
-├── docs/                 # Documentation (you are here)
-├── src/Ava/             # Core implementation
-│   ├── models/          # Model architectures
-│   ├── layers/          # Layer implementations
-│   ├── data/            # Data loading utilities
-│   ├── generation/      # Generation utilities
-│   ├── evaluation/      # Evaluation tools
-│   └── utils/           # Helper functions
-├── scripts/             # Executable scripts
-│   ├── training/        # Training scripts
-│   ├── generation/      # Generation scripts
-│   ├── evaluation/      # Evaluation scripts
-│   └── show_outputs.py  # Output summary tool
-├── configs/             # Configuration files
-│   ├── cpu/            # CPU configurations
-│   └── gpu/            # GPU configurations
-├── data/               # Data directory
-│   └── pretraining/
-│       └── processed/  # Processed training data
-└── outputs/            # Training outputs & logs
+ docs/                 # Documentation (you are here)
+ src/Ava/             # Core implementation
+    models/          # Model architectures
+    layers/          # Layer implementations
+    data/            # Data loading utilities
+    generation/      # Generation utilities
+    evaluation/      # Evaluation tools
+    utils/           # Helper functions
+ scripts/             # Executable scripts
+    training/        # Training scripts
+    generation/      # Generation scripts
+    evaluation/      # Evaluation scripts
+    show_outputs.py  # Output summary tool
+ configs/             # Configuration files
+    cpu/            # CPU configurations
+    gpu/            # GPU configurations
+ data/               # Data directory
+    pretraining/
+        processed/  # Processed training data
+ outputs/            # Training outputs & logs
 ```
 
-## 🔧 Key Scripts
+##  Key Scripts
 
 ### Training
 ```bash
@@ -93,7 +93,7 @@ python scripts/show_outputs.py
 ```
 See: [Output Management](../README_OUTPUTS.md)
 
-## 📊 Configuration Files
+##  Configuration Files
 
 ### CPU Configurations
 - `configs/cpu/small.yaml` - 50M parameters, 8GB RAM
@@ -105,7 +105,7 @@ See: [Output Management](../README_OUTPUTS.md)
 
 See: [Configuration Guide](configuration.md)
 
-## 🛠️ Development Resources
+##  Development Resources
 
 ### Testing
 ```bash
@@ -121,7 +121,7 @@ model = EnhancedMoEModel(config)
 ```
 See: [API Reference](api/models.md)
 
-## 📈 Performance Guidelines
+##  Performance Guidelines
 
 ### Memory Usage
 | Model Size | RAM Required | VRAM Required |
@@ -137,7 +137,7 @@ See: [API Reference](api/models.md)
 | RTX 3090 | ~2000 | ~300 |
 | A100 40GB | ~5000 | ~1000 |
 
-## 🔍 Quick Links
+##  Quick Links
 
 ### Common Tasks
 - [Start Training](training_guide.md#basic-training)
@@ -159,13 +159,13 @@ See: [API Reference](api/models.md)
 - [Memory Optimization](configuration.md#memory-optimized-configuration)
 - [Expert Statistics](api/models.md#expert-statistics)
 
-## 📝 Documentation Updates
+##  Documentation Updates
 
 - **Version**: 1.0.0
 - **Last Updated**: September 2024
 - **Model Version**: Ava MoE++ v1.0
 
-## 💡 Tips
+##  Tips
 
 1. **Start with Quick Start**: Begin with [quick_start.md](quick_start.md)
 2. **Use Small Configs**: Test with `configs/cpu/small.yaml` first
@@ -173,7 +173,7 @@ See: [API Reference](api/models.md)
 4. **Read Logs**: Check `/project/code/outputs/training_*.log`
 5. **Save Checkpoints**: Use `--save-every` for frequent saves
 
-## 📞 Help & Support
+##  Help & Support
 
 - **GitHub Issues**: Report bugs and issues
 - **Documentation**: This directory (`/project/code/docs/`)
@@ -182,4 +182,4 @@ See: [API Reference](api/models.md)
 
 ---
 
-Happy Learning with Ava MoE++! 🚀
+Happy Learning with Ava MoE++! 

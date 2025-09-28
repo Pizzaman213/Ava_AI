@@ -90,10 +90,10 @@ def create_folders():
         if not os.path.exists(folder_path):
             try:
                 os.makedirs(folder_path, exist_ok=True)
-                print(f"✓ Created: {folder}")
+                print(f" Created: {folder}")
                 created_count += 1
             except OSError as e:
-                print(f"✗ Failed to create {folder}: {e}")
+                print(f" Failed to create {folder}: {e}")
         else:
             existing_count += 1
     
@@ -104,9 +104,9 @@ def create_folders():
     print(f"  Total processed: {len(folders)} folders")
     
     if created_count > 0:
-        print(f"\n✓ Setup complete! Created {created_count} missing folders.")
+        print(f"\n Setup complete! Created {created_count} missing folders.")
     else:
-        print(f"\n✓ All folders already exist. No action needed.")
+        print(f"\n All folders already exist. No action needed.")
 
 if __name__ == "__main__":
     try:

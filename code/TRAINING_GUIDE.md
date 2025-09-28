@@ -22,7 +22,7 @@ python3 scripts/training/train.py --config configs/cpu/small.yaml --no-streaming
 
 ## Data Loading Modes
 
-### 🌊 Streaming Mode (Default)
+###  Streaming Mode (Default)
 - **Memory Efficient**: Constant memory usage regardless of dataset size
 - **Handles Large Datasets**: Can train on datasets larger than RAM
 - **Immediate Start**: Begins training without loading delay
@@ -35,7 +35,7 @@ python3 scripts/training/train.py \
     --buffer-size 2000  # Larger buffer for better shuffling
 ```
 
-### 💾 In-Memory Mode
+###  In-Memory Mode
 - **Faster Iteration**: All data in RAM
 - **Full Shuffling**: Complete dataset randomization
 - **Best for Small Datasets**: When dataset fits in memory
@@ -49,7 +49,7 @@ python3 scripts/training/train.py \
 
 ## Multi-Column Data Loading
 
-### 📊 Multi-Column Support
+###  Multi-Column Support
 The framework now supports training on datasets with multiple columns and mixed data types:
 
 - **Text columns**: Natural language with configurable tokenization

@@ -81,7 +81,7 @@ training:
 
 data:
   # Dataset Configuration
-  data_dir: "data/train"
+  data_dir: "/project/code/data/processed"
   max_length: 2048
   max_train_examples: -1
   max_eval_examples: 2000

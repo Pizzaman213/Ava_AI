@@ -15,21 +15,26 @@ model:
   # MoE Configuration - Reduced for 100M params
   num_experts: 4
   num_experts_per_token: 2
-  expert_capacity_factor: 1.0
+  expert_capacity_factor: 1.5  # Extra capacity prevents dropping
   router_type: "switch"
-  router_aux_loss_coef: 0.01
-  router_jitter_noise: 0.01
+  router_aux_loss_coef: 0.0001  # Minimal aux loss impact
+  router_jitter_noise: 0.0  # No jitter during pretraining
+  router_z_loss_coef: 0.0001  # Minimal router z-loss
+  moe_dropout: 0.0  # No MoE dropout for stability
 
   # Attention & Position Encoding
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.1
-  hidden_dropout: 0.1
+  attention_dropout: 0.0  # No dropout like DeepSeek
+  hidden_dropout: 0.0  # No dropout for maximum learning
 
-  # Regularization
-  layer_norm_eps: 1e-5
-  initializer_range: 0.02
-  hidden_act: "gelu"
+  # Regularization - DeepSeek Style
+  layer_norm_eps: 1e-6
+  initializer_range: 0.02  # Standard initialization
+  hidden_act: "swiglu"  # DeepSeek uses SwiGLU activation
+  label_smoothing: 0.0  # No label smoothing
+  tie_word_embeddings: true  # Tie embeddings for stability
+  dropout: 0.0  # No dropout like DeepSeek
 
   # Enhanced Features (basic features for tiny model)
   use_moh: false
@@ -44,46 +49,66 @@ model:
   deepspeed_moe_param_groups: true
 
 training:
-  # Batch Configuration - Optimized for 100M model
-  batch_size: 4
-  gradient_accumulation_steps: 2
-  max_gradient_norm: 1.0
+  # Batch Configuration - RTX 3060 Optimized for DeepSeek Style
+  batch_size: 4  # Prevent OOM with 2048 context on RTX 3060
+  gradient_accumulation_steps: 64  # Effective batch of 256 tokens
+  max_gradient_norm: 1.0  # Standard clipping
 
-  # Training Duration
-  num_epochs: 15
-  max_steps: -1
-  warmup_steps: 800
+  # Training Duration - DeepSeek Style Extended
+  num_epochs: 1  # Single pass through data
+  max_steps: 500000  # Long training for proper DeepSeek-style convergence
+  warmup_steps: 5000  # Longer warmup for stability
+  warmup_type: "linear"  # Linear warmup like DeepSeek
+  save_total_limit: 20  # Keep more checkpoints for long training
 
-  # Learning Rate & Optimizer
-  learning_rate: 3e-4
-  weight_decay: 0.01
-  beta1: 0.9
-  beta2: 0.95
+  # Learning Rate & Optimizer - DeepSeek Style Optimized
+  learning_rate: 3e-4  # DeepSeek-style moderate LR
+  weight_decay: 0.1  # Standard weight decay
+  beta1: 0.9  # Standard Adam beta1
+  beta2: 0.95  # GPT-style beta2
   eps: 1e-8
-  lr_scheduler_type: "cosine"
+  lr_scheduler_type: "cosine"  # Cosine decay like DeepSeek
+  lr_end: 3e-5  # 10% of max LR at end
+  warmup_ratio: 0.01  # 1% warmup (5k steps out of 500k)
 
   # Mixed Precision & Performance
   mixed_precision: "fp16"
-  dataloader_num_workers: 4
-  gradient_checkpointing: false
+  dataloader_num_workers: 2  # Reduce workers to save memory
+  gradient_checkpointing: true  # Enable to save memory
 
-  # Evaluation & Logging
-  eval_strategy: "steps"
-  eval_steps: 1000
-  save_strategy: "steps"
-  save_steps: 2000
-  logging_steps: 100
+  # Adaptive Learning Features - Disabled for DeepSeek
+  use_adaptive_lr: false  # No adaptive LR (DeepSeek uses fixed schedule)
+  lr_patience: 1000000  # Effectively disabled
+  lr_reduction_factor: 1.0  # No reduction
+  min_lr: 0.0  # No minimum LR constraint for cosine decay
 
-  # Early Stopping
-  early_stopping_patience: 5
-  early_stopping_threshold: 0.01
+  # Evaluation & Logging - Long Training Optimized
+  eval_strategy: "steps"  # Evaluate periodically for LLM
+  eval_steps: 25000  # Evaluate every 25k steps (less frequent for long training)
+  save_strategy: "steps"  # Save periodically
+  save_steps: 10000  # Save every 10k steps
+  logging_steps: 100  # Log every 100 steps (reduce logging overhead)
+  load_best_model_at_end: false  # Use final checkpoint for LLM
+  metric_for_best_model: "loss"  # Use loss for DeepSeek-style training
+  greater_is_better: false  # Lower loss is better
+
+  # Early Stopping - Disabled for DeepSeek Style
+  early_stopping_patience: 1000  # Effectively disabled (train to completion)
+  early_stopping_threshold: 0.0001  # Very small threshold
+  min_loss_reduction: 0.0001  # Very small threshold
+
+  # Stability Features for LLM
+  use_ema: false  # EMA not typically used for LLM pretraining
+  clip_grad_value: null  # Only use norm clipping for LLMs
+  loss_scaling: "dynamic"  # Dynamic loss scaling for fp16
+  adam_epsilon: 1e-8  # Standard for LLMs
 
 data:
   # Dataset Configuration
-  data_dir: "data/train"
-  max_length: 1024
-  max_train_examples: -1
-  max_eval_examples: 1000
+  data_dir: "/project/code/data/processed"
+  max_length: 2048  # Standard context length for proper training
+  max_train_examples: -1  # Use entire dataset
+  max_eval_examples: 1000  # Smaller eval set to save memory
 
   # Preprocessing
   tokenizer_name: "gpt2"
@@ -91,10 +116,11 @@ data:
   truncation: true
 
   # Data Loading
-  train_batch_size: 8
-  eval_batch_size: 16
-  dataloader_drop_last: true
-  dataloader_pin_memory: true
+  train_batch_size: 4  # Match training batch size
+  eval_batch_size: 2  # Small eval batch for memory
+  dataloader_drop_last: true  # Drop last to avoid variable batch OOM
+  dataloader_pin_memory: false  # Save memory
+  shuffle: true  # Shuffle for each epoch
 
 # Enhanced Configuration Sections
 
@@ -156,12 +182,19 @@ enhanced_features:
     nvfp4_block_size: 64
     stochastic_rounding: false
 
-# Data Loading Configuration
+# Data Loading Configuration - DeepSeek Style Anti-Memorization
 data_loading:
-  # Streaming data (good for limited VRAM)
-  streaming: true
-  buffer_size: 500
-  max_samples: 50000
+  # Streaming to prevent memorization
+  streaming: true  # Stream data like DeepSeek
+  buffer_size: 100000  # Very large buffer for maximum shuffling
+  max_samples: -1  # Use all samples
+  shuffle_seed: 42  # Fixed seed for reproducibility
+  reshuffle_each_epoch: true  # Reshuffle to prevent memorization
+
+  # Anti-memorization techniques
+  drop_last_batch: true  # Drop incomplete batches
+  prefetch_factor: 4  # Prefetch more batches
+  persistent_workers: true  # Keep workers alive for better shuffling
 
   # Multi-column data
   multi_column: false
@@ -181,13 +214,13 @@ performance:
 
 # Memory Optimization
 memory:
-  # A100 memory optimizer settings
+  # RTX 3060 12GB optimization
   enable_memory_pool: true
-  pool_size_gb: null  # Auto-detect
-  gradient_checkpointing: false
-  memory_threshold_gb: 4.0  # Conservative for 6GB GPUs
-  enable_cpu_offload: false
-  clear_cache_frequency: 200
+  pool_size_gb: 10.0  # Leave 2GB for system
+  gradient_checkpointing: true  # Essential for memory savings
+  memory_threshold_gb: 8.0  # Aggressive cleanup at 8GB
+  enable_cpu_offload: false  # Don't offload on consumer GPU
+  clear_cache_frequency: 50  # Frequent cache clearing
 
 # Evaluation Configuration
 evaluation:

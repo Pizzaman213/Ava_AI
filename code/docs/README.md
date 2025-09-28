@@ -2,7 +2,7 @@
 
 Welcome to the Ava MoE++ (Mixture of Experts Plus Plus) documentation. This advanced language model implementation features state-of-the-art routing mechanisms, dynamic expert selection, DeepSpeed integration, and comprehensive enhanced training utilities with RAG, quantization, and advanced AI features.
 
-## 📚 Documentation Index
+##  Documentation Index
 
 ### Getting Started
 - [Quick Start Guide](quick_start.md) - Get up and running in 5 minutes
@@ -36,7 +36,7 @@ Welcome to the Ava MoE++ (Mixture of Experts Plus Plus) documentation. This adva
 - [Common Issues](troubleshooting.md) - Solutions to common problems
 - [FAQ](faq.md) - Frequently asked questions
 
-## 🚀 Quick Example
+##  Quick Example
 
 ```python
 # Train a model
@@ -53,34 +53,34 @@ python scripts/evaluation/evaluate.py \
     --metrics perplexity accuracy
 ```
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 /project/code/
-├── src/Ava/            # Core implementation
-│   ├── models/         # Model architectures
-│   ├── layers/         # Layer implementations
-│   ├── data/           # Data utilities
-│   ├── generation/     # Generation utilities
-│   ├── evaluation/     # Evaluation tools
-│   └── utils/          # Helper functions
-├── scripts/            # Training and inference scripts
-│   ├── training/       # Training scripts
-│   ├── generation/     # Generation scripts
-│   └── evaluation/     # Evaluation scripts
-├── configs/            # Configuration files
-│   ├── cpu/           # CPU configurations
-│   ├── gpu/           # GPU configurations
-│   └── auto/          # Auto configurations
-├── data/              # Data directory
-│   └── pretraining/   # Pretraining datasets
-│       └── processed/ # Processed data
-├── outputs/           # Training outputs
-└── docs/             # Documentation
+ src/Ava/            # Core implementation
+    models/         # Model architectures
+    layers/         # Layer implementations
+    data/           # Data utilities
+    generation/     # Generation utilities
+    evaluation/     # Evaluation tools
+    utils/          # Helper functions
+ scripts/            # Training and inference scripts
+    training/       # Training scripts
+    generation/     # Generation scripts
+    evaluation/     # Evaluation scripts
+ configs/            # Configuration files
+    cpu/           # CPU configurations
+    gpu/           # GPU configurations
+    auto/          # Auto configurations
+ data/              # Data directory
+    pretraining/   # Pretraining datasets
+        processed/ # Processed data
+ outputs/           # Training outputs
+ docs/             # Documentation
 
 ```
 
-## 🔑 Key Features
+##  Key Features
 
 ### Enhanced Mixture of Experts (MoE++)
 - **Dynamic Routing**: Confidence-based expert selection
@@ -100,7 +100,7 @@ python scripts/evaluation/evaluate.py \
 - **Data Pipeline**: Efficient data loading and preprocessing
 - **Logging System**: Detailed training and evaluation logs
 
-## 📊 Model Configurations
+##  Model Configurations
 
 | Config | Parameters | Use Case | Hardware |
 |--------|-----------|----------|----------|
@@ -109,7 +109,7 @@ python scripts/evaluation/evaluate.py \
 | `gpu/base.yaml` | ~500M | Standard training | 1x GPU (8GB+ VRAM) |
 | `gpu/large.yaml` | ~1.5B | Large-scale training | 1x GPU (24GB+ VRAM) |
 
-## 📈 Performance
+##  Performance
 
 Training performance on standard hardware:
 
@@ -120,7 +120,7 @@ Training performance on standard hardware:
 | RTX 3090 | base | ~1,000 | 12GB |
 | A100 40GB | large | ~5,000 | 32GB |
 
-## 🛠️ Development
+##  Development
 
 ### Contributing
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for development guidelines.
@@ -142,7 +142,7 @@ python -c "from src.Ava.models import EnhancedMoEModel, EnhancedMoEConfig; \
 - Check outputs: `python scripts/show_outputs.py`
 - Monitor training: `tail -f outputs/training_*.log`
 
-## 📝 Citation
+##  Citation
 
 If you use Ava MoE++ in your research, please cite:
 
@@ -154,17 +154,17 @@ If you use Ava MoE++ in your research, please cite:
 }
 ```
 
-## 📜 License
+##  License
 
 This project is licensed under the MIT License - see [LICENSE](../LICENSE) for details.
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - Based on the Mixture of Experts architecture
 - Implements techniques from recent MoE research papers
 - Uses PyTorch and Hugging Face Transformers
 
-## 📞 Support
+##  Support
 
 - **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/your-repo/discussions)

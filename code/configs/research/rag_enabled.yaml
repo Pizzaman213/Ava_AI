@@ -92,7 +92,7 @@ data_loading:
   retrieval_corpus_path: "data/retrieval_corpus"
 
 data:
-  data_dir: "data/rag_train"
+  data_dir: "/project/code/data/processed"
   max_length: 2048
   tokenizer_name: "gpt2"
   train_batch_size: 4

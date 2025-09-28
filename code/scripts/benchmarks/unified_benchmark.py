@@ -3476,25 +3476,25 @@ class ModelCapacityAnalyzer:
 
         if setup['device'] == 'gpu':
             if effective_tflops > 50:
-                notes.append("✅ Excellent GPU performance - training will be fast")
+                notes.append(" Excellent GPU performance - training will be fast")
             elif effective_tflops > 20:
-                notes.append("✅ Good GPU performance - reasonable training times")
+                notes.append(" Good GPU performance - reasonable training times")
             elif effective_tflops > 5:
-                notes.append("⚠️ Moderate GPU performance - training will take some time")
+                notes.append(" Moderate GPU performance - training will take some time")
             else:
-                notes.append("⚠️ Limited GPU performance - consider smaller models or longer training times")
+                notes.append(" Limited GPU performance - consider smaller models or longer training times")
 
             if setup['precision'] in ['fp16', 'bf16']:
-                notes.append(f"🚀 Using {setup['precision'].upper()} precision for 2x speed boost")
+                notes.append(f" Using {setup['precision'].upper()} precision for 2x speed boost")
             elif setup['precision'] == 'fp8':
-                notes.append("🔥 FP8 precision available - up to 1.8x speedup over FP16")
+                notes.append(" FP8 precision available - up to 1.8x speedup over FP16")
 
             if self.capabilities.has_tensor_cores:
-                notes.append("🔥 Tensor Cores available - significant speedup for mixed precision")
+                notes.append(" Tensor Cores available - significant speedup for mixed precision")
 
             # Repository training optimizations
             if TRAINING_COMPONENTS_AVAILABLE:
-                notes.append("✨ Repository training optimizations available:")
+                notes.append(" Repository training optimizations available:")
                 if 'hidden' in model_name:  # Language model
                     notes.append("  • Progressive training (GrowLength + Curriculum)")
                     notes.append("  • Dynamic batch sizing optimization")
@@ -3502,12 +3502,12 @@ class ModelCapacityAnalyzer:
                     notes.append("  • Advanced FP8 training with Transformer Engine")
                 notes.append("  • 20-30% faster convergence with progressive training")
         else:
-            notes.append("💻 CPU training - will be slower but still feasible for smaller models")
+            notes.append(" CPU training - will be slower but still feasible for smaller models")
 
         if setup.get('max_batch_size', 0) < 8:
-            notes.append("⚠️ Limited batch size due to memory constraints")
+            notes.append(" Limited batch size due to memory constraints")
         elif setup.get('max_batch_size', 0) >= 32:
-            notes.append("✅ Large batch sizes possible - efficient training")
+            notes.append(" Large batch sizes possible - efficient training")
 
         return notes
 
@@ -3602,27 +3602,27 @@ class EnhancedResultsDisplay:
     def display_model_capacity_analysis(analysis: Dict[str, Any]) -> None:
         """Display comprehensive model capacity analysis."""
         print(f"\n{'='*80}")
-        print("🤖 MODEL CAPACITY & TRAINING TIME ANALYSIS")
+        print(" MODEL CAPACITY & TRAINING TIME ANALYSIS")
         print(f"{'='*80}")
 
         # System limits
         limits = analysis['system_limits']
-        print(f"\n📊 SYSTEM LIMITS:")
+        print(f"\n SYSTEM LIMITS:")
 
         if 'gpu' in limits:
             gpu = limits['gpu']
-            print(f"   🎮 GPU Memory: {gpu['total_memory_gb']:.1f}GB total, {gpu['available_memory_gb']:.1f}GB available")
+            print(f"    GPU Memory: {gpu['total_memory_gb']:.1f}GB total, {gpu['available_memory_gb']:.1f}GB available")
             print(f"      Max Model Size: {gpu['max_model_params_fp32']/1e9:.1f}B params (FP32), {gpu['max_model_params_fp16']/1e9:.1f}B params (FP16)")
             print(f"      Compute: {gpu['compute_tflops']:.1f} TFLOPS")
 
         cpu = limits['cpu']
-        print(f"   💻 CPU Memory: {cpu['total_memory_gb']:.1f}GB total, {cpu['available_memory_gb']:.1f}GB available")
+        print(f"    CPU Memory: {cpu['total_memory_gb']:.1f}GB total, {cpu['available_memory_gb']:.1f}GB available")
         print(f"      Max Model Size: {cpu['max_model_params_fp32']/1e9:.1f}B params (CPU)")
 
         # Trainable models
         trainable = analysis['trainable_models']
         if trainable:
-            print(f"\n✅ TRAINABLE MODELS ({len(trainable)} models):")
+            print(f"\n TRAINABLE MODELS ({len(trainable)} models):")
 
             # Sort by parameter count
             sorted_models = sorted(trainable.items(), key=lambda x: x[1]['parameters'])
@@ -3631,7 +3631,7 @@ class EnhancedResultsDisplay:
                 params = model_analysis['parameters']
                 setup = model_analysis['recommended_setup']
 
-                print(f"\n   🔹 {model_name.upper().replace('_', ' ')}")
+                print(f"\n    {model_name.upper().replace('_', ' ')}")
                 print(f"      Parameters: {params/1e9:.1f}B")
                 print(f"      Device: {setup['device'].upper()}")
                 print(f"      Precision: {setup['precision'].upper()}")
@@ -3648,23 +3648,23 @@ class EnhancedResultsDisplay:
                             if scenario_name in ['fine_tuning_1k', 'training_100k']:  # Show key scenarios
                                 print(f"        • {scenario['description']}: {scenario['readable_time']}")
         else:
-            print(f"\n❌ NO TRAINABLE MODELS FOUND")
+            print(f"\n NO TRAINABLE MODELS FOUND")
             print(f"   Your system may need more memory or a GPU upgrade")
 
         # Recommendations
         recommendations = analysis['scaling_recommendations']
         if recommendations['current_bottlenecks']:
-            print(f"\n⚠️  CURRENT BOTTLENECKS:")
+            print(f"\n  CURRENT BOTTLENECKS:")
             for bottleneck in recommendations['current_bottlenecks']:
                 print(f"   • {bottleneck}")
 
         if recommendations['upgrade_suggestions']:
-            print(f"\n🚀 UPGRADE SUGGESTIONS:")
+            print(f"\n UPGRADE SUGGESTIONS:")
             for suggestion in recommendations['upgrade_suggestions']:
                 print(f"   • {suggestion}")
 
         if recommendations['optimization_tips']:
-            print(f"\n💡 OPTIMIZATION TIPS:")
+            print(f"\n OPTIMIZATION TIPS:")
             for tip in recommendations['optimization_tips'][:5]:  # Show top 5
                 print(f"   • {tip}")
 
@@ -3731,38 +3731,38 @@ Examples:
         benchmark = UnifiedBenchmarkSuite(device_id=args.gpu_id, output_dir=args.output_dir)
 
         print(f"\n{'='*80}")
-        print("🚀 UNIFIED SYSTEM BENCHMARK & OPTIMIZATION TOOL")
+        print(" UNIFIED SYSTEM BENCHMARK & OPTIMIZATION TOOL")
         print(f"{'='*80}")
         print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         # System analysis (always run)
         print(f"\n{'='*60}")
-        print("📊 SYSTEM ANALYSIS")
+        print(" SYSTEM ANALYSIS")
         print(f"{'='*60}")
 
         capabilities = benchmark.analyze_system()
 
         # Display system info
-        print(f"\n🖥️  CPU: {capabilities.cpu_model}")
+        print(f"\n  CPU: {capabilities.cpu_model}")
         print(f"   Cores: {capabilities.physical_cores}P / {capabilities.logical_cores}L")
         print(f"   Memory: {capabilities.system_memory_gb:.1f} GB")
         print(f"   AI Score: {capabilities.cpu_ai_score:.0f}")
 
         if capabilities.gpu_model:
-            print(f"\n🎮 GPU: {capabilities.gpu_model}")
+            print(f"\n GPU: {capabilities.gpu_model}")
             print(f"   Memory: {capabilities.gpu_memory_gb:.1f} GB")
             print(f"   Architecture: {capabilities.gpu_architecture.value}")
             if capabilities.gpu_ai_score:
                 print(f"   AI Score: {capabilities.gpu_ai_score:.0f}")
         else:
-            print(f"\n🎮 GPU: Not available (CPU-only system)")
+            print(f"\n GPU: Not available (CPU-only system)")
 
-        print(f"\n⚖️  System Balance: CPU {capabilities.recommended_cpu_gpu_split['cpu']*100:.0f}% / GPU {capabilities.recommended_cpu_gpu_split['gpu']*100:.0f}%")
-        print(f"💡 Recommended Precision: {capabilities.recommended_precision.upper()}")
-        print(f"🔧 Optimal DataLoader Workers: {capabilities.optimal_dataloader_workers}")
+        print(f"\n  System Balance: CPU {capabilities.recommended_cpu_gpu_split['cpu']*100:.0f}% / GPU {capabilities.recommended_cpu_gpu_split['gpu']*100:.0f}%")
+        print(f" Recommended Precision: {capabilities.recommended_precision.upper()}")
+        print(f" Optimal DataLoader Workers: {capabilities.optimal_dataloader_workers}")
 
         if capabilities.identified_bottlenecks:
-            print(f"\n⚠️  Identified Bottlenecks:")
+            print(f"\n  Identified Bottlenecks:")
             for bottleneck in capabilities.identified_bottlenecks[:3]:  # Show top 3
                 print(f"   • {bottleneck.replace('_', ' ').title()}")
 
@@ -3770,18 +3770,18 @@ Examples:
         run_benchmarks = args.quick_test or args.full_analysis or (not args.system_info and not args.generate_config)
         if run_benchmarks:
             print(f"\n{'='*60}")
-            print("🏃 PERFORMANCE BENCHMARKS")
+            print(" PERFORMANCE BENCHMARKS")
             print(f"{'='*60}")
 
             quick_mode = args.quick_test and not args.full_analysis
             results = benchmark.run_performance_benchmarks(quick_mode=quick_mode)
 
-            print(f"\n✅ Benchmarks completed!")
-            print(f"📈 Results saved to: {benchmark.output_dir}")
+            print(f"\n Benchmarks completed!")
+            print(f" Results saved to: {benchmark.output_dir}")
 
         # Model capacity analysis (always show at the end)
         print(f"\n{'='*80}")
-        print("🤖 AI MODEL CAPACITY & TRAINING TIME ANALYSIS")
+        print(" AI MODEL CAPACITY & TRAINING TIME ANALYSIS")
         print(f"{'='*80}")
 
         capacity_analyzer = ModelCapacityAnalyzer(capabilities)
@@ -3797,17 +3797,17 @@ Examples:
             with open(output_file, 'w') as f:
                 json.dump(benchmark.results, f, indent=2, default=str)
 
-            print(f"\n💾 Results saved to: {output_file}")
+            print(f"\n Results saved to: {output_file}")
 
         print(f"\n{'='*80}")
-        print("🎉 UNIFIED BENCHMARK COMPLETED SUCCESSFULLY!")
+        print(" UNIFIED BENCHMARK COMPLETED SUCCESSFULLY!")
         print(f"{'='*80}")
 
     except KeyboardInterrupt:
-        print(f"\n⚠️  Benchmark interrupted by user")
+        print(f"\n  Benchmark interrupted by user")
         return 1
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n Error: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()

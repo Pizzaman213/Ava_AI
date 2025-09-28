@@ -146,7 +146,7 @@ def fast_pip_install(requirements_file: str, max_workers: int = None, download_o
     
     # Get already installed packages
     installed_packages = get_installed_packages()
-    print(f"📋 Found {len(installed_packages)} packages already installed")
+    print(f" Found {len(installed_packages)} packages already installed")
     
     # Filter out known problematic packages based on platform
     filtered_packages = []
@@ -172,29 +172,29 @@ def fast_pip_install(requirements_file: str, max_workers: int = None, download_o
                     repl_name = replacement.split('>=')[0].split('==')[0].split('<')[0].split('>')[0].lower()
                     if repl_name not in installed_packages:
                         filtered_packages.append(replacement)
-                        print(f"📝 Replaced {package} with {replacement}")
+                        print(f" Replaced {package} with {replacement}")
                     else:
-                        print(f"✓ {replacement} (replacement for {package}) already installed")
+                        print(f" {replacement} (replacement for {package}) already installed")
                         skipped_installed += 1
                 else:
-                    print(f"⚠️  Skipping platform-specific package: {package}")
+                    print(f"  Skipping platform-specific package: {package}")
                 skip_package = True
                 break
         
         if not skip_package:
             # Check if package is already installed
             if pkg_name in installed_packages:
-                print(f"✓ {package} already installed")
+                print(f" {package} already installed")
                 skipped_installed += 1
             else:
                 filtered_packages.append(package)
     
     packages = filtered_packages
-    print(f"📦 Will process {len(packages)} new packages ({skipped_installed} already installed)")
+    print(f" Will process {len(packages)} new packages ({skipped_installed} already installed)")
     
     # If all packages are already installed, we're done
     if len(packages) == 0:
-        print("\n✅ All required packages are already installed!")
+        print("\n All required packages are already installed!")
         return
     
     # Create download directory
@@ -202,7 +202,7 @@ def fast_pip_install(requirements_file: str, max_workers: int = None, download_o
     os.makedirs(download_dir, exist_ok=True)
     
     # Phase 1: Concurrent downloads
-    print("\n📥 Phase 1: Downloading packages...")
+    print("\n Phase 1: Downloading packages...")
     start_time = time.time()
     
     failed_downloads = []
@@ -218,22 +218,22 @@ def fast_pip_install(requirements_file: str, max_workers: int = None, download_o
             package, success, error = future.result()
             if success:
                 successful_downloads.append(package)
-                print(f"✅ Downloaded: {package}")
+                print(f" Downloaded: {package}")
             else:
                 failed_downloads.append((package, error))
-                print(f"❌ Failed to download: {package} - {error[:100]}")
+                print(f" Failed to download: {package} - {error[:100]}")
     
     download_time = time.time() - start_time
-    print(f"\n📊 Download phase completed in {download_time:.2f}s")
-    print(f"✅ Successful downloads: {len(successful_downloads)}")
-    print(f"❌ Failed downloads: {len(failed_downloads)}")
+    print(f"\n Download phase completed in {download_time:.2f}s")
+    print(f" Successful downloads: {len(successful_downloads)}")
+    print(f" Failed downloads: {len(failed_downloads)}")
     
     if download_only:
         print(f"Download-only mode. Packages saved to {download_dir}")
         return
     
     # Phase 2: Install downloaded packages (if not download-only)
-    print("\n🔧 Phase 2: Installing packages...")
+    print("\n Phase 2: Installing packages...")
     start_time = time.time()
     
     # First, try to install all packages with dependencies
@@ -244,10 +244,10 @@ def fast_pip_install(requirements_file: str, max_workers: int = None, download_o
         
         if result.returncode == 0:
             install_time = time.time() - start_time
-            print(f"✅ All packages installed successfully in {install_time:.2f}s")
-            print(f"📊 Total time: {download_time + install_time:.2f}s")
+            print(f" All packages installed successfully in {install_time:.2f}s")
+            print(f" Total time: {download_time + install_time:.2f}s")
         else:
-            print(f"❌ Installation failed: {result.stderr[:200]}")
+            print(f" Installation failed: {result.stderr[:200]}")
             print("Falling back to individual package installation...")
             
             # Fallback: install successful downloads individually
@@ -264,30 +264,30 @@ def fast_pip_install(requirements_file: str, max_workers: int = None, download_o
                     package, success, error = future.result()
                     if success:
                         successful_installs.append(package)
-                        print(f"✅ Installed: {package}")
+                        print(f" Installed: {package}")
                     else:
                         failed_installs.append((package, error))
-                        print(f"❌ Failed to install: {package} - {error[:100]}")
+                        print(f" Failed to install: {package} - {error[:100]}")
             
             install_time = time.time() - start_time
-            print(f"\n📊 Individual installation completed in {install_time:.2f}s")
-            print(f"✅ Successful installs: {len(successful_installs)}")
-            print(f"❌ Failed installs: {len(failed_installs)}")
+            print(f"\n Individual installation completed in {install_time:.2f}s")
+            print(f" Successful installs: {len(successful_installs)}")
+            print(f" Failed installs: {len(failed_installs)}")
     
     except subprocess.TimeoutExpired:
-        print("❌ Installation timeout. Some packages may not be installed.")
+        print(" Installation timeout. Some packages may not be installed.")
     
     total_time = time.time() - (start_time - download_time)
-    print(f"\n🎉 Total processing time: {total_time:.2f}s")
+    print(f"\n Total processing time: {total_time:.2f}s")
     
     # Clean up download directory
     if not download_only:
         import shutil
         try:
             shutil.rmtree(download_dir)
-            print(f"🧹 Cleaned up download directory: {download_dir}")
+            print(f" Cleaned up download directory: {download_dir}")
         except:
-            print(f"⚠️  Could not clean up download directory: {download_dir}")
+            print(f"  Could not clean up download directory: {download_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description="Fast multi-core pip installer")
@@ -318,10 +318,10 @@ def main():
             download_only=args.download_only
         )
     except KeyboardInterrupt:
-        print("\n⚠️  Installation interrupted by user")
+        print("\n  Installation interrupted by user")
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f" Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

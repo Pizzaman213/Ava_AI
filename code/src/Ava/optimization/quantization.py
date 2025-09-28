@@ -20,9 +20,9 @@ try:
     from torchao.prototype.mx_formats import NVFP4InferenceConfig
     from torchao.quantization.qat import QATConfig
     TORCHAO_AVAILABLE = True
-    print("✓ TorchAO available - Hardware-accelerated NVFP4 enabled")
+    print(" TorchAO available - Hardware-accelerated NVFP4 enabled")
 except ImportError:
-    print("⚠️ TorchAO not available - using custom NVFP4 implementation")
+    print(" TorchAO not available - using custom NVFP4 implementation")
 
 
 @dataclass
@@ -917,9 +917,9 @@ class TorchAONVFP4Wrapper:
         if not self.use_qat:
             raise ValueError("QAT not enabled for this wrapper")
 
-        print("🔄 Preparing model for NVFP4 training with TorchAO...")
+        print(" Preparing model for NVFP4 training with TorchAO...")
         quantized_model = quantize_(model, self.qat_config_prepare)
-        print("✅ Model prepared for NVFP4 training")
+        print(" Model prepared for NVFP4 training")
 
         return quantized_model
 
@@ -928,17 +928,17 @@ class TorchAONVFP4Wrapper:
         if not self.use_qat:
             raise ValueError("QAT not enabled for this wrapper")
 
-        print("🔄 Converting model to final NVFP4 format...")
+        print(" Converting model to final NVFP4 format...")
         final_model = quantize_(model, self.qat_config_convert)
-        print("✅ Model converted to NVFP4 format")
+        print(" Model converted to NVFP4 format")
 
         return final_model
 
     def quantize_model_for_inference(self, model: nn.Module) -> nn.Module:
         """Quantize model directly for NVFP4 inference."""
-        print("🔄 Quantizing model for NVFP4 inference...")
+        print(" Quantizing model for NVFP4 inference...")
         quantized_model = quantize_(model, self.base_config)
-        print("✅ Model quantized for NVFP4 inference")
+        print(" Model quantized for NVFP4 inference")
 
         return quantized_model
 

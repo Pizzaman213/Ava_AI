@@ -69,3 +69,4 @@ myst-parser>=2.0.0
 jupyterlab>3.0
 mpi4py
 deepspeed
+pynvml

@@ -322,9 +322,9 @@ class AuxiliaryLoss(nn.Module):
 
     def __init__(
         self,
-        load_balancing_weight: float = 0.01,
+        load_balancing_weight: float = 0.0001,
         router_z_weight: float = 0.001,
-        expert_diversity_weight: float = 0.01
+        expert_diversity_weight: float = 0.0001
     ):
         super().__init__()
         self.load_balancing_weight = load_balancing_weight
@@ -353,7 +353,7 @@ class AuxiliaryLoss(nn.Module):
 
         # Expert usage frequency
         expert_mask = F.one_hot(expert_indices, num_experts).float()
-        expert_usage = expert_mask.sum(dim=0).sum(dim=0)  # Sum over batch and top_k
+        expert_usage = expert_mask.sum(dim=0).sum(dim=0)
 
         # Gate probability sums
         gate_prob_sums = gate_probs.sum(dim=0)
@@ -361,6 +361,9 @@ class AuxiliaryLoss(nn.Module):
         # Load balancing loss (CV^2 - coefficient of variation squared)
         total_tokens = gate_logits.shape[0] * expert_indices.shape[1]
         load_loss = num_experts * torch.sum(gate_prob_sums * expert_usage) / (total_tokens ** 2)
+
+        # Cap load balancing loss to prevent runaway values
+        load_loss = torch.clamp(load_loss, max=10.0)
 
         return load_loss
 
@@ -374,8 +377,16 @@ class AuxiliaryLoss(nn.Module):
         Returns:
             Router Z-loss
         """
+        # Clip gate logits to prevent extreme values
+        gate_logits = torch.clamp(gate_logits, min=-10.0, max=10.0)
+
         # Z-loss encourages smaller logits to prevent overflow
-        z_loss = torch.mean(torch.logsumexp(gate_logits, dim=-1) ** 2)
+        logsumexp_vals = torch.logsumexp(gate_logits, dim=-1)
+        z_loss = torch.mean(logsumexp_vals ** 2)
+
+        # Cap the z-loss to prevent runaway values
+        z_loss = torch.clamp(z_loss, max=100.0)
+
         return z_loss
 
     def expert_diversity_loss(self, expert_outputs: List[torch.Tensor]) -> torch.Tensor:

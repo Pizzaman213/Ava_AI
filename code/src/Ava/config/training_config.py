@@ -85,7 +85,7 @@ class EpisodicMemoryConfig:
 @dataclass
 class DataConfig:
     """Configuration for data handling."""
-    data_dir: str = '/project/code/processed'  # Data directory
+    data_dir: str = '/project/code/data/combined'  # Data directory
     max_length: int = 512                     # Max sequence length
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = True                    # Streaming loader
@@ -107,12 +107,44 @@ class MultiColumnDataConfig:
 
 
 @dataclass
+class ProgressiveTrainingConfig:
+    """Configuration for progressive training features."""
+    enable_progressive_training: bool = False    # Enable progressive training
+
+    # Sequence length scaling (5.1 fixes)
+    enable_sequence_scaling: bool = False
+    initial_seq_length: int = 128
+    final_seq_length: int = 2048
+    length_schedule: str = "linear"
+    length_growth_epochs: int = 10
+    enable_length_bucketing: bool = True
+
+    # Difficulty scoring (5.2 fixes)
+    enable_curriculum: bool = False
+    curriculum_metric: str = "loss"
+    enable_score_caching: bool = True
+    cache_dir: str = "/tmp/difficulty_cache"
+    cache_version: str = "v1.0"
+
+    # Dynamic batch sizing (5.3 fixes)
+    enable_dynamic_batch: bool = False
+    enable_binary_search_oom: bool = True
+    enable_dry_run_mode: bool = True
+    min_batch_size: int = 1
+    max_batch_size: int = 64
+    target_gpu_utilization: float = 0.85
+    batch_size_adaptation_steps: int = 100
+
+@dataclass
 class TrainingConfig:
     """Configuration for training parameters."""
     batch_size: Optional[int] = None          # Batch size
     epochs: Optional[int] = None              # Number of epochs
     learning_rate: Optional[float] = None     # Learning rate
     gradient_accumulation: int = 1            # Gradient accumulation
+
+    # Progressive training
+    progressive: ProgressiveTrainingConfig = field(default_factory=ProgressiveTrainingConfig)
 
 
 @dataclass
@@ -376,7 +408,7 @@ Examples:
         # === DATA ARGUMENTS ===
         data_group = parser.add_argument_group('Data Configuration')
         data_group.add_argument('--data-dir', type=str,
-                               default='/project/code/processed',
+                               default='/project/code/data/combined',
                                help='Directory containing preprocessed training data')
         data_group.add_argument('--max-length', type=int, default=512,
                                help='Maximum sequence length')
@@ -508,6 +540,51 @@ Examples:
         perf_group.add_argument('--express-mode', action='store_true',
                                help='Express mode: optimized async logging with reduced frequency')
 
+        # Progressive training arguments
+        prog_group = parser.add_argument_group('Progressive Training (Phase 5 Fixes)')
+        prog_group.add_argument('--enable-progressive-training', action='store_true',
+                               help='Enable progressive training with Phase 5 fixes')
+
+        # Sequence length scaling (5.1)
+        prog_group.add_argument('--enable-sequence-scaling', action='store_true',
+                               help='Enable progressive sequence length scaling (5.1)')
+        prog_group.add_argument('--initial-seq-length', type=int, default=128,
+                               help='Initial sequence length for progressive scaling')
+        prog_group.add_argument('--final-seq-length', type=int, default=2048,
+                               help='Final sequence length for progressive scaling')
+        prog_group.add_argument('--length-schedule', type=str, default='linear',
+                               choices=['linear', 'exponential', 'step'],
+                               help='Sequence length growth schedule')
+        prog_group.add_argument('--length-growth-epochs', type=int, default=10,
+                               help='Number of epochs to grow sequence length')
+        prog_group.add_argument('--enable-length-bucketing', action='store_true', default=True,
+                               help='Enable length-based bucketing for efficiency')
+
+        # Difficulty scoring (5.2)
+        prog_group.add_argument('--enable-curriculum', action='store_true',
+                               help='Enable curriculum learning with streaming batches (5.2)')
+        prog_group.add_argument('--curriculum-metric', type=str, default='loss',
+                               choices=['loss', 'perplexity', 'attention_entropy'],
+                               help='Metric for difficulty scoring')
+        prog_group.add_argument('--enable-score-caching', action='store_true', default=True,
+                               help='Enable difficulty score disk caching')
+        prog_group.add_argument('--cache-dir', type=str, default='/tmp/difficulty_cache',
+                               help='Directory for difficulty score cache')
+
+        # Dynamic batch sizing (5.3)
+        prog_group.add_argument('--enable-dynamic-batch', action='store_true',
+                               help='Enable dynamic batch sizing with binary search OOM handling (5.3)')
+        prog_group.add_argument('--enable-binary-search-oom', action='store_true', default=True,
+                               help='Use binary search for OOM handling instead of simple halving')
+        prog_group.add_argument('--enable-dry-run-mode', action='store_true', default=True,
+                               help='Enable dry-run mode for safe batch size testing')
+        prog_group.add_argument('--progressive-min-batch-size', type=int, default=1,
+                               help='Minimum batch size for progressive training')
+        prog_group.add_argument('--progressive-max-batch-size', type=int, default=64,
+                               help='Maximum batch size for progressive training')
+        prog_group.add_argument('--target-gpu-utilization', type=float, default=0.85,
+                               help='Target GPU utilization for dynamic batch sizing')
+
         return parser
 
     def parse_args_to_config(self, args: argparse.Namespace) -> EnhancedTrainingConfig:
@@ -604,7 +681,26 @@ Examples:
                 batch_size=args.batch_size,
                 epochs=args.epochs,
                 learning_rate=args.learning_rate,
-                gradient_accumulation=args.gradient_accumulation
+                gradient_accumulation=args.gradient_accumulation,
+                progressive=ProgressiveTrainingConfig(
+                    enable_progressive_training=args.enable_progressive_training,
+                    enable_sequence_scaling=args.enable_sequence_scaling,
+                    initial_seq_length=args.initial_seq_length,
+                    final_seq_length=args.final_seq_length,
+                    length_schedule=args.length_schedule,
+                    length_growth_epochs=args.length_growth_epochs,
+                    enable_length_bucketing=args.enable_length_bucketing,
+                    enable_curriculum=args.enable_curriculum,
+                    curriculum_metric=args.curriculum_metric,
+                    enable_score_caching=args.enable_score_caching,
+                    cache_dir=args.cache_dir,
+                    enable_dynamic_batch=args.enable_dynamic_batch,
+                    enable_binary_search_oom=args.enable_binary_search_oom,
+                    enable_dry_run_mode=args.enable_dry_run_mode,
+                    min_batch_size=args.progressive_min_batch_size,
+                    max_batch_size=args.progressive_max_batch_size,
+                    target_gpu_utilization=args.target_gpu_utilization
+                )
             ),
 
             output=OutputConfig(

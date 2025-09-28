@@ -649,5 +649,5 @@ if __name__ == "__main__":
         profiler.save_profile(profile, f"{args.output_dir}/profile.json")
         profiler.generate_report(profile, args.output_dir)
 
-        print(f"\n✅ Data Quality Score: {profile.data_quality_score:.1f}/100")
-        print(f"📊 Report generated at {args.output_dir}/data_profile_report.html")
+        print(f"\n Data Quality Score: {profile.data_quality_score:.1f}/100")
+        print(f" Report generated at {args.output_dir}/data_profile_report.html")

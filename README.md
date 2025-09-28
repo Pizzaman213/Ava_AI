@@ -1,4 +1,4 @@
-# 🚀 Advanced LLM Training Framework
+#  Advanced LLM Training Framework
 
 This project is a state-of-the-art framework for training Large Language Models with cutting-edge techniques including Mixture of Experts (MoE), Mixture of Depths (MoD), and advanced attention mechanisms, designed to work seamlessly across CPU, GPU, and Apple Silicon platforms. It provides researchers and developers with a comprehensive toolkit for building production-ready language models with minimal setup and maximum efficiency.
 
@@ -23,14 +23,14 @@ Includes sophisticated data handling with support for multiple formats (JSON, JS
 
 After cloning the repository, you have multiple options to begin training your language model:
 
-### 🎯 **Fastest Setup - One Command**
+###  **Fastest Setup - One Command**
 ```bash
 # Complete automation: setup, dependencies, data download, and training
 python3 run_first.py
 ```
 This single script handles everything: creates project structure, installs dependencies via optimized pip install, downloads datasets in parallel (Wikipedia, code samples, instruction data), processes data for training, and starts model training with optimized configuration.
 
-### ⚡ **Quick Start - 5 Minutes Manual**
+###  **Quick Start - 5 Minutes Manual**
 ```bash
 # 1. Setup environment (30 seconds)
 pip install -r requirements.txt
@@ -49,7 +49,7 @@ python3 scripts/training/train_with_data.py --config configs/small_model.yaml --
 python3 scripts/generation/interactive_generate.py
 ```
 
-### 🔧 **Platform-Specific Optimization**
+###  **Platform-Specific Optimization**
 The framework automatically detects your hardware and selects optimal configurations:
 
 **For Apple Silicon (M1/M2/M3):**
@@ -69,14 +69,14 @@ python3 scripts/training/train_with_data.py --config configs/cpu/tiny.yaml
 python3 scripts/training/train_with_data.py --config configs/gpu/medium.yaml --mixed-precision
 ```
 
-### 📊 **Training Guidance**
+###  **Training Guidance**
 The system provides comprehensive training guidance with expected outcomes:
 
 - **Quick Testing (10K-50K samples)**: Achieves 2.0-3.0 loss in 15-30 minutes, suitable for basic functionality verification
 - **Meaningful Results (500K samples)**: Reaches 0.8-1.5 loss in 2-4 hours, produces coherent text generation
 - **Production Quality (5M+ samples)**: Achieves 0.2-0.5 loss in 1-3 days, delivers high-quality language understanding
 
-### 🎛️ **Configuration Options**
+###  **Configuration Options**
 Choose from pre-optimized configurations:
 - `configs/cpu/ultra_tiny.yaml` - 10M parameters, 1GB memory (testing)
 - `configs/gpu/small.yaml` - 125M parameters, 4GB memory (experiments)
@@ -84,7 +84,7 @@ Choose from pre-optimized configurations:
 - `configs/gpu/large.yaml` - 1.3B parameters, 16GB memory (production)
 - `configs/advanced/full_features.yaml` - All features enabled (research)
 
-### 📈 **Monitoring and Outputs**
+###  **Monitoring and Outputs**
 - Models automatically save every 1000 steps to `outputs/run_*/`
 - Best model saved as `best_model.pt`, final model as `final_model.pt`
 - Training logs include loss curves, learning rate schedules, and GPU utilization

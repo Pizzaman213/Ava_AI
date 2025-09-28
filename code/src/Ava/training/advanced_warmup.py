@@ -173,7 +173,7 @@ class AdvancedWarmupScheduler:
 
         # Restart if loss spikes beyond threshold
         if current_loss > self.warmup_loss_baseline * self.config.restart_threshold:
-            print(f"  🔄 Warmup restart triggered: loss {current_loss:.4f} > {self.warmup_loss_baseline * self.config.restart_threshold:.4f}")
+            print(f"   Warmup restart triggered: loss {current_loss:.4f} > {self.warmup_loss_baseline * self.config.restart_threshold:.4f}")
             return True
 
         return False
@@ -190,7 +190,7 @@ class AdvancedWarmupScheduler:
         warmup_start_lrs = [lr * self.config.start_ratio for lr in self.target_lrs]
         self._apply_learning_rates(warmup_start_lrs)
 
-        print(f"  🔄 Warmup restarted (#{self.warmup_restart_count}) - LR reset to {warmup_start_lrs[0]:.2e}")
+        print(f"   Warmup restarted (#{self.warmup_restart_count}) - LR reset to {warmup_start_lrs[0]:.2e}")
 
     def _compute_gradient_norm(self, model: torch.nn.Module) -> float:
         """Compute gradient norm for adaptive warmup completion."""
@@ -222,7 +222,7 @@ class AdvancedWarmupScheduler:
 
         # Complete early if gradient norm is stable and below threshold
         if gradient_norm <= self.config.gradient_threshold:
-            print(f"  ✅ Early warmup completion: gradient norm {gradient_norm:.4f} <= {self.config.gradient_threshold}")
+            print(f"   Early warmup completion: gradient norm {gradient_norm:.4f} <= {self.config.gradient_threshold}")
             return True
 
         return False
@@ -238,7 +238,7 @@ class AdvancedWarmupScheduler:
         # Apply target learning rates
         self._apply_learning_rates(self.target_lrs)
 
-        print(f"  🎯 Warmup completed early at step {self.current_step} (target: {self.config.warmup_steps})")
+        print(f"   Warmup completed early at step {self.current_step} (target: {self.config.warmup_steps})")
 
     def _complete_warmup(self) -> None:
         """Complete warmup normally."""
@@ -249,7 +249,7 @@ class AdvancedWarmupScheduler:
         # Apply target learning rates
         self._apply_learning_rates(self.target_lrs)
 
-        print(f"  🎯 Warmup completed at step {self.current_step}")
+        print(f"   Warmup completed at step {self.current_step}")
 
     def _update_loss_baseline(self, loss: float) -> None:
         """Update loss baseline for restart detection."""
