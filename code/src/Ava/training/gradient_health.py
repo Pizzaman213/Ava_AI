@@ -73,18 +73,20 @@ class GradientHealthMonitor:
         """
         Get adaptive gradient clip value for current step.
 
-        Uses linear warmup from initial to final clip value.
+        For MoE models, use a more conservative approach that maintains higher clipping values.
         """
         if step >= self.warmup_steps:
             return self.final_clip_value
 
-        # Linear warmup
-        progress = step / self.warmup_steps
-        clip_value = self.initial_clip_value + progress * (
-            self.final_clip_value - self.initial_clip_value
-        )
+        # For MoE models, use a gentler reduction to maintain higher clip values
+        # Instead of linear warmup, use a slower decay curve
+        progress = min(1.0, step / self.warmup_steps)
+        # Use square root for gentler reduction that keeps higher values longer
+        decay_factor = 1.0 - (progress ** 0.5) * 0.5  # Only reduce by 50% at most
+        clip_value = self.initial_clip_value * decay_factor
 
-        return clip_value
+        # Ensure we don't go below final_clip_value
+        return max(clip_value, self.final_clip_value)
 
     def check_gradient_health(
         self,
@@ -107,8 +109,9 @@ class GradientHealthMonitor:
         total_norm = 0.0
         grad_count = 0
 
-        # Optional: collect gradient values for histogram
+        # CRITICAL FIX: Sample gradients instead of collecting all (prevents memory leak)
         grad_values = [] if compute_histogram else None
+        max_grad_samples = 10000  # Limit histogram to 10K samples instead of millions
 
         for p in model.parameters():
             if p.grad is not None:
@@ -116,8 +119,19 @@ class GradientHealthMonitor:
                 total_norm += param_norm.item() ** 2
                 grad_count += 1
 
-                if compute_histogram:
-                    grad_values.extend(p.grad.data.abs().flatten().cpu().numpy().tolist())
+                if compute_histogram and len(grad_values) < max_grad_samples:
+                    # Sample gradients uniformly instead of taking all
+                    grad_flat = p.grad.data.abs().flatten()
+                    num_grads = grad_flat.numel()
+
+                    if num_grads + len(grad_values) <= max_grad_samples:
+                        # Take all if under limit
+                        grad_values.extend(grad_flat.cpu().numpy().tolist())
+                    else:
+                        # Sample uniformly to reach limit
+                        remaining = max_grad_samples - len(grad_values)
+                        indices = torch.randperm(num_grads, device=grad_flat.device)[:remaining]
+                        grad_values.extend(grad_flat[indices].cpu().numpy().tolist())
 
         total_norm = total_norm ** 0.5
 
@@ -186,7 +200,12 @@ class GradientHealthMonitor:
         """
         clip_value = max_norm if max_norm is not None else self.get_clip_value(step)
 
-        # Clip gradients
+        # SAFETY: First clip individual gradient values to prevent extreme outliers
+        # This prevents individual weights from having extreme gradients even if overall norm is OK
+        # Use 2x the norm clip value for value clipping
+        torch.nn.utils.clip_grad_value_(model.parameters(), clip_value * 2.0)
+
+        # Then clip gradient norm
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
 
         # Update history

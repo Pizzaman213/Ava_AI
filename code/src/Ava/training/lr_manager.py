@@ -89,7 +89,8 @@ class IntelligentLRManager:
             patience=config.plateau_patience,
             threshold=config.plateau_threshold,
             factor=config.plateau_factor,
-            min_lr=config.plateau_min_lr
+            min_lr=config.plateau_min_lr,
+            min_checks_between_reductions=5  # Minimum 5 validation checks between reductions
         ) if config.enable_adaptive else None
 
         # Recovery state
@@ -242,16 +243,21 @@ class IntelligentLRManager:
 
         return recovery_lr
 
-    def step(self, validation_loss: Optional[float] = None) -> Dict[str, Any]:
+    def step(self, validation_loss: Optional[float] = None, training_step: Optional[int] = None) -> Dict[str, Any]:
         """
         Perform LR schedule step.
 
         Args:
             validation_loss: Current validation loss for plateau detection
+            training_step: Current training step (if provided, updates current_step)
 
         Returns:
             Dictionary with step information
         """
+        # Update current step if provided
+        if training_step is not None:
+            self.current_step = training_step
+
         # Get current LR
         current_lr = self.get_lr(self.current_step)
 
@@ -265,8 +271,11 @@ class IntelligentLRManager:
         # Handle adaptive LR (plateau detection)
         step_info = {'lr': current_lr, 'phase': self._get_current_phase()}
 
+        # IMPORTANT: Only check for plateau when we have an actual NEW validation loss
+        # This should only happen during validation, not on every training step
         if self.plateau_detector and validation_loss is not None:
-            plateau_result = self.plateau_detector.step(validation_loss)
+            # Pass current training step to plateau detector for logging purposes
+            plateau_result = self.plateau_detector.step(validation_loss, current_step=self.current_step)
 
             if plateau_result['reduce_lr']:
                 # Plateau detected - reduce LR
@@ -299,7 +308,9 @@ class IntelligentLRManager:
                 'best_loss': plateau_result['best_loss']
             })
 
-        self.current_step += 1
+        # CRITICAL FIX: Don't increment here - caller provides training_step parameter
+        # This was causing LR schedule to run at 2x speed (double stepping)
+        # self.current_step += 1  # REMOVED - step updated via training_step parameter
         return step_info
 
     def _get_current_phase(self) -> str:
@@ -337,46 +348,82 @@ class IntelligentLRManager:
 class PlateauDetector:
     """Detects training plateaus and triggers LR reductions."""
 
-    def __init__(self, patience: int, threshold: float, factor: float, min_lr: float):
+    def __init__(self, patience: int, threshold: float, factor: float, min_lr: float,
+                 min_checks_between_reductions: int = 5):
+        """
+        Initialize plateau detector.
+
+        Args:
+            patience: Number of validation checks without improvement before reducing LR
+            threshold: Minimum improvement required
+            factor: Factor to reduce LR by
+            min_lr: Minimum learning rate
+            min_checks_between_reductions: Minimum validation checks before allowing another reduction (default: 5)
+        """
         self.patience = patience
         self.threshold = threshold
         self.factor = factor
         self.min_lr = min_lr
+        self.min_checks_between_reductions = min_checks_between_reductions
 
         self.best_loss = float('inf')
         self.patience_remaining = patience
-        self.step_count = 0
+        self.validation_check_count = 0  # Count actual validation checks, not training steps
+        self.last_reduction_check = -min_checks_between_reductions  # Allow first reduction immediately
+        self.checks_without_improvement = 0
 
-    def step(self, loss: float) -> Dict[str, Any]:
+    def step(self, loss: float, current_step: Optional[int] = None) -> Dict[str, Any]:
         """
         Check for plateau and determine if LR should be reduced.
+        This should only be called with actual validation losses, not on every training step.
 
         Args:
             loss: Current validation loss
+            current_step: Current training step (for logging purposes only)
 
         Returns:
             Dictionary with plateau detection results
         """
-        self.step_count += 1
+        # Increment validation check counter (this is what matters, not training steps)
+        self.validation_check_count += 1
         reduce_lr = False
+
+        # Check if enough validation checks have passed since last reduction
+        checks_since_last_reduction = self.validation_check_count - self.last_reduction_check
+        if checks_since_last_reduction < self.min_checks_between_reductions:
+            return {
+                'reduce_lr': False,
+                'best_loss': self.best_loss,
+                'patience_remaining': self.patience_remaining,
+                'validation_checks': self.validation_check_count,
+                'reason': f'Too soon since last reduction ({checks_since_last_reduction}/{self.min_checks_between_reductions} validation checks)'
+            }
 
         # Check if we have improvement
         if loss < self.best_loss - self.threshold:
             # Significant improvement
             self.best_loss = loss
             self.patience_remaining = self.patience
+            self.checks_without_improvement = 0
+            logger.info(f"Plateau detector: Improvement detected at validation check {self.validation_check_count}, loss: {loss:.6f}")
         else:
             # No significant improvement
+            self.checks_without_improvement += 1
             self.patience_remaining -= 1
 
             if self.patience_remaining <= 0:
                 # Plateau detected
                 reduce_lr = True
                 self.patience_remaining = self.patience  # Reset for next plateau
+                self.last_reduction_check = self.validation_check_count
+                self.checks_without_improvement = 0
+                step_info = f" (training step {current_step})" if current_step else ""
+                logger.info(f"Plateau detected after {self.patience} validation checks without improvement{step_info}")
 
         return {
             'reduce_lr': reduce_lr,
             'best_loss': self.best_loss,
             'patience_remaining': self.patience_remaining,
-            'step_count': self.step_count
+            'validation_checks': self.validation_check_count,
+            'checks_without_improvement': self.checks_without_improvement
         }

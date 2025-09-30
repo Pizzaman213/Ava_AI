@@ -182,7 +182,15 @@ class StreamingDataset(IterableDataset):
         self.data_files = self._find_data_files()
 
         if not self.data_files:
-            print(f" No data files found for {split} split, will use synthetic data")
+            print(f" WARNING: No data files found for {split} split, will use synthetic data")
+            print(f" Data directory checked: {self.data_dir}")
+            if self.data_dir.exists():
+                all_files = list(self.data_dir.glob('*.jsonl')) + list(self.data_dir.glob('*.arrow')) + list(self.data_dir.glob('*.parquet'))
+                print(f" Available files in directory: {len(all_files)}")
+                if all_files:
+                    print(f" Sample files: {[f.name for f in all_files[:3]]}")
+        else:
+            print(f" Found {len(self.data_files)} data files for {split} split")
 
     def _find_data_files(self) -> List[Path]:
         """Find all relevant data files with improved pattern matching"""
@@ -190,6 +198,7 @@ class StreamingDataset(IterableDataset):
 
         # More flexible patterns that match actual data structure
         patterns = [
+            # Standard split-based patterns
             f"*/{self.split}/**/*.arrow",      # dataset_name/train/...
             f"**/{self.split}/**/*.arrow",     # nested structures
             f"{self.split}_*/**/*.arrow",      # original pattern
@@ -202,6 +211,33 @@ class StreamingDataset(IterableDataset):
             f"{self.split}_*.jsonl",
             f"{self.split}.jsonl",             # exact match
         ]
+
+        # For 'train' split, also look for processed files (common naming pattern)
+        if self.split == "train":
+            patterns.extend([
+                "*_processed.jsonl",              # processed files
+                "processed*.jsonl",               # processed prefix
+                "combined*.jsonl",                # combined datasets
+                "*.jsonl",                        # fallback: any jsonl file
+                "*_processed.arrow",              # processed arrow files
+                "*.arrow",                        # any arrow files
+                "*_processed.parquet",            # processed parquet files
+                "*.parquet",                      # any parquet files
+            ])
+
+        # For 'val' split, use same patterns as train since we don't have separate val files
+        # The dataset will randomly sample from available data for validation
+        elif self.split == "val":
+            patterns.extend([
+                "*_processed.jsonl",              # processed files
+                "processed*.jsonl",               # processed prefix
+                "combined*.jsonl",                # combined datasets
+                "*.jsonl",                        # fallback: any jsonl file
+                "*_processed.arrow",              # processed arrow files
+                "*.arrow",                        # any arrow files
+                "*_processed.parquet",            # processed parquet files
+                "*.parquet",                      # any parquet files
+            ])
 
         for pattern in patterns:
             matched_files = sorted(self.data_dir.glob(pattern))
@@ -390,6 +426,21 @@ class StreamingDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
         """Iterate over the dataset with length-based bucketing"""
+        # CRITICAL FIX: Handle multi-worker data loading correctly
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            # Split data files across workers to avoid duplication/deadlock
+            num_workers = worker_info.num_workers
+            worker_id = worker_info.id
+
+            # Each worker gets a subset of files
+            worker_files = [f for i, f in enumerate(self.data_files) if i % num_workers == worker_id]
+            # Temporarily override data_files for this worker
+            original_files = self.data_files
+            self.data_files = worker_files
+        else:
+            original_files = None
+
         count = 0
         buffer = []
 
@@ -440,13 +491,17 @@ class StreamingDataset(IterableDataset):
                         if self.max_samples and count >= self.max_samples:
                             return
 
-        # Flush remaining buckets at the end
-        for bucket_samples in self.bucketing.flush_buckets():
+        # Flush remaining buckets at the end (FIXED: use min_size=1 to not lose samples)
+        for bucket_samples in self.bucketing.flush_buckets(min_size=1):
             for sample in bucket_samples:
                 if self.max_samples and count >= self.max_samples:
-                    return
+                    break
                 yield sample
                 count += 1
+
+        # Restore original data_files if we're in a worker
+        if original_files is not None:
+            self.data_files = original_files
 
 
 def create_streaming_dataloaders(

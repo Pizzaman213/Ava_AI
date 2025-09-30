@@ -22,8 +22,15 @@ import numpy as np
 # Try to import NVML for actual GPU utilization monitoring
 try:
     import pynvml
-    NVML_AVAILABLE = True
-    pynvml.nvmlInit()
+    try:
+        pynvml.nvmlInit()
+        NVML_AVAILABLE = True
+    except Exception as e:
+        # NVML library exists but initialization failed (no GPU, permissions, etc.)
+        NVML_AVAILABLE = False
+        pynvml = None
+        logger = logging.getLogger(__name__)
+        logger.debug(f"NVML initialization failed: {e}")
 except ImportError:
     NVML_AVAILABLE = False
     pynvml = None
@@ -147,12 +154,16 @@ class MemoryMonitor:
                 # Get actual GPU compute utilization (not memory utilization)
                 gpu_compute_util = get_gpu_compute_utilization(device)
 
+                # Calculate memory utilization (what we should monitor for memory warnings)
+                memory_utilization = cached / total if total > 0 else 0  # Use cached (reserved) memory
+
                 stats.update({
                     'gpu_allocated_gb': allocated,
                     'gpu_cached_gb': cached,
                     'gpu_total_gb': total,
-                    'gpu_utilization': gpu_compute_util,  # Now using actual compute utilization
-                    'gpu_memory_utilization': allocated / total if total > 0 else 0,  # Separate memory util
+                    'gpu_utilization': memory_utilization,  # Use MEMORY utilization for memory warnings
+                    'gpu_compute_utilization': gpu_compute_util,  # Separate compute util
+                    'gpu_memory_utilization': allocated / total if total > 0 else 0,  # Allocated memory util
                     'gpu_cached_utilization': cached / total if total > 0 else 0,
                     'gpu_available_gb': total - cached,
                     'gpu_device': device
