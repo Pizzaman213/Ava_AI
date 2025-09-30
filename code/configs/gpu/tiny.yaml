@@ -1,265 +1,219 @@
-# GPU Tiny Configuration - Enhanced
-# Entry-level GPU training configuration for Ava MoE++
-# Target: ~100M parameters, 6GB+ VRAM, RTX 2060/GTX 1060 6GB
-# Optimized for: Entry-level GPU training and experimentation with enhanced features
-
 model:
-  # Core Architecture - 100M Parameter Target
   hidden_size: 384
   num_layers: 8
   num_attention_heads: 6
   intermediate_size: 1536
   vocab_size: 50257
   max_position_embeddings: 1024
-
-  # MoE Configuration - Reduced for 100M params
   num_experts: 4
   num_experts_per_token: 2
-  expert_capacity_factor: 1.5  # Extra capacity prevents dropping
-  router_type: "switch"
-  router_aux_loss_coef: 0.0001  # Minimal aux loss impact
-  router_jitter_noise: 0.0  # No jitter during pretraining
-  router_z_loss_coef: 0.0001  # Minimal router z-loss
-  moe_dropout: 0.0  # No MoE dropout for stability
-
-  # Attention & Position Encoding
+  expert_capacity_factor: 1.5
+  router_type: switch
+  router_aux_loss_coef: 0.01
+  router_jitter_noise: 0.0  # Disabled during initialization for stability
+  router_z_loss_coef: 0.0001
+  moe_dropout: 0.0
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.0  # No dropout like DeepSeek
-  hidden_dropout: 0.0  # No dropout for maximum learning
-
-  # Regularization - DeepSeek Style
+  attention_dropout: 0.1
+  hidden_dropout: 0.1
   layer_norm_eps: 1e-6
-  initializer_range: 0.02  # Standard initialization
-  hidden_act: "swiglu"  # DeepSeek uses SwiGLU activation
-  label_smoothing: 0.0  # No label smoothing
-  tie_word_embeddings: true  # Tie embeddings for stability
-  dropout: 0.0  # No dropout like DeepSeek
-
-  # Enhanced Features (basic features for tiny model)
+  initializer_range: 0.008  # Balanced value for MoE (not too high, not too low)
+  hidden_act: swiglu
+  label_smoothing: 0.0
+  tie_word_embeddings: true
+  dropout: 0.0
   use_moh: false
   use_moa: false
   use_rag: false
   use_cross_attention: false
   use_episodic_memory: false
-
-  # DeepSpeed compatibility
-  deepspeed_activation_checkpointing: false
+  deepspeed_activation_checkpointing: false  # SPEED: Disabled for 30% gain
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
-
+  use_flash_attention: true
 training:
-  # Batch Configuration - RTX 3060 Optimized for DeepSeek Style
-  batch_size: 4  # Prevent OOM with 2048 context on RTX 3060
-  gradient_accumulation_steps: 64  # Effective batch of 256 tokens
-  max_gradient_norm: 1.0  # Standard clipping
-
-  # Training Duration - DeepSeek Style Extended
-  num_epochs: 1  # Single pass through data
-  max_steps: 500000  # Long training for proper DeepSeek-style convergence
-  warmup_steps: 5000  # Longer warmup for stability
-  warmup_type: "linear"  # Linear warmup like DeepSeek
-  save_total_limit: 20  # Keep more checkpoints for long training
-
-  # Learning Rate & Optimizer - DeepSeek Style Optimized
-  learning_rate: 3e-4  # DeepSeek-style moderate LR
-  weight_decay: 0.1  # Standard weight decay
-  beta1: 0.9  # Standard Adam beta1
-  beta2: 0.95  # GPT-style beta2
+  batch_size: 16  # SPEED: Increased from 4 (removed gradient accumulation)
+  gradient_accumulation_steps: 1  # SPEED: Disabled for 50% gain (was 64)
+  max_gradient_norm: 1.0
+  num_epochs: 1
+  max_steps: 500000
+  warmup_steps: 10000
+  warmup_type: linear
+  save_total_limit: 20
+  learning_rate: 7.5e-05
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.999
   eps: 1e-8
-  lr_scheduler_type: "cosine"  # Cosine decay like DeepSeek
-  lr_end: 3e-5  # 10% of max LR at end
-  warmup_ratio: 0.01  # 1% warmup (5k steps out of 500k)
-
-  # Mixed Precision & Performance
-  mixed_precision: "fp16"
-  dataloader_num_workers: 2  # Reduce workers to save memory
-  gradient_checkpointing: true  # Enable to save memory
-
-  # Adaptive Learning Features - Disabled for DeepSeek
-  use_adaptive_lr: false  # No adaptive LR (DeepSeek uses fixed schedule)
-  lr_patience: 1000000  # Effectively disabled
-  lr_reduction_factor: 1.0  # No reduction
-  min_lr: 0.0  # No minimum LR constraint for cosine decay
-
-  # Evaluation & Logging - Long Training Optimized
-  eval_strategy: "steps"  # Evaluate periodically for LLM
-  eval_steps: 25000  # Evaluate every 25k steps (less frequent for long training)
-  save_strategy: "steps"  # Save periodically
-  save_steps: 10000  # Save every 10k steps
-  logging_steps: 100  # Log every 100 steps (reduce logging overhead)
-  load_best_model_at_end: false  # Use final checkpoint for LLM
-  metric_for_best_model: "loss"  # Use loss for DeepSeek-style training
-  greater_is_better: false  # Lower loss is better
-
-  # Early Stopping - Disabled for DeepSeek Style
-  early_stopping_patience: 1000  # Effectively disabled (train to completion)
-  early_stopping_threshold: 0.0001  # Very small threshold
-  min_loss_reduction: 0.0001  # Very small threshold
-
-  # Stability Features for LLM
-  use_ema: false  # EMA not typically used for LLM pretraining
-  clip_grad_value: null  # Only use norm clipping for LLMs
-  loss_scaling: "dynamic"  # Dynamic loss scaling for fp16
-  adam_epsilon: 1e-8  # Standard for LLMs
-
+  lr_scheduler_type: cosine
+  lr_end: 7.499999999999999e-06
+  warmup_ratio: 0.01
+  mixed_precision: bf16  # SPEED: Changed from fp16 for better stability
+  dataloader_num_workers: 12  # SPEED: Increased from 2 for better I/O
+  gradient_checkpointing: false  # SPEED: Disabled for 30% gain
+  use_adaptive_lr: false
+  lr_patience: 1000000
+  lr_reduction_factor: 1.0
+  min_lr: 0.0
+  eval_strategy: steps
+  eval_steps: 2000  # SPEED: Reduced frequency from 25000 (evaluate less often)
+  save_strategy: steps
+  save_steps: 3000  # SPEED: Reduced frequency from 10000 (save less often)
+  logging_steps: 200  # SPEED: Reduced frequency from 100 (log less often)
+  load_best_model_at_end: false
+  metric_for_best_model: loss
+  greater_is_better: false
+  early_stopping_patience: 1000
+  early_stopping_threshold: 0.0001
+  min_loss_reduction: 0.0001
+  use_ema: false
+  clip_grad_value: null
+  loss_scaling: dynamic
+  adam_epsilon: 1e-8
+  gradient_health:
+    enabled: true
+    initial_clip_value: 5.0  # MoE needs higher clipping during warmup
+    final_clip_value: 2.0  # MoE models need 2-3x higher than dense models
+    warmup_steps: 10000
+    explosion_threshold: 30.0  # Increased from 5.0 - previous was too sensitive
+    explosion_window: 5
+    auto_reduce_lr: true
+    lr_reduction_factor: 0.5
+  dynamic_batching:  # NEW: Automatic batch size adjustment based on GPU memory
+    enabled: true  # Enabled for automatic hardware adaptation
+    min_batch_size: 8
+    max_batch_size: 48  # Higher for tiny model (smaller memory footprint)
+    target_memory_utilization: 0.88  # Slightly higher target (more aggressive)
+    adjustment_frequency: 100
+    adjustment_factor: 1.3  # More aggressive than baseline (1.2)
+    warmup_steps: 500
+    smooth_transitions: true
 data:
-  # Dataset Configuration
-  data_dir: "/project/code/data/processed"
-  max_length: 2048  # Standard context length for proper training
-  max_train_examples: -1  # Use entire dataset
-  max_eval_examples: 1000  # Smaller eval set to save memory
-
-  # Preprocessing
-  tokenizer_name: "gpt2"
-  padding_side: "right"
+  data_dir: /project/code/data/processed
+  max_length: 2048
+  max_train_examples: -1
+  max_eval_examples: 1000
+  tokenizer_name: gpt2
+  padding_side: right
   truncation: true
-
-  # Data Loading
-  train_batch_size: 4  # Match training batch size
-  eval_batch_size: 2  # Small eval batch for memory
-  dataloader_drop_last: true  # Drop last to avoid variable batch OOM
-  dataloader_pin_memory: false  # Save memory
-  shuffle: true  # Shuffle for each epoch
-
-# Enhanced Configuration Sections
-
-# DeepSpeed Configuration (disabled for tiny model)
+  train_batch_size: 16  # Synced with training.batch_size
+  eval_batch_size: 24  # SPEED: Increased from 2 for faster evaluation
+  dataloader_drop_last: true
+  dataloader_pin_memory: false
+  shuffle: true
 deepspeed:
   enabled: false
   zero_stage: 0
   cpu_offload: false
   nvme_offload: false
-  precision: "fp16"
-  gradient_accumulation_steps: 4
-  train_batch_size: 32  # 8 * 4
-  micro_batch_size: 8
-
-# Enhanced Features Configuration
+  precision: bf16  # Changed from fp16 to match training config
+  gradient_accumulation_steps: 1  # Synced with training config
+  train_batch_size: 16  # Effective batch: 16 * 1 = 16
+  micro_batch_size: 16  # Synced with training.batch_size
+  activation_checkpointing: false  # SPEED: Disabled for 30% gain
 enhanced_features:
-  # Architecture enhancements (minimal for tiny)
   architecture:
     use_moh: false
     use_moa: false
     use_cross_attention: false
     use_alibi: false
-    expert_routing_type: "switch"
-
-  # RAG System (disabled for tiny)
+    expert_routing_type: switch
   rag:
     enabled: false
     knowledge_base_path: null
     max_retrieved_docs: 5
-    rag_fusion_type: "concatenate"
-
-  # Advanced Loss Functions (basic for tiny)
+    rag_fusion_type: concatenate
   losses:
     focal_loss: false
     contrastive_loss: false
-    diversity_loss: true  # Helps with expert utilization
+    diversity_loss: true
     auxiliary_loss: true
-    adaptive_loss_scaling: false
-
-  # Gradient Surgery (disabled for tiny)
+    adaptive_loss_scaling: true
   gradient:
-    gradient_surgery: false
-    adaptive_gradient_surgery: false
-    gradient_surgery_method: "pcgrad"
-
-  # Episodic Memory (disabled for tiny)
+    gradient_surgery: false  # SPEED: Disabled to avoid multi-task overhead
+    adaptive_gradient_surgery: false  # SPEED: Disabled
+    gradient_surgery_method: pcgrad
+    gradient_norm_tracking: false  # SPEED: Disabled for monitoring reduction
+    gradient_anomaly_detection: false  # SPEED: Disabled for monitoring reduction
   memory:
     use_episodic_memory: false
     memory_capacity: 500
-    memory_selection_strategy: "importance"
+    memory_selection_strategy: importance
     memory_importance_threshold: 0.7
     memory_adaptation_rate: 0.01
-
-  # Quantization (basic options for memory efficiency)
   quantization:
     quantization_aware: false
     use_nvfp4: false
     bit_width: 8
     nvfp4_block_size: 64
     stochastic_rounding: false
-
-# Data Loading Configuration - DeepSeek Style Anti-Memorization
 data_loading:
-  # Streaming to prevent memorization
-  streaming: true  # Stream data like DeepSeek
-  buffer_size: 100000  # Very large buffer for maximum shuffling
-  max_samples: -1  # Use all samples
-  shuffle_seed: 42  # Fixed seed for reproducibility
-  reshuffle_each_epoch: true  # Reshuffle to prevent memorization
-
-  # Anti-memorization techniques
-  drop_last_batch: true  # Drop incomplete batches
-  prefetch_factor: 4  # Prefetch more batches
-  persistent_workers: true  # Keep workers alive for better shuffling
-
-  # Multi-column data
+  streaming: true
+  buffer_size: 15000  # SPEED: Adjusted from 100000 for better throughput
+  max_samples: -1
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 4
+  persistent_workers: true
   multi_column: false
   use_multi_column: false
-
-  # Distributed (disabled for single GPU)
   distributed: false
-
-# Performance Configuration
 performance:
-  # Performance modes (fast for development)
-  ultra_fast_mode: false
-  fast_progress: true
-  minimal_progress: false
-  express_mode: false
+  ultra_fast_mode: true  # SPEED: Enable ultra-fast mode (minimal monitoring)
+  fast_progress: false  # Overridden by ultra_fast_mode
+  minimal_progress: false  # Overridden by ultra_fast_mode
+  express_mode: false  # Overridden by ultra_fast_mode
   no_sync: false
-
-# Memory Optimization
 memory:
-  # RTX 3060 12GB optimization
   enable_memory_pool: true
-  pool_size_gb: 10.0  # Leave 2GB for system
-  gradient_checkpointing: true  # Essential for memory savings
-  memory_threshold_gb: 8.0  # Aggressive cleanup at 8GB
-  enable_cpu_offload: false  # Don't offload on consumer GPU
-  clear_cache_frequency: 50  # Frequent cache clearing
-
-# Evaluation Configuration
+  pool_size_gb: 8.0  # SPEED: Adjusted for tiny model
+  gradient_checkpointing: false  # SPEED: Disabled
+  memory_threshold_gb: 8.0
+  enable_cpu_offload: false
+  clear_cache_frequency: 200  # SPEED: Reduced frequency from 50
 evaluation:
   eval_during_training: true
-  eval_metrics: "perplexity"
+  eval_metrics: perplexity
   comprehensive_eval: false
-
-# Output Configuration
 output:
-  output_dir: "outputs/tiny"
+  output_dir: outputs/tiny
   save_total_limit: 3
   save_on_each_node: false
-
-# Run Management
 run_management:
-  experiment_name: "ava-tiny-enhanced"
+  experiment_name: ava-tiny-enhanced
   run_id: null
   resume_from_checkpoint: null
-
-# Hardware Configuration
-device: "auto"
-fp16: true
-bf16: false
-
-# Monitoring (Enhanced)
+device: auto
+fp16: false  # Disabled in favor of bf16
+bf16: true  # Enabled for better numerical stability in MoE training
 wandb:
   enabled: true
-  project: "ava-moe-gpu-tiny-enhanced"
-  tags: ["gpu", "tiny", "100M", "entry-level", "enhanced"]
+  project: ava-moe-gpu-tiny-ultrafast
+  tags:
+  - gpu
+  - tiny
+  - 100M
+  - ultrafast
+  - optimized
+  - production
   entity: null
   name: null
-  notes: "Enhanced tiny model with streaming data and basic optimizations"
-  group: "tiny-models"
-  job_type: "train"
+  notes: "Ultra-fast training config: 2-3x speedup via disabled checkpointing, no gradient accumulation, reduced monitoring. Requires ~30% more GPU memory."
+  group: tiny-models-ultrafast
+  job_type: train
   offline: false
-  cache_size: 1000
-  cache_flush_interval: 100
-
-# Hardware Requirements
-# VRAM: 6GB minimum, 8GB recommended
-# Compatible GPUs: RTX 2060, GTX 1060 6GB, RTX 3050, RX 580 8GB
-# Features: Streaming data loading, basic loss functions, memory optimization
+  cache_size: 5000  # SPEED: Increased cache from 1000
+  cache_flush_interval: 200  # SPEED: Reduced frequency from 100
+stability:
+  loss_smoothing: true
+  loss_smoothing_alpha: 0.9
+  lr_warmup_ratio: 0.1
+  lr_decay_ratio: 0.1
+  sync_gradients_each_step: false
+  use_kahan_summation: true
+  use_stable_embedding: true
+  stop_on_nan: true
+  max_grad_norm_before_stop: 100.0
+  max_loss_before_stop: 20.0

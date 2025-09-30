@@ -1061,19 +1061,51 @@ def create_multi_column_dataloader(
     balancing_tolerance: float = 0.05
 ) -> DataLoader:
     """
-    Create a DataLoader for multi-column datasets.
+    Create a DataLoader for multi-column datasets with advanced features.
+
+    This function creates a sophisticated DataLoader that can handle multiple data types
+    including text, numeric, categorical, image, and tensor columns. It supports both
+    file-based and HuggingFace Hub datasets, with options for streaming, distributed
+    training, and advanced load balancing.
 
     Args:
-        config: DatasetConfig or dict with configuration
-        tokenizer: Tokenizer for text columns
-        batch_size: Batch size
-        data_dir: Directory containing data files
-        split: Data split (train/val/test)
-        streaming: Whether to use streaming mode
-        num_workers: Number of data loading workers
+        config: DatasetConfig or dict containing dataset configuration including:
+            - columns: List of column configurations
+            - combine_strategy: How to combine multiple columns
+            - source_type: 'files' or 'huggingface'
+            - dataset_name: HuggingFace dataset name (if using hub)
+        tokenizer: Tokenizer for processing text columns (required for text data)
+        batch_size: Number of samples per batch
+        data_dir: Directory containing data files (for file-based datasets)
+        split: Data split to load ('train', 'validation', 'test')
+        streaming: Whether to use streaming mode for large datasets
+        num_workers: Number of worker processes for data loading
+        distributed: Whether distributed training is enabled (auto-detected if None)
+        world_size: Total number of distributed processes
+        rank: Current process rank in distributed setup
+        use_advanced_sampler: Whether to use advanced sampling strategies
+        enable_load_balancing: Whether to enable dynamic load balancing
+        balancing_tolerance: Tolerance for load balancing (0.05 = 5%)
 
     Returns:
-        DataLoader instance
+        DataLoader: Configured DataLoader instance ready for training
+
+    Raises:
+        ValueError: If configuration is invalid or required parameters are missing
+        FileNotFoundError: If data files cannot be found
+        ImportError: If required dependencies are missing
+
+    Example:
+        >>> config = {
+        ...     'columns': [{'name': 'text', 'type': 'text'}],
+        ...     'combine_strategy': 'concatenate',
+        ...     'source_type': 'files'
+        ... }
+        >>> loader = create_multi_column_dataloader(
+        ...     config=config,
+        ...     tokenizer=tokenizer,
+        ...     batch_size=32
+        ... )
     """
 
     # Convert dict to DatasetConfig if needed

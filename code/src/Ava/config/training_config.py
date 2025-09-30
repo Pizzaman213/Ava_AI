@@ -85,7 +85,7 @@ class EpisodicMemoryConfig:
 @dataclass
 class DataConfig:
     """Configuration for data handling."""
-    data_dir: str = '/project/code/data/combined'  # Data directory
+    data_dir: str = '/project/code/data/processed'  # Data directory
     max_length: int = 512                     # Max sequence length
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = True                    # Streaming loader
@@ -135,6 +135,20 @@ class ProgressiveTrainingConfig:
     target_gpu_utilization: float = 0.85
     batch_size_adaptation_steps: int = 100
 
+
+@dataclass
+class DynamicBatchingConfig:
+    """Configuration for dynamic batch sizing based on GPU memory."""
+    enabled: bool = False                      # Enable dynamic batching
+    min_batch_size: int = 1                    # Minimum batch size
+    max_batch_size: int = 64                   # Maximum batch size
+    target_memory_utilization: float = 0.85    # Target GPU memory usage (0.85 = 85%)
+    adjustment_frequency: int = 100            # Check every N steps
+    adjustment_factor: float = 1.25            # Scale factor for adjustments
+    warmup_steps: int = 500                    # Don't adjust during first N steps
+    smooth_transitions: bool = True            # Use gradual adjustments
+
+
 @dataclass
 class TrainingConfig:
     """Configuration for training parameters."""
@@ -145,6 +159,9 @@ class TrainingConfig:
 
     # Progressive training
     progressive: ProgressiveTrainingConfig = field(default_factory=ProgressiveTrainingConfig)
+
+    # Dynamic batching
+    dynamic_batching: Optional[DynamicBatchingConfig] = None
 
 
 @dataclass
@@ -408,7 +425,7 @@ Examples:
         # === DATA ARGUMENTS ===
         data_group = parser.add_argument_group('Data Configuration')
         data_group.add_argument('--data-dir', type=str,
-                               default='/project/code/data/combined',
+                               default='/project/code/data/processed',
                                help='Directory containing preprocessed training data')
         data_group.add_argument('--max-length', type=int, default=512,
                                help='Maximum sequence length')
@@ -462,6 +479,10 @@ Examples:
                                  help='Save checkpoint every N steps')
         output_group.add_argument('--resume', type=str, default=None,
                                  help='Resume from checkpoint')
+        output_group.add_argument('--fresh-start', action='store_true',
+                                 help='Force fresh start, ignore any existing checkpoints')
+        output_group.add_argument('--reset-step-counter', action='store_true',
+                                 help='Reset global step counter to 0 (for debugging)')
 
         # === RUN MANAGEMENT ARGUMENTS ===
         run_group = parser.add_argument_group('Run Management')

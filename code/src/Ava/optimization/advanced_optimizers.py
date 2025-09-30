@@ -23,8 +23,46 @@ import math
 from typing import Dict, Any, Optional, List, Tuple, Union
 import logging
 from functools import reduce
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OptimizerConfig:
+    """Configuration class for advanced optimizers.
+
+    This class provides a unified configuration interface for all advanced
+    optimizers in the module.
+
+    Attributes:
+        optimizer_type: Type of optimizer ('lion', 'sophia', 'adafactor')
+        lr: Learning rate
+        weight_decay: Weight decay coefficient
+        betas: Momentum coefficients (beta1, beta2)
+        eps: Small constant for numerical stability
+        clip_threshold: Gradient clipping threshold
+        factorization_rank: Rank for factorized optimizers (AdaFactor)
+        min_dim_size_to_factor: Minimum dimension size for factorization
+        decay_rate: Decay rate for second moments
+        beta1: Beta1 parameter (can override betas[0])
+        warmup_init: Whether to use warmup initialization
+        scale_parameter: Whether to scale parameter updates
+        relative_step: Whether to use relative step size
+    """
+    optimizer_type: str = 'lion'
+    lr: float = 1e-4
+    weight_decay: float = 0.01
+    betas: Tuple[float, float] = (0.9, 0.99)
+    eps: float = 1e-15
+    clip_threshold: float = 1.0
+    factorization_rank: Optional[int] = None
+    min_dim_size_to_factor: int = 128
+    decay_rate: float = -0.8
+    beta1: Optional[float] = None
+    warmup_init: bool = False
+    scale_parameter: bool = True
+    relative_step: bool = True
 
 
 class LionOptimizer(Optimizer):

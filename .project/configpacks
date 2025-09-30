@@ -8,5 +8,6 @@
 *bash.PreLanguage
 *python.PipPackageManager
 *bash.PostBuild
+*python.Boto3Package
 *jupyterlab.JupyterLab
 *vs_code.VSCode

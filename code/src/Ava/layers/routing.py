@@ -108,6 +108,7 @@ class SwitchTransformerRouting(nn.Module):
         # Track expert assignments
         expert_usage = torch.zeros(self.num_experts, device=hidden_flat.device)
 
+        # Vectorized routing instead of double loop (much faster!)
         for expert_id in range(self.num_experts):
             # Find tokens assigned to this expert
             expert_mask = (expert_index == expert_id)
@@ -121,12 +122,12 @@ class SwitchTransformerRouting(nn.Module):
                 selected_tokens = selected_tokens[top_indices]
 
             if len(selected_tokens) > 0:
-                # Create dispatch tensor (binary assignment)
-                for i, token_id in enumerate(selected_tokens):
-                    dispatch_tensor[token_id, expert_id, i] = 1.0
-                    combine_tensor[token_id, expert_id, i] = expert_gate[token_id]
-
-                expert_usage[expert_id] = len(selected_tokens)
+                # Vectorized assignment (no inner loop!)
+                num_selected = len(selected_tokens)
+                positions = torch.arange(num_selected, device=hidden_flat.device)
+                dispatch_tensor[selected_tokens, expert_id, positions] = 1.0
+                combine_tensor[selected_tokens, expert_id, positions] = expert_gate[selected_tokens]
+                expert_usage[expert_id] = num_selected
 
         # Update statistics for load balancing loss
         if training:

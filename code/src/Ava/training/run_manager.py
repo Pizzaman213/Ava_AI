@@ -345,6 +345,9 @@ class RunManager:
 
         self.log('training', f"Saved checkpoint at step {step} (epoch {epoch})")
 
+        # Return the path to the latest checkpoint
+        return str(latest_path)
+
     def _atomic_save(self, checkpoint_data: Dict[str, Any], final_path: Path):
         """
         Atomically save checkpoint using temp file + rename pattern.

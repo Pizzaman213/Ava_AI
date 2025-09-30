@@ -447,6 +447,106 @@ class TrainingMetricsCollector:
         self.total_steps = 0
         self.collection_start_time = time.time()
 
+    def record_batch_size_change(self, step: int, new_batch_size: int, reason: str) -> None:
+        """
+        Record a dynamic batch size change event.
+
+        Args:
+            step: Training step number
+            new_batch_size: New batch size after adjustment
+            reason: Reason for the adjustment
+        """
+        # Initialize batch size tracking if not exists
+        if 'batch_size_history' not in self.running_stats:
+            self.running_stats['batch_size_history'] = {
+                'count': 0,
+                'sum': 0.0,
+                'sum_sq': 0.0,
+                'min': float('inf'),
+                'max': float('-inf'),
+                'recent': deque(maxlen=self.config.trend_window_size),
+                'changes': deque(maxlen=100),  # Track last 100 changes
+                'increases': 0,
+                'decreases': 0
+            }
+
+        stats = self.running_stats['batch_size_history']
+
+        # Determine if increase or decrease
+        if stats['recent']:
+            prev_batch_size = stats['recent'][-1]
+            if new_batch_size > prev_batch_size:
+                stats['increases'] += 1
+                direction = 'increase'
+            elif new_batch_size < prev_batch_size:
+                stats['decreases'] += 1
+                direction = 'decrease'
+            else:
+                direction = 'unchanged'
+        else:
+            direction = 'initial'
+
+        # Update statistics
+        stats['count'] += 1
+        stats['sum'] += new_batch_size
+        stats['sum_sq'] += new_batch_size ** 2
+        stats['min'] = min(stats['min'], new_batch_size)
+        stats['max'] = max(stats['max'], new_batch_size)
+        stats['recent'].append(new_batch_size)
+
+        # Record change event
+        stats['changes'].append({
+            'step': step,
+            'batch_size': new_batch_size,
+            'reason': reason,
+            'direction': direction,
+            'timestamp': time.time()
+        })
+
+    def get_batch_size_statistics(self) -> Dict[str, Any]:
+        """
+        Get comprehensive batch size statistics.
+
+        Returns:
+            Dictionary with batch size statistics
+        """
+        if 'batch_size_history' not in self.running_stats:
+            return {
+                'enabled': False,
+                'current_batch_size': None,
+                'avg_batch_size': None,
+                'min_batch_size': None,
+                'max_batch_size': None,
+                'total_changes': 0,
+                'increases': 0,
+                'decreases': 0,
+                'adjustment_rate': 0.0
+            }
+
+        stats = self.running_stats['batch_size_history']
+
+        # Calculate average
+        avg_batch_size = stats['sum'] / stats['count'] if stats['count'] > 0 else 0.0
+
+        # Get current batch size
+        current_batch_size = stats['recent'][-1] if stats['recent'] else None
+
+        # Calculate adjustment rate (changes per step)
+        adjustment_rate = stats['count'] / max(self.total_steps, 1)
+
+        return {
+            'enabled': True,
+            'current_batch_size': current_batch_size,
+            'avg_batch_size': avg_batch_size,
+            'min_batch_size': stats['min'] if stats['min'] != float('inf') else None,
+            'max_batch_size': stats['max'] if stats['max'] != float('-inf') else None,
+            'total_changes': stats['count'],
+            'increases': stats['increases'],
+            'decreases': stats['decreases'],
+            'adjustment_rate': adjustment_rate,
+            'recent_changes': list(stats['changes'])[-5:] if stats['changes'] else []
+        }
+
     def get_state_dict(self) -> Dict[str, Any]:
         """Get collector state for checkpointing."""
         return {

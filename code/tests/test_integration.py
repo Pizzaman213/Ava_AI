@@ -19,15 +19,14 @@ from src.Ava.optimization.advanced_optimizers import (
     LionOptimizer, SophiaOptimizer, AdaFactorOptimizer, OptimizerFactory, OptimizerConfig
 )
 from src.Ava.training.progressive_training import (
-    ProgressiveTrainingOrchestrator, ProgressiveConfig,
-    CurriculumConfig, GrowLengthConfig, DynamicBatchConfig
+    ProgressiveTrainingManager, ProgressiveTrainingConfig
 )
 from src.Ava.training.advanced_schedulers import (
-    CosineAnnealingWithRestarts, OneCycleScheduler, AdaptiveLRScheduler,
-    SchedulerFactory, SchedulerConfig
+    CosineAnnealingWarmRestarts, OneCycleLR, AdaptiveLRScheduler,
+    SchedulerFactory
 )
 from src.Ava.optimization.fp8_training import (
-    FP8Config, FP8Optimizer, FP8TrainingManager, convert_model_to_fp8
+    FP8Config, FP8Handler, FP8ModelWrapper, create_fp8_model
 )
 
 
