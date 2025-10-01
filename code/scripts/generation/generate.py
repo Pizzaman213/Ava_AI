@@ -245,7 +245,7 @@ class GenerationPipeline:
         elif is_new_framework and 'model_state_dict' in checkpoint:
             # New framework format
             print(" Loading model state (new framework)")
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             print(f"✓ Model loaded from run: {checkpoint.get('run_id', 'unknown')}")
             print(f"  Epoch: {checkpoint.get('epoch', '?')}, Step: {checkpoint.get('step', '?')}, Loss: {checkpoint.get('loss', '?'):.4f}")
         elif 'model_state_dict' in checkpoint:

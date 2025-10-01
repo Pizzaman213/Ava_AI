@@ -206,8 +206,8 @@ class FailureDetector:
                     }
                 ))
 
-            # Gradient vanishing
-            if latest_grad < 1e-8:
+            # Gradient vanishing (increased threshold from 1e-8 to 1e-6 for large models with gradient accumulation)
+            if latest_grad < 1e-6:
                 confidence = 0.9
                 failures.append((
                     FailureType.GRADIENT_VANISHING,
@@ -215,7 +215,7 @@ class FailureDetector:
                     {
                         'latest_gradient_norm': latest_grad,
                         'recent_gradients': recent_grads,
-                        'vanishing_threshold': 1e-8
+                        'vanishing_threshold': 1e-6
                     }
                 ))
 

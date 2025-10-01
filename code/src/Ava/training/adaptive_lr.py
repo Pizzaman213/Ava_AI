@@ -14,6 +14,10 @@ from collections import deque
 @dataclass
 class AdaptiveLRConfig:
     """Configuration for adaptive learning rate management."""
+    # Warmup configuration
+    warmup_steps: int = 0                  # Number of warmup steps (0 = no warmup)
+    warmup_start_lr: float = 1e-8          # Starting LR for warmup
+
     # Loss tracking
     batch_loss_window: int = 100           # Window size for loss averaging
     min_improvement: float = 0.001         # Minimum improvement threshold
@@ -62,6 +66,14 @@ class AdaptiveLearningRateManager:
         self.optimizer = optimizer
         self.config = config
 
+        # Store target LR for warmup
+        self.target_lr = optimizer.param_groups[0]['lr']
+
+        # Set initial LR to warmup start if warmup is enabled
+        if config.warmup_steps > 0:
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = config.warmup_start_lr
+
         # Loss tracking
         self.batch_losses = deque(maxlen=config.batch_loss_window)
         self.best_loss = float('inf')
@@ -85,6 +97,7 @@ class AdaptiveLearningRateManager:
             'emergency_reductions': 0,
             'plateau_reductions': 0,
             'stability_increases': 0,
+            'warmup_steps_completed': 0,
             'lr_history': [],
             'loss_history': []
         }
@@ -127,7 +140,14 @@ class AdaptiveLearningRateManager:
             'adjustment_reason': None
         }
 
-        # Emergency spike detection (immediate action)
+        # FIXED: Handle warmup phase first
+        if self.config.warmup_steps > 0 and self.step_count <= self.config.warmup_steps:
+            warmup_adjustment = self._handle_warmup()
+            lr_info.update(warmup_adjustment)
+            self.lr_stats['warmup_steps_completed'] = self.step_count
+            return lr_info
+
+        # Emergency spike detection (immediate action) - only after warmup
         if self._detect_loss_spike(avg_recent_loss):
             adjustment = self._handle_loss_spike(avg_recent_loss)
             lr_info.update(adjustment)
@@ -144,6 +164,27 @@ class AdaptiveLearningRateManager:
                 lr_info.update(adjustment)
 
         return lr_info
+
+    def _handle_warmup(self) -> Dict[str, Any]:
+        """Handle learning rate warmup phase with linear scaling."""
+        # Linear warmup from warmup_start_lr to target_lr
+        progress = self.step_count / self.config.warmup_steps
+        new_lr = self.config.warmup_start_lr + (self.target_lr - self.config.warmup_start_lr) * progress
+
+        current_lr = self.optimizer.param_groups[0]['lr']
+
+        # Update LR
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = new_lr
+
+        return {
+            'lr_adjusted': True,
+            'adjustment_type': 'warmup',
+            'adjustment_reason': f'Warmup step {self.step_count}/{self.config.warmup_steps}',
+            'old_lr': current_lr,
+            'new_lr': new_lr,
+            'warmup_progress': progress
+        }
 
     def _detect_loss_spike(self, current_loss: float) -> bool:
         """Detect if current loss represents a spike requiring immediate action."""
@@ -287,9 +328,32 @@ class AdaptiveLearningRateManager:
             'batches_since_improvement': self.batches_since_improvement
         }
 
+    def update_validation_loss(self, val_loss: float) -> None:
+        """
+        Update manager with validation loss for plateau detection.
+
+        Args:
+            val_loss: Current validation loss
+        """
+        # Update best loss if validation improves
+        if val_loss < self.best_loss:
+            improvement = self.best_loss - val_loss
+            self.best_loss = val_loss
+            self.recent_best_loss = val_loss
+            self.batches_since_improvement = 0
+
+            # Track validation improvements
+            if 'validation_improvements' not in self.lr_stats:
+                self.lr_stats['validation_improvements'] = 0
+            self.lr_stats['validation_improvements'] += 1
+
     def get_current_lr(self) -> float:
         """Get current learning rate."""
         return self.optimizer.param_groups[0]['lr']
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive learning rate statistics (alias for get_lr_statistics)."""
+        return self.get_lr_statistics()
 
     def get_lr_statistics(self) -> Dict[str, Any]:
         """Get comprehensive learning rate statistics."""
@@ -369,6 +433,7 @@ class AdaptiveLearningRateManager:
             'last_lr_reduction_step': self.last_lr_reduction_step,
             'last_lr_increase_step': self.last_lr_increase_step,
             'lr_before_spike': self.lr_before_spike,
+            'target_lr': self.target_lr,
             'lr_stats': self.lr_stats
         }
 
@@ -384,6 +449,7 @@ class AdaptiveLearningRateManager:
         self.last_lr_reduction_step = state_dict['last_lr_reduction_step']
         self.last_lr_increase_step = state_dict['last_lr_increase_step']
         self.lr_before_spike = state_dict['lr_before_spike']
+        self.target_lr = state_dict.get('target_lr', self.optimizer.param_groups[0]['lr'])
         self.lr_stats = state_dict['lr_stats']
 
 

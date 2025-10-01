@@ -15,10 +15,10 @@ model:
   moe_dropout: 0.0
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.1
-  hidden_dropout: 0.1
+  attention_dropout: 0.0
+  hidden_dropout: 0.0
   layer_norm_eps: 1e-6
-  initializer_range: 0.008  # Balanced value for MoE (not too high, not too low)
+  initializer_range: 0.02  # Balanced value for MoE (not too high, not too low)
   hidden_act: swiglu
   label_smoothing: 0.0
   tie_word_embeddings: true
@@ -38,13 +38,13 @@ training:
   max_gradient_norm: 1.0
   num_epochs: 1
   max_steps: 500000
-  warmup_steps: 10000
+  warmup_steps: 2000
   warmup_type: linear
   save_total_limit: 20
-  learning_rate: 7.5e-05
-  weight_decay: 0.01
+  learning_rate: 0.00042
+  weight_decay: 0.1
   beta1: 0.9
-  beta2: 0.999
+  beta2: 0.95
   eps: 1e-8
   lr_scheduler_type: cosine
   lr_end: 7.499999999999999e-06
@@ -75,19 +75,19 @@ training:
     enabled: true
     initial_clip_value: 5.0  # MoE needs higher clipping during warmup
     final_clip_value: 2.0  # MoE models need 2-3x higher than dense models
-    warmup_steps: 10000
+    warmup_steps: 2000
     explosion_threshold: 30.0  # Increased from 5.0 - previous was too sensitive
     explosion_window: 5
     auto_reduce_lr: true
     lr_reduction_factor: 0.5
   dynamic_batching:  # NEW: Automatic batch size adjustment based on GPU memory
-    enabled: true  # Enabled for automatic hardware adaptation
+    enabled: false  # Enabled for automatic hardware adaptation
     min_batch_size: 8
     max_batch_size: 48  # Higher for tiny model (smaller memory footprint)
     target_memory_utilization: 0.88  # Slightly higher target (more aggressive)
     adjustment_frequency: 100
     adjustment_factor: 1.3  # More aggressive than baseline (1.2)
-    warmup_steps: 500
+    warmup_steps: 2000
     smooth_transitions: true
 data:
   data_dir: /project/code/data/processed
