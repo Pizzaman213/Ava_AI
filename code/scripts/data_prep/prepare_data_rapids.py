@@ -456,9 +456,21 @@ class LocalDataProcessor:
     def __init__(self, output_dir: str = "/project/code/processed",
                  use_gpu: bool = False, use_multiprocessing: bool = True,
                  format_strategy: str = "auto", quality_threshold: float = 0.3,
-                 enable_quality_filtering: bool = True, initial_batch_size: int = 50000):
+                 enable_quality_filtering: bool = True, initial_batch_size: int = 50000,
+                 auto_organize: bool = False):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.auto_organize = auto_organize
+
+        # Create separate directories if auto-organize is enabled
+        if self.auto_organize:
+            self.finetuning_dir = self.output_dir.parent / "fine-tuning"
+            self.pretraining_dir = self.output_dir
+            self.finetuning_dir.mkdir(parents=True, exist_ok=True)
+            print(f"🎯 Auto-organize enabled:")
+            print(f"   Q&A/Instruction → {self.finetuning_dir}")
+            print(f"   Web/General text → {self.pretraining_dir}")
+
         self.use_gpu = use_gpu and RAPIDS_AVAILABLE
         self.use_multiprocessing = use_multiprocessing
         self.cpu_count = mp.cpu_count()
@@ -573,6 +585,35 @@ class LocalDataProcessor:
                 old_size = self.current_batch_size
                 self.current_batch_size = new_batch_size
                 print(f"    ⚠️  GPU near capacity ({gpu_util:.1%}), reducing batch size: {old_size:,} → {new_batch_size:,}")
+
+    def is_qa_dataset(self, dataset_name: str, detected_format: str) -> bool:
+        """Determine if a dataset is Q&A/instruction-based or general web text"""
+        # Q&A format types
+        qa_formats = {
+            "instruction_response",
+            "qa_context",
+            "conversation",
+            "preference",
+            "code_instruction"
+        }
+
+        # If format was detected and it's a Q&A format
+        if detected_format in qa_formats:
+            return True
+
+        # Additional name-based heuristics for datasets that might not detect properly
+        qa_keywords = [
+            'orca', 'openassistant', 'oasst', 'instruct', 'alpaca',
+            'platypus', 'qa', 'question', 'answer', 'dialog', 'dialogue',
+            'conversation', 'chat', 'rlhf', 'ultrachat', 'ultrafeedback',
+            'wizardlm', 'evol', 'math', 'code', 'flashcard'
+        ]
+
+        dataset_lower = dataset_name.lower()
+        if any(keyword in dataset_lower for keyword in qa_keywords):
+            return True
+
+        return False
 
     def discover_datasets(self, raw_data_dir: str = "/project/code/data") -> List[str]:
         """Discover all available datasets (supports multiple formats)"""
@@ -1339,8 +1380,36 @@ class LocalDataProcessor:
                             print(f"  🛑 Stopping processing - reached {max_total_tokens:,} token limit")
                             break
 
+                    # Determine output directory based on auto-organize setting
+                    if self.auto_organize:
+                        # Detect format if not already cached
+                        if not hasattr(self, '_dataset_formats'):
+                            self._dataset_formats = {}
+
+                        if dataset_name not in self._dataset_formats:
+                            # Sample some texts to detect format
+                            sample_size = min(10, len(dataset_texts))
+                            sample_dicts = [{'text': t} for t in dataset_texts[:sample_size]]
+                            detected_format = self.detect_dataset_format(sample_dicts)
+                            self._dataset_formats[dataset_name] = detected_format
+                        else:
+                            detected_format = self._dataset_formats[dataset_name]
+
+                        is_qa = self.is_qa_dataset(dataset_name, detected_format)
+
+                        if is_qa:
+                            output_dir = self.finetuning_dir
+                            category_label = "Q&A/Instruction"
+                        else:
+                            output_dir = self.pretraining_dir
+                            category_label = "Web/General"
+
+                        output_file = output_dir / f"{dataset_name}_processed.jsonl"
+                        print(f"  📁 Category: {category_label} → {output_dir.name}/")
+                    else:
+                        output_file = self.output_dir / f"{dataset_name}_processed.jsonl"
+
                     # Save dataset texts
-                    output_file = self.output_dir / f"{dataset_name}_processed.jsonl"
                     with open(output_file, 'w', encoding='utf-8') as f:
                         for text in dataset_texts:
                             f.write(json.dumps({'text': text}) + '\n')
@@ -1655,6 +1724,10 @@ def main():
                        help="Enable harmful content filtering (disabled by default for RLHF/safety datasets)")
     parser.add_argument("--disable-harmful-filtering", action="store_true",
                        help="Explicitly disable harmful content filtering (default behavior)")
+    parser.add_argument("--auto-organize", action="store_true", default=True,
+                       help="Automatically organize datasets into fine-tuning/ (Q&A) and processed/ (web text) folders (default: True)")
+    parser.add_argument("--no-auto-organize", action="store_false", dest="auto_organize",
+                       help="Disable auto-organize, save everything to processed/ folder")
 
     args = parser.parse_args()
 
@@ -1713,7 +1786,8 @@ def main():
         format_strategy=args.format_strategy,
         quality_threshold=args.quality_threshold,
         enable_quality_filtering=not args.disable_quality_filtering,
-        initial_batch_size=args.batch_size
+        initial_batch_size=args.batch_size,
+        auto_organize=args.auto_organize
     )
 
     # Configure quality analyzer if quality filtering is enabled
