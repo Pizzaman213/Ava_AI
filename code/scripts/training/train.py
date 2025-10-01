@@ -593,10 +593,11 @@ def setup_optimizer_and_lr_management(
             print(f"   Warmup steps: {warmup_steps} (from config - total steps unknown)")
 
         adaptive_config = AdaptiveLRConfig(
+            warmup_steps=warmup_steps,  # FIXED: Pass warmup steps to config
             batch_loss_window=100,
             plateau_patience=500,
             plateau_factor=0.5,
-            lr_check_interval=100,
+            lr_check_interval=50,  # FIXED: More responsive - check every 50 batches
             min_lr=1e-7,
             max_lr=lr * 2.0,  # Allow up to 2x initial LR
             stability_threshold=5,
@@ -605,7 +606,7 @@ def setup_optimizer_and_lr_management(
 
         adaptive_lr_manager = AdaptiveLearningRateManager(optimizer, adaptive_config)
         print(
-            f"✓ Adaptive LR manager initialized with plateau detection and stability-based increases"
+            f"✓ Adaptive LR manager initialized with warmup, plateau detection and stability-based increases"
         )
 
     return optimizer, adaptive_lr_manager
@@ -769,11 +770,16 @@ def train_epoch(
         )
 
         # Phase 3: Adaptive learning rate management
-        # Only check adaptive LR periodically to avoid excessive adjustments
-        if adaptive_lr_manager and batch_idx % 100 == 0:  # Check every 100 batches
-            # Update with current loss
-            lr_adjustment = adaptive_lr_manager.step(step_results["loss"])
-            if lr_adjustment:
+        # Call every step - needed for warmup and loss tracking
+        if adaptive_lr_manager:
+            # Extract scalar loss value for manager
+            loss_scalar = step_results["loss"]
+            if isinstance(loss_scalar, torch.Tensor):
+                loss_scalar = loss_scalar.detach().item()
+
+            # Update with current loss - manager handles check frequency internally
+            lr_adjustment = adaptive_lr_manager.step(loss_scalar)
+            if lr_adjustment and lr_adjustment.get("lr_adjusted", False):
                 epoch_stats["adaptive_lr_adjustments"] += 1
                 step_results["lr_adjusted"] = True
                 step_results["lr_adjustment_reason"] = lr_adjustment.get(
@@ -1177,6 +1183,22 @@ def main():
     # Load base config file
     config_dict = load_config(args.config)
 
+    # FIXED: Load DeepSpeed config from YAML
+    if "deepspeed" in config_dict:
+        from src.Ava.config.training_config import DeepSpeedConfig
+        ds_yaml = config_dict["deepspeed"]
+        training_config.deepspeed = DeepSpeedConfig(
+            use_deepspeed=ds_yaml.get("use_deepspeed", False),
+            zero_stage=ds_yaml.get("zero_stage", 2),
+            cpu_offload=ds_yaml.get("cpu_offload", False),
+            nvme_offload=ds_yaml.get("nvme_offload", False),
+            gradient_accumulation_steps=ds_yaml.get("gradient_accumulation_steps", 1),
+            train_batch_size=ds_yaml.get("train_batch_size"),
+            micro_batch_size=ds_yaml.get("micro_batch_size"),
+            precision_type=ds_yaml.get("precision_type", "bf16"),
+        )
+        print(f"✓ DeepSpeed config loaded: enabled={training_config.deepspeed.use_deepspeed}, zero_stage={training_config.deepspeed.zero_stage}")
+
     # Merge YAML training config into training_config.training
     if "training" in config_dict:
         yaml_training = config_dict["training"]
@@ -1500,11 +1522,15 @@ def main():
         model, config_dict, training_config, estimated_total_steps
     )
 
-    # Attach adaptive LR manager to trainer
-    if adaptive_lr_manager:
-        trainer.adaptive_lr_manager = adaptive_lr_manager
-
+    # CRITICAL: Set up training FIRST, then replace lr_manager if using adaptive
     setup_info = trainer.setup_training(optimizer)
+
+    # Attach adaptive LR manager to trainer and disable old lr_manager
+    if adaptive_lr_manager:
+        # Replace old lr_manager with new adaptive one AFTER setup_training
+        trainer.adaptive_lr_manager = adaptive_lr_manager
+        trainer.lr_manager = None  # Disable old IntelligentLRManager to avoid conflicts
+        print("   ✓ Old LR manager disabled, using new adaptive LR manager")
 
     print("Training setup:")
     for key, value in setup_info.items():
@@ -1714,11 +1740,13 @@ def main():
                 # Set validation loss for adaptive LR plateau detection (Phase 3.2)
                 trainer.set_validation_loss(val_loss)
 
-                # Update adaptive LR manager with validation loss
-                # Note: Disabled complex LR management for now
-                # if hasattr(trainer, 'adaptive_lr_manager') and trainer.adaptive_lr_manager:
-                #     if hasattr(trainer.adaptive_lr_manager, 'update_validation_loss'):
-                #         trainer.adaptive_lr_manager.update_validation_loss(val_loss)
+                # FIXED: Update adaptive LR manager with validation loss for plateau detection
+                if hasattr(trainer, 'adaptive_lr_manager') and trainer.adaptive_lr_manager:
+                    if hasattr(trainer.adaptive_lr_manager, 'update_validation_loss'):
+                        trainer.adaptive_lr_manager.update_validation_loss(val_loss)
+                    elif hasattr(trainer.adaptive_lr_manager, 'step'):
+                        # Fallback: Some implementations use step() for validation too
+                        trainer.adaptive_lr_manager.step(val_loss)
 
                 # Update progressive training with validation metrics (Phase 5)
                 # Note: Disabled progressive training for now

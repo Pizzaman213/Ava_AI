@@ -1,0 +1,91 @@
+================================================================================
+🔥 THE SMOKING GUN: WHY YOUR LOSS IS UNSTABLE
+================================================================================
+
+ROOT CAUSE: TWO SYSTEMS FIGHTING OVER LEARNING RATE
+----------------------------------------------------
+
+Your code has TWO independent LR adjustment systems running simultaneously:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ SYSTEM 1: Adaptive LR Manager (adaptive_lr.py)                 │
+│ - Default: ENABLED (code defaults to True)                     │
+│ - Spike threshold: 2.0x loss increase                          │
+│ - Emergency action: Reduce LR by 10x (0.1x multiplier)         │
+│ - Check interval: Every 100 batches                            │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ SYSTEM 2: Gradient Health Monitor (enhanced_trainer.py)        │
+│ - auto_reduce_lr: true (in gradient_health config)             │
+│ - Explosion threshold: 30.0                                    │
+│ - Emergency action: Reduce LR by 2x (0.5x multiplier)          │
+│ - Checks: Every gradient update                                │
+└─────────────────────────────────────────────────────────────────┘
+
+WHAT HAPPENS:
+-------------
+Step 100: Loss 6.5 → 7.8 (normal variance)
+  → System 1: "Spike detected! 7.8/6.5 = 1.2x" 
+  → System 1: Reduces LR 4.2e-4 → 4.2e-5 (10x drop!)
+
+Step 150: Loss jumps due to suddenly low LR
+  → System 2: "Gradient explosion!" 
+  → System 2: Reduces LR 4.2e-5 → 2.1e-5 (2x drop!)
+
+Step 200: Model can't learn with LR too low, loss wanders
+  → System 1: "Plateau detected!"
+  → System 1: Increases LR back up... 
+
+Result: Loss oscillates chaotically! 🎢
+
+ADDITIONAL PROBLEM:
+-------------------
+enhanced_trainer.py HARDCODES gradient clipping:
+  Line 167: initial_clip_value=5.0
+  Line 168: final_clip_value=3.0
+  
+This IGNORES your config's max_grad_norm=1.0!
+Large gradients (up to 5.0) trigger false "explosion" alarms.
+
+THE FIX:
+--------
+
+Option 1 (Quick - Config Only):
+  Edit /project/code/configs/gpu/small.yaml:
+  
+  training:
+    use_adaptive_lr: false        # ADD THIS LINE
+    
+    gradient_health:
+      auto_reduce_lr: false       # CHANGE FROM true
+
+Option 2 (Better - Fix Code):
+  Edit /project/code/src/Ava/training/enhanced_trainer.py:
+  
+  Line 167: initial_clip_value=1.0,   # CHANGE FROM 5.0
+  Line 168: final_clip_value=1.0,     # CHANGE FROM 3.0
+  Line 171: explosion_threshold=10.0, # CHANGE FROM 30.0
+
+Option 3 (Best - Use Working Config):
+  cd /project/code/scripts/training
+  python train.py --config ../../configs/gpu/tiny.yaml
+  
+  (tiny.yaml already has use_adaptive_lr: false)
+
+VERIFICATION:
+-------------
+After fix, you should see:
+  ✅ Loss decreases smoothly: 8.2 → 7.8 → 7.4 → 7.1 → 6.9
+  ✅ No "emergency LR reduction" messages
+  ✅ LR follows cosine schedule (no sudden drops)
+  ✅ Gradient norms stay below 2.0
+
+SUMMARY:
+--------
+Your configs are actually GOOD (batch=12, lr=4.2e-4, bf16, cosine)
+The problem is COMPETING LR ADJUSTMENT SYSTEMS in the code!
+
+Disable one (or both) and training will be stable.
+
+================================================================================

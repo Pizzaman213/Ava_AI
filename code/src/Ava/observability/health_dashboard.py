@@ -60,7 +60,7 @@ class HealthThresholds:
 
     # Gradient thresholds
     gradient_explosion_threshold: float = 100.0
-    gradient_vanishing_threshold: float = 1e-8
+    gradient_vanishing_threshold: float = 1e-6  # Increased from 1e-8 - gradients around 1e-6 to 1e-4 are normal for large models
 
     # Performance thresholds
     min_samples_per_second: float = 1.0

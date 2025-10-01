@@ -455,15 +455,20 @@ class EnhancedModularTrainer:
         ) or ("LOCAL_RANK" in os.environ)
 
         if not self.is_distributed:
-            print(" DeepSpeed enabled but not in distributed environment")
-            print(
-                "   Set WORLD_SIZE and LOCAL_RANK environment variables for multi-GPU training"
-            )
+            print(" DeepSpeed enabled for single-GPU training (ZeRO optimizations)")
+            # Set minimal distributed environment for single GPU
+            import os
+            os.environ.setdefault('RANK', '0')
+            os.environ.setdefault('LOCAL_RANK', '0')
+            os.environ.setdefault('WORLD_SIZE', '1')
+            os.environ.setdefault('MASTER_ADDR', 'localhost')
+            os.environ.setdefault('MASTER_PORT', '29500')
+            self.is_distributed = True  # Enable for single GPU too
 
         # Load or generate DeepSpeed configuration
         self.deepspeed_config = self._create_deepspeed_config()
 
-        print("DeepSpeed configuration prepared")
+        print(f"✓ DeepSpeed configuration prepared (ZeRO Stage {self.config.deepspeed.zero_stage})")
 
     def _create_deepspeed_config(self) -> Dict[str, Any]:
         """Create DeepSpeed configuration dictionary."""
@@ -501,8 +506,12 @@ class EnhancedModularTrainer:
                 "contiguous_gradients": ds_config.zero_contiguous_gradients,
             },
             "gradient_clipping": ds_config.gradient_clipping or 1.0,
-            "wall_clock_breakdown": ds_config.wall_clock_breakdown,
+            "wall_clock_breakdown": False,  # FIXED: Disable timers to avoid engine_timers error
             "data_types": {"grad_accum_dtype": "fp32", "params_dtype": "fp32"},
+            "steps_per_print": 100000,  # Reduce DeepSpeed logging overhead
+            "tensorboard": {
+                "enabled": False  # Disable DeepSpeed's tensorboard to avoid overhead
+            },
         }
 
         # Add mixed precision configuration
@@ -1749,9 +1758,17 @@ class EnhancedModularTrainer:
 
         if not loss_health_result["is_valid"]:
             print(f"     CRITICAL: {loss_health_result['reason']}")
-            # Implement checkpoint restore for recovery
-            self._attempt_checkpoint_restore(loss_health_result["reason"])
-            raise RuntimeError(f"Invalid loss detected: {loss_health_result['reason']}")
+            print(f"     Skipping optimizer step due to invalid loss")
+            # Return early to skip this step instead of crashing
+            return {
+                "loss": float('inf'),
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "grad_norm": 0.0,
+                "grad_norm_pre_clip": 0.0,
+                "clipped": False,
+                "skipped": True,
+                "skip_reason": loss_health_result['reason']
+            }
 
         # Handle loss spikes - skip auxiliary losses if main loss is high
         skip_auxiliary_losses = main_loss.item() > 5.0 or loss_health_result["is_spike"]
@@ -1846,18 +1863,27 @@ class EnhancedModularTrainer:
                     )
                 print(f"    Total loss: {total_loss.item():.6f}")
 
-            # Check for loss validity after adding auxiliary losses
+            # FIXED: Check for loss validity after adding auxiliary losses - skip step instead of crash
             if torch.isnan(total_loss) or torch.isinf(total_loss):
                 print(f"     Invalid total loss detected! Main: {main_loss.item():.6f}")
                 for name, loss_value in valid_aux_losses.items():
                     print(f"      {name}: {loss_value.item():.6f}")
                 print(f"      Total: {total_loss.item():.6f}")
+                print(f"     Skipping optimizer step due to invalid loss")
 
                 # Reset auxiliary loss EMAs if they might be corrupted
                 self.aux_loss_emas.clear()
-                raise RuntimeError(
-                    "NaN or Inf loss detected after adding auxiliary losses"
-                )
+
+                # Return early to skip this step instead of crashing
+                return {
+                    "loss": float('inf'),
+                    "learning_rate": optimizer.param_groups[0]["lr"],
+                    "grad_norm": 0.0,
+                    "grad_norm_pre_clip": 0.0,
+                    "clipped": False,
+                    "skipped": True,
+                    "skip_reason": "invalid_loss"
+                }
 
         # Backward pass with timing
         backward_start = time.time()
@@ -1997,14 +2023,27 @@ class EnhancedModularTrainer:
                 if self.scaler is not None:
                     self.scaler.unscale_(optimizer)
 
-                # Check gradient health BEFORE clipping
-                grad_health_result = self.gradient_health.check_gradient_health(
-                    self.model,
-                    self.step_count,
-                    compute_histogram=(
-                        self.step_count % 5000 == 0
-                    ),  # SPEED OPTIMIZATION: Detailed analysis every 5000 steps (was 1000)
-                )
+                # ULTRA-OPTIMIZED: Only check gradient health periodically in ultra_fast_mode
+                ultra_fast = getattr(self.config, 'performance', None) and getattr(self.config.performance, 'ultra_fast_mode', False)
+                should_check = not ultra_fast or self.step_count % 10 == 0 or self.step_count < 100
+
+                if should_check:
+                    grad_health_result = self.gradient_health.check_gradient_health(
+                        self.model,
+                        self.step_count,
+                        compute_histogram=(self.step_count % 5000 == 0),
+                    )
+                else:
+                    # Skip check - use minimal result
+                    grad_health_result = {
+                        "should_skip": False,
+                        "should_reduce_lr": False,
+                        "grad_norm": 0.0,
+                        "grad_norm_pre_clip": 0.0,
+                        "is_explosion": False,
+                        "clip_value": self.gradient_health.get_clip_value(self.step_count),
+                        "recent_explosions": 0,
+                    }
             else:
                 # Not the last accumulation step - skip gradient checking
                 # Just continue accumulating gradients
@@ -2150,8 +2189,13 @@ class EnhancedModularTrainer:
             warmup_info = {"warmup_step": self.step_count, "deepspeed_managed": True}
             lr_info = {"lr_step": self.step_count, "deepspeed_managed": True}
         else:
-            # Use intelligent LR manager for gradient accumulation aware scheduling
-            if hasattr(self, "lr_manager") and self.lr_manager is not None:
+            # FIXED: Check for adaptive_lr_manager first, skip old lr_manager if adaptive is active
+            if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
+                # Use new adaptive LR manager - it's called in train_epoch loop in train.py
+                # Set warmup/lr info for compatibility but don't call old lr_manager
+                warmup_info = {"warmup_step": self.step_count, "adaptive_lr_manager": True}
+                lr_info = {"lr_step": self.step_count, "adaptive_lr_manager": True}
+            elif hasattr(self, "lr_manager") and self.lr_manager is not None:
                 # Get gradient accumulation steps from LR manager configuration
                 gradient_accumulation_steps = (
                     self.lr_manager.config.gradient_accumulation_steps
@@ -2464,8 +2508,11 @@ class EnhancedModularTrainer:
         """
         self._last_validation_loss = validation_loss
 
-        # Check for plateau with the new validation loss
-        if hasattr(self, "lr_manager") and self.lr_manager is not None:
+        # FIXED: Use adaptive_lr_manager if available, skip old lr_manager if so
+        if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
+            # New adaptive LR manager handles validation in train.py
+            pass
+        elif hasattr(self, "lr_manager") and self.lr_manager is not None:
             # Pass the new validation loss to the LR manager for plateau detection
             # Don't pass training_step here to avoid incrementing step counter
             lr_step_info = self.lr_manager.step(validation_loss)
@@ -2606,7 +2653,10 @@ class EnhancedModularTrainer:
                 }
 
             # CRITICAL FIX: Save learning rate manager state
-            if hasattr(self, "lr_manager") and self.lr_manager is not None:
+            # FIXED: Save adaptive_lr_manager state if it's being used (check it first)
+            if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
+                checkpoint["adaptive_lr_manager_state"] = self.adaptive_lr_manager.get_state_dict()
+            elif hasattr(self, "lr_manager") and self.lr_manager is not None:
                 checkpoint["lr_manager_state"] = {
                     "current_step": self.lr_manager.current_step,
                     "warmup_steps": self.lr_manager.warmup_steps,
@@ -2757,7 +2807,23 @@ class EnhancedModularTrainer:
                 "optimizer": optimizer_restored,  # Use the flag we set during actual loading
             }
 
+            # FIXED: Restore adaptive_lr_manager or old lr_manager (check adaptive first)
             if (
+                hasattr(self, "adaptive_lr_manager")
+                and self.adaptive_lr_manager is not None
+                and "adaptive_lr_manager_state" in checkpoint
+            ):
+                try:
+                    self.adaptive_lr_manager.load_state_dict(checkpoint["adaptive_lr_manager_state"])
+                    print(
+                        f"   ✓ Adaptive LR manager state restored: step={self.adaptive_lr_manager.step_count}, "
+                        f"best_loss={self.adaptive_lr_manager.best_loss:.4f}, reductions={self.adaptive_lr_manager.lr_reductions}"
+                    )
+                    restored_states["adaptive_lr_manager"] = True
+                except Exception as e:
+                    print(f"   ⚠️  Failed to restore adaptive LR manager state: {e}")
+                    restored_states["adaptive_lr_manager"] = False
+            elif (
                 hasattr(self, "lr_manager")
                 and self.lr_manager is not None
                 and "lr_manager_state" in checkpoint

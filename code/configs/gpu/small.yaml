@@ -7,17 +7,17 @@ model:
   max_position_embeddings: 2048
   num_experts: 4
   num_experts_per_token: 1
-  expert_capacity_factor: 2.0  # Increased from 1.5 to reduce token dropping
-  router_type: switch  # Changed from deepseek for better efficiency
-  router_aux_loss_coef: 0.015  # Increased from 0.001 for better load balancing
-  router_jitter_noise: 0.0  # Disabled during initialization for stability (was 0.01)
+  expert_capacity_factor: 1.25  # Reduced from 2.0 - successful run used 1.25
+  router_type: deepseek  # Changed back from switch - successful run used deepseek
+  router_aux_loss_coef: 0.001  # Reduced from 0.015 - successful run used 0.001
+  router_jitter_noise: 0.01  # Re-enabled - successful run used 0.01
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.1
-  hidden_dropout: 0.1
+  attention_dropout: 0.0  # Disabled - successful run used 0
+  hidden_dropout: 0.0  # Disabled - successful run used 0
   use_flash_attention: true
   layer_norm_eps: 1e-5
-  initializer_range: 0.005  # Reduced for more conservative initialization to prevent explosions
+  initializer_range: 0.02  # Increased from 0.005 - successful run used 0.02
   hidden_act: gelu
   use_moh: false
   use_moa: false
@@ -34,11 +34,11 @@ training:
   max_gradient_norm: 1.0  # Reduced for better stability
   num_epochs: 12
   max_steps: -1
-  warmup_steps: 5000  # Extended for better MoE router stabilization
-  learning_rate: 0.00005  # Reduced from 1e-4 to 5e-5 for gentler initialization
-  weight_decay: 0.01
+  warmup_steps: 2000  # Reduced from 5000 - successful run used 2000
+  learning_rate: 0.00042  # Increased from 0.00005 - successful run used 0.00042
+  weight_decay: 0.1  # Increased from 0.01 - successful run used 0.1
   beta1: 0.9
-  beta2: 0.999
+  beta2: 0.95  # Changed from 0.999 - successful run used 0.95
   eps: 1e-8
   lr_scheduler_type: cosine
   lr_end: 1.0e-05
@@ -53,7 +53,7 @@ training:
   early_stopping_patience: 4
   early_stopping_threshold: 0.01
   dynamic_batching:  # NEW: Automatic batch size adjustment based on GPU memory
-    enabled: true  # Enabled by default for automatic hardware adaptation
+    enabled: false  # DISABLED - prevents training instability
     min_batch_size: 8
     max_batch_size: 48  # Increased for 11.6GB GPU utilization
     target_memory_utilization: 0.95  # Target ~11GB of 11.6GB available
@@ -63,10 +63,10 @@ training:
     smooth_transitions: true
   gradient_health:
     enabled: true
-    initial_clip_value: 10.0  # Higher initial clipping to prevent early explosions
-    final_clip_value: 2.0  # MoE models need 2-3x higher than dense models
-    warmup_steps: 5000  # Match LR warmup for consistent stabilization
-    explosion_threshold: 50.0  # Higher threshold to be less sensitive during initialization
+    initial_clip_value: 1.0  # Reduced from 10.0 - successful run had stable gradients
+    final_clip_value: 1.0  # Keep at 1.0 - successful run used max_gradient_norm: 1.0
+    warmup_steps: 2000  # Match LR warmup
+    explosion_threshold: 30.0  # Reduced from 50.0 for earlier detection
     explosion_window: 5
     auto_reduce_lr: true
     lr_reduction_factor: 0.5
@@ -83,11 +83,11 @@ data:
   dataloader_drop_last: true
   dataloader_pin_memory: true
 deepspeed:
-  enabled: true
+  use_deepspeed: false  # DISABLED: DeepSpeed has compatibility issues with version 0.17.6
   zero_stage: 2
   cpu_offload: false
   nvme_offload: false
-  precision: bf16  # Changed from fp16 to match training config
+  precision_type: bf16  # FIXED: Changed from 'precision' to 'precision_type'
   gradient_accumulation_steps: 1  # SPEED: Synced with training config
   train_batch_size: 12  # Effective batch: 12 * 1 = 12
   micro_batch_size: 12  # Synced with training.batch_size
