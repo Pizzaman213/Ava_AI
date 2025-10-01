@@ -1,6 +1,0 @@
- nodejs
-build-essential
-tmux
- openmpi-bin
-openmpi-common 
-libopenmpi-dev
