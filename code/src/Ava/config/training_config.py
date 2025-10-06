@@ -97,6 +97,7 @@ class EpisodicMemoryConfig:
     memory_adaptation_rate: float = 0.01     # Adaptation rate
     memory_performance_window: int = 100     # Performance window
     task_id: int = 0                         # Task ID
+    silent_mode: bool = False                # Suppress memory warnings in console
 
 
 @dataclass
