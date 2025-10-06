@@ -80,8 +80,8 @@ training:
 
   # Precision & Performance - OPTIMIZED for 16-core CPU + 61GB RAM
   mixed_precision: bf16  # Use BFloat16 for better numerical stability than FP16
-  dataloader_num_workers: 16  # Number of parallel data loading processes (matches CPU core count: 16 cores)
-  prefetch_factor: 8  # Prefetch 8 batches per worker (16 workers × 8 = 128 batches buffered in RAM)
+  dataloader_num_workers: 8  # FIXED: Reduced from 16 to 8 (only 7 data files, avoid worker deadlock)
+  prefetch_factor: 4  # FIXED: Reduced from 8 to 4 (8 workers × 4 = 32 batches buffered, down from 128)
   persistent_workers: true  # OPTIMIZED: Keep workers alive between epochs (reduces startup overhead)
   gradient_checkpointing: false  # DISABLED: Speed priority for 11.6GB GPU (memory sufficient without it)
 
@@ -141,6 +141,10 @@ data:
   # Dataset Sampling
   max_train_examples: null  # Limit on training samples (null = use all available data)
   max_eval_examples: 5000  # Limit evaluation set to 5000 samples for speed
+  max_samples: null  # FIXED: Training max_samples (null = use all data)
+  val_max_samples: null  # FIXED: Validation max_samples (null = use val_split_ratio)
+  val_split_ratio: 0.1  # FIXED: Validation split ratio (10% of training data)
+  buffer_size: 2000  # FIXED: Streaming buffer size (reduced from 20000)
 
   # DataLoader Settings
   dataloader_drop_last: true  # Drop incomplete final batch (ensures consistent batch sizes)
@@ -210,6 +214,7 @@ enhanced_features:
     memory_performance_window: 100
     memory_replay_ratio: 0.01
     memory_replay_strategy: random
+    silent_mode: true  # Suppress memory warnings (still monitors, just doesn't print)
   quantization:
     quantization_aware: false
     use_nvfp4: true  # ENABLED: NVFP4 WEIGHT_ONLY mode (~4x weight compression)
@@ -221,12 +226,14 @@ enhanced_features:
     use_hadamard_transform: false  # Not needed for NVFP4
 data_loading:
   streaming: true
-  buffer_size: 20000  # Large buffer for 16 workers (20K samples = ~2GB RAM for text buffer)
+  buffer_size: 2000  # FIXED: Reduced from 20000 to 2000 for faster startup (still 2K samples × 16 workers = 32K buffer total)
   max_samples: null  # No limit - use all available data
+  val_max_samples: null  # FIXED: No hardcoded limit - use val_split_ratio instead
+  val_split_ratio: 0.1  # FIXED: Use 10% of training data for validation (was hardcoded to 1000 samples)
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 16  # Multi-worker loading matches CPU cores (16 cores)
+  num_workers: 8  # FIXED: Reduced from 16 to 8 (we only have 7 data files, so 16 workers caused deadlock)
   # Length-based bucketing for better GPU utilization
   enable_bucketing: true
   bucket_boundaries: [256, 512, 768, 1024]  # Optimized boundaries for progressive training

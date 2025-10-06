@@ -531,7 +531,27 @@ class StreamingDataset(IterableDataset):
 
             # Save original files and use worker subset
             original_files = self.data_files
-            worker_files = [f for i, f in enumerate(self.data_files) if i % num_workers == worker_id]
+
+            # FIX: Cycle files across workers instead of modulo distribution
+            # This ensures all workers get files even when num_workers > num_files
+            if len(self.data_files) == 0:
+                worker_files = []
+            elif len(self.data_files) >= num_workers:
+                # More files than workers: distribute evenly
+                worker_files = [f for i, f in enumerate(self.data_files) if i % num_workers == worker_id]
+            else:
+                # Fewer files than workers: cycle files to give each worker at least one
+                # Each worker gets every Nth file where N = num_workers, starting at worker_id
+                worker_files = []
+                file_idx = worker_id % len(self.data_files)
+                while file_idx < len(self.data_files):
+                    worker_files.append(self.data_files[file_idx])
+                    file_idx += num_workers
+
+                # If worker still has no files, assign files in round-robin
+                if not worker_files:
+                    # Cycle through files: worker N gets file (N % num_files)
+                    worker_files = [self.data_files[worker_id % len(self.data_files)]]
         else:
             worker_files = None  # Use all files
 
@@ -642,9 +662,16 @@ def create_streaming_dataloaders(
     dynamic_length_fn: Optional[Callable[[], int]] = None,
     enable_bucketing: bool = True,
     bucket_boundaries: Optional[List[int]] = None,
-    max_bucket_size: int = 100
+    max_bucket_size: int = 100,
+    val_max_samples: Optional[int] = None,
+    val_split_ratio: float = 0.1
 ) -> Tuple[DataLoader, DataLoader]:
-    """Create streaming train and validation dataloaders with distributed support"""
+    """Create streaming train and validation dataloaders with distributed support
+
+    Args:
+        val_max_samples: Maximum samples for validation set (None = use val_split_ratio)
+        val_split_ratio: Ratio of training samples to use for validation (default 0.1 = 10%)
+    """
 
     # Safety check for batch_size
     if batch_size is None:
@@ -690,13 +717,28 @@ def create_streaming_dataloaders(
         max_bucket_size=max_bucket_size
     )
 
+    # FIX: Make validation samples configurable instead of hardcoded
+    # Calculate validation samples based on config
+    if val_max_samples is not None:
+        # Use explicit limit if provided
+        computed_val_samples = val_max_samples
+    elif max_samples is not None:
+        # Use ratio of training samples
+        computed_val_samples = int(max_samples * val_split_ratio)
+    else:
+        # No limit - use None for unlimited validation
+        computed_val_samples = None
+
+    # Reduce validation buffer proportionally
+    val_buffer_size = buffer_size // 10 if buffer_size >= 10 else buffer_size
+
     val_dataset = StreamingDataset(
         data_dir=data_dir,
         split='val',
         tokenizer=tokenizer,
         max_length=max_length,
-        max_samples=max_samples // 10 if max_samples else 1000,  # Limit validation
-        buffer_size=buffer_size // 10,
+        max_samples=computed_val_samples,
+        buffer_size=val_buffer_size,
         dynamic_length_fn=dynamic_length_fn,
         enable_bucketing=enable_bucketing,
         bucket_boundaries=bucket_boundaries,

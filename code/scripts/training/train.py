@@ -498,9 +498,72 @@ def create_dataloaders(
             )
 
         # Enhanced dataloader creation with minimum samples validation (Phase 2.1)
-        print(" Creating enhanced streaming dataloaders...")
+        print("\n" + "="*80)
+        print("📊 DATASET INFORMATION")
+        print("="*80)
+
+        # Count available examples in data directory
+        import json
+        # Note: Path is already imported at the top of the file
+
+        data_path = Path(data_dir)
+        total_examples = 0
+        file_count = 0
+
+        print(f"📂 Data directory: {data_dir}")
+
+        # Count examples in JSONL files
+        for jsonl_file in data_path.glob("*_processed.jsonl"):
+            try:
+                with open(jsonl_file, 'r') as f:
+                    file_lines = sum(1 for _ in f)
+                    total_examples += file_lines
+                    file_count += 1
+                    print(f"   ✓ {jsonl_file.name}: {file_lines:,} examples")
+            except Exception as e:
+                print(f"   ⚠️  Could not read {jsonl_file.name}: {e}")
+
+        print(f"\n📈 Total examples found: {total_examples:,}")
+        print(f"📁 Total files: {file_count}")
+
         # Get num_workers from config (dataloader_num_workers in training section)
         num_workers = config_dict.get("training", {}).get("dataloader_num_workers", 4)
+
+        # Get validation dataset config
+        val_max_samples = getattr(training_config.data, 'val_max_samples', None)
+        val_split_ratio = getattr(training_config.data, 'val_split_ratio', 0.1)
+
+        # Calculate expected training metrics
+        gradient_acc_steps = getattr(training_config.training, 'gradient_accumulation_steps',
+                                     getattr(training_config.training, 'gradient_accumulation', 4))
+        effective_batch_size = batch_size * gradient_acc_steps
+
+        if training_config.data.max_samples:
+            train_samples = training_config.data.max_samples
+        else:
+            train_samples = total_examples
+
+        if val_max_samples:
+            val_samples = val_max_samples
+        elif training_config.data.max_samples:
+            val_samples = int(training_config.data.max_samples * val_split_ratio)
+        else:
+            val_samples = int(total_examples * val_split_ratio)
+
+        expected_steps = train_samples // effective_batch_size if train_samples > 0 else 0
+
+        print(f"\n🎯 Training Configuration:")
+        print(f"   Batch size: {batch_size}")
+        print(f"   Gradient accumulation steps: {gradient_acc_steps}")
+        print(f"   Effective batch size: {effective_batch_size}")
+        print(f"   Training samples: {train_samples:,}")
+        print(f"   Validation samples: {val_samples:,} ({val_split_ratio:.1%} of training)")
+        print(f"   Expected training steps: {expected_steps:,}")
+        print(f"   Workers: {num_workers}")
+        print(f"   Buffer size: {training_config.data.buffer_size:,}")
+        print("="*80 + "\n")
+
+        print(" Creating enhanced streaming dataloaders...")
         train_loader, val_loader = create_streaming_dataloaders(
             tokenizer=tokenizer,
             batch_size=batch_size,
@@ -510,6 +573,8 @@ def create_dataloaders(
             max_samples=training_config.data.max_samples,
             num_workers=num_workers,
             enable_bucketing=False,  # Temporarily disable bucketing to ensure data flows
+            val_max_samples=val_max_samples,
+            val_split_ratio=val_split_ratio,
         )
 
         # Minimum samples validation (Phase 2.1)
