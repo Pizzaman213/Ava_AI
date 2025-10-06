@@ -228,30 +228,16 @@ class StreamingDataset(IterableDataset):
             f"{self.split}.jsonl",             # exact match
         ]
 
-        # For 'train' split, also look for processed files (common naming pattern)
-        if self.split == "train":
+        # For both 'train' and 'val' splits, look for all processed files
+        # Each split will use all available data (differentiated by random seed/sampling)
+        if self.split in ["train", "val"]:
             patterns.extend([
-                "*_processed.jsonl",              # processed files
+                "*_processed.jsonl",              # processed files (MAIN PATTERN)
                 "processed*.jsonl",               # processed prefix
-                "combined*.jsonl",                # combined datasets
-                "*.jsonl",                        # fallback: any jsonl file
                 "*_processed.arrow",              # processed arrow files
-                "*.arrow",                        # any arrow files
                 "*_processed.parquet",            # processed parquet files
-                "*.parquet",                      # any parquet files
-            ])
-
-        # For 'val' split, use same patterns as train since we don't have separate val files
-        # The dataset will randomly sample from available data for validation
-        elif self.split == "val":
-            patterns.extend([
-                "*_processed.jsonl",              # processed files
-                "processed*.jsonl",               # processed prefix
-                "combined*.jsonl",                # combined datasets
                 "*.jsonl",                        # fallback: any jsonl file
-                "*_processed.arrow",              # processed arrow files
                 "*.arrow",                        # any arrow files
-                "*_processed.parquet",            # processed parquet files
                 "*.parquet",                      # any parquet files
             ])
 
@@ -280,22 +266,26 @@ class StreamingDataset(IterableDataset):
                 filtered_count += 1
 
         if filtered_count > 0:
-            print(f" Filtered out {filtered_count} empty/tiny files (<10KB)")
+            print(f"   Filtered out {filtered_count} empty/tiny files (<10KB)")
 
         files = substantial_files
 
         # If still no files, provide diagnostic info
         if not files:
             if not self.data_dir.exists():
-                print(f" Data directory does not exist: {self.data_dir}")
+                print(f"   ⚠️  Data directory does not exist: {self.data_dir}")
             else:
-                print(f" Searching in: {self.data_dir}")
+                print(f"   Searching in: {self.data_dir}")
                 all_files = list(self.data_dir.glob("**/*.arrow")) + list(self.data_dir.glob("**/*.jsonl"))
                 if all_files:
-                    print(f" Found {len(all_files)} data files, but none match split '{self.split}'")
+                    print(f"   Found {len(all_files)} data files, but none match split '{self.split}'")
                     print(f"   Sample files: {[f.relative_to(self.data_dir) for f in all_files[:3]]}")
 
-        print(f"Found {len(files)} data files for {self.split} split")
+        print(f"   ✓ Found {len(files)} data files for {self.split} split")
+        if len(files) > 0:
+            print(f"   📊 Sample files: {[f.name for f in files[:3]]}")
+            if len(files) > 3:
+                print(f"      ... and {len(files) - 3} more files")
         return files
 
     def _read_file(self, file_path: Path) -> Iterator[str]:
@@ -445,7 +435,8 @@ class StreamingDataset(IterableDataset):
             print(f"  📚 Interleaving data from {len(file_generators)} files")
 
             # Interleave samples from all files
-            samples_per_file = 10  # Read 10 samples from each file before switching
+            # With multi-worker loading, each worker gets fewer files, so read more per file
+            samples_per_file = 100  # Read 100 samples from each file before switching (was 10)
             exhausted_files = set()
 
             while len(exhausted_files) < len(file_generators):
@@ -493,7 +484,13 @@ class StreamingDataset(IterableDataset):
                             print(f"  ⚠️ Could not reopen {file_path.name}: {e}")
 
     def _tokenize_text(self, text: str) -> Dict[str, torch.Tensor]:
-        """Tokenize a single text with dynamic sequence length support"""
+        """Tokenize a single text with dynamic sequence length support
+
+        The text should already contain Human/Assistant conversation format.
+        Example: "\\n\\nHuman: Hello\\n\\nAssistant: Hi there!"
+
+        This function preserves the full conversation structure in the tokenized output.
+        """
         # Get current sequence length (progressive training fix)
         if self.dynamic_length_fn is not None:
             try:
@@ -507,6 +504,7 @@ class StreamingDataset(IterableDataset):
         # Ensure current_max_length is within reasonable bounds
         current_max_length = max(32, min(current_max_length, self.max_length))
 
+        # Tokenize the full conversation (Human/Assistant format is preserved)
         encoded = self.tokenizer(
             text,
             max_length=current_max_length,
@@ -652,6 +650,14 @@ def create_streaming_dataloaders(
     if batch_size is None:
         batch_size = 8
         print(f" batch_size was None, defaulting to {batch_size}")
+
+    # Auto-detect CPU core count if num_workers is set to use all cores
+    if num_workers == -1 or num_workers == 0:
+        import multiprocessing
+        num_workers = multiprocessing.cpu_count()
+        print(f" 🚀 Auto-detected {num_workers} CPU cores, using all for data loading")
+    elif num_workers > 0:
+        print(f" 🚀 Using {num_workers} CPU workers for parallel data loading")
 
     # Auto-detect distributed training
     if distributed is None:

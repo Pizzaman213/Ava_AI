@@ -12,7 +12,8 @@
       "Bash(find:*)",
       "Bash(mv:*)",
       "Bash(python3:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []
