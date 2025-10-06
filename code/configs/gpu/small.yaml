@@ -48,7 +48,7 @@ training:
   max_gradient_norm: 1.0  # Clip gradients to prevent explosion - reduced for stability with higher LR
 
   # Training Duration
-  num_epochs: 100  # Number of full passes through the dataset (increased to train longer)
+  num_epochs: 1  # Number of full passes through the dataset (increased to train longer)
   max_steps: -1  # Maximum training steps (-1 = train for full num_epochs)
 
   # Learning Rate Schedule (~98k total steps with 1.17M examples, batch 12)
@@ -78,10 +78,10 @@ training:
   beta2: 0.999  # Adam momentum for second moment - INCREASED from 0.95 for better gradient estimates
   eps: 1e-8  # Small constant for numerical stability in Adam
 
-  # Precision & Performance - OPTIMIZED for speed
+  # Precision & Performance - OPTIMIZED for 16-core CPU + 61GB RAM
   mixed_precision: bf16  # Use BFloat16 for better numerical stability than FP16
-  dataloader_num_workers: 4  # Number of parallel data loading processes (optimized for stability)
-  prefetch_factor: 6  # Prefetch 6 batches per worker - OPTIMIZED: Better GPU saturation
+  dataloader_num_workers: 16  # Number of parallel data loading processes (matches CPU core count: 16 cores)
+  prefetch_factor: 8  # Prefetch 8 batches per worker (16 workers × 8 = 128 batches buffered in RAM)
   persistent_workers: true  # OPTIMIZED: Keep workers alive between epochs (reduces startup overhead)
   gradient_checkpointing: false  # DISABLED: Speed priority for 11.6GB GPU (memory sufficient without it)
 
@@ -221,16 +221,16 @@ enhanced_features:
     use_hadamard_transform: false  # Not needed for NVFP4
 data_loading:
   streaming: true
-  buffer_size: 10000  # Increased buffer for better throughput (from 1000)
+  buffer_size: 20000  # Large buffer for 16 workers (20K samples = ~2GB RAM for text buffer)
   max_samples: null  # No limit - use all available data
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 4  # Multi-worker loading for better performance (matches dataloader_num_workers)
+  num_workers: 16  # Multi-worker loading matches CPU cores (16 cores)
   # Length-based bucketing for better GPU utilization
   enable_bucketing: true
   bucket_boundaries: [256, 512, 768, 1024]  # Optimized boundaries for progressive training
-  max_bucket_size: 32  # Samples per bucket before yielding batch
+  max_bucket_size: 64  # Larger buckets with more RAM available (was 32)
 performance:
   ultra_fast_mode: true  # SPEED: Enable ultra-fast mode (minimal monitoring)
   fast_progress: false  # Overridden by ultra_fast_mode
@@ -239,11 +239,11 @@ performance:
   no_sync: false
 memory:
   enable_memory_pool: true
-  pool_size_gb: 8.0  # SPEED: Increased from 6.0 (more memory available without checkpointing)
+  pool_size_gb: 16.0  # Large memory pool for 61GB RAM system (16GB for data caching)
   gradient_checkpointing: false  # SPEED: Disabled (unified with training.gradient_checkpointing)
-  memory_threshold_gb: 8.0
+  memory_threshold_gb: 16.0  # Higher threshold with more RAM available
   enable_cpu_offload: false
-  clear_cache_frequency: 2000  # OPTIMIZED: Clear even less frequently for speed (was 500)
+  clear_cache_frequency: 5000  # Clear less frequently with abundant RAM (was 2000)
   silent_mode: true  # NEW: Suppress memory warnings (still monitors, just doesn't print)
 evaluation:
   eval_during_training: true
@@ -283,8 +283,8 @@ wandb:
   group: ava-small-models
   job_type: train
   offline: false
-  cache_size: 10000  # SPEED: Increased cache from 5000 for better throughput
-  cache_flush_interval: 1000  # SPEED: Optimized interval (was 300) - OPTIMIZED: Reduced I/O
+  cache_size: 50000  # Large cache for 61GB RAM (50K metrics = ~500MB, reduces I/O)
+  cache_flush_interval: 2000  # Flush less frequently with large cache (was 1000)
 stability:
   # Loss Stability
   loss_smoothing: true  # Apply exponential moving average to logged loss values
