@@ -1,0 +1,1 @@
+{"schema":"v1","records":[{"type":"ENVIRONMENT","operation":"CREATED","data":[{"data":"Added packages through pip package manager: xxhash, langdetect, tqdm, chardet, ftfy, torch\u003e=2.0.0, transformers\u003e=4.30.0, deepspeed\u003e=0.9.0, wandb\u003e=0.15.0, datasets\u003e=2.0.0, torchao","mime":"text/plain"}],"important":null}]}
