@@ -2,17 +2,24 @@
 """
 Comprehensive Dataset Downloader for Enhanced LLM Features
 
+DEFAULT BEHAVIOR: Downloads ALL available datasets when run without arguments.
+This ensures comprehensive training data covering all domains and capabilities.
+
 This script downloads and prepares datasets for all enhanced features including:
+- ANTHROPIC DATASETS (HH-RLHF, model-written-evals, persona, sycophancy, AI risk)
+- Constitutional AI & RLAIF datasets
 - Pre-training datasets (OpenWebText, The Pile, WikiText, BookCorpus)
 - RAG knowledge bases (Wikipedia, MS MARCO, Natural Questions)
 - Multi-task learning datasets (GLUE, SuperGLUE, XTREME)
 - Evaluation datasets (HellaSwag, ARC, MMLU, CNN/DailyMail)
-- Safety & bias datasets (Toxicity, bias evaluation)
+- Safety & bias datasets (Toxicity, bias evaluation, red-teaming)
+- Preference learning datasets (RLHF, DPO, feedback)
 - Multi-modal datasets (Vision-language, audio-text)
 - Continual learning datasets (For episodic memory)
 - Code datasets (For programming capabilities)
 
 Supports 80+ diverse datasets with multiple retry strategies and feature-specific groupings.
+All Anthropic datasets are downloaded by default to ensure safety and alignment training.
 """
 
 import os
@@ -50,43 +57,54 @@ DATASETS_CONFIG = {
     # ================================
     # PRE-TRAINING DATASETS
     # ================================
-    # Core Instruction Tuning (Verified Working)
+    # Core Instruction Tuning (Verified Working) - HIGHEST QUALITY
     "teknium/OpenHermes-2.5": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "instruction"], "tokens": "high",
-        "description": "High-quality GPT-4 generated instruction dataset",
+        "categories": ["pretraining", "instruction", "qa"], "tokens": "high",
+        "quality_score": 10,  # GPT-4 quality
+        "priority": 1,  # Download first
+        "description": "1M+ GPT-4 generated Q&A pairs - highest quality instruction dataset",
         "example_command": "python download_datasets.py --dataset 'teknium/OpenHermes-2.5'"
     },
     "Open-Orca/OpenOrca": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "instruction"], "tokens": "very_high",
-        "description": "4M high-quality instruction examples",
+        "categories": ["pretraining", "instruction", "qa"], "tokens": "very_high",
+        "quality_score": 9.5,  # GPT-4/3.5 quality
+        "priority": 1,  # Download early
+        "description": "4M GPT-4/GPT-3.5 instruction Q&A pairs from FLAN",
         "example_command": "python download_datasets.py --dataset 'Open-Orca/OpenOrca'"
     },
     "meta-math/MetaMathQA": {
         "splits": ["train", "test"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "math"], "tokens": "high",
-        "description": "Mathematical reasoning dataset",
+        "categories": ["pretraining", "math", "qa"], "tokens": "high",
+        "quality_score": 9,  # High-quality math
+        "priority": 2,  # Important for reasoning
+        "description": "395k mathematical Q&A with step-by-step solutions",
         "example_command": "python download_datasets.py --dataset 'meta-math/MetaMathQA'"
     },
     "m-a-p/Code-Feedback": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "code"], "tokens": "high",
-        "description": "Code instruction dataset with feedback",
+        "categories": ["pretraining", "code", "qa"], "tokens": "high",
+        "quality_score": 8,  # Good code Q&A
+        "priority": 3,
+        "description": "Code Q&A dataset with detailed feedback",
         "example_command": "python download_datasets.py --dataset 'm-a-p/Code-Feedback'"
     },
 
     # OpenAssistant (Verified Working)
     "OpenAssistant/oasst1": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "conversation"], "tokens": "high",
-        "description": "Human-generated, assistant-ranked conversation trees",
+        "categories": ["pretraining", "conversation", "qa"], "tokens": "high",
+        "quality_score": 8,  # Human quality
+        "description": "Human-generated, assistant-ranked conversation Q&A trees",
         "example_command": "python download_datasets.py --dataset 'OpenAssistant/oasst1'"
     },
     "OpenAssistant/oasst2": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
-        "categories": ["pretraining", "conversation"], "tokens": "high",
-        "description": "Second version of OpenAssistant conversations dataset",
+        "categories": ["pretraining", "conversation", "qa"], "tokens": "high",
+        "quality_score": 8.5,  # Improved human quality
+        "priority": 2,
+        "description": "Enhanced human-ranked conversational Q&A dataset",
         "example_command": "python download_datasets.py --dataset 'OpenAssistant/oasst2'"
     },
 
@@ -109,7 +127,7 @@ DATASETS_CONFIG = {
         "example_command": "python download_datasets.py --dataset 'openwebtext' --max-samples 5000"
     },
     "EleutherAI/pile": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 500000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 5000000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "description": "800GB of diverse text from books, websites, and academic sources",
         "example_command": "python download_datasets.py --dataset 'EleutherAI/pile' --max-samples 5000"
@@ -126,14 +144,10 @@ DATASETS_CONFIG = {
         "description": "News articles from Common Crawl for current events knowledge",
         "example_command": "python download_datasets.py --dataset 'cc_news' --max-samples 5000"
     },
-    "togethercomputer/RedPajama-Data-1T": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 2500000,
-        "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
-        "description": "1.2 trillion token dataset replicating LLaMA training data",
-        "example_command": "python download_datasets.py --dataset 'togethercomputer/RedPajama-Data-1T' --max-samples 1000"
-    },
+    # RedPajama dataset removed - requires special handling with subsets
+    # Use alternative datasets like c4, openwebtext, or fineweb instead
     "HuggingFaceFW/fineweb": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 200000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 2000000,
         "categories": ["rag", "web"], "tokens": "very_high", "large": True,
         "description": "High-quality web text filtered from CommonCrawl",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceFW/fineweb' --max-samples 5000"
@@ -145,7 +159,7 @@ DATASETS_CONFIG = {
         "example_command": "python download_datasets.py --dataset 'HuggingFaceFW/fineweb-edu' --max-samples 5000"
     },
     "tiiuae/falcon-refinedweb": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 30000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 300000,
         "categories": ["rag", "web"], "tokens": "very_high", "large": True,
         "description": "Refined web text used to train Falcon LLM",
         "example_command": "python download_datasets.py --dataset 'tiiuae/falcon-refinedweb' --max-samples 3000"
@@ -217,7 +231,7 @@ DATASETS_CONFIG = {
         "example_command": "python download_datasets.py --dataset 'm-a-p/CodeFeedback-Filtered-Instruction'"
     },
     "github-code": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 40000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 400000,
         "categories": ["code", "github"], "tokens": "very_high", "large": True,
         "description": "Large corpus of code from GitHub repositories",
         "example_command": "python download_datasets.py --dataset 'github-code' --max-samples 1000"
@@ -273,19 +287,116 @@ DATASETS_CONFIG = {
     },
 
     # ================================
-    # SAFETY & BIAS DATASETS
+    # ANTHROPIC DATASETS (COMPLETE COLLECTION)
     # ================================
     "Anthropic/hh-rlhf": {
         "splits": ["train", "test"], "subset": None, "streaming_safe": True,
-        "categories": ["safety", "rlhf"], "tokens": "high",
-        "description": "Human feedback dataset for helpful and harmless AI",
+        "categories": ["anthropic", "safety", "rlhf", "preference", "harmlessness", "helpfulness"],
+        "tokens": "high",
+        "quality_score": 9,  # Anthropic's high-quality human feedback
+        "priority": 1,  # Critical for safety training
+        "description": "Anthropic's human preference data for helpful and harmless AI assistant training",
         "example_command": "python download_datasets.py --dataset 'Anthropic/hh-rlhf'"
     },
+    "Anthropic/model-written-evals": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["anthropic", "evaluation", "persona", "sycophancy", "ai_risk", "bias"],
+        "tokens": "medium",
+        "quality_score": 9,  # High-quality AI-generated evals
+        "priority": 1,  # Important for model evaluation
+        "description": "Anthropic's model-written evaluations for persona, sycophancy, AI risks, and gender bias",
+        "example_command": "python download_datasets.py --dataset 'Anthropic/model-written-evals'"
+    },
+    "HyperionHF/Anthropic-evals-persona": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["anthropic", "persona", "evaluation", "behavior"],
+        "tokens": "medium",
+        "quality_score": 8,  # Derived from Anthropic evals
+        "priority": 2,
+        "description": "Persona evaluation dataset based on Anthropic's model-written evaluations",
+        "example_command": "python download_datasets.py --dataset 'HyperionHF/Anthropic-evals-persona'"
+    },
+    "HuggingFaceH4/helpful-anthropic-raw": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["anthropic", "helpfulness", "raw_data", "conversation"],
+        "tokens": "high",
+        "quality_score": 8,  # Raw Anthropic data
+        "priority": 2,
+        "description": "Raw helpful conversations from Anthropic's research",
+        "example_command": "python download_datasets.py --dataset 'HuggingFaceH4/helpful-anthropic-raw'"
+    },
+    "Baidicoot/anthropic-harmless-rlhf": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["anthropic", "harmlessness", "rlhf", "safety"],
+        "tokens": "medium",
+        "quality_score": 8,  # Derived from Anthropic
+        "priority": 2,
+        "description": "Harmlessness-focused subset of Anthropic's RLHF data",
+        "example_command": "python download_datasets.py --dataset 'Baidicoot/anthropic-harmless-rlhf'"
+    },
+    # Trelis/hh-rlhf-dpo removed - requires authentication (gated dataset)
+    # Alternative: Use the original Anthropic/hh-rlhf which is already included
+
+    # ================================
+    # CONSTITUTIONAL AI & RLAIF DATASETS
+    # ================================
+    # Note: Some Constitutional AI datasets may have different split names
+    "HuggingFaceH4/cai-conversation-harmless": {
+        "splits": ["train_sft", "test_sft"], "subset": None, "streaming_safe": True,
+        "categories": ["constitutional_ai", "rlaif", "harmlessness", "synthetic"],
+        "tokens": "high",
+        "quality_score": 8,  # AI feedback quality
+        "priority": 2,
+        "description": "Constitutional AI conversations focused on harmlessness",
+        "example_command": "python download_datasets.py --dataset 'HuggingFaceH4/cai-conversation-harmless'"
+    },
+
+    # ================================
+    # SAFETY & BIAS DATASETS (EXTENDED)
+    # ================================
     "HuggingFaceH4/ultrafeedback_binarized": {
         "splits": ["train_prefs", "test_prefs"], "subset": None, "streaming_safe": True,
-        "categories": ["safety", "feedback"], "tokens": "high",
-        "description": "High-quality preference data for RLHF",
+        "categories": ["safety", "feedback", "preference", "rlhf"], "tokens": "high",
+        "quality_score": 8.5,  # High-quality preferences
+        "priority": 2,
+        "description": "High-quality preference data for RLHF from GPT-4 feedback",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceH4/ultrafeedback_binarized'"
+    },
+    "PKU-Alignment/PKU-SafeRLHF": {
+        "splits": ["train", "test"], "subset": None, "streaming_safe": True,
+        "categories": ["safety", "rlhf", "harmlessness", "red_teaming"],
+        "tokens": "high",
+        "quality_score": 8,  # Safety-focused
+        "priority": 2,
+        "description": "Safety-focused RLHF dataset from PKU with red-teaming examples",
+        "example_command": "python download_datasets.py --dataset 'PKU-Alignment/PKU-SafeRLHF'"
+    },
+    "allenai/real-toxicity-prompts": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["safety", "toxicity", "red_teaming", "bias"],
+        "tokens": "medium",
+        "quality_score": 7.5,  # Toxicity detection
+        "priority": 3,
+        "description": "Real toxicity prompts for testing model safety",
+        "example_command": "python download_datasets.py --dataset 'allenai/real-toxicity-prompts'"
+    },
+    "google/civil_comments": {
+        "splits": ["train", "validation", "test"], "subset": None, "streaming_safe": True,
+        "categories": ["safety", "bias", "toxicity", "fairness"],
+        "tokens": "high",
+        "quality_score": 8,  # High-quality toxicity annotations
+        "priority": 2,
+        "description": "Civil Comments dataset with toxicity and identity annotations",
+        "example_command": "python download_datasets.py --dataset 'google/civil_comments'"
+    },
+    "SetFit/toxic_conversations": {
+        "splits": ["train", "test"], "subset": None, "streaming_safe": True,
+        "categories": ["safety", "toxicity", "conversation"],
+        "tokens": "medium",
+        "quality_score": 7.5,  # Jigsaw toxicity data
+        "priority": 3,
+        "description": "Toxic conversations from Jigsaw Unintended Bias challenge",
+        "example_command": "python download_datasets.py --dataset 'SetFit/toxic_conversations'"
     },
 
     # ================================
@@ -827,15 +938,30 @@ def validate_dataset_config():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download datasets for enhanced LLM features",
+        description="Download datasets for enhanced LLM features (DEFAULT: Downloads ALL datasets)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Download all datasets
+  # DEFAULT: Download ALL datasets (no arguments needed)
+  python download_datasets.py
+
+  # Download all datasets explicitly (same as default)
   python download_datasets.py --all
+
+  # Download only core Anthropic datasets
+  python download_datasets.py --anthropic
 
   # Download specific categories
   python download_datasets.py --pretraining --rag --evaluation
+
+  # Download safety & alignment datasets (Constitutional AI, RLHF, etc.)
+  python download_datasets.py --safety --constitutional-ai --harmlessness
+
+  # Download preference learning datasets (RLHF, DPO, feedback)
+  python download_datasets.py --preference --dpo --rlaif
+
+  # Download evaluation datasets (persona, sycophancy, AI risk)
+  python download_datasets.py --persona --sycophancy --ai-risk
 
   # Download for specific enhanced features
   python download_datasets.py --for-moh --for-rag --for-continual-learning
@@ -881,6 +1007,34 @@ Examples:
                        help="Download code datasets")
     parser.add_argument("--conversation", action="store_true",
                        help="Download conversational datasets")
+
+    # Anthropic-specific categories
+    parser.add_argument("--anthropic", action="store_true",
+                       help="Download all Anthropic datasets (HH-RLHF, model-written-evals, etc.)")
+    parser.add_argument("--constitutional-ai", action="store_true",
+                       help="Download Constitutional AI and RLAIF datasets")
+    parser.add_argument("--persona", action="store_true",
+                       help="Download persona and behavior evaluation datasets")
+    parser.add_argument("--sycophancy", action="store_true",
+                       help="Download sycophancy detection datasets")
+    parser.add_argument("--ai-risk", action="store_true",
+                       help="Download AI risk evaluation datasets")
+    parser.add_argument("--red-teaming", action="store_true",
+                       help="Download red-teaming and adversarial datasets")
+    parser.add_argument("--preference", action="store_true",
+                       help="Download preference learning datasets (RLHF/DPO)")
+    parser.add_argument("--harmlessness", action="store_true",
+                       help="Download harmlessness-focused datasets")
+    parser.add_argument("--helpfulness", action="store_true",
+                       help="Download helpfulness-focused datasets")
+    parser.add_argument("--toxicity", action="store_true",
+                       help="Download toxicity detection datasets")
+    parser.add_argument("--fairness", action="store_true",
+                       help="Download fairness and bias detection datasets")
+    parser.add_argument("--dpo", action="store_true",
+                       help="Download Direct Preference Optimization datasets")
+    parser.add_argument("--rlaif", action="store_true",
+                       help="Download Reinforcement Learning from AI Feedback datasets")
 
     # Feature-specific downloads
     parser.add_argument("--for-moh", action="store_true",
@@ -933,7 +1087,61 @@ Examples:
     # Determine what to download
     datasets = None
 
-    if args.dataset:
+    # DEFAULT: Download ALL datasets when no args provided
+    if not any([args.dataset, args.all, args.pretraining, args.rag, args.multitask,
+                args.continual, args.evaluation, args.safety, args.multimodal,
+                args.code, args.conversation, args.anthropic, args.constitutional_ai,
+                args.persona, args.sycophancy, args.ai_risk, args.red_teaming,
+                args.preference, args.harmlessness, args.helpfulness, args.toxicity,
+                args.fairness, args.dpo, args.rlaif, args.for_moh, args.for_moa,
+                args.for_rag, args.for_continual_learning, args.for_cross_attention,
+                args.for_evaluation, args.for_safety]):
+        # No arguments = Download ALL DATASETS by default
+        print("\n🎯 DEFAULT: Downloading ALL AVAILABLE DATASETS")
+        print("="*70)
+        print("This will download all configured datasets for comprehensive LLM training.")
+        print("="*70)
+
+        # Get all datasets
+        datasets = None  # None means download all
+        total_datasets = len(DATASETS_CONFIG)
+
+        # Group by category for display
+        by_category = {}
+        for name, config in DATASETS_CONFIG.items():
+            categories = config.get("categories", ["other"])
+            main_cat = categories[0] if categories else "other"
+            if main_cat not in by_category:
+                by_category[main_cat] = []
+            by_category[main_cat].append((name, config))
+
+        print(f"\n📊 Downloading ALL {total_datasets} datasets:")
+
+        # Show top priority datasets
+        priority_datasets = []
+        for name, config in DATASETS_CONFIG.items():
+            priority = config.get("priority", 999)
+            if priority <= 3:
+                priority_datasets.append((priority, name, config))
+
+        if priority_datasets:
+            priority_datasets.sort()
+            print("\n🔹 High Priority Datasets:")
+            for priority, name, config in priority_datasets[:10]:
+                print(f"   • [{priority}] {name}: {config.get('description', '')}")
+
+        print(f"\n📂 Categories included ({len(by_category)} categories):")
+        for category, dataset_list in by_category.items():
+            print(f"   • {category.upper().replace('_', ' ')}: {len(dataset_list)} datasets")
+
+        print("\n💡 Tips:")
+        print("   • Use --anthropic to download only Anthropic datasets")
+        print("   • Use --skip-large to skip very large datasets")
+        print("   • Use specific flags like --code, --math, etc. for specific categories")
+        print("   • Use --max-samples 1000 to limit samples per dataset for testing")
+        print("="*70)
+
+    elif args.dataset:
         # Single dataset
         datasets = [args.dataset]
     elif args.all:
@@ -962,6 +1170,34 @@ Examples:
             categories.extend(["code", "python", "github"])
         if args.conversation:
             categories.extend(["conversation", "dialog", "multiturn"])
+
+        # Anthropic-specific categories
+        if args.anthropic:
+            categories.extend(["anthropic", "safety", "rlhf", "preference", "harmlessness", "helpfulness"])
+        if args.constitutional_ai:
+            categories.extend(["constitutional_ai", "rlaif", "harmlessness", "synthetic"])
+        if args.persona:
+            categories.extend(["persona", "behavior", "evaluation"])
+        if args.sycophancy:
+            categories.extend(["sycophancy", "evaluation", "bias"])
+        if args.ai_risk:
+            categories.extend(["ai_risk", "evaluation", "safety"])
+        if args.red_teaming:
+            categories.extend(["red_teaming", "adversarial", "safety", "toxicity"])
+        if args.preference:
+            categories.extend(["preference", "rlhf", "dpo", "feedback"])
+        if args.harmlessness:
+            categories.extend(["harmlessness", "safety", "constitutional_ai"])
+        if args.helpfulness:
+            categories.extend(["helpfulness", "instruction", "qa"])
+        if args.toxicity:
+            categories.extend(["toxicity", "safety", "bias", "red_teaming"])
+        if args.fairness:
+            categories.extend(["fairness", "bias", "safety"])
+        if args.dpo:
+            categories.extend(["dpo", "preference", "rlhf"])
+        if args.rlaif:
+            categories.extend(["rlaif", "constitutional_ai", "synthetic"])
 
         # Feature-specific mappings
         if args.for_moh:

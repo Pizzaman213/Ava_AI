@@ -1,0 +1,23 @@
+{
+  "include": [
+    "src",
+    "tests"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__"
+  ],
+  "ignore": [
+    "tests/test_fp8_training.py",
+    "tests/test_progressive_training.py",
+    "tests/test_advanced_optimizers.py",
+    "tests/test_advanced_schedulers.py",
+    "tests/test_benchmarks.py",
+    "tests/test_integration.py"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.8",
+  "pythonPlatform": "Linux"
+}

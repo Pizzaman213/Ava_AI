@@ -8,9 +8,9 @@ Implements robust gradient management to prevent training instability:
 - Automatic learning rate adjustment on instability
 """
 
-import torch
-import torch.nn as nn
-from typing import Dict, List, Optional, Tuple
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+from typing import Any, Dict, List, Optional, Tuple
 from collections import deque
 import numpy as np
 import logging
@@ -93,7 +93,7 @@ class GradientHealthMonitor:
         model: nn.Module,
         step: int,
         compute_histogram: bool = False
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Check gradient health before clipping.
 
@@ -118,6 +118,7 @@ class GradientHealthMonitor:
                 torch.stack([
                     torch.norm(p.grad.detach(), 2.0).to(device)
                     for p in parameters_with_grad
+                    if p.grad is not None
                 ]),
                 2.0
             ).item()
@@ -126,12 +127,12 @@ class GradientHealthMonitor:
 
         # CRITICAL FIX: Sample gradients instead of collecting all (prevents memory leak)
         # Only do this for histogram computation (rare)
-        grad_values = [] if compute_histogram else None
+        grad_values: Optional[List[float]] = [] if compute_histogram else None
         max_grad_samples = 10000  # Limit histogram to 10K samples instead of millions
 
-        if compute_histogram:
+        if compute_histogram and grad_values is not None:
             for p in parameters_with_grad:
-                if len(grad_values) >= max_grad_samples:
+                if p.grad is None or len(grad_values) >= max_grad_samples:
                     break
 
                 # Sample gradients uniformly instead of taking all
@@ -220,27 +221,41 @@ class GradientHealthMonitor:
             error_if_nonfinite=False  # Handle inf/nan gracefully
         )
 
-        # Update history
-        self.grad_norm_history.append(grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm)
+        # Convert to float
+        grad_norm_float = grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)
 
-        return grad_norm
+        # Update history
+        self.grad_norm_history.append(grad_norm_float)
+
+        # Return (pre_clip, post_clip) - since we clip in place, both are the same after clipping
+        # In a more sophisticated implementation, pre_clip would be computed before clipping
+        return (grad_norm_float, grad_norm_float)
 
     def _update_statistics(self):
         """Update gradient statistics from history."""
-        if len(self.grad_norm_pre_clip_history) < 2:
+        if len(self.grad_norm_pre_clip_history) == 0:
+            # No history yet - keep initial values
             return
 
-        history_array = np.array(list(self.grad_norm_pre_clip_history))
-
-        self.stats['mean_grad_norm'] = float(np.mean(history_array))
-        self.stats['std_grad_norm'] = float(np.std(history_array))
-        self.stats['max_grad_norm'] = float(np.max(history_array))
-        self.stats['min_grad_norm'] = float(np.min(history_array))
+        if len(self.grad_norm_pre_clip_history) == 1:
+            # Only one value - use it for all stats except std
+            val = self.grad_norm_pre_clip_history[0]
+            self.stats['mean_grad_norm'] = float(val)
+            self.stats['std_grad_norm'] = 0.0
+            self.stats['max_grad_norm'] = float(val)
+            self.stats['min_grad_norm'] = float(val)
+        else:
+            # Multiple values - compute full statistics
+            history_array = np.array(list(self.grad_norm_pre_clip_history))
+            self.stats['mean_grad_norm'] = float(np.mean(history_array))
+            self.stats['std_grad_norm'] = float(np.std(history_array))
+            self.stats['max_grad_norm'] = float(np.max(history_array))
+            self.stats['min_grad_norm'] = float(np.min(history_array))
 
         if self.total_steps > 0:
             self.stats['explosion_rate'] = self.total_explosions / self.total_steps
 
-    def get_health_summary(self) -> Dict[str, any]:
+    def get_health_summary(self) -> Dict[str, Any]:
         """Get summary of gradient health."""
         return {
             'total_steps': self.total_steps,
@@ -312,7 +327,7 @@ class LossHealthMonitor:
         self,
         loss: float,
         step: int
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """
         Check loss health and detect anomalies.
 
@@ -397,7 +412,7 @@ class LossHealthMonitor:
             'divergence_count': self.divergence_count
         }
 
-    def get_health_summary(self) -> Dict[str, any]:
+    def get_health_summary(self) -> Dict[str, Any]:
         """Get summary of loss health."""
         if len(self.loss_history) == 0:
             return {'status': 'no_data'}

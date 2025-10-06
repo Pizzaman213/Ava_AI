@@ -5,8 +5,8 @@ Replaces hardcoded values with proper calculation based on dataset size,
 gradient accumulation, and training configuration.
 """
 
-import torch
-import torch.optim as optim
+import torch  # type: ignore[import]
+import torch.optim  # type: ignore[import] as optim
 from typing import Dict, Any, Optional, Tuple
 import math
 import logging
@@ -35,6 +35,10 @@ class LRConfig:
     plateau_factor: float = 0.5  # Factor to reduce LR by
     plateau_min_lr: float = 1e-8  # Absolute minimum LR
 
+    # Progressive training LR scaling (sequence length aware)
+    enable_progressive_scaling: bool = True  # Scale LR based on sequence length
+    progressive_scaling_method: str = "sqrt"  # "sqrt", "linear", "none"
+
     # Gradient accumulation awareness
     gradient_accumulation_steps: int = 1
 
@@ -56,7 +60,8 @@ class IntelligentLRManager:
         optimizer: torch.optim.Optimizer,
         config: LRConfig,
         total_steps: Optional[int] = None,
-        steps_per_epoch: Optional[int] = None
+        steps_per_epoch: Optional[int] = None,
+        warmup_steps: Optional[int] = None
     ):
         """
         Initialize LR manager.
@@ -66,10 +71,12 @@ class IntelligentLRManager:
             config: LR configuration
             total_steps: Total training steps (calculated if None)
             steps_per_epoch: Steps per epoch for calculation
+            warmup_steps: Explicit warmup steps (overrides config.warmup_ratio if provided)
         """
         self.optimizer = optimizer
         self.config = config
         self.initial_lrs = [group['lr'] for group in optimizer.param_groups]
+        self.explicit_warmup_steps = warmup_steps  # Store explicit warmup_steps
 
         # Calculate training schedule
         self.total_steps = total_steps
@@ -78,10 +85,15 @@ class IntelligentLRManager:
 
         # Calculate warmup and main training steps
         if self.total_steps:
-            self.warmup_steps = max(1, int(self.total_steps * config.warmup_ratio))
+            # Use explicit warmup_steps if provided, otherwise calculate from ratio
+            if self.explicit_warmup_steps is not None:
+                self.warmup_steps = self.explicit_warmup_steps
+            else:
+                self.warmup_steps = max(1, int(self.total_steps * config.warmup_ratio))
             self.main_training_steps = self.total_steps - self.warmup_steps
         else:
-            self.warmup_steps = 1000  # Fallback
+            # Use explicit warmup_steps if provided, otherwise use fallback
+            self.warmup_steps = warmup_steps if warmup_steps is not None else 1000
             self.main_training_steps = 10000  # Fallback
 
         # Adaptive LR state
@@ -152,7 +164,11 @@ class IntelligentLRManager:
         # Update internal state
         self.total_steps = total_steps
         self.steps_per_epoch = steps_per_epoch
-        self.warmup_steps = max(1, int(total_steps * self.config.warmup_ratio))
+        # Use explicit warmup_steps if provided, otherwise calculate from ratio
+        if self.explicit_warmup_steps is not None:
+            self.warmup_steps = self.explicit_warmup_steps
+        else:
+            self.warmup_steps = max(1, int(total_steps * self.config.warmup_ratio))
         self.main_training_steps = total_steps - self.warmup_steps
 
         logger.info(f"Training schedule calculated:")
@@ -164,12 +180,13 @@ class IntelligentLRManager:
 
         return total_steps
 
-    def get_lr(self, step: int) -> float:
+    def get_lr(self, step: int, current_seq_length: Optional[int] = None) -> float:
         """
         Get learning rate for current step.
 
         Args:
             step: Current training step
+            current_seq_length: Current sequence length for progressive scaling (optional)
 
         Returns:
             Learning rate for this step
@@ -178,14 +195,19 @@ class IntelligentLRManager:
 
         # Handle recovery mode
         if self.in_recovery:
-            return self._get_recovery_lr(step)
-
+            base_lr = self._get_recovery_lr(step)
         # Warmup phase
-        if step < self.warmup_steps:
-            return self._get_warmup_lr(step)
-
+        elif step < self.warmup_steps:
+            base_lr = self._get_warmup_lr(step)
         # Main training phase
-        return self._get_main_lr(step)
+        else:
+            base_lr = self._get_main_lr(step)
+
+        # Apply progressive scaling if enabled
+        if self.config.enable_progressive_scaling and current_seq_length is not None:
+            base_lr = self._apply_progressive_scaling(base_lr, current_seq_length)
+
+        return base_lr
 
     def _get_warmup_lr(self, step: int) -> float:
         """Calculate warmup learning rate."""
@@ -234,7 +256,7 @@ class IntelligentLRManager:
 
         # Warmup from reduced LR back to normal schedule
         current_normal_lr = self._get_main_lr(step)
-        recovery_lr = self.pre_recovery_lr + (current_normal_lr - self.pre_recovery_lr) * recovery_progress
+        recovery_lr = (self.pre_recovery_lr or 0.0) + (current_normal_lr - (self.pre_recovery_lr or 0.0)) * recovery_progress
 
         if recovery_progress >= 1.0:
             self.in_recovery = False
@@ -242,6 +264,36 @@ class IntelligentLRManager:
             logger.info(f"LR recovery completed at step {step}")
 
         return recovery_lr
+
+    def _apply_progressive_scaling(self, base_lr: float, current_seq_length: int) -> float:
+        """
+        Apply progressive LR scaling based on current sequence length.
+
+        Longer sequences typically need lower learning rates for stability.
+
+        Args:
+            base_lr: Base learning rate
+            current_seq_length: Current sequence length
+
+        Returns:
+            Scaled learning rate
+        """
+        if self.config.progressive_scaling_method == "sqrt":
+            # Scale LR inversely with sqrt of sequence length
+            # Assumes base LR is calibrated for 512 tokens
+            reference_length = 512
+            scale_factor = math.sqrt(reference_length / max(current_seq_length, 1))
+            scaled_lr = base_lr * scale_factor
+        elif self.config.progressive_scaling_method == "linear":
+            # Linear inverse scaling
+            reference_length = 512
+            scale_factor = reference_length / max(current_seq_length, 1)
+            scaled_lr = base_lr * scale_factor
+        else:
+            # No scaling
+            scaled_lr = base_lr
+
+        return scaled_lr
 
     def step(self, validation_loss: Optional[float] = None, training_step: Optional[int] = None) -> Dict[str, Any]:
         """

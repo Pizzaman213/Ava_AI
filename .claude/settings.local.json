@@ -1,7 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(for file in layers/experts.py layers/mixture_of_activations.py layers/mixture_of_heads.py layers/routing.py losses/advanced_losses.py memory/episodic_memory.py)",
+      "Bash(do)",
+      "Bash(done)",
+      "Bash(for file in layers/mixture_of_activations.py layers/mixture_of_heads.py layers/routing.py losses/advanced_losses.py memory/episodic_memory.py multi_column_data.py)",
+      "Bash(if [ -f \"$file\" ])",
+      "Bash(then)",
+      "Bash(fi)",
+      "Bash(find:*)",
+      "Bash(mv:*)",
+      "Bash(python3:*)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []

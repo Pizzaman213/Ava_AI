@@ -8,7 +8,7 @@ import os
 import sys
 import shutil
 from pathlib import Path
-import torch
+import torch  # type: ignore[import-not-found]
 import random
 import numpy as np
 
@@ -86,7 +86,7 @@ def diagnose_model_issues():
     print("\n🔍 Diagnosing model initialization...")
 
     try:
-        from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
+        from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
 
         # Test model creation with different initialization schemes
         config = EnhancedMoEConfig(

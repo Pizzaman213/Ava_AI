@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import uuid
 import yaml
-import torch
+import torch  # type: ignore[import]
 
 
 class RunManager:
@@ -222,7 +222,7 @@ class RunManager:
         log_method = getattr(logger, level.lower(), logger.info)
         log_method(message)
 
-    def log_metrics(self, metrics: Dict[str, float], step: int, epoch: int = None, metric_type: str = 'training'):
+    def log_metrics(self, metrics: Dict[str, float], step: int, epoch: Optional[int] = None, metric_type: str = 'training'):
         """
         Log metrics for a training step.
 

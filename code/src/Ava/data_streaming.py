@@ -5,21 +5,21 @@ Efficiently handles large datasets without loading everything into memory
 
 import os
 import json
-import torch
-from torch.utils.data import IterableDataset, DataLoader, DistributedSampler
+import torch  # type: ignore[import]
+from torch.utils.data import IterableDataset, DataLoader, DistributedSampler  # type: ignore[import]
 from pathlib import Path
-from typing import Optional, Iterator, Dict, List, Tuple, Callable
+from typing import Optional, Iterator, Dict, List, Tuple, Callable, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 import random
 from itertools import cycle, islice
 from collections import defaultdict
-from .data.arrow_reader import arrow_reader
-from .data.encoding_detector import encoding_detector
+from .data.arrow_reader import arrow_reader  # type: ignore[import]
+from .data.encoding_detector import encoding_detector  # type: ignore[import]
 
 # Distributed training imports
 try:
-    import torch.distributed as dist
+    import torch.distributed as dist  # type: ignore[import]
     DISTRIBUTED_AVAILABLE = True
 except ImportError:
     DISTRIBUTED_AVAILABLE = False
@@ -34,7 +34,7 @@ class LengthBasedBucketing:
 
     def __init__(
         self,
-        bucket_boundaries: List[int] = None,
+        bucket_boundaries: Optional[List[int]] = None,
         max_bucket_size: int = 100,
         min_bucket_size: int = 8,
         enable_bucketing: bool = True
@@ -121,7 +121,7 @@ class LengthBasedBucketing:
                 yield samples.copy()
                 samples.clear()
 
-    def get_statistics(self) -> Dict[str, any]:
+    def get_statistics(self) -> Dict[str, Any]:
         """Get bucketing statistics."""
         total_samples = sum(self.bucket_stats.values())
         bucket_distribution = {}
@@ -160,7 +160,7 @@ class StreamingDataset(IterableDataset):
         buffer_size: int = 1000,
         dynamic_length_fn: Optional[Callable[[], int]] = None,
         enable_bucketing: bool = True,
-        bucket_boundaries: List[int] = None,
+        bucket_boundaries: Optional[List[int]] = None,
         max_bucket_size: int = 100
     ):
         self.data_dir = Path(data_dir)
@@ -180,6 +180,22 @@ class StreamingDataset(IterableDataset):
 
         # Find all data files
         self.data_files = self._find_data_files()
+
+        # Auto-create validation from training files if val split is empty
+        if not self.data_files and self.split == "val":
+            print(f" No validation files found, creating validation set from training files...")
+            # Temporarily switch to train split to find files
+            original_split = self.split
+            self.split = "train"
+            train_files = self._find_data_files()
+            self.split = original_split
+
+            if train_files:
+                # Use all training files for validation (they'll be sampled differently via random seed)
+                self.data_files = train_files
+                print(f" ✓ Created validation set from {len(self.data_files)} training files")
+            else:
+                print(f" WARNING: No training files found either, will use synthetic data")
 
         if not self.data_files:
             print(f" WARNING: No data files found for {split} split, will use synthetic data")
@@ -253,6 +269,21 @@ class StreamingDataset(IterableDataset):
 
         files = unique_files
 
+        # Filter out empty files (0 bytes) and very small files (<10KB - likely just metadata)
+        MIN_FILE_SIZE = 10 * 1024  # 10KB minimum
+        substantial_files = []
+        filtered_count = 0
+        for f in files:
+            if f.stat().st_size >= MIN_FILE_SIZE:
+                substantial_files.append(f)
+            else:
+                filtered_count += 1
+
+        if filtered_count > 0:
+            print(f" Filtered out {filtered_count} empty/tiny files (<10KB)")
+
+        files = substantial_files
+
         # If still no files, provide diagnostic info
         if not files:
             if not self.data_dir.exists():
@@ -294,7 +325,7 @@ class StreamingDataset(IterableDataset):
 
             elif file_path.suffix == '.jsonl':
                 # Read JSONL file with robust Unicode handling
-                print(f"📄 Reading JSONL file: {file_path.name}")
+                # Reduced logging - only log if verbose mode enabled
                 line_count = 0
                 error_count = 0
 
@@ -337,12 +368,12 @@ class StreamingDataset(IterableDataset):
                                 print(f"  ⚠️  Text extraction error at line {line_count}: {str(e)[:100]}")
                             continue
 
-                    # Summary for this file
+                    # Summary for this file - only log non-empty files
                     if line_count > 0:
                         success_rate = (line_count - error_count) / line_count * 100
-                        print(f"  ✓ Processed {line_count} lines, {error_count} errors ({success_rate:.1f}% success)")
-                    else:
-                        print(f"  ⚠️  No valid lines found in {file_path.name}")
+                        if line_count > error_count:  # Only log if there were valid lines
+                            pass  # Silent - too verbose
+                    # Skip logging empty files to reduce noise
 
                 except Exception as e:
                     print(f"  ❌ Failed to read {file_path.name}: {e}")
@@ -376,24 +407,90 @@ class StreamingDataset(IterableDataset):
             "Pre-training creates powerful language representations.",
         ]
 
-        while True:
+        # Generate finite number of synthetic examples (1000) to avoid infinite blocking
+        for _ in range(1000):
             # Randomly combine templates
             num_sentences = random.randint(3, 8)
             text = " ".join(random.choices(templates, k=num_sentences))
             yield text * random.randint(2, 5)
 
-    def _stream_examples(self) -> Iterator[str]:
-        """Stream examples from all files"""
-        if not self.data_files:
+    def _stream_examples(self, files_to_use=None) -> Iterator[str]:
+        """Stream examples from all files with interleaving"""
+        # Use provided files or fall back to self.data_files
+        files = files_to_use if files_to_use is not None else self.data_files
+
+        if not files:
             # Use synthetic data if no files found
             yield from self._generate_synthetic_data()
         else:
-            # Shuffle files for each epoch
-            shuffled_files = list(self.data_files)
+            # Shuffle files initially for variety
+            shuffled_files = list(files)
             random.shuffle(shuffled_files)
 
+            # Open all files and create generators
+            file_generators = []
             for file_path in shuffled_files:
-                yield from self._read_file(file_path)
+                try:
+                    gen = self._read_file(file_path)
+                    file_generators.append((file_path, gen))
+                    print(f"  ✓ Added {file_path.name} to streaming pool")
+                except Exception as e:
+                    print(f"  ⚠️ Could not open {file_path.name}: {e}")
+
+            if not file_generators:
+                print("  ⚠️ No files could be opened, using synthetic data")
+                yield from self._generate_synthetic_data()
+                return
+
+            print(f"  📚 Interleaving data from {len(file_generators)} files")
+
+            # Interleave samples from all files
+            samples_per_file = 10  # Read 10 samples from each file before switching
+            exhausted_files = set()
+
+            while len(exhausted_files) < len(file_generators):
+                # Go through each file in round-robin fashion
+                for idx, (file_path, gen) in enumerate(file_generators):
+                    if idx in exhausted_files:
+                        continue
+
+                    # Read a batch of samples from this file
+                    samples_read = 0
+                    for _ in range(samples_per_file):
+                        try:
+                            text = next(gen)
+                            yield text
+                            samples_read += 1
+                        except StopIteration:
+                            exhausted_files.add(idx)
+                            # Removed verbose logging
+                            break
+
+                # If all files exhausted, restart with fresh generators
+                if len(exhausted_files) == len(file_generators):
+                    # Reduced logging - only log first restart
+                    if not hasattr(self, '_restart_count'):
+                        self._restart_count = 0
+                        print(f"  🔄 Restarting data streaming (all files processed)")
+                    self._restart_count += 1
+
+                    # Prevent infinite restarts for empty files (max 3 restarts)
+                    if self._restart_count > 3:
+                        print(f"  ⚠️ Files appear to be empty after {self._restart_count} restarts, using synthetic data")
+                        yield from self._generate_synthetic_data()
+                        return
+
+                    exhausted_files.clear()
+
+                    # Reshuffle and recreate generators
+                    random.shuffle(shuffled_files)
+                    file_generators = []
+                    for file_path in shuffled_files:
+                        try:
+                            gen = self._read_file(file_path)
+                            file_generators.append((file_path, gen))
+                        except Exception as e:
+                            print(f"  ⚠️ Could not reopen {file_path.name}: {e}")
 
     def _tokenize_text(self, text: str) -> Dict[str, torch.Tensor]:
         """Tokenize a single text with dynamic sequence length support"""
@@ -428,27 +525,28 @@ class StreamingDataset(IterableDataset):
         """Iterate over the dataset with length-based bucketing"""
         # CRITICAL FIX: Handle multi-worker data loading correctly
         worker_info = torch.utils.data.get_worker_info()
+        original_files = None  # Track original files for restoration
         if worker_info is not None:
             # Split data files across workers to avoid duplication/deadlock
             num_workers = worker_info.num_workers
             worker_id = worker_info.id
 
-            # Each worker gets a subset of files
-            worker_files = [f for i, f in enumerate(self.data_files) if i % num_workers == worker_id]
-            # Temporarily override data_files for this worker
+            # Save original files and use worker subset
             original_files = self.data_files
-            self.data_files = worker_files
+            worker_files = [f for i, f in enumerate(self.data_files) if i % num_workers == worker_id]
         else:
-            original_files = None
+            worker_files = None  # Use all files
 
         count = 0
         buffer = []
+        samples_processed = 0  # Track total samples processed from files
 
-        for text in self._stream_examples():
+        for text in self._stream_examples(files_to_use=worker_files):
             if self.max_samples and count >= self.max_samples:
                 break
 
             buffer.append(text)
+            samples_processed += 1
 
             # When buffer is full, process with bucketing
             if len(buffer) >= self.buffer_size:
@@ -461,18 +559,32 @@ class StreamingDataset(IterableDataset):
 
                     tokenized = self._tokenize_text(buffered_text)
 
-                    # Add to bucket and check if bucket is ready
-                    bucket_samples = self.bucketing.add_sample(tokenized)
+                    # If bucketing is disabled, yield immediately
+                    if not self.bucketing.enable_bucketing:
+                        yield tokenized
+                        count += 1
+                    else:
+                        # Add to bucket and check if bucket is ready
+                        bucket_samples = self.bucketing.add_sample(tokenized)
 
-                    if bucket_samples is not None:
-                        # Bucket is full, yield all samples in bucket
-                        for sample in bucket_samples:
-                            yield sample
-                            count += 1
-                            if self.max_samples and count >= self.max_samples:
-                                return
+                        if bucket_samples is not None:
+                            # Bucket is full, yield all samples in bucket
+                            for sample in bucket_samples:
+                                yield sample
+                                count += 1
+                                if self.max_samples and count >= self.max_samples:
+                                    return
 
                 buffer = []
+
+                # Periodically flush partial buckets to ensure continuous data flow
+                if self.bucketing.enable_bucketing and samples_processed % (self.buffer_size * 5) == 0:
+                    for bucket_samples in self.bucketing.flush_buckets(min_size=8):  # Flush if at least 8 samples
+                        for sample in bucket_samples:
+                            if self.max_samples and count >= self.max_samples:
+                                return
+                            yield sample
+                            count += 1
 
         # Process remaining buffer
         if buffer:
@@ -482,22 +594,36 @@ class StreamingDataset(IterableDataset):
                     break
 
                 tokenized = self._tokenize_text(buffered_text)
-                bucket_samples = self.bucketing.add_sample(tokenized)
 
-                if bucket_samples is not None:
-                    for sample in bucket_samples:
-                        yield sample
-                        count += 1
-                        if self.max_samples and count >= self.max_samples:
-                            return
+                if not self.bucketing.enable_bucketing:
+                    yield tokenized
+                    count += 1
+                else:
+                    bucket_samples = self.bucketing.add_sample(tokenized)
 
-        # Flush remaining buckets at the end (FIXED: use min_size=1 to not lose samples)
-        for bucket_samples in self.bucketing.flush_buckets(min_size=1):
-            for sample in bucket_samples:
-                if self.max_samples and count >= self.max_samples:
-                    break
-                yield sample
-                count += 1
+                    if bucket_samples is not None:
+                        for sample in bucket_samples:
+                            yield sample
+                            count += 1
+                            if self.max_samples and count >= self.max_samples:
+                                return
+
+        # Flush ALL remaining buckets at the end (use min_size=1 to not lose ANY samples)
+        if self.bucketing.enable_bucketing:
+            for bucket_samples in self.bucketing.flush_buckets(min_size=1):
+                for sample in bucket_samples:
+                    if self.max_samples and count >= self.max_samples:
+                        break
+                    yield sample
+                    count += 1
+
+        # Log statistics if we processed data
+        if samples_processed > 0:
+            if self.bucketing.enable_bucketing:
+                stats = self.bucketing.get_statistics()
+                if count < samples_processed * 0.5:  # If we yielded less than 50% of what we read
+                    print(f"⚠️  Warning: Read {samples_processed} samples but only yielded {count}")
+                    print(f"    Bucketing stats: {stats['samples_in_buckets']} samples still in buckets")
 
         # Restore original data_files if we're in a worker
         if original_files is not None:
@@ -512,12 +638,12 @@ def create_streaming_dataloaders(
     num_workers: int = 0,
     max_samples: Optional[int] = None,
     buffer_size: int = 1000,
-    distributed: bool = None,
+    distributed: Optional[bool] = None,
     world_size: Optional[int] = None,
     rank: Optional[int] = None,
     dynamic_length_fn: Optional[Callable[[], int]] = None,
     enable_bucketing: bool = True,
-    bucket_boundaries: List[int] = None,
+    bucket_boundaries: Optional[List[int]] = None,
     max_bucket_size: int = 100
 ) -> Tuple[DataLoader, DataLoader]:
     """Create streaming train and validation dataloaders with distributed support"""
@@ -576,15 +702,17 @@ def create_streaming_dataloaders(
         'batch_size': batch_size,
         'num_workers': num_workers,
         'pin_memory': torch.cuda.is_available(),
-        'drop_last': True  # Important for distributed training
+        'drop_last': True,  # Important for distributed training
+        'prefetch_factor': 4 if num_workers > 0 else None,  # Prefetch 4 batches per worker
+        'persistent_workers': True if num_workers > 0 else False  # Keep workers alive between epochs
     }
 
     # For IterableDataset, we don't use DistributedSampler,
     # but we need to handle distributed iteration in the dataset itself
     if distributed and DISTRIBUTED_AVAILABLE:
         # Modify datasets for distributed iteration
-        train_dataset = DistributedStreamingDataset(train_dataset, world_size, rank)
-        val_dataset = DistributedStreamingDataset(val_dataset, world_size, rank)
+        train_dataset = DistributedStreamingDataset(train_dataset, world_size or 1, rank or 0)
+        val_dataset = DistributedStreamingDataset(val_dataset, world_size or 1, rank or 0)
 
     train_loader = DataLoader(train_dataset, **dataloader_kwargs)
     val_loader = DataLoader(val_dataset, **dataloader_kwargs)

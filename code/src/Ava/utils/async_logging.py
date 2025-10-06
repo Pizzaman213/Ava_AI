@@ -323,7 +323,7 @@ class AsyncLogger:
 
             # If we're in offline mode, ensure WandB knows about it
             if self.wandb_offline and wandb.run is None:
-                os.environ['WANDB_MODE'] = 'offline'
+                os.environ['WANDB_MODE'] = 'offline'  # type: ignore[misc]
 
             wandb.log(metrics, step=step)
         except ImportError:
@@ -434,7 +434,7 @@ class AsyncLogger:
 
             # GPU metrics if available
             try:
-                import torch
+                import torch  # type: ignore[import]
                 if torch.cuda.is_available():
                     allocated = torch.cuda.memory_allocated() / 1024**3
                     reserved = torch.cuda.memory_reserved() / 1024**3

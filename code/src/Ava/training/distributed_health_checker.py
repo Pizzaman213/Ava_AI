@@ -5,8 +5,8 @@ Monitors the health of distributed training across all ranks with loss synchroni
 gradient analysis, and performance monitoring.
 """
 
-import torch
-import torch.distributed as dist
+import torch  # type: ignore[import]
+import torch.distributed as dist  # type: ignore[import]
 import time
 import threading
 import logging
@@ -265,7 +265,7 @@ class DistributedHealthChecker:
                         elif status == HealthStatus.HEALTHY:
                             status = HealthStatus.WARNING
 
-        return status, anomaly_score
+        return status, float(anomaly_score)
 
     def _synchronize_health_metrics(self) -> Optional[SynchronizedHealthData]:
         """Synchronize health metrics across all ranks."""
@@ -341,10 +341,10 @@ class DistributedHealthChecker:
             return SynchronizedHealthData(
                 timestamp=time.time(),
                 rank_metrics=all_metrics,
-                global_loss_mean=global_loss_mean,
-                global_loss_std=global_loss_std,
-                global_gradient_norm_mean=global_gradient_norm_mean,
-                global_gradient_norm_std=global_gradient_norm_std,
+                global_loss_mean=float(global_loss_mean),
+                global_loss_std=float(global_loss_std),
+                global_gradient_norm_mean=float(global_gradient_norm_mean),
+                global_gradient_norm_std=float(global_gradient_norm_std),
                 healthy_ranks=healthy_ranks,
                 warning_ranks=warning_ranks,
                 degraded_ranks=degraded_ranks,
@@ -397,14 +397,16 @@ class DistributedHealthChecker:
             self.loss_baseline_std = synchronized_data.global_loss_std
         else:
             self.loss_baseline_mean = (1 - alpha) * self.loss_baseline_mean + alpha * synchronized_data.global_loss_mean
-            self.loss_baseline_std = (1 - alpha) * self.loss_baseline_std + alpha * synchronized_data.global_loss_std
+            if self.loss_baseline_std is not None:
+                self.loss_baseline_std = (1 - alpha) * self.loss_baseline_std + alpha * synchronized_data.global_loss_std
 
         if self.gradient_baseline_mean is None:
             self.gradient_baseline_mean = synchronized_data.global_gradient_norm_mean
             self.gradient_baseline_std = synchronized_data.global_gradient_norm_std
         else:
             self.gradient_baseline_mean = (1 - alpha) * self.gradient_baseline_mean + alpha * synchronized_data.global_gradient_norm_mean
-            self.gradient_baseline_std = (1 - alpha) * self.gradient_baseline_std + alpha * synchronized_data.global_gradient_norm_std
+            if self.gradient_baseline_std is not None:
+                self.gradient_baseline_std = (1 - alpha) * self.gradient_baseline_std + alpha * synchronized_data.global_gradient_norm_std
 
     def _log_health_summary(self, synchronized_data: SynchronizedHealthData):
         """Log health summary (master rank only)."""

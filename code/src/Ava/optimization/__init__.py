@@ -2,6 +2,17 @@
 Optimization module for model quantization, compression, and advanced optimizers.
 """
 
+# Note: The following files are in _archived/optimization/ but re-exported here for compatibility:
+# - a100_optimizer.py
+# - flash_attention_v3.py
+# - nvlink_optimizer.py
+# - memory_optimizer.py
+# - fused_optimizers.py
+# - gradient_optimizations.py
+# - compilation_optimizations.py
+# - hardware_optimizations.py
+# These are experimental/optional optimizations used by the unified optimization system
+
 from .quantization import (
     ModelQuantizer,
     LinearQuantized,
@@ -32,6 +43,21 @@ from .fp8_training import (
     benchmark_fp8_training
 )
 
+# Re-export modules from _archived for compatibility with optimization_integration
+try:
+    from .._archived.optimization import (
+        gradient_optimizations,
+        fused_optimizers,
+        hardware_optimizations,
+        compilation_optimizations,
+    )
+except ImportError:
+    # Graceful fallback if _archived modules not available
+    gradient_optimizations = None
+    fused_optimizers = None
+    hardware_optimizations = None
+    compilation_optimizations = None
+
 __all__ = [
     # Quantization
     "ModelQuantizer",
@@ -58,5 +84,11 @@ __all__ = [
     "FP8TransformerLayer",
     "FP8ModelWrapper",
     "create_fp8_model",
-    "benchmark_fp8_training"
+    "benchmark_fp8_training",
+
+    # Re-exported optimization modules
+    "gradient_optimizations",
+    "fused_optimizers",
+    "hardware_optimizations",
+    "compilation_optimizations",
 ]

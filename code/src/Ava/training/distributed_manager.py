@@ -5,9 +5,9 @@ Provides robust distributed training support with proper process group managemen
 barrier synchronization, error handling, and cleanup procedures.
 """
 
-import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
+import torch  # type: ignore[import]
+import torch.distributed as dist  # type: ignore[import]
+import torch.multiprocessing as mp  # type: ignore[import]
 import os
 import signal
 import time
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 from enum import Enum
 import json
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ class DistributedManager:
         self.world_size = 1
         self.rank = 0
         self.local_rank = 0
-        self.is_master = True
+        self._is_master_rank = True
 
         # Process group management
         self.process_group = None
@@ -137,7 +138,7 @@ class DistributedManager:
             os.environ.setdefault('MASTER_ADDR', master_addr or os.environ.get('MASTER_ADDR', 'localhost'))
             os.environ.setdefault('MASTER_PORT', master_port or os.environ.get('MASTER_PORT', '12355'))
 
-            self.is_master = (self.rank == 0)
+            self._is_master_rank = (self.rank == 0)
 
             # Validate configuration
             if self.world_size <= 0:
@@ -191,7 +192,7 @@ class DistributedManager:
                 rank=self.rank,
                 world_size=self.world_size,
                 timeout=torch.distributed.default_pg_timeout if self.config.timeout_seconds == 1800
-                        else torch.timedelta(seconds=self.config.timeout_seconds),
+                        else timedelta(seconds=self.config.timeout_seconds),
                 init_method=self.config.init_method
             )
 
@@ -208,7 +209,7 @@ class DistributedManager:
                     backend='gloo',
                     rank=self.rank,
                     world_size=self.world_size,
-                    timeout=torch.timedelta(seconds=self.config.timeout_seconds)
+                    timeout=timedelta(seconds=self.config.timeout_seconds)
                 )
                 self.process_group = dist.group.WORLD
                 logger.warning("Fallback to gloo backend successful")
@@ -267,7 +268,7 @@ class DistributedManager:
     def all_reduce(
         self,
         tensor: torch.Tensor,
-        op: dist.ReduceOp = dist.ReduceOp.SUM,
+        op: dist.ReduceOp = dist.ReduceOp.SUM,  # type: ignore[assignment]
         async_op: bool = False
     ) -> Union[torch.Tensor, dist.Work]:
         """
@@ -285,12 +286,12 @@ class DistributedManager:
             return tensor
 
         try:
-            return dist.all_reduce(tensor, op=op, group=self.process_group, async_op=async_op)
+            return dist.all_reduce(tensor, op=op, group=self.process_group, async_op=async_op)  # type: ignore[arg-type,return-value]
         except Exception as e:
             logger.error(f"All-reduce failed: {e}")
             self.state = DistributedState.DEGRADED
             if async_op:
-                return None
+                return None  # type: ignore[return-value]
             return tensor
 
     def broadcast(
@@ -314,12 +315,12 @@ class DistributedManager:
             return tensor
 
         try:
-            return dist.broadcast(tensor, src=src, group=self.process_group, async_op=async_op)
+            return dist.broadcast(tensor, src=src, group=self.process_group, async_op=async_op)  # type: ignore[return-value]
         except Exception as e:
             logger.error(f"Broadcast failed: {e}")
             self.state = DistributedState.DEGRADED
             if async_op:
-                return None
+                return None  # type: ignore[return-value]
             return tensor
 
     def gather(
@@ -408,9 +409,9 @@ class DistributedManager:
                 logger.critical(f"OOM info: {oom_info}")
 
             # Use all_reduce to let all ranks know if ANY rank has OOM
-            oom_signal = self.all_reduce(oom_signal, op=dist.ReduceOp.MAX)
+            oom_signal = self.all_reduce(oom_signal, op=dist.ReduceOp.MAX)  # type: ignore[arg-type]
 
-            has_collective_oom = oom_signal.item() > 0.5
+            has_collective_oom = oom_signal.item() > 0.5 if hasattr(oom_signal, 'item') else float(oom_signal) > 0.5  # type: ignore[attr-defined]
 
             if has_collective_oom:
                 logger.critical(f"Collective OOM detected across ranks - coordinating response")
@@ -537,7 +538,7 @@ class DistributedManager:
                 logger.error("Failed to broadcast recovery action")
                 return False
 
-            coordinated_action = action_tensor.item()
+            coordinated_action = action_tensor.item() if hasattr(action_tensor, 'item') else int(action_tensor)  # type: ignore[attr-defined]
             action_name = {v: k for k, v in action_codes.items()}.get(coordinated_action, "reduce_batch_size")
 
             logger.info(f"All ranks will execute: {action_name}")

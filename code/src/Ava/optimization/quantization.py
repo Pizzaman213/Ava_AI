@@ -5,9 +5,9 @@ This module implements various quantization techniques including INT8, INT4,
 and other optimization methods for reducing model size and inference time.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
 from typing import Dict, List, Optional, Tuple, Union, Any
 import numpy as np
 from dataclasses import dataclass
@@ -16,12 +16,15 @@ import math
 # TorchAO integration for hardware-accelerated NVFP4
 TORCHAO_AVAILABLE = False
 try:
-    from torchao.quantization import quantize_
-    from torchao.prototype.mx_formats import NVFP4InferenceConfig
-    from torchao.quantization.qat import QATConfig
+    from torchao.quantization import quantize_  # type: ignore[import]
+    from torchao.prototype.mx_formats import NVFP4InferenceConfig  # type: ignore[import]
+    from torchao.quantization.qat import QATConfig  # type: ignore[import]
     TORCHAO_AVAILABLE = True
     print(" TorchAO available - Hardware-accelerated NVFP4 enabled")
 except ImportError:
+    quantize_ = None  # type: ignore[assignment]
+    NVFP4InferenceConfig = None  # type: ignore[assignment,misc]
+    QATConfig = None  # type: ignore[assignment,misc]
     print(" TorchAO not available - using custom NVFP4 implementation")
 
 
@@ -144,7 +147,7 @@ class LinearQuantized(nn.Module):
             elif self.bit_width == 4:
                 quantized = torch.clamp(quantized, -8, 7).to(torch.int8)
 
-        self.quantized_weight.copy_(quantized)
+        self.quantized_weight.copy_(quantized)  # type: ignore[misc]
 
     def dequantize_weight(self) -> torch.Tensor:
         """Dequantize the weight tensor."""
@@ -179,6 +182,9 @@ class LinearQuantized(nn.Module):
             return torch.clamp(quantized, -128, 127).to(torch.int8)
         elif self.bit_width == 4:
             return torch.clamp(quantized, -8, 7).to(torch.int8)
+        else:
+            # Default to int8 for unsupported bit widths
+            return torch.clamp(quantized, -128, 127).to(torch.int8)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with quantized computation."""
@@ -257,7 +263,7 @@ class LinearNVFP4(nn.Module):
         """Quantize weights to NVFP4 format."""
         with torch.no_grad():
             quantized, scales = self.nvfp4_quantizer.quantize_tensor_nvfp4(self.weight)
-            self.quantized_weight.copy_(quantized.to(torch.uint8))
+            self.quantized_weight.copy_(quantized.to(torch.uint8))  # type: ignore[misc]
             self.weight_scales = scales
             self.calibrated = True
 
@@ -267,7 +273,7 @@ class LinearNVFP4(nn.Module):
             return self.weight
 
         return self.nvfp4_quantizer.dequantize_tensor_nvfp4(
-            self.quantized_weight,
+            self.quantized_weight,  # type: ignore[arg-type]
             self.weight_scales,
             self.weight.shape
         )
@@ -351,14 +357,17 @@ class QuantizationObserver:
         self.total_samples += tensor.numel()
 
         if self.observer_type == "histogram":
+            range_val = max(abs(self.min_val), abs(self.max_val))
             if self.bin_edges is None:
                 # Initialize histogram bins
-                range_val = max(abs(self.min_val), abs(self.max_val))
                 self.bin_edges = torch.linspace(-range_val, range_val, self.num_bins + 1)
 
             # Update histogram
             hist = torch.histc(tensor, bins=self.num_bins, min=-range_val, max=range_val)
-            self.histogram += hist
+            if self.histogram is None:
+                self.histogram = hist
+            else:
+                self.histogram += hist
 
     def calculate_qparams(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Calculate quantization parameters based on collected statistics."""
@@ -386,7 +395,7 @@ class QuantizationObserver:
 
     def _calculate_histogram_qparams(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Calculate qparams using histogram method with outlier removal."""
-        if self.histogram is None:
+        if self.histogram is None or self.bin_edges is None:
             return self._calculate_minmax_qparams()
 
         # Remove outliers (e.g., top and bottom 0.01%)
@@ -428,8 +437,8 @@ class ModelQuantizer:
 
     def __init__(
         self,
-        config: QuantizationConfig = None,
-        skip_layers: List[str] = None
+        config: Optional[QuantizationConfig] = None,
+        skip_layers: Optional[List[str]] = None
     ):
         self.config = config or QuantizationConfig()
         self.skip_layers = skip_layers or ['lm_head', 'embed_tokens']
@@ -495,7 +504,7 @@ class ModelQuantizer:
 
                     # Copy original weights for calibration
                     quantized_layer.quantize_weight(module.weight.data)
-                    if module.bias is not None:
+                    if module.bias is not None and quantized_layer.quantized_bias is not None:
                         quantized_layer.quantized_bias.copy_(module.bias.data.round().int())
 
                 setattr(quantized_model, name, quantized_layer)
@@ -505,7 +514,13 @@ class ModelQuantizer:
                 child_module = getattr(quantized_model, name, None)
                 if child_module is None:
                     # Create child module if it doesn't exist
-                    child_module = type(module)()
+                    # We need to properly initialize the module, so we use type() with no args
+                    # This may fail for modules that require constructor arguments
+                    try:
+                        child_module = type(module)()  # type: ignore[call-arg]
+                    except TypeError:
+                        # Skip modules that can't be instantiated without args
+                        continue
                     setattr(quantized_model, name, child_module)
 
                 self._replace_layers_recursive(child_module, full_name, module)
@@ -875,7 +890,7 @@ class NVFP4Quantization:
         # Decode scale factors from E4M3
         scale_factors = torch.zeros(num_blocks, device=quantized.device)
         for i in range(len(encoded_scales)):
-            scale_factors[i] = self.decode_e4m3_scale(encoded_scales[i].item())
+            scale_factors[i] = self.decode_e4m3_scale(int(encoded_scales[i].item()))
 
         # Dequantize each block
         dequantized_blocks = torch.zeros_like(quantized_blocks, dtype=torch.float32)
@@ -884,7 +899,7 @@ class NVFP4Quantization:
             scale = scale_factors[i]
 
             for j in range(self.block_size):
-                encoded_val = quantized_blocks[i, j].item()
+                encoded_val = int(quantized_blocks[i, j].item())
                 decoded_val = self.decode_fp4_e2m1(encoded_val)
                 dequantized_blocks[i, j] = decoded_val * scale
 
@@ -904,21 +919,25 @@ class TorchAONVFP4Wrapper:
     def __init__(self, use_qat: bool = True):
         if not TORCHAO_AVAILABLE:
             raise ImportError("TorchAO is not available. Install with: pip install torchao")
+        if NVFP4InferenceConfig is None or QATConfig is None:
+            raise ImportError("TorchAO components not available")
 
         self.use_qat = use_qat
-        self.base_config = NVFP4InferenceConfig()
+        self.base_config = NVFP4InferenceConfig()  # type: ignore[misc]
 
         if use_qat:
-            self.qat_config_prepare = QATConfig(self.base_config, step="prepare")
-            self.qat_config_convert = QATConfig(self.base_config, step="convert")
+            self.qat_config_prepare = QATConfig(self.base_config, step="prepare")  # type: ignore[misc]
+            self.qat_config_convert = QATConfig(self.base_config, step="convert")  # type: ignore[misc]
 
     def prepare_model_for_training(self, model: nn.Module) -> nn.Module:
         """Prepare model for NVFP4 quantization-aware training."""
         if not self.use_qat:
             raise ValueError("QAT not enabled for this wrapper")
+        if quantize_ is None:
+            raise ImportError("quantize_ not available")
 
         print(" Preparing model for NVFP4 training with TorchAO...")
-        quantized_model = quantize_(model, self.qat_config_prepare)
+        quantized_model = quantize_(model, self.qat_config_prepare)  # type: ignore[misc]
         print(" Model prepared for NVFP4 training")
 
         return quantized_model
@@ -927,17 +946,22 @@ class TorchAONVFP4Wrapper:
         """Convert model to final NVFP4 format after training."""
         if not self.use_qat:
             raise ValueError("QAT not enabled for this wrapper")
+        if quantize_ is None:
+            raise ImportError("quantize_ not available")
 
         print(" Converting model to final NVFP4 format...")
-        final_model = quantize_(model, self.qat_config_convert)
+        final_model = quantize_(model, self.qat_config_convert)  # type: ignore[misc]
         print(" Model converted to NVFP4 format")
 
         return final_model
 
     def quantize_model_for_inference(self, model: nn.Module) -> nn.Module:
         """Quantize model directly for NVFP4 inference."""
+        if quantize_ is None:
+            raise ImportError("quantize_ not available")
+
         print(" Quantizing model for NVFP4 inference...")
-        quantized_model = quantize_(model, self.base_config)
+        quantized_model = quantize_(model, self.base_config)  # type: ignore[misc]
         print(" Model quantized for NVFP4 inference")
 
         return quantized_model
@@ -1020,7 +1044,7 @@ class INT4Quantization:
 def quantize_model_pipeline(
     model: nn.Module,
     calibration_loader: torch.utils.data.DataLoader,
-    config: QuantizationConfig = None,
+    config: Optional[QuantizationConfig] = None,
     output_path: Optional[str] = None
 ) -> nn.Module:
     """

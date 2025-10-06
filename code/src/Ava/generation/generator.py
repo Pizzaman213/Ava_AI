@@ -12,11 +12,14 @@ The generator is designed to work with models trained on data from
 text generation with various control parameters.
 """
 
-import torch
-import torch.nn.functional as F
-from typing import Optional, List, Tuple, Union
+import torch  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
+from typing import Optional, List, Tuple, Union, TYPE_CHECKING
 import numpy as np
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer  # type: ignore[import]
+
+if TYPE_CHECKING:
+    from transformers import PreTrainedTokenizerBase
 
 
 class TextGenerator:
@@ -37,9 +40,9 @@ class TextGenerator:
         >>> text = generator.generate("Once upon a time", max_length=100, temperature=0.8)
     """
 
-    def __init__(self, model, tokenizer: AutoTokenizer, device: Optional[torch.device] = None):
+    def __init__(self, model, tokenizer: "PreTrainedTokenizerBase", device: Optional[torch.device] = None):
         self.model = model
-        self.tokenizer = tokenizer
+        self.tokenizer: "PreTrainedTokenizerBase" = tokenizer
         self.device = device or next(model.parameters()).device
 
         # Special tokens
@@ -84,9 +87,10 @@ class TextGenerator:
         """
         # Encode prompt
         if isinstance(prompt, str):
-            input_ids = self.tokenizer.encode(prompt, return_tensors='pt')
+            encoded = self.tokenizer.encode(prompt, return_tensors='pt')
+            input_ids = torch.tensor(encoded) if not isinstance(encoded, torch.Tensor) else encoded
         else:
-            input_ids = torch.tensor([prompt])
+            input_ids = torch.tensor([prompt]) if not isinstance(prompt, torch.Tensor) else prompt
 
         input_ids = input_ids.to(self.device)
         batch_size = input_ids.shape[0]
@@ -185,9 +189,11 @@ class TextGenerator:
 
             # Force minimum length
             if cur_len < min_length:
+                # Create condition tensor for torch.where
+                eos_mask = (next_tokens == self.eos_token_id)
                 next_tokens = torch.where(
-                    next_tokens == self.eos_token_id,
-                    self.pad_token_id,
+                    eos_mask,  # type: ignore[arg-type]
+                    torch.tensor(self.pad_token_id, device=next_tokens.device, dtype=next_tokens.dtype),
                     next_tokens
                 )
 
@@ -196,7 +202,8 @@ class TextGenerator:
             cur_len += 1
 
             # Check for completion
-            unfinished_sequences = unfinished_sequences * (next_tokens != self.eos_token_id).long()
+            not_eos_mask = (next_tokens != self.eos_token_id).long()  # type: ignore[attr-defined]
+            unfinished_sequences = unfinished_sequences * not_eos_mask
             if unfinished_sequences.sum() == 0:
                 break
 

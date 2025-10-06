@@ -5,6 +5,8 @@ This module handles all training configuration management including
 enhanced feature flags, parameter validation, and configuration inheritance.
 """
 
+from __future__ import annotations
+
 import argparse
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Union
@@ -37,6 +39,21 @@ class LossConfig:
     use_contrastive_loss: bool = True         # Contrastive loss
     use_diversity_loss: bool = True           # Diversity loss
     adaptive_loss_scaling: bool = True        # Adaptive loss scaling
+
+    # Multi-token prediction settings (DeepSeek-style)
+    use_multi_token_prediction: bool = True   # Enable MTP loss
+    num_future_tokens: int = 3                # Number of future tokens to predict
+    mtp_weight: float = 0.1                   # Weight for MTP loss
+
+    # Temperature scaling settings
+    initial_temperature: float = 1.0          # Initial temperature for scaling
+    adaptive_temperature: bool = True         # Adapt temperature based on training
+    label_smoothing: float = 0.1              # Label smoothing factor
+
+    # MoE balancing settings
+    use_moe_balancing: bool = True            # Enable auxiliary-free MoE balancing
+    gradient_balance_weight: float = 0.1      # Weight for gradient-based balancing
+    use_auxiliary_loss: bool = True           # Use traditional auxiliary loss (legacy)
 
 
 @dataclass
@@ -157,6 +174,9 @@ class TrainingConfig:
     learning_rate: Optional[float] = None     # Learning rate
     gradient_accumulation: int = 1            # Gradient accumulation
 
+    # Adaptive LR configuration
+    adaptive_lr: dict = field(default_factory=dict)  # Adaptive learning rate settings
+
     # Progressive training
     progressive: ProgressiveTrainingConfig = field(default_factory=ProgressiveTrainingConfig)
 
@@ -187,7 +207,7 @@ class WandBConfig:
     use_wandb: bool = True                    # Enable WandB
     disable_wandb: bool = False               # Disable WandB
     wandb_offline: bool = False               # Force WandB offline mode
-    wandb_project: str = 'llm-moe-training'   # WandB project
+    wandb_project: str = 'Ava'                # WandB project
     wandb_name: Optional[str] = None          # WandB run name
     wandb_tags: List[str] = field(default_factory=lambda: ['moe', 'training'])
     wandb_log_freq: int = 10                  # Log frequency
@@ -215,10 +235,10 @@ class DeepSpeedConfig:
     zero_reduce_scatter: bool = True
     zero_overlap_comm: bool = True
     zero_contiguous_gradients: bool = True
-    zero_reduce_bucket_size: int = 5e8       # 500MB
-    zero_allgather_bucket_size: int = 5e8    # 500MB
-    zero_stage3_prefetch_bucket_size: int = 5e8  # 500MB
-    zero_stage3_param_persistence_threshold: int = 1e6
+    zero_reduce_bucket_size: int = 500000000       # 500MB
+    zero_allgather_bucket_size: int = 500000000    # 500MB
+    zero_stage3_prefetch_bucket_size: int = 500000000  # 500MB
+    zero_stage3_param_persistence_threshold: int = 1000000
 
     # Communication settings
     communication_data_type: str = 'fp32'     # Communication data type
@@ -255,6 +275,18 @@ class PerformanceConfig:
 
 
 @dataclass
+class ModelConfig:
+    """Configuration for model architecture parameters."""
+    vocab_size: int = 32000                   # Vocabulary size
+    hidden_size: int = 4096                   # Hidden dimension
+    num_experts: Optional[int] = None         # Number of experts for MoE
+    num_layers: int = 32                      # Number of layers
+    num_attention_heads: int = 32             # Number of attention heads
+    intermediate_size: int = 11008            # FFN intermediate size
+    dropout: float = 0.1                      # Dropout rate
+
+
+@dataclass
 class EnhancedTrainingConfig:
     """Main configuration class combining all sub-configs."""
     config_file: str                          # Required config file
@@ -267,6 +299,7 @@ class EnhancedTrainingConfig:
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
 
     # Data configurations
     data: DataConfig = field(default_factory=DataConfig)
@@ -278,7 +311,7 @@ class EnhancedTrainingConfig:
     run_management: RunManagementConfig = field(default_factory=RunManagementConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    deepspeed: DeepSpeedConfig = field(default_factory=DeepSpeedConfig)
+    deepspeed: DeepSpeedConfig = field(default_factory=DeepSpeedConfig)  # type: ignore[call-overload]
 
     # Special flags
     enable_all_features: bool = False         # Enable all features
@@ -503,7 +536,7 @@ Examples:
                                 help='Disable Weights & Biases logging')
         wandb_group.add_argument('--wandb-offline', action='store_true',
                                 help='Force Weights & Biases offline mode')
-        wandb_group.add_argument('--wandb-project', type=str, default='llm-moe-training',
+        wandb_group.add_argument('--wandb-project', type=str, default='Ava',
                                 help='Weights & Biases project name')
         wandb_group.add_argument('--wandb-name', type=str, default=None,
                                 help='Weights & Biases run name')

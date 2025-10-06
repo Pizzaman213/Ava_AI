@@ -9,9 +9,9 @@ The routing system uses confidence-based dynamic selection where high-confidence
 tokens use fewer experts while uncertain tokens engage more experts for better accuracy.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
 from typing import Dict, Tuple, Any
 
 from .experts import ExpertBalancer, SparseExpert
@@ -53,7 +53,7 @@ class SwitchTransformerRouting(nn.Module):
         self,
         hidden_states: torch.Tensor,
         training: bool = True
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, int, Dict]:
         """
         Forward pass through Switch Transformer routing.
 
@@ -274,6 +274,7 @@ class HashingExpertRouting(nn.Module):
         else:
             # Fixed random hash functions
             self.register_buffer('hash_weights', torch.randn(num_hash_functions, hidden_dim))
+            self.hash_weights: torch.Tensor  # Type hint for registered buffer
 
     def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         """

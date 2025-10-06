@@ -16,9 +16,9 @@ References:
 - Dynamic Batch Sizing: https://arxiv.org/abs/1711.00489
 """
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, Sampler
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+from torch.utils.data import DataLoader, Sampler  # type: ignore[import]
 import numpy as np
 import math
 import time
@@ -210,7 +210,7 @@ class CurriculumLearning:
         scores = []
 
         # Create temporary loader for this chunk
-        from torch.utils.data import TensorDataset, DataLoader
+        from torch.utils.data import TensorDataset, DataLoader  # type: ignore[import]
 
         # Convert samples to tensors
         chunk_data = []
@@ -328,7 +328,7 @@ class CurriculumLearning:
         hash_string = "|".join(hash_input)
         return hashlib.md5(hash_string.encode()).hexdigest()[:16]
 
-    def save_difficulty_scores(self, cache_path: Path = None):
+    def save_difficulty_scores(self, cache_path: Optional[Path] = None):
         """Save difficulty scores to disk with versioning."""
         if not self.config.enable_score_caching:
             return
@@ -358,7 +358,7 @@ class CurriculumLearning:
         except Exception as e:
             logger.warning(f"Failed to save difficulty scores to cache: {e}")
 
-    def load_difficulty_scores(self, cache_path: Path = None) -> bool:
+    def load_difficulty_scores(self, cache_path: Optional[Path] = None) -> bool:
         """Load difficulty scores from disk cache with validation."""
         if not self.config.enable_score_caching:
             return False
@@ -423,7 +423,7 @@ class CurriculumLearning:
         # Save to cache
         self.save_difficulty_scores()
 
-    def clear_cache(self, dataset_hash: str = None):
+    def clear_cache(self, dataset_hash: Optional[str] = None):
         """Clear cached difficulty scores."""
         try:
             from pathlib import Path
@@ -462,13 +462,18 @@ class CurriculumLearning:
             )
 
         logits = outputs.logits
+        if labels is None:
+            return []
         batch_size, seq_len = labels.shape[:2]
 
         # Compute per-example cross-entropy loss manually
         # Shift labels for causal LM: predict next token
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
-        shift_attention_mask = attention_mask[..., 1:].contiguous() if attention_mask is not None else None
+        if attention_mask is not None:
+            shift_attention_mask = attention_mask[..., 1:].contiguous()
+        else:
+            shift_attention_mask = None
 
         # Flatten for loss computation
         flat_logits = shift_logits.view(-1, shift_logits.size(-1))
@@ -664,7 +669,7 @@ class GrowLengthScheduler:
         self.current_epoch = 0
         self.last_length_change_epoch = 0
 
-    def get_sequence_length(self, epoch: int = None, step: int = None, steps_per_epoch: int = None) -> int:
+    def get_sequence_length(self, epoch: Optional[int] = None, step: Optional[int] = None, steps_per_epoch: Optional[int] = None) -> int:
         """
         Get current sequence length based on training epoch.
 
@@ -966,7 +971,7 @@ class DynamicBatchSizer:
 
         return min(estimated_batch_size, self.config.max_batch_size)
 
-    def dry_run_batch_size(self, seq_length: int, target_batch_size: int, model: nn.Module = None) -> Dict[str, Any]:
+    def dry_run_batch_size(self, seq_length: int, target_batch_size: int, model: Optional[nn.Module] = None) -> Dict[str, Any]:
         """
         FIXED: Dry-run mode to safely test batch size configurations without affecting training.
 
@@ -1102,7 +1107,7 @@ class DynamicBatchSizer:
 
             return base_memory * seq_factor * batch_factor
 
-    def run_batch_size_test(self, seq_length: int, test_batch_sizes: List[int], model: nn.Module = None) -> Dict[str, Any]:
+    def run_batch_size_test(self, seq_length: int, test_batch_sizes: List[int], model: Optional[nn.Module] = None) -> Dict[str, Any]:
         """
         Run comprehensive batch size testing for a given sequence length.
 
@@ -1404,7 +1409,7 @@ class ProgressiveTrainer:
 
         if self.curriculum:
             summary['difficulty_scores_computed'] = len(self.curriculum.difficulty_scores) > 0
-            summary['current_percentile'] = getattr(self.curriculum, 'current_percentile', 1.0)
+            summary['current_percentile'] = int(getattr(self.curriculum, 'current_percentile', 1.0))
 
         if self.model_scaler:
             summary['current_layers'] = self.model_scaler.current_layers
@@ -1480,7 +1485,7 @@ class ProgressiveTrainingManager:
 
     def get_current_sequence_length(self, current_step: int) -> int:
         """Get current sequence length based on training step."""
-        return self.length_scheduler.get_length_for_step(current_step)
+        return self.length_scheduler.get_length_for_step(current_step)  # type: ignore[attr-defined]
 
     def get_adaptive_learning_rate(
         self,

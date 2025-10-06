@@ -68,7 +68,7 @@ This script is part of the comprehensive Ava training pipeline supporting:
 
 import argparse
 import sys
-import torch
+import torch  # type: ignore[import-not-found]
 import yaml
 from pathlib import Path
 from typing import Optional, List, Union
@@ -78,9 +78,9 @@ from tqdm import tqdm
 # Add project root to path
 sys.path.append('/project/code')
 
-from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
+from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
 from src.Ava.generation.generator import TextGenerator
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer  # type: ignore[import-not-found]
 from datetime import datetime
 
 
@@ -122,6 +122,13 @@ def get_checkpoint_path_from_run(run_dir: Path, checkpoint_type: str = 'latest')
     Returns:
         Path to checkpoint file
     """
+    # Check if we're already in a step_N directory
+    if run_dir.name.startswith('step_'):
+        # We're in a step checkpoint directory, just return model.pt
+        model_path = run_dir / 'model.pt'
+        if model_path.exists():
+            return model_path
+
     checkpoints_dir = run_dir / 'checkpoints'
 
     if checkpoint_type == 'latest':
@@ -152,8 +159,11 @@ class GenerationPipeline:
         >>> text = pipeline.generate("The meaning of life is", max_length=100)
     """
 
-    def __init__(self, model_path: str, config_path: Optional[str] = None, device: str = 'cuda'):
-        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+    def __init__(self, model_path: str, config_path: Optional[str] = None, device: str = 'cuda', cpu: bool = False):
+        if cpu:
+            self.device = torch.device('cpu')
+        else:
+            self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         print(f" Using device: {self.device}")
 
         # Determine checkpoint format and load
@@ -420,6 +430,8 @@ Examples:
     parser.add_argument('--device', type=str, default='cuda',
                        choices=['cuda', 'cpu'],
                        help='Device to run inference on')
+    parser.add_argument('--cpu', action='store_true',
+                       help='Force CPU usage (overrides --device)')
 
     # Generation mode (not required if --list-runs is used)
     mode_group = parser.add_mutually_exclusive_group(required=False)
@@ -540,7 +552,8 @@ Examples:
     pipeline = GenerationPipeline(
         model_path=model_path,
         config_path=args.config_path,
-        device=args.device
+        device=args.device,
+        cpu=args.cpu
     )
 
     # Handle different modes
@@ -565,7 +578,10 @@ Examples:
 
         if args.output_file:
             with open(args.output_file, 'w') as f:
-                f.write(output)
+                if isinstance(output, list):
+                    f.write('\n'.join(output))
+                else:
+                    f.write(output)
             print(f"\n Saved to {args.output_file}")
 
     elif args.input_file:

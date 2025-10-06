@@ -2,6 +2,8 @@
 Evaluation utilities for Qwen MoE++ models.
 """
 
-from .evaluator import ModelEvaluator, PerplexityEvaluator
+# Note: evaluator.py has been moved to _archived/evaluation/
+# Training uses comprehensive_eval.py instead
+from .comprehensive_eval import ComprehensiveEvaluator
 
-__all__ = ["ModelEvaluator", "PerplexityEvaluator"]
+__all__ = ["ComprehensiveEvaluator"]
