@@ -16,89 +16,166 @@ A comprehensive implementation of advanced LLM architectures with:
 """
 
 # Core models and configurations
-from .models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
+try:
+    from .models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import]
+except ImportError:
+    EnhancedMoEModel = None
+    EnhancedMoEConfig = None
 
 # Layer components
-from .layers.experts import ExpertBalancer, SparseExpert
-from .layers.routing import (
-    ExpertSelector, MoEPlusPlusLayer,
-    SwitchTransformerRouting, GSERouting,
-    HashingExpertRouting, StochasticExpertRouting
-)
-from .layers.attention import (
-    EnhancedMultiheadAttention, RotaryPositionEmbedding,
-    ALiBiPositionEmbedding, FlashAttention
-)
-from .layers.mixture_of_heads import (
-    MixtureOfHeads, AdaptiveHeadAttention
-)
-from .layers.cross_attention import (
-    MultiModalCrossAttention, PerceiversCrossAttention,
-    AdaptiveCrossAttention, HierarchicalCrossAttention
-)
-from .layers.mixture_of_activations import (
-    MixtureOfActivations, AdaptiveActivation,
-    ContextualActivation, HierarchicalActivation
-)
+try:
+    from .layers.experts import ExpertBalancer, SparseExpert
+except ImportError:
+    ExpertBalancer = SparseExpert = None
+
+try:
+    from .layers.routing import (
+        ExpertSelector, MoEPlusPlusLayer,
+        SwitchTransformerRouting, GSERouting,
+        HashingExpertRouting, StochasticExpertRouting
+    )
+except ImportError:
+    ExpertSelector = MoEPlusPlusLayer = None
+    SwitchTransformerRouting = GSERouting = None
+    HashingExpertRouting = StochasticExpertRouting = None
+
+try:
+    from .layers.attention import (
+        EnhancedMultiheadAttention, RotaryPositionEmbedding,
+        ALiBiPositionEmbedding, FlashAttention
+    )
+except ImportError:
+    EnhancedMultiheadAttention = RotaryPositionEmbedding = None
+    ALiBiPositionEmbedding = FlashAttention = None
+
+try:
+    from .layers.mixture_of_heads import (
+        MixtureOfHeads, AdaptiveHeadAttention
+    )
+except ImportError:
+    MixtureOfHeads = AdaptiveHeadAttention = None
+
+try:
+    from .layers.cross_attention import (
+        MultiModalCrossAttention, PerceiversCrossAttention,
+        AdaptiveCrossAttention, HierarchicalCrossAttention
+    )
+except ImportError:
+    MultiModalCrossAttention = PerceiversCrossAttention = None
+    AdaptiveCrossAttention = HierarchicalCrossAttention = None
+
+try:
+    from .layers.mixture_of_activations import (
+        MixtureOfActivations, AdaptiveActivation,
+        ContextualActivation, HierarchicalActivation
+    )
+except ImportError:
+    MixtureOfActivations = AdaptiveActivation = None
+    ContextualActivation = HierarchicalActivation = None
 
 # Retrieval and RAG
-from .retrieval import (
-    RAGSystem, AdaptiveRAG, DenseRetriever,
-    KnowledgeBase, RAGFusion
-)
+try:
+    from .retrieval import (
+        RAGSystem, AdaptiveRAG, DenseRetriever,
+        KnowledgeBase, RAGFusion
+    )
+except ImportError:
+    RAGSystem = AdaptiveRAG = DenseRetriever = None
+    KnowledgeBase = RAGFusion = None
 
 # Training utilities
-from .training import (
-    GradientSurgeon, AdaptiveGradientSurgeon,
-    GradientConflictAnalyzer,
-    CosineAnnealingWarmRestarts, OneCycleLR, PolynomialDecayLR, AdaptiveLRScheduler,
-    NoisyStudentScheduler, SchedulerFactory,
-    ProgressiveTrainingConfig, CurriculumLearning, GrowLengthScheduler,
-    DynamicBatchSizer, ProgressiveModelScaler, ProgressiveTrainer
-)
+try:
+    from .training import (
+        GradientSurgeon, AdaptiveGradientSurgeon,
+        GradientConflictAnalyzer,
+        CosineAnnealingWarmRestarts, OneCycleLR, PolynomialDecayLR, AdaptiveLRScheduler,
+        NoisyStudentScheduler, SchedulerFactory,
+        ProgressiveTrainingConfig, CurriculumLearning, GrowLengthScheduler,
+        DynamicBatchSizer, ProgressiveModelScaler, ProgressiveTrainer
+    )
+except ImportError:
+    GradientSurgeon = AdaptiveGradientSurgeon = None
+    GradientConflictAnalyzer = None
+    CosineAnnealingWarmRestarts = OneCycleLR = PolynomialDecayLR = AdaptiveLRScheduler = None
+    NoisyStudentScheduler = SchedulerFactory = None
+    ProgressiveTrainingConfig = CurriculumLearning = GrowLengthScheduler = None
+    DynamicBatchSizer = ProgressiveModelScaler = ProgressiveTrainer = None
 
 # Loss functions
-from .losses import (
-    ContrastiveLoss, FocalLoss, LabelSmoothingLoss,
-    DiversityLoss, AuxiliaryLoss, ConsistencyLoss,
-    PerplexityLoss, AdaptiveLossScaling, CompositeLoss
-)
+try:
+    from .losses import (
+        ContrastiveLoss, FocalLoss, LabelSmoothingLoss,
+        DiversityLoss, AuxiliaryLoss, ConsistencyLoss,
+        PerplexityLoss, AdaptiveLossScaling, CompositeLoss
+    )
+except ImportError:
+    ContrastiveLoss = FocalLoss = LabelSmoothingLoss = None
+    DiversityLoss = AuxiliaryLoss = ConsistencyLoss = None
+    PerplexityLoss = AdaptiveLossScaling = CompositeLoss = None
 
 # Evaluation
-from .evaluation.comprehensive_eval import (
-    ComprehensiveEvaluator, PerplexityEvaluator,
-    BLEUEvaluator, ROUGEEvaluator, ToxicityEvaluator,
-    BiasEvaluator, CoherenceEvaluator
-)
+try:
+    from .evaluation.comprehensive_eval import (
+        ComprehensiveEvaluator, PerplexityEvaluator,
+        BLEUEvaluator, ROUGEEvaluator, ToxicityEvaluator,
+        BiasEvaluator, CoherenceEvaluator
+    )
+except ImportError:
+    ComprehensiveEvaluator = PerplexityEvaluator = None
+    BLEUEvaluator = ROUGEEvaluator = ToxicityEvaluator = None
+    BiasEvaluator = CoherenceEvaluator = None
 
 # Optimization
-from .optimization import (
-    ModelQuantizer, LinearQuantized, DynamicQuantization,
-    INT4Quantization, QuantizationConfig, quantize_model_pipeline,
-    LionOptimizer, SophiaOptimizer, AdaFactorOptimizer,
-    OptimizerFactory,
-    FP8Format, FP8Config, FP8Handler, FP8Linear, FP8MultiHeadAttention,
-    FP8LayerNorm, FP8TransformerLayer, FP8ModelWrapper,
-    create_fp8_model, benchmark_fp8_training
-)
+try:
+    from .optimization import (
+        ModelQuantizer, LinearQuantized, DynamicQuantization,
+        INT4Quantization, QuantizationConfig, quantize_model_pipeline,
+        LionOptimizer, SophiaOptimizer, AdaFactorOptimizer,
+        OptimizerFactory,
+        FP8Format, FP8Config, FP8Handler, FP8Linear, FP8MultiHeadAttention,
+        FP8LayerNorm, FP8TransformerLayer, FP8ModelWrapper,
+        create_fp8_model, benchmark_fp8_training
+    )
+except ImportError:
+    ModelQuantizer = LinearQuantized = DynamicQuantization = None
+    INT4Quantization = QuantizationConfig = quantize_model_pipeline = None
+    LionOptimizer = SophiaOptimizer = AdaFactorOptimizer = None
+    OptimizerFactory = None
+    FP8Format = FP8Config = FP8Handler = FP8Linear = FP8MultiHeadAttention = None
+    FP8LayerNorm = FP8TransformerLayer = FP8ModelWrapper = None
+    create_fp8_model = benchmark_fp8_training = None
 
 # Memory and continual learning
-from .memory import (
-    EpisodicMemoryBank, MemoryEntry, MemoryRetriever,
-    AdaptiveMemoryManager, ExperienceReplay
-)
+try:
+    from .memory import (
+        EpisodicMemoryBank, MemoryEntry, MemoryRetriever,
+        AdaptiveMemoryManager, ExperienceReplay
+    )
+except ImportError:
+    EpisodicMemoryBank = MemoryEntry = MemoryRetriever = None
+    AdaptiveMemoryManager = ExperienceReplay = None
 
 # Configuration Management
-from .config import (
-    EnhancedTrainingConfig, TrainingConfigManager,
-    ArchitectureConfig, RAGConfig, LossConfig, GradientConfig,
-    EvaluationConfig, QuantizationConfig, EpisodicMemoryConfig,
-    DataConfig, MultiColumnDataConfig, TrainingConfig,
-    OutputConfig, RunManagementConfig, WandBConfig, PerformanceConfig
-)
+try:
+    from .config import (
+        EnhancedTrainingConfig, TrainingConfigManager,
+        ArchitectureConfig, RAGConfig, LossConfig, GradientConfig,
+        EvaluationConfig, QuantizationConfig, EpisodicMemoryConfig,
+        DataConfig, MultiColumnDataConfig, TrainingConfig,
+        OutputConfig, RunManagementConfig, WandBConfig, PerformanceConfig
+    )
+except ImportError:
+    EnhancedTrainingConfig = TrainingConfigManager = None
+    ArchitectureConfig = RAGConfig = LossConfig = GradientConfig = None
+    EvaluationConfig = QuantizationConfig = EpisodicMemoryConfig = None
+    DataConfig = MultiColumnDataConfig = TrainingConfig = None
+    OutputConfig = RunManagementConfig = WandBConfig = PerformanceConfig = None
 
 # Serving
-from .serving.fastapi_server import LLMServer
+try:
+    from .serving.fastapi_server import LLMServer
+except ImportError:
+    LLMServer = None
 
 __version__ = "2.0.0"
 

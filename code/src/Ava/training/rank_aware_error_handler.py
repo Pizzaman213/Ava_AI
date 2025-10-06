@@ -5,8 +5,8 @@ Provides graceful error handling across distributed training ranks with failure 
 recovery mechanisms, and coordinated error responses.
 """
 
-import torch
-import torch.distributed as dist
+import torch  # type: ignore[import]
+import torch.distributed as dist  # type: ignore[import]
 import time
 import threading
 import traceback
@@ -182,7 +182,7 @@ class RankAwareErrorHandler:
             for target_rank in range(self.world_size):
                 if target_rank != self.rank:
                     try:
-                        dist.send(heartbeat_data, dst=target_rank, async_op=False)
+                        dist.send(heartbeat_data, dst=target_rank)
                     except Exception as e:
                         logger.debug(f"Failed to send heartbeat to rank {target_rank}: {e}")
 
@@ -254,7 +254,7 @@ class RankAwareErrorHandler:
         shutdown_error = ErrorInfo(
             rank=self.rank,
             timestamp=time.time(),
-            error_type=ErrorType.CRITICAL,
+            error_type=ErrorType.UNKNOWN,
             severity=ErrorSeverity.FATAL,
             message="Emergency shutdown due to excessive rank failures",
             recoverable=False
@@ -366,8 +366,8 @@ class RankAwareErrorHandler:
             for target_rank in range(self.world_size):
                 if target_rank != self.rank:
                     try:
-                        dist.send(size_tensor, dst=target_rank, async_op=False)
-                        dist.send(error_tensor, dst=target_rank, async_op=False)
+                        dist.send(size_tensor, dst=target_rank)
+                        dist.send(error_tensor, dst=target_rank)
                     except Exception as e:
                         logger.debug(f"Failed to broadcast error to rank {target_rank}: {e}")
 

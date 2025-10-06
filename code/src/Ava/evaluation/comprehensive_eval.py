@@ -5,8 +5,8 @@ This module provides a complete evaluation framework including various
 metrics, benchmarks, and analysis tools for language models.
 """
 
-import torch
-import torch.nn as nn
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any, Union
 from dataclasses import dataclass
@@ -18,7 +18,7 @@ import seaborn as sns
 from collections import defaultdict
 import math
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer  # type: ignore[import]
 import re
 
 
@@ -260,7 +260,7 @@ class BLEUEvaluator:
 
         return EvaluationResult(
             metric_name="bleu",
-            score=avg_bleu,
+            score=float(avg_bleu),
             details={
                 "individual_scores": total_scores,
                 "n_gram_scores": avg_n_gram_scores,
@@ -275,7 +275,7 @@ class BLEUEvaluator:
 class ROUGEEvaluator:
     """ROUGE score evaluator for summarization tasks."""
 
-    def __init__(self, rouge_types: List[str] = None):
+    def __init__(self, rouge_types: Optional[List[str]] = None):
         self.rouge_types = rouge_types or ["rouge-1", "rouge-2", "rouge-l"]
 
     def _get_ngrams(self, tokens: List[str], n: int) -> set:
@@ -418,7 +418,7 @@ class ToxicityEvaluator:
 
         return EvaluationResult(
             metric_name="toxicity",
-            score=avg_toxicity,
+            score=float(avg_toxicity),
             details={
                 "individual_scores": toxicity_scores,
                 "toxic_percentage": toxic_percentage,
@@ -527,7 +527,7 @@ class CoherenceEvaluator:
             sim = self._compute_sentence_similarity(sentences[i], sentences[i + 1])
             similarities.append(sim)
 
-        return np.mean(similarities) if similarities else 0.0
+        return float(np.mean(similarities)) if similarities else 0.0
 
     def evaluate(self, texts: List[str]) -> EvaluationResult:
         """
@@ -543,7 +543,7 @@ class CoherenceEvaluator:
 
         return EvaluationResult(
             metric_name="coherence",
-            score=np.mean(coherence_scores),
+            score=float(np.mean(coherence_scores)),
             details={
                 "individual_scores": coherence_scores,
                 "std_dev": np.std(coherence_scores),
@@ -565,7 +565,7 @@ class ComprehensiveEvaluator:
     a unified interface for model evaluation.
     """
 
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize comprehensive evaluator.
 
@@ -598,7 +598,7 @@ class ComprehensiveEvaluator:
         self,
         model: nn.Module,
         evaluation_data: Dict[str, Any],
-        metrics: List[str] = None,
+        metrics: Optional[List[str]] = None,
         save_results: bool = True,
         output_dir: Optional[Path] = None
     ) -> Dict[str, EvaluationResult]:

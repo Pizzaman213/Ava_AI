@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Optional
 
 def get_installed_packages() -> Set[str]:
     """Get a set of installed package names."""
@@ -103,7 +103,7 @@ def install_package(package: str) -> tuple:
     except Exception as e:
         return package, False, str(e)
 
-def fast_pip_install(requirements_file: str, max_workers: int = None, download_only: bool = False):
+def fast_pip_install(requirements_file: str, max_workers: Optional[int] = None, download_only: bool = False):
     """Fast pip installation using parallel processing."""
     
     if max_workers is None:

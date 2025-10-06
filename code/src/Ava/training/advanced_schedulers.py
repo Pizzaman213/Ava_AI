@@ -18,12 +18,12 @@ References:
 - Super-convergence: https://arxiv.org/abs/1506.01186
 """
 
-import torch
-import torch.nn as nn
-from torch.optim.lr_scheduler import _LRScheduler
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+from torch.optim.lr_scheduler import _LRScheduler  # type: ignore[import]
 import math
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any, Union, Callable
+from typing import Dict, List, Optional, Tuple, Any, Union, Callable, Sequence
 from abc import ABC, abstractmethod
 import logging
 from collections import deque, defaultdict
@@ -193,21 +193,29 @@ class OneCycleLR(_LRScheduler):
         three_phase: bool = False,
         last_epoch: int = -1
     ):
-        # Validate parameters
+        # Validate parameters and ensure lists
         if not isinstance(max_lr, (list, tuple)):
-            max_lr = [max_lr] * len(optimizer.param_groups)
-        if not isinstance(base_momentum, (list, tuple)):
-            base_momentum = [base_momentum] * len(optimizer.param_groups)
-        if not isinstance(max_momentum, (list, tuple)):
-            max_momentum = [max_momentum] * len(optimizer.param_groups)
+            max_lrs_list: List[float] = [float(max_lr)] * len(optimizer.param_groups)
+        else:
+            max_lrs_list = [float(lr) for lr in max_lr]
 
-        self.max_lrs = max_lr
+        if not isinstance(base_momentum, (list, tuple)):
+            base_momentum_list: List[float] = [float(base_momentum)] * len(optimizer.param_groups)
+        else:
+            base_momentum_list = [float(m) for m in base_momentum]
+
+        if not isinstance(max_momentum, (list, tuple)):
+            max_momentum_list: List[float] = [float(max_momentum)] * len(optimizer.param_groups)
+        else:
+            max_momentum_list = [float(m) for m in max_momentum]
+
+        self.max_lrs: List[float] = max_lrs_list
         self.total_steps = total_steps
         self.pct_start = pct_start
         self.anneal_strategy = anneal_strategy
         self.cycle_momentum = cycle_momentum
-        self.base_momentum = base_momentum
-        self.max_momentum = max_momentum
+        self.base_momentum: List[float] = base_momentum_list
+        self.max_momentum: List[float] = max_momentum_list
         self.div_factor = div_factor
         self.final_div_factor = final_div_factor
         self.three_phase = three_phase
@@ -449,8 +457,8 @@ class AdaptiveLRScheduler(_LRScheduler):
             return False
 
         # Check if gradient norm is significantly higher than recent history
-        recent_avg = np.mean(list(self.gradient_history)[-10:])
-        return grad_norm > recent_avg * 3.0 and grad_norm > self.gradient_clip_threshold
+        recent_avg = float(np.mean(list(self.gradient_history)[-10:]))
+        return bool(grad_norm > recent_avg * 3.0 and grad_norm > self.gradient_clip_threshold)
 
     def _detect_learning_rate_recovery_opportunity(self) -> bool:
         """Detect if learning rate can be recovered."""
@@ -469,7 +477,7 @@ class AdaptiveLRScheduler(_LRScheduler):
 
         return False
 
-    def step(self, metrics: Dict[str, float]):
+    def step(self, metrics: Dict[str, float]):  # type: ignore[override]
         """
         Step the scheduler with current metrics.
 
@@ -746,7 +754,7 @@ def benchmark_schedulers(
     optimizer,
     data_loader,
     total_steps: int,
-    schedulers_to_test: List[str] = None
+    schedulers_to_test: Optional[List[str]] = None
 ) -> Dict[str, Dict[str, float]]:
     """
     Benchmark different schedulers on convergence speed and stability.
@@ -770,7 +778,8 @@ def benchmark_schedulers(
         logger.info(f"Benchmarking scheduler: {scheduler_name}")
 
         # Create fresh model and optimizer copies
-        model_copy = type(model)(model.config).to(model.device)
+        device = next(model.parameters()).device if hasattr(model, 'parameters') else 'cpu'
+        model_copy = type(model)(model.config).to(device)  # type: ignore[call-arg]
         model_copy.load_state_dict(model.state_dict())
 
         optimizer_copy = type(optimizer)(model_copy.parameters(), **optimizer.defaults)
@@ -795,7 +804,7 @@ def benchmark_schedulers(
                 break
 
             # Move batch to device
-            batch = {k: v.to(model.device) if torch.is_tensor(v) else v
+            batch = {k: v.to(device) if torch.is_tensor(v) else v
                     for k, v in batch.items()}
 
             # Forward pass
@@ -814,7 +823,8 @@ def benchmark_schedulers(
             if isinstance(scheduler, AdaptiveLRScheduler):
                 # Adaptive scheduler needs metrics
                 grad_norm = torch.nn.utils.clip_grad_norm_(model_copy.parameters(), 1.0)
-                scheduler.step({'loss': loss.item(), 'grad_norm': grad_norm})
+                grad_norm_float = grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)
+                scheduler.step({'loss': loss.item(), 'grad_norm': grad_norm_float})
             else:
                 scheduler.step()
 

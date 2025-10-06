@@ -5,7 +5,7 @@ This module provides comprehensive GPU memory management, cleanup functions,
 and signal handling for proper resource management during training.
 """
 
-import torch
+import torch  # type: ignore[import]
 import gc
 import signal
 import atexit
@@ -18,6 +18,7 @@ try:
     import torch.distributed as dist
     DISTRIBUTED_AVAILABLE = True
 except ImportError:
+    dist = None  # type: ignore[assignment]
     DISTRIBUTED_AVAILABLE = False
 
 
@@ -97,9 +98,9 @@ class GPUMemoryManager:
 
                         # Force memory pool cleanup
                         try:
-                            torch.cuda.memory._set_per_process_memory_fraction(0.0)
+                            torch.cuda.memory._set_per_process_memory_fraction(0.0)  # type: ignore[attr-defined]
                             torch.cuda.empty_cache()
-                            torch.cuda.memory._set_per_process_memory_fraction(1.0)
+                            torch.cuda.memory._set_per_process_memory_fraction(1.0)  # type: ignore[attr-defined]
                         except Exception:
                             pass
 
@@ -122,7 +123,7 @@ class GPUMemoryManager:
 
         except Exception as e:
             print(f" Error during GPU cleanup: {e}")
-            stats['error'] = str(e)
+            stats['error'] = str(e)  # type: ignore[assignment]
 
         return stats
 
@@ -300,15 +301,15 @@ def distributed_cleanup(sync: bool = True) -> Dict[str, float]:
     Returns:
         Memory statistics after cleanup
     """
-    if DISTRIBUTED_AVAILABLE and dist.is_initialized() and sync:
+    if DISTRIBUTED_AVAILABLE and dist.is_initialized() and sync:  # type: ignore[union-attr]
         # Synchronize all processes before cleanup
-        dist.barrier()
+        dist.barrier()  # type: ignore[union-attr]
 
         # Perform cleanup
         stats = get_memory_manager().cleanup_gpu_memory(aggressive=True)
 
         # Synchronize after cleanup
-        dist.barrier()
+        dist.barrier()  # type: ignore[union-attr]
 
         return stats
     else:
@@ -319,5 +320,5 @@ def is_distributed_training() -> bool:
     """Check if we're in a distributed training environment."""
     return (
         DISTRIBUTED_AVAILABLE and
-        (dist.is_initialized() or 'WORLD_SIZE' in os.environ)
+        (dist.is_initialized() or 'WORLD_SIZE' in os.environ)  # type: ignore[union-attr]
     )

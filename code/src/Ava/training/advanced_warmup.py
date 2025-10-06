@@ -5,7 +5,7 @@ This module provides sophisticated warmup scheduling with multiple warmup types,
 gradient-norm based completion, restart mechanisms, and adaptive parameter tuning.
 """
 
-import torch
+import torch  # type: ignore[import]
 import math
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
@@ -262,7 +262,7 @@ class AdvancedWarmupScheduler:
 
     def _handle_post_warmup(self) -> Dict[str, Any]:
         """Handle post-warmup decay if configured."""
-        if not self.decay_applied and self.config.decay_steps > 0:
+        if not self.decay_applied and self.config.decay_steps > 0 and self.warmup_completion_step is not None:
             steps_since_warmup = self.current_step - self.warmup_completion_step
             if steps_since_warmup <= self.config.decay_steps:
                 self._apply_warmup_decay(steps_since_warmup)

@@ -6,9 +6,9 @@ and analysis for enhanced monitoring and debugging.
 """
 
 import time
-import torch
+import torch  # type: ignore[import]
 import psutil
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Tuple, Union, cast
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 from enum import Enum
@@ -97,8 +97,8 @@ class TrainingMetricsCollector:
         self.metrics_history = deque(maxlen=config.history_size)
         self.detailed_history = deque(maxlen=config.detailed_history_size)
 
-        # Running statistics
-        self.running_stats = defaultdict(lambda: {
+        # Running statistics - using Dict[str, Any] for flexibility with different stat types
+        self.running_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
             'count': 0, 'sum': 0.0, 'sum_sq': 0.0,
             'min': float('inf'), 'max': float('-inf'),
             'recent': deque(maxlen=config.trend_window_size)
@@ -285,18 +285,19 @@ class TrainingMetricsCollector:
         for name, value in metrics_to_track.items():
             if isinstance(value, (int, float)) and not np.isnan(value):
                 stats = self.running_stats[name]
-                stats['count'] += 1
-                stats['sum'] += value
-                stats['sum_sq'] += value ** 2
-                stats['min'] = min(stats['min'], value)
-                stats['max'] = max(stats['max'], value)
-                stats['recent'].append(value)
+                stats['count'] = int(stats['count']) + 1  # type: ignore[assignment]
+                stats['sum'] = float(stats['sum']) + value  # type: ignore[assignment]
+                stats['sum_sq'] = float(stats['sum_sq']) + value ** 2  # type: ignore[assignment]
+                stats['min'] = min(float(stats['min']), value)
+                stats['max'] = max(float(stats['max']), value)
+                cast(deque, stats['recent']).append(value)
 
     def _analyze_trends(self, step_info: TrainingStep) -> None:
         """Analyze trends in metrics."""
         for metric_name, stats in self.running_stats.items():
-            if len(stats['recent']) >= self.config.trend_window_size:
-                recent_values = list(stats['recent'])
+            recent = cast(deque, stats['recent'])
+            if len(recent) >= self.config.trend_window_size:
+                recent_values = list(recent)
 
                 # Simple linear trend
                 x = np.arange(len(recent_values))
@@ -316,9 +317,10 @@ class TrainingMetricsCollector:
     def _detect_anomalies(self, step_info: TrainingStep) -> None:
         """Detect anomalies in metrics."""
         for metric_name, stats in self.running_stats.items():
-            if stats['count'] >= 10:  # Need sufficient history
-                mean = stats['sum'] / stats['count']
-                variance = (stats['sum_sq'] / stats['count']) - (mean ** 2)
+            count = float(stats['count'])
+            if count >= 10:  # Need sufficient history
+                mean = float(stats['sum']) / count
+                variance = (float(stats['sum_sq']) / count) - (mean ** 2)
                 std = variance ** 0.5 if variance > 0 else 0
 
                 # Get current value
@@ -354,18 +356,20 @@ class TrainingMetricsCollector:
         stats_summary = {}
 
         for metric_name, stats in self.running_stats.items():
-            if stats['count'] > 0:
-                mean = stats['sum'] / stats['count']
-                variance = (stats['sum_sq'] / stats['count']) - (mean ** 2)
+            count = float(stats['count'])
+            if count > 0:
+                mean = float(stats['sum']) / count
+                variance = (float(stats['sum_sq']) / count) - (mean ** 2)
                 std = variance ** 0.5 if variance > 0 else 0
 
+                recent = cast(deque, stats['recent'])
                 stats_summary[metric_name] = {
-                    'count': stats['count'],
+                    'count': count,
                     'mean': mean,
                     'std': std,
-                    'min': stats['min'],
-                    'max': stats['max'],
-                    'latest': stats['recent'][-1] if stats['recent'] else None
+                    'min': float(stats['min']),
+                    'max': float(stats['max']),
+                    'latest': recent[-1] if recent else None
                 }
 
         return stats_summary
@@ -437,7 +441,7 @@ class TrainingMetricsCollector:
 
     def record_timing(self, name: str, duration: float) -> None:
         """Record a timing measurement."""
-        self.running_stats[f'timing_{name}']['recent'].append(duration)
+        cast(deque, self.running_stats[f'timing_{name}']['recent']).append(duration)
 
     def reset_statistics(self) -> None:
         """Reset all statistics."""
@@ -473,13 +477,14 @@ class TrainingMetricsCollector:
         stats = self.running_stats['batch_size_history']
 
         # Determine if increase or decrease
-        if stats['recent']:
-            prev_batch_size = stats['recent'][-1]
+        recent = cast(deque, stats['recent'])
+        if recent:
+            prev_batch_size = recent[-1]
             if new_batch_size > prev_batch_size:
-                stats['increases'] += 1
+                stats['increases'] = int(stats['increases']) + 1  # type: ignore[assignment]
                 direction = 'increase'
             elif new_batch_size < prev_batch_size:
-                stats['decreases'] += 1
+                stats['decreases'] = int(stats['decreases']) + 1  # type: ignore[assignment]
                 direction = 'decrease'
             else:
                 direction = 'unchanged'
@@ -487,15 +492,15 @@ class TrainingMetricsCollector:
             direction = 'initial'
 
         # Update statistics
-        stats['count'] += 1
-        stats['sum'] += new_batch_size
-        stats['sum_sq'] += new_batch_size ** 2
-        stats['min'] = min(stats['min'], new_batch_size)
-        stats['max'] = max(stats['max'], new_batch_size)
-        stats['recent'].append(new_batch_size)
+        stats['count'] = int(stats['count']) + 1  # type: ignore[assignment]
+        stats['sum'] = float(stats['sum']) + new_batch_size  # type: ignore[assignment]
+        stats['sum_sq'] = float(stats['sum_sq']) + new_batch_size ** 2  # type: ignore[assignment]
+        stats['min'] = min(float(stats['min']), new_batch_size)
+        stats['max'] = max(float(stats['max']), new_batch_size)
+        recent.append(new_batch_size)
 
         # Record change event
-        stats['changes'].append({
+        cast(deque, stats['changes']).append({
             'step': step,
             'batch_size': new_batch_size,
             'reason': reason,
@@ -526,13 +531,15 @@ class TrainingMetricsCollector:
         stats = self.running_stats['batch_size_history']
 
         # Calculate average
-        avg_batch_size = stats['sum'] / stats['count'] if stats['count'] > 0 else 0.0
+        count = float(stats['count'])
+        avg_batch_size = float(stats['sum']) / count if count > 0 else 0.0
 
         # Get current batch size
-        current_batch_size = stats['recent'][-1] if stats['recent'] else None
+        recent = cast(deque, stats['recent'])
+        current_batch_size = recent[-1] if recent else None
 
         # Calculate adjustment rate (changes per step)
-        adjustment_rate = stats['count'] / max(self.total_steps, 1)
+        adjustment_rate = count / max(self.total_steps, 1)
 
         return {
             'enabled': True,
@@ -544,7 +551,7 @@ class TrainingMetricsCollector:
             'increases': stats['increases'],
             'decreases': stats['decreases'],
             'adjustment_rate': adjustment_rate,
-            'recent_changes': list(stats['changes'])[-5:] if stats['changes'] else []
+            'recent_changes': list(cast(deque, stats['changes']))[-5:] if stats['changes'] else []
         }
 
     def get_state_dict(self) -> Dict[str, Any]:
@@ -639,3 +646,184 @@ def create_minimal_metrics_config() -> MetricConfig:
         enable_trend_analysis=False,
         enable_anomaly_detection=False
     )
+
+
+# MoE-Specific Metrics
+@dataclass
+class MoEMetricsConfig:
+    """Configuration for MoE-specific metrics tracking."""
+    track_expert_utilization: bool = True
+    track_routing_entropy: bool = True
+    track_load_balance: bool = True
+    track_expert_specialization: bool = False
+    log_frequency: int = 500
+
+
+class MoEMetricsTracker:
+    """
+    Mixture-of-Experts specific metrics tracker.
+
+    Monitors expert behavior to detect issues like:
+    - Expert collapse (all tokens routed to few experts)
+    - Poor load balancing
+    - Low routing diversity
+    """
+
+    def __init__(self, config: MoEMetricsConfig, num_experts: int = 8):
+        """
+        Initialize MoE metrics tracker.
+
+        Args:
+            config: MoE metrics configuration
+            num_experts: Number of experts in the model
+        """
+        self.config = config
+        self.num_experts = num_experts
+
+        # Expert utilization tracking
+        self.expert_counts = defaultdict(int)
+        self.expert_utilization_history = deque(maxlen=1000)
+
+        # Routing entropy tracking
+        self.routing_entropy_history = deque(maxlen=1000)
+
+        # Load balance tracking
+        self.load_balance_history = deque(maxlen=1000)
+
+        # Specialization tracking (if enabled)
+        self.expert_token_affinity = defaultdict(lambda: defaultdict(int))
+
+    def update_from_router_outputs(
+        self,
+        router_logits: torch.Tensor,
+        selected_experts: torch.Tensor,
+        step: int
+    ) -> Dict[str, float]:
+        """
+        Update metrics from router outputs.
+
+        Args:
+            router_logits: Router logits [batch_size, seq_len, num_experts]
+            selected_experts: Selected expert indices [batch_size, seq_len, top_k]
+            step: Current training step
+
+        Returns:
+            Dictionary of computed metrics
+        """
+        metrics = {}
+
+        if self.config.track_expert_utilization:
+            utilization = self._compute_expert_utilization(selected_experts)
+            metrics['moe/expert_utilization'] = utilization
+            self.expert_utilization_history.append(utilization)
+
+        if self.config.track_routing_entropy:
+            entropy = self._compute_routing_entropy(router_logits)
+            metrics['moe/routing_entropy'] = entropy
+            self.routing_entropy_history.append(entropy)
+
+        if self.config.track_load_balance:
+            balance = self._compute_load_balance(selected_experts)
+            metrics['moe/load_balance'] = balance
+            self.load_balance_history.append(balance)
+
+        return metrics
+
+    def _compute_expert_utilization(self, selected_experts: torch.Tensor) -> float:
+        """
+        Compute percentage of experts being actively used.
+
+        Returns:
+            Utilization ratio (0.0 to 1.0, higher is better)
+        """
+        # Flatten to get all selected experts
+        flat_experts = selected_experts.flatten()
+        unique_experts = torch.unique(flat_experts)
+
+        utilization = len(unique_experts) / self.num_experts
+        return float(utilization)
+
+    def _compute_routing_entropy(self, router_logits: torch.Tensor) -> float:
+        """
+        Compute entropy of routing distribution.
+
+        Higher entropy = more diverse routing (better)
+        Lower entropy = concentrated routing (risk of expert collapse)
+
+        Returns:
+            Average routing entropy across batch
+        """
+        # Apply softmax to get probabilities
+        routing_probs = torch.softmax(router_logits, dim=-1)
+
+        # Compute entropy: -sum(p * log(p))
+        entropy = -torch.sum(routing_probs * torch.log(routing_probs + 1e-10), dim=-1)
+
+        # Average across batch and sequence
+        avg_entropy = entropy.mean().item()
+
+        return avg_entropy
+
+    def _compute_load_balance(self, selected_experts: torch.Tensor) -> float:
+        """
+        Compute load balance metric.
+
+        Perfect balance = 1.0 (all experts used equally)
+        Poor balance = lower values (some experts overused)
+
+        Returns:
+            Load balance score (0.0 to 1.0)
+        """
+        # Count how many times each expert was selected
+        flat_experts = selected_experts.flatten()
+        expert_counts = torch.bincount(flat_experts, minlength=self.num_experts)
+
+        # Compute coefficient of variation (inverse measure of balance)
+        mean_count = expert_counts.float().mean()
+        std_count = expert_counts.float().std()
+
+        if mean_count > 0:
+            cv = std_count / mean_count
+            # Convert to 0-1 score (lower CV = better balance)
+            balance_score = 1.0 / (1.0 + cv)
+        else:
+            balance_score = 0.0
+
+        return float(balance_score)
+
+    def get_summary_statistics(self) -> Dict[str, Any]:
+        """Get summary statistics of MoE metrics."""
+        summary = {}
+
+        if self.expert_utilization_history:
+            summary['expert_utilization_mean'] = np.mean(self.expert_utilization_history)
+            summary['expert_utilization_std'] = np.std(self.expert_utilization_history)
+            summary['expert_utilization_min'] = np.min(self.expert_utilization_history)
+
+        if self.routing_entropy_history:
+            summary['routing_entropy_mean'] = np.mean(self.routing_entropy_history)
+            summary['routing_entropy_std'] = np.std(self.routing_entropy_history)
+
+        if self.load_balance_history:
+            summary['load_balance_mean'] = np.mean(self.load_balance_history)
+            summary['load_balance_min'] = np.min(self.load_balance_history)
+
+        return summary
+
+    def detect_expert_collapse(self, threshold: float = 0.5) -> bool:
+        """
+        Detect if expert collapse is occurring.
+
+        Args:
+            threshold: Minimum utilization ratio to consider healthy
+
+        Returns:
+            True if expert collapse detected
+        """
+        if not self.expert_utilization_history:
+            return False
+
+        recent_utilization = list(self.expert_utilization_history)[-10:]
+        avg_utilization = np.mean(recent_utilization)
+
+        return avg_utilization < threshold

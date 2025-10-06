@@ -10,9 +10,10 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
+from torch.amp import GradScaler, autocast  # type: ignore[import]
 
 # Optional imports with fallbacks
 try:
@@ -23,37 +24,78 @@ except ImportError:
     WANDB_AVAILABLE = False
 
 try:
-    import deepspeed
+    import deepspeed  # type: ignore[import]
 
     DEEPSPEED_AVAILABLE = True
 except ImportError:
     DEEPSPEED_AVAILABLE = False
+    deepspeed = None  # type: ignore[assignment]
 
 from ..config.training_config import EnhancedTrainingConfig
 from ..evaluation.comprehensive_eval import ComprehensiveEvaluator
 
 # Import existing components
 from ..losses.advanced_losses import AdaptiveLossScaling, CompositeLoss
+from ..losses.deepseek_loss import DeepSeekLoss
 from ..memory.episodic_memory import (
     AdaptiveMemoryManager,
     EpisodicMemoryBank,
     ExperienceReplay,
 )
 
-# Import Phase 7 observability components
-from ..observability.training_integration import (
-    ObservabilityConfig,
-    ObservabilityIntegration,
-    create_lightweight_observability,
-    create_observability_integration,
-)
+# Import Phase 7 observability components - DISABLED (modules removed)
+# from ..observability.training_integration import (
+#     ObservabilityConfig,
+#     ObservabilityIntegration,
+#     create_lightweight_observability,
+#     create_observability_integration,
+# )
+# Stub classes to prevent errors
+class ObservabilityConfig:
+    def __init__(self, *args, **kwargs):
+        """Accept any arguments to prevent initialization errors."""
+        pass
+class ObservabilityIntegration:
+    def __init__(self, *args, **kwargs):
+        pass
+    def initialize(self, *args, **kwargs):
+        pass
+    def log_metrics(self, *args, **kwargs):
+        pass
+    def start_training_observation(self, *args, **kwargs):
+        pass
+    def handle_out_of_memory(self, *args, **kwargs):
+        pass
+    def handle_training_error(self, *args, **kwargs):
+        pass
+    def update_training_step(self, *args, **kwargs):
+        pass
+    def create_checkpoint_data(self, *args, **kwargs):
+        return {}
+    def stop_training_observation(self, *args, **kwargs):
+        pass
+    def export_all_data(self, *args, **kwargs):
+        pass
+    def shutdown(self, *args, **kwargs):
+        pass
+    def get_observability_summary(self, *args, **kwargs):
+        return {}
+def create_lightweight_observability(*args, **kwargs):
+    return ObservabilityIntegration()
+def create_observability_integration(*args, **kwargs):
+    return ObservabilityIntegration()
 from ..optimization.quantization import ModelQuantizer, QuantizationConfig
-from ..retrieval.rag_system import KnowledgeBase, RAGSystem
+# from ..retrieval.rag_system import KnowledgeBase, RAGSystem  # DISABLED (module removed)
+# Stub classes to prevent errors
+class KnowledgeBase:
+    pass
+class RAGSystem:
+    def __init__(self, *args, **kwargs):
+        pass
 from ..utils.async_logging import AsyncLogger, AsyncLoggingConfig
 
 # Import all the new modular components
 from ..utils.gpu_memory import GPUMemoryManager
-from .adaptive_lr import AdaptiveLearningRateManager, AdaptiveLRConfig
 from .advanced_warmup import AdvancedWarmupScheduler, WarmupConfig
 from .distributed_health_checker import (
     DistributedHealthChecker,
@@ -124,6 +166,9 @@ class EnhancedModularTrainer:
         # Observability integration (Phase 7)
         self.observability = None
 
+        # Adaptive learning rate manager (optional)
+        self.adaptive_lr_manager = None
+
         # Initialize all modular components
         self._init_gpu_memory_manager()
         self._init_performance_manager()
@@ -156,7 +201,7 @@ class EnhancedModularTrainer:
 
         # Mixed precision gradient scaler with health monitoring
         self.scaler = (
-            torch.amp.GradScaler("cuda") if torch.cuda.is_available() else None
+            GradScaler('cuda') if torch.cuda.is_available() else None
         )
         self.scaler_reset_interval = (
             1000  # Reset scaler every N steps to prevent error accumulation
@@ -176,6 +221,14 @@ class EnhancedModularTrainer:
         )
 
         # Initialize memory monitor for proactive OOM prevention
+        # Check for silent_mode in config (supports both dict and object access)
+        memory_silent = False
+        if hasattr(config, 'memory') and config.memory:
+            if hasattr(config.memory, 'silent_mode'):
+                memory_silent = config.memory.silent_mode
+            elif isinstance(config.memory, dict) and 'silent_mode' in config.memory:
+                memory_silent = config.memory['silent_mode']
+
         self.memory_monitor = MemoryMonitor(
             target_utilization=0.85,
             warning_threshold=0.90,
@@ -183,6 +236,7 @@ class EnhancedModularTrainer:
             emergency_threshold=0.98,
             history_size=100,
             memory_headroom_gb=1.0,
+            silent_mode=memory_silent,
         )
         print("Gradient, loss, and memory monitors initialized")
 
@@ -193,8 +247,8 @@ class EnhancedModularTrainer:
         print(f"🔍 DEBUG: config.training type = {type(config.training)}")
         if hasattr(config.training, '__dict__'):
             print(f"🔍 DEBUG: config.training.__dict__ keys = {list(config.training.__dict__.keys())[:20]}")  # First 20 keys
-        if hasattr(config.training, 'keys'):
-            print(f"🔍 DEBUG: config.training.keys() = {list(config.training.keys())[:20]}")  # If it's a dict
+        if hasattr(config.training, 'keys') and callable(getattr(config.training, 'keys')):
+            print(f"🔍 DEBUG: config.training.keys() = {list(config.training.keys())[:20]}")  # If it's a dict  # type: ignore[attr-defined]
         try:
             # Check if dynamic_batching is configured
             dynamic_batching = None
@@ -202,7 +256,7 @@ class EnhancedModularTrainer:
                 dynamic_batching = config.training.dynamic_batching
                 print(f"🔍 DEBUG: Found dynamic_batching in config.training")
             elif hasattr(config, "dynamic_batching"):
-                dynamic_batching = config.dynamic_batching
+                dynamic_batching = config.dynamic_batching  # type: ignore[attr-defined]
                 print(f"🔍 DEBUG: Found dynamic_batching in config")
             else:
                 print(f"🔍 DEBUG: dynamic_batching not found in config")
@@ -249,6 +303,13 @@ class EnhancedModularTrainer:
         self.last_valid_checkpoint_path = None
         self.checkpoint_restore_attempts = 0
         self.max_restore_attempts = 3
+
+    @property
+    def _get_base_model(self):
+        """Get the base model, handling DeepSpeed wrapping."""
+        if self.deepspeed_engine is not None:
+            return self.deepspeed_engine.module
+        return self.model
 
     def _init_gpu_memory_manager(self):
         """Initialize GPU memory manager."""
@@ -391,13 +452,12 @@ class EnhancedModularTrainer:
 
         # Log the failure event
         if hasattr(self, "async_logger") and self.async_logger:
-            self.async_logger.log_metric(
-                f"rank_failure_{failed_rank}",
-                1,
+            self.async_logger.log_metrics(
                 {
+                    f"rank_failure_{failed_rank}": 1,
                     "error_type": error_info.error_type.value,
                     "severity": error_info.severity.value,
-                },
+                }
             )
 
     def _init_health_checker(self):
@@ -456,14 +516,15 @@ class EnhancedModularTrainer:
 
         if not self.is_distributed:
             print(" DeepSpeed enabled for single-GPU training (ZeRO optimizations)")
-            # Set minimal distributed environment for single GPU
+            # Set complete distributed environment for single GPU
             import os
             os.environ.setdefault('RANK', '0')
             os.environ.setdefault('LOCAL_RANK', '0')
             os.environ.setdefault('WORLD_SIZE', '1')
             os.environ.setdefault('MASTER_ADDR', 'localhost')
-            os.environ.setdefault('MASTER_PORT', '29500')
+            os.environ.setdefault('MASTER_PORT', '29500')  # CRITICAL: Must set port
             self.is_distributed = True  # Enable for single GPU too
+            print(f"   Set distributed env: RANK=0, WORLD_SIZE=1, MASTER_PORT=29500")
 
         # Load or generate DeepSpeed configuration
         self.deepspeed_config = self._create_deepspeed_config()
@@ -475,8 +536,8 @@ class EnhancedModularTrainer:
         ds_config = self.config.deepspeed
 
         config = {
-            "train_batch_size": ds_config.train_batch_size or 32,
-            "train_micro_batch_size_per_gpu": ds_config.micro_batch_size or 4,
+            "train_batch_size": ds_config.train_batch_size or self.config.training.batch_size,
+            "train_micro_batch_size_per_gpu": ds_config.micro_batch_size or self.config.training.batch_size,
             "gradient_accumulation_steps": ds_config.gradient_accumulation_steps,
             "optimizer": {
                 "type": "AdamW",
@@ -491,9 +552,9 @@ class EnhancedModularTrainer:
             "scheduler": {
                 "type": "WarmupLR",
                 "params": {
-                    "warmup_min_lr": "auto",
-                    "warmup_max_lr": "auto",
-                    "warmup_num_steps": "auto",
+                    "warmup_min_lr": 0.0,
+                    "warmup_max_lr": self.config.training.learning_rate,
+                    "warmup_num_steps": getattr(self.config.training, 'warmup_steps', 1000),
                 },
             },
             "zero_optimization": {
@@ -544,6 +605,9 @@ class EnhancedModularTrainer:
 
         # Add CPU offloading
         if ds_config.cpu_offload:
+            # CRITICAL: Allow custom optimizer with ZeRO-Offload
+            config["zero_force_ds_cpu_optimizer"] = False
+
             if ds_config.zero_stage == 2:
                 config["zero_optimization"]["offload_optimizer"] = {
                     "device": "cpu",
@@ -617,47 +681,89 @@ class EnhancedModularTrainer:
 
     def _init_loss_functions(self):
         """Initialize advanced loss functions."""
-        if any(
-            [
-                self.config.losses.use_focal_loss,
-                self.config.losses.use_contrastive_loss,
-                self.config.losses.use_diversity_loss,
-            ]
-        ):
-            loss_config = {}
-            if self.config.losses.use_focal_loss:
-                loss_config["focal"] = {
-                    "type": "focal",
-                    "alpha": 1.0,
-                    "gamma": 2.0,
-                    "weight": 0.1,
-                }
-            if self.config.losses.use_contrastive_loss:
-                loss_config["contrastive"] = {
-                    "type": "contrastive",
-                    "temperature": 0.07,
-                    "weight": 0.1,
-                }
-            if self.config.losses.use_diversity_loss:
-                loss_config["diversity"] = {"type": "diversity", "weight": 0.01}
+        # Always initialize DeepSeek-style loss if multi-token prediction is enabled
+        use_multi_token_prediction = getattr(self.config.losses, "use_multi_token_prediction", False)
 
-            # Add auxiliary loss only if enabled (for MoE stability)
-            if getattr(self.config.losses, "use_auxiliary_loss", True):
-                loss_config["auxiliary"] = {
-                    "type": "auxiliary",
-                    "load_balancing_weight": 0.0001,
-                    "router_z_weight": 0.00001,
-                    "weight": 0.001,
-                }
+        if use_multi_token_prediction:
+            # Initialize DeepSeek-style loss
+            vocab_size = getattr(self.config.model, "vocab_size", 32000)
+            hidden_size = getattr(self.config.model, "hidden_size", 4096)
+            num_experts = getattr(self.config.model, "num_experts", None)
 
-            self.composite_loss = CompositeLoss(loss_config)
-            print(f" Advanced loss functions: {list(loss_config.keys())}")
-        else:
+            self.deepseek_loss = DeepSeekLoss(
+                vocab_size=vocab_size,
+                hidden_size=hidden_size,
+                num_experts=num_experts,
+                # Multi-token prediction settings
+                use_mtp=getattr(self.config.losses, "use_multi_token_prediction", True),
+                num_future_tokens=getattr(self.config.losses, "num_future_tokens", 3),
+                mtp_weight=getattr(self.config.losses, "mtp_weight", 0.1),
+                # Temperature scaling settings
+                initial_temperature=getattr(self.config.losses, "initial_temperature", 1.0),
+                adaptive_temperature=getattr(self.config.losses, "adaptive_temperature", True),
+                label_smoothing=getattr(self.config.losses, "label_smoothing", 0.1),
+                # MoE balancing settings
+                use_moe_balancing=getattr(self.config.losses, "use_moe_balancing", True),
+                gradient_balance_weight=getattr(self.config.losses, "gradient_balance_weight", 0.1)
+            )
+
+            # CRITICAL: Move to device and convert to BF16 if using BF16 training
+            if getattr(self.config.training, "mixed_precision", "fp16") == "bf16":
+                self.deepseek_loss = self.deepseek_loss.to(device=self.device, dtype=torch.bfloat16)
+            else:
+                self.deepseek_loss = self.deepseek_loss.to(self.device)
             self.composite_loss = None
+            print("✓ DeepSeek-style loss initialized with MTP and auxiliary-free balancing")
+        else:
+            # Original composite loss configuration
+            self.deepseek_loss = None
+            loss_config = {}
+            if any(
+                [
+                    self.config.losses.use_focal_loss,
+                    self.config.losses.use_contrastive_loss,
+                    self.config.losses.use_diversity_loss,
+                ]
+            ):
+                if self.config.losses.use_focal_loss:
+                    loss_config["focal"] = {
+                        "type": "focal",
+                        "alpha": 1.0,
+                        "gamma": 2.0,
+                        "weight": 0.1,
+                    }
+                if self.config.losses.use_contrastive_loss:
+                    loss_config["contrastive"] = {
+                        "type": "contrastive",
+                        "temperature": 0.07,
+                        "weight": 0.1,
+                    }
+                if self.config.losses.use_diversity_loss:
+                    loss_config["diversity"] = {"type": "diversity", "weight": 0.01}
+
+                # Add auxiliary loss only if enabled (for MoE stability)
+                if getattr(self.config.losses, "use_auxiliary_loss", True):
+                    loss_config["auxiliary"] = {
+                        "type": "auxiliary",
+                        "load_balancing_weight": 0.0001,
+                        "router_z_weight": 0.00001,
+                        "weight": 0.001,
+                    }
+
+                self.composite_loss = CompositeLoss(loss_config)
+                print(f" Advanced loss functions: {list(loss_config.keys())}")
+            else:
+                self.composite_loss = None
 
         # Adaptive loss scaling
         if self.config.losses.adaptive_loss_scaling:
-            num_losses = len(loss_config) if loss_config else 1
+            if self.deepseek_loss is not None:
+                # For DeepSeek loss, we have main + mtp + moe components
+                num_losses = 3
+            elif self.composite_loss is not None:
+                num_losses = len(loss_config) if 'loss_config' in locals() else 1
+            else:
+                num_losses = 1
             self.adaptive_scaler = AdaptiveLossScaling(num_losses=num_losses)
         else:
             self.adaptive_scaler = None
@@ -881,20 +987,20 @@ class EnhancedModularTrainer:
         try:
             # For HuggingFace models
             if hasattr(self.model, "gradient_checkpointing_enable"):
-                self.model.gradient_checkpointing_enable()
+                self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]
                 print("    ✓ HuggingFace gradient checkpointing enabled")
 
             # For custom models with explicit layer checkpointing
             elif hasattr(self.model, "enable_gradient_checkpointing"):
-                self.model.enable_gradient_checkpointing()
+                self.model.enable_gradient_checkpointing()  # type: ignore[attr-defined]
                 print("    ✓ Custom gradient checkpointing enabled")
 
             # For models with transformer layers, enable layer-wise checkpointing
             elif hasattr(self.model, "transformer") and hasattr(
-                self.model.transformer, "h"
+                self.model.transformer, "h"  # type: ignore[attr-defined]
             ):
                 # Enable checkpointing on transformer layers
-                for layer in self.model.transformer.h:
+                for layer in self.model.transformer.h:  # type: ignore[attr-defined]
                     if hasattr(layer, "gradient_checkpointing"):
                         layer.gradient_checkpointing = True
                 print("    ✓ Layer-wise gradient checkpointing enabled")
@@ -1025,7 +1131,7 @@ class EnhancedModularTrainer:
         """Set up DeepSpeed training with robust initialization."""
         try:
             # Validate distributed training environment
-            import torch.distributed as dist
+            import torch.distributed as dist  # type: ignore[import]
 
             if not dist.is_available():
                 raise RuntimeError("PyTorch distributed not available for DeepSpeed")
@@ -1085,7 +1191,7 @@ class EnhancedModularTrainer:
 
             # Load and merge DeepSpeed configs more carefully
             final_config = (
-                self.deepspeed_config.copy()
+                self.deepspeed_config.copy() if self.deepspeed_config is not None else {}
             )  # Start with programmatic config
 
             if self.config.deepspeed.config_file:
@@ -1129,11 +1235,16 @@ class EnhancedModularTrainer:
 
             print(f"Final DeepSpeed config keys: {list(final_config.keys())}")
 
+            # Wrap model for DeepSpeed compatibility
+            from ..models.deepspeed_wrapper import DeepSpeedModelWrapper
+            wrapped_model = DeepSpeedModelWrapper(self.model)
+            print("  ✓ Model wrapped for DeepSpeed compatibility")
+
             # Initialize DeepSpeed engine with better error handling
             try:
                 self.deepspeed_engine, optimizer, _, lr_scheduler = (
-                    deepspeed.initialize(
-                        model=self.model,
+                    deepspeed.initialize(  # type: ignore[union-attr]
+                        model=wrapped_model,  # Use wrapped model
                         optimizer=optimizer,
                         config=final_config,
                         lr_scheduler=None,  # We'll handle LR scheduling manually
@@ -1145,10 +1256,29 @@ class EnhancedModularTrainer:
                 print("  - Incompatible config settings")
                 print("  - Insufficient GPU memory")
                 print("  - Model architecture incompatibility")
+                # Ensure clean state on failure
+                self.deepspeed_engine = None
+                self.config.deepspeed.use_deepspeed = False
                 raise
 
+            # Workaround: Initialize engine_timers if missing (DeepSpeed compatibility fix)
+            if not hasattr(self.deepspeed_engine, 'engine_timers'):
+                print("⚠️  Warning: DeepSpeed engine_timers not initialized, disabling timers")
+                # Create a dummy timer object to prevent AttributeError
+                from types import SimpleNamespace
+                self.deepspeed_engine.engine_timers = SimpleNamespace(
+                    forward_timers=None,
+                    backward_timers=None,
+                    step_timers=None
+                )
+                # Also disable the timer start/stop methods
+                self.deepspeed_engine._start_timers = lambda *args, **kwargs: None
+                self.deepspeed_engine._stop_timers = lambda *args, **kwargs: None
+
             # Store references safely
-            self.model = self.deepspeed_engine.module  # Get the wrapped model
+            # IMPORTANT: Do NOT overwrite self.model - keep both references
+            # self.model stays as the original model
+            # self.deepspeed_engine is the DeepSpeed wrapper
             self.optimizer = optimizer  # DeepSpeed-managed optimizer
             self.lr_scheduler = lr_scheduler  # May be None
 
@@ -1210,15 +1340,22 @@ class EnhancedModularTrainer:
         )
 
         # Create intelligent LR configuration
+        # Calculate min_lr_ratio from config's lr_end and learning_rate
+        learning_rate = getattr(self.config.training, "learning_rate", 1e-4)
+        lr_end = getattr(self.config.training, "lr_end", learning_rate * 0.1)
+        min_lr_ratio = lr_end / learning_rate if learning_rate > 0 else 0.1
+
+        # Calculate warmup_ratio from warmup_steps if provided, else use warmup_ratio
+        warmup_steps_config = getattr(self.config.training, "warmup_steps", None)
+        warmup_ratio_config = getattr(self.config.training, "warmup_ratio", 0.1)
+
         lr_config = LRConfig(
-            warmup_ratio=getattr(
-                self.config.training, "warmup_ratio", 0.03
-            ),  # 3% default
+            warmup_ratio=warmup_ratio_config,  # Will be overridden if warmup_steps is set
             warmup_min_ratio=0.01,
             warmup_schedule="linear",
             main_schedule="cosine",
-            min_lr_ratio=0.01,
-            enable_adaptive=getattr(self.config.training, "enable_adaptive_lr", True),
+            min_lr_ratio=min_lr_ratio,  # Respect config's lr_end
+            enable_adaptive=getattr(self.config.training, "enable_adaptive_lr", False),  # Disable by default
             plateau_patience=getattr(self.config.training, "plateau_patience", 10),
             plateau_threshold=0.01,
             plateau_factor=0.5,
@@ -1226,13 +1363,9 @@ class EnhancedModularTrainer:
             enable_lr_recovery=True,
         )
 
-        # Create intelligent LR manager (will calculate total steps intelligently)
-        self.lr_manager = IntelligentLRManager(
-            optimizer=optimizer,
-            config=lr_config,
-            total_steps=None,  # Will be calculated
-            steps_per_epoch=None,  # Will be calculated
-        )
+        # DISABLED: IntelligentLRManager (using AdaptiveLRManager from train.py instead)
+        # This gets overridden in train.py with adaptive_lr_manager
+        self.lr_manager = None
 
         # Store for later dataset size calculation
         self.training_params = {
@@ -1244,7 +1377,6 @@ class EnhancedModularTrainer:
         # Legacy schedulers set to None (replaced by lr_manager)
         self.warmup_scheduler = None
         self.lr_scheduler = None
-        self.adaptive_lr_manager = self.lr_manager  # For compatibility
 
         print(f"✓ Intelligent LR management enabled:")
         print(f"   Warmup ratio: {lr_config.warmup_ratio:.1%}")
@@ -1282,6 +1414,7 @@ class EnhancedModularTrainer:
                     print("⏳ Estimating dataset size for streaming dataset...")
                     sample_batches = 10
                     total_samples = 0
+                    i = 0
 
                     temp_iter = iter(train_loader)
                     for i in range(min(sample_batches, 50)):  # Don't sample too many
@@ -1504,9 +1637,9 @@ class EnhancedModularTrainer:
         """
         Internal implementation of training step.
         """
-        # CRITICAL FIX: Increment step count at BEGINNING
-        # This ensures all logic uses correct step number
-        self.step_count += 1
+        # CRITICAL FIX: Step count will be incremented at END, after optimizer.step()
+        # For now, use current step count for all calculations
+        current_step = self.step_count
 
         # Start metrics collection
         if self.metrics_collector:
@@ -1534,7 +1667,7 @@ class EnhancedModularTrainer:
 
                 # Update gradient accumulation in config (this is what the training loop reads)
                 old_grad_accum = getattr(self.config.training, "gradient_accumulation_steps", 1)
-                self.config.training.gradient_accumulation_steps = new_grad_accum
+                self.config.training.gradient_accumulation_steps = new_grad_accum  # type: ignore[attr-defined]
 
                 # Also update training_params for consistency
                 self.training_params["gradient_accumulation_steps"] = new_grad_accum
@@ -1574,9 +1707,9 @@ class EnhancedModularTrainer:
         # Check collective memory health across all ranks if distributed
         collective_memory_health = None
         if self.distributed_manager and self.distributed_manager.is_initialized():
-            # Periodic collective memory health checks (every 200 steps to avoid overhead)
-            # SPEED OPTIMIZATION: Reduced frequency from 50 to 200 for ~3% speedup
-            if batch_idx % 200 == 0:
+            # Periodic collective memory health checks (every 2000 steps to avoid overhead)
+            # SPEED OPTIMIZATION: Reduced frequency from 200 to 2000 for additional speedup
+            if batch_idx % 2000 == 0:
                 collective_memory_health = (
                     self.distributed_manager.check_collective_memory_health()
                 )
@@ -1604,9 +1737,9 @@ class EnhancedModularTrainer:
                             "reduce_batch_size"
                         )
 
-            # Periodic rank failure detection (every 500 steps to avoid overhead)
-            # SPEED OPTIMIZATION: Reduced frequency from 100 to 500 for ~2% speedup
-            if batch_idx % 500 == 0:
+            # Periodic rank failure detection (every 5000 steps to avoid overhead)
+            # SPEED OPTIMIZATION: Reduced frequency from 500 to 5000 for additional speedup
+            if batch_idx % 5000 == 0:
                 failure_status = self.distributed_manager.detect_rank_failures()
 
                 if failure_status["status"] == "success":
@@ -1633,14 +1766,14 @@ class EnhancedModularTrainer:
                             # Coordinate data resharding if dataloader supports it
                             if (
                                 hasattr(self, "train_dataloader")
-                                and self.train_dataloader
+                                and self.train_dataloader  # type: ignore[attr-defined]
                             ):
                                 from ..multi_column_data import (
                                     coordinate_data_resharding,
                                 )
 
                                 data_reshard_success = coordinate_data_resharding(
-                                    self.train_dataloader, failed_ranks
+                                    self.train_dataloader, failed_ranks  # type: ignore[attr-defined]
                                 )
                                 if data_reshard_success:
                                     print(
@@ -1664,11 +1797,11 @@ class EnhancedModularTrainer:
             if (
                 batch_idx % 200 == 0
                 and hasattr(self, "train_dataloader")
-                and self.train_dataloader
+                and self.train_dataloader  # type: ignore[attr-defined]
             ):
                 from ..multi_column_data import get_data_distribution_stats
 
-                data_stats = get_data_distribution_stats(self.train_dataloader)
+                data_stats = get_data_distribution_stats(self.train_dataloader)  # type: ignore[attr-defined]
 
                 if data_stats:
                     load_ratio = data_stats.get("load_ratio", 1.0)
@@ -1704,23 +1837,26 @@ class EnhancedModularTrainer:
                 )
 
         elif memory_health["status"] in ["critical", "warning"]:
-            print(
-                f"    Memory {memory_health['status'].upper()}: "
-                f"{memory_health['gpu_utilization']:.1%} used, "
-                f"recommend batch_size={memory_health['recommended_batch_size']}"
-            )
+            # Only print if not in silent mode
+            if not self.memory_monitor.silent_mode:
+                print(
+                    f"    Memory {memory_health['status'].upper()}: "
+                    f"{memory_health['gpu_utilization']:.1%} used, "
+                    f"recommend batch_size={memory_health['recommended_batch_size']}"
+                )
 
             # Perform standard cleanup
             if memory_health["status"] == "critical":
                 cleanup_stats = self.memory_monitor.cleanup_memory(aggressive=False)
-                if cleanup_stats["freed_gb"] > 0.1:
+                if cleanup_stats["freed_gb"] > 0.1 and not self.memory_monitor.silent_mode:
                     print(f"    Freed {cleanup_stats['freed_gb']:.2f}GB GPU memory")
 
             # Dynamic batch size adjustment for LLM training
             self._handle_memory_pressure(memory_health)
 
         # Validate device placement before forward pass
-        model_device = next(self.model.parameters()).device
+        base_model = self._get_base_model
+        model_device = next(base_model.parameters()).device
         if input_ids.device != model_device:
             raise RuntimeError(
                 f"Device mismatch: input on {input_ids.device}, model on {model_device}. "
@@ -1733,27 +1869,89 @@ class EnhancedModularTrainer:
         # CRITICAL FIX: Use correct autocast dtype from config (BF16 vs FP16)
         autocast_dtype = torch.bfloat16 if getattr(self.config.training, "mixed_precision", "fp16") == "bf16" else torch.float16
 
-        with torch.amp.autocast("cuda", enabled=True, dtype=autocast_dtype):
-            outputs = self.model(
-                input_ids=input_ids, attention_mask=attention_mask, labels=labels
-            )
+        with autocast(device_type='cuda', enabled=True, dtype=autocast_dtype):
+            # Use DeepSpeed engine for forward pass if available, otherwise use model directly
+            if self.deepspeed_engine is not None:
+                # Runtime check: Ensure engine_timers exists before forward pass
+                if not hasattr(self.deepspeed_engine, 'engine_timers'):
+                    from types import SimpleNamespace
+                    self.deepspeed_engine.engine_timers = SimpleNamespace(
+                        forward_timers=None,
+                        backward_timers=None,
+                        step_timers=None
+                    )
+                    self.deepspeed_engine._start_timers = lambda *args, **kwargs: None
+                    self.deepspeed_engine._stop_timers = lambda *args, **kwargs: None
+
+                # DeepSpeed wrapper returns (loss, outputs_dict) tuple
+                result = self.deepspeed_engine(
+                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                )
+                # Unpack tuple if using wrapper
+                if isinstance(result, tuple) and len(result) == 2:
+                    _, outputs = result  # Discard loss, we'll compute it ourselves
+                else:
+                    outputs = result
+            else:
+                outputs = self.model(
+                    input_ids=input_ids, attention_mask=attention_mask, labels=labels
+                )
 
         forward_time = time.time() - start_time
 
-        # Calculate losses
-        main_loss = outputs.get("loss")
+        # Calculate losses - use DeepSeek loss if configured
+        if self.deepseek_loss is not None:
+            # CRITICAL FIX: When using DeepSeek loss, compute it from logits
+            # The model's built-in loss is ignored to avoid double calculation
+            # Extract hidden states and logits from model outputs
+            hidden_states = outputs.get("hidden_states", None)
+            if hidden_states is not None and isinstance(hidden_states, (list, tuple)):
+                # Use the last layer's hidden states
+                hidden_states = hidden_states[-1]
 
-        # Validate main loss before continuing
-        if main_loss is None:
-            raise RuntimeError("Model did not return a loss value")
-        if not main_loss.requires_grad:
-            raise RuntimeError(
-                "Loss does not require gradients - check model configuration"
+            logits = outputs.get("logits", None)
+            if logits is None:
+                raise RuntimeError("Model did not return logits - cannot compute DeepSeek loss")
+
+            # Get MoE routing info if available
+            # CRITICAL FIX: Model returns "gate_logits", not "router_logits"
+            gate_logits = outputs.get("gate_logits", outputs.get("router_logits", None))
+            expert_indices = outputs.get("expert_indices", None)
+
+            # Compute DeepSeek-style loss (ignores model's built-in loss)
+            loss_dict = self.deepseek_loss(
+                logits=logits,
+                targets=labels,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                gate_logits=gate_logits,
+                expert_indices=expert_indices
             )
 
-        # Check loss health BEFORE adding auxiliary losses
+            total_loss = loss_dict["total_loss"]
+            main_loss = loss_dict.get("main_loss", total_loss)
+
+            # Extract auxiliary losses (MTP, MoE balancing, etc.)
+            aux_losses = {k: v for k, v in loss_dict.items() if k != "total_loss" and k != "main_loss"}
+        else:
+            # Use model's built-in loss calculation
+            main_loss = outputs.get("loss")
+
+            # Validate main loss before continuing
+            if main_loss is None:
+                raise RuntimeError("Model did not return a loss value")
+            if not main_loss.requires_grad:
+                raise RuntimeError(
+                    "Loss does not require gradients - check model configuration"
+                )
+
+            total_loss = main_loss
+            aux_losses = {}
+
+        # Check loss health BEFORE proceeding
         loss_health_result = self.loss_health.check_loss_health(
-            main_loss.item(), self.step_count
+            main_loss.item() if isinstance(main_loss, torch.Tensor) else main_loss,
+            self.step_count
         )
 
         if not loss_health_result["is_valid"]:
@@ -1774,14 +1972,11 @@ class EnhancedModularTrainer:
         skip_auxiliary_losses = main_loss.item() > 5.0 or loss_health_result["is_spike"]
         if skip_auxiliary_losses and batch_idx % 100 == 0:
             print(
-                f"     Skipping auxiliary losses due to high main loss: {main_loss.item():.4f}"
+                f"     Skipping additional auxiliary losses due to high main loss: {main_loss.item():.4f}"
             )
 
-        total_loss = main_loss
-
-        # Apply composite loss if available and not skipping
-        aux_losses = {}
-        if self.composite_loss and not skip_auxiliary_losses:
+        # Apply composite loss if available and not using DeepSeek loss
+        if self.composite_loss and not skip_auxiliary_losses and self.deepseek_loss is None:
             aux_losses = self.composite_loss(
                 inputs=input_ids,
                 targets=labels,
@@ -1829,11 +2024,11 @@ class EnhancedModularTrainer:
                 # CRITICAL FIX: Different scaling for router vs other auxiliary losses
                 # Router loss is ESSENTIAL for MoE training and should NOT be suppressed
                 if "router" in name.lower() or "load_balance" in name.lower():
-                    # Router loss: use config coefficient directly, no clamping
-                    # The model already applies router_aux_loss_coef in forward pass
-                    # So we just validate and pass through
+                    # Router loss: DO NOT add to total_loss - the model already includes it!
+                    # The model applies router_aux_loss_coef in forward pass and returns it in loss
+                    # We only track it for logging purposes
                     valid_aux_losses[name] = loss_value
-                    total_loss = total_loss + loss_value
+                    # DO NOT: total_loss = total_loss + loss_value  # Would double-count!
                 else:
                     # Other auxiliary losses: apply conservative scaling
                     aux_ema = self.aux_loss_emas[name]
@@ -1907,7 +2102,7 @@ class EnhancedModularTrainer:
                 if hasattr(self.deepspeed_engine, "get_global_grad_norm"):
                     grad_norm = self.deepspeed_engine.get_global_grad_norm()
                     if grad_norm is not None and torch.is_tensor(grad_norm):
-                        grad_norm = grad_norm.item()
+                        grad_norm = grad_norm.item()  # type: ignore[union-attr]
 
                 # Method 2: Try optimizer-specific gradient norm
                 elif hasattr(self.deepspeed_engine, "optimizer") and hasattr(
@@ -1915,7 +2110,7 @@ class EnhancedModularTrainer:
                 ):
                     grad_norm = self.deepspeed_engine.optimizer.get_global_grad_norm()
                     if grad_norm is not None and torch.is_tensor(grad_norm):
-                        grad_norm = grad_norm.item()
+                        grad_norm = grad_norm.item()  # type: ignore[union-attr]
 
                 # Method 3: Check if optimizer has gradient clipping info
                 elif hasattr(self.deepspeed_engine, "optimizer"):
@@ -1926,7 +2121,7 @@ class EnhancedModularTrainer:
                         # We can't get exact grad norm but can detect scaling issues
                         if (
                             hasattr(optimizer, "last_overflow_time")
-                            and optimizer.last_overflow_time == optimizer.step_count
+                            and optimizer.last_overflow_time == optimizer.step_count  # type: ignore[attr-defined]
                         ):
                             grad_norm = float("inf")  # Overflow detected
 
@@ -1934,7 +2129,7 @@ class EnhancedModularTrainer:
                 elif hasattr(self.deepspeed_engine, "_global_grad_norm"):
                     grad_norm = self.deepspeed_engine._global_grad_norm
                     if torch.is_tensor(grad_norm):
-                        grad_norm = grad_norm.item()
+                        grad_norm = grad_norm.item()  # type: ignore[union-attr]
 
                 # Fallback: Default to 0 if no method worked
                 if grad_norm is None:
@@ -1942,7 +2137,7 @@ class EnhancedModularTrainer:
 
                 # Ensure grad_norm is a float
                 if torch.is_tensor(grad_norm):
-                    grad_norm = grad_norm.item()
+                    grad_norm = grad_norm.item()  # type: ignore[union-attr]
                 elif grad_norm is None:
                     grad_norm = 0.0
 
@@ -1982,15 +2177,18 @@ class EnhancedModularTrainer:
                 self.config.training, "gradient_accumulation_steps", 1
             )
 
-            # Only zero gradients at the START of accumulation cycle
-            is_accumulation_start = (self.step_count % gradient_accumulation_steps) == 0
+            # CRITICAL FIX: Consistent gradient accumulation logic
+            # Zero gradients at START of accumulation cycle (step 0, N, 2N, ...)
+            # Optimizer steps at END of accumulation cycle (step N-1, 2N-1, 3N-1, ...)
+            is_accumulation_start = (current_step % gradient_accumulation_steps) == 0
+            is_accumulation_complete = ((current_step + 1) % gradient_accumulation_steps) == 0
+
             if is_accumulation_start:
                 # CRITICAL FIX: Use set_to_none=True for 10-20% memory savings
                 optimizer.zero_grad(set_to_none=True)
 
             # CRITICAL FIX: Add gradient sync control for distributed training
             # Only synchronize gradients on the last accumulation step
-            is_accumulation_complete = ((self.step_count + 1) % gradient_accumulation_steps) == 0
             should_sync_grads = is_accumulation_complete
 
             # Check if model is wrapped in DDP
@@ -1998,7 +2196,7 @@ class EnhancedModularTrainer:
 
             # Use no_sync context manager for gradient accumulation in DDP
             from contextlib import nullcontext
-            sync_context = nullcontext() if (not is_ddp or should_sync_grads) else self.model.no_sync()
+            sync_context = nullcontext() if (not is_ddp or should_sync_grads) else self.model.no_sync()  # type: ignore[attr-defined]
 
             with sync_context:
                 # CRITICAL FIX: Scale loss by gradient accumulation steps
@@ -2028,8 +2226,9 @@ class EnhancedModularTrainer:
                 should_check = not ultra_fast or self.step_count % 10 == 0 or self.step_count < 100
 
                 if should_check:
+                    base_model = self._get_base_model
                     grad_health_result = self.gradient_health.check_gradient_health(
-                        self.model,
+                        base_model,
                         self.step_count,
                         compute_histogram=(self.step_count % 5000 == 0),
                     )
@@ -2103,7 +2302,8 @@ class EnhancedModularTrainer:
                         return {"loss": total_loss.item(), "learning_rate": current_lr, "restored_checkpoint": True}
 
             # Apply adaptive gradient clipping
-            grad_norm = self.gradient_health.clip_gradients(self.model, self.step_count)
+            base_model = self._get_base_model
+            grad_norm_pre_clip_clipped, grad_norm = self.gradient_health.clip_gradients(base_model, self.step_count)
 
             grad_norm_pre_clip = grad_health_result["grad_norm_pre_clip"]
 
@@ -2126,7 +2326,7 @@ class EnhancedModularTrainer:
 
             # Optimizer step with scaler support and health monitoring
             # CRITICAL FIX: Only step optimizer when gradient accumulation is complete
-            is_accumulation_complete = ((self.step_count + 1) % gradient_accumulation_steps) == 0
+            # (is_accumulation_complete was already calculated above, reuse it)
 
             if is_accumulation_complete:
                 if self.scaler is not None:
@@ -2189,12 +2389,13 @@ class EnhancedModularTrainer:
             warmup_info = {"warmup_step": self.step_count, "deepspeed_managed": True}
             lr_info = {"lr_step": self.step_count, "deepspeed_managed": True}
         else:
-            # FIXED: Check for adaptive_lr_manager first, skip old lr_manager if adaptive is active
+            # Use adaptive LR manager if available, otherwise fall back to intelligent LR manager
             if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
-                # Use new adaptive LR manager - it's called in train_epoch loop in train.py
-                # Set warmup/lr info for compatibility but don't call old lr_manager
-                warmup_info = {"warmup_step": self.step_count, "adaptive_lr_manager": True}
-                lr_info = {"lr_step": self.step_count, "adaptive_lr_manager": True}
+                # Adaptive LR manager - call every step with current loss
+                lr_step_info = self.adaptive_lr_manager.step(total_loss.item(), self.step_count)
+                gradient_accumulation_steps = 1  # Adaptive LR doesn't use gradient accumulation awareness
+                is_optimizer_step = True  # Always consider it an optimizer step for adaptive LR
+
             elif hasattr(self, "lr_manager") and self.lr_manager is not None:
                 # Get gradient accumulation steps from LR manager configuration
                 gradient_accumulation_steps = (
@@ -2207,67 +2408,72 @@ class EnhancedModularTrainer:
                 lr_step_info = self.lr_manager.step(
                     None, training_step=self.step_count
                 )
-
                 # Check if this is an actual optimizer step (not just gradient accumulation)
                 is_optimizer_step = (self.step_count % gradient_accumulation_steps) == 0
-
-                if is_optimizer_step:
-                    # Calculate the actual optimizer step number (for logging)
-                    optimizer_step = self.step_count // gradient_accumulation_steps
-
-                    warmup_info = {
-                        "warmup_step": self.step_count,
-                        "optimizer_step": optimizer_step,
-                        "phase": lr_step_info.get("phase", "unknown"),
-                        "plateau_patience": lr_step_info.get("plateau_patience", 0),
-                        "gradient_accumulation_steps": gradient_accumulation_steps,
-                        "gradient_accumulation_aware": True,
-                    }
-
-                    lr_info = {
-                        "lr_step": self.step_count,
-                        "optimizer_step": optimizer_step,
-                        "intelligent_lr": True,
-                        "lr_reduced": lr_step_info.get("lr_reduced", False),
-                        "plateau_detected": lr_step_info.get("plateau_detected", False),
-                        "gradient_accumulation_steps": gradient_accumulation_steps,
-                    }
-
-                    # Log significant LR events
-                    if lr_step_info.get("lr_reduced", False):
-                        print(
-                            f"    🔽 LR reduced due to plateau at optimizer step {optimizer_step} (micro-step {self.step_count})"
-                        )
-                        print(f"        New LR: {lr_step_info['lr']:.2e}")
-
-                    # Log LR schedule progress periodically
-                    if optimizer_step % 100 == 0:
-                        phase = lr_step_info.get("phase", "unknown")
-                        print(
-                            f"    📈 LR Schedule: optimizer_step={optimizer_step}, phase={phase}, "
-                            f"lr={lr_step_info['lr']:.2e}, gradient_accum={gradient_accumulation_steps}"
-                        )
-                else:
-                    # Not an optimizer step, just accumulating gradients
-                    accumulation_step = (
-                        self.step_count % gradient_accumulation_steps
-                    ) + 1
-                    warmup_info = {
-                        "warmup_step": self.step_count,
-                        "accumulation_step": accumulation_step,
-                        "gradient_accumulation_steps": gradient_accumulation_steps,
-                        "accumulating": True,
-                    }
-                    lr_info = {
-                        "lr_step": self.step_count,
-                        "accumulation_step": accumulation_step,
-                        "gradient_accumulation_steps": gradient_accumulation_steps,
-                        "accumulating": True,
-                    }
             else:
-                # Fallback for cases without LR manager
-                warmup_info = {"warmup_step": self.step_count, "fallback": True}
-                lr_info = {"lr_step": self.step_count, "fallback": True}
+                # No LR manager
+                gradient_accumulation_steps = 1
+                is_optimizer_step = True
+                lr_step_info = {}
+
+            if is_optimizer_step:
+                # Calculate the actual optimizer step number (for logging)
+                optimizer_step = self.step_count // gradient_accumulation_steps
+
+                warmup_info = {
+                    "warmup_step": self.step_count,
+                    "optimizer_step": optimizer_step,
+                    "phase": lr_step_info.get("phase", "unknown"),
+                    "plateau_patience": lr_step_info.get("plateau_patience", 0),
+                    "gradient_accumulation_steps": gradient_accumulation_steps,
+                    "gradient_accumulation_aware": True,
+                }
+
+                lr_info = {
+                    "lr_step": self.step_count,
+                    "optimizer_step": optimizer_step,
+                    "intelligent_lr": True,
+                    "lr_reduced": lr_step_info.get("lr_reduced", False),
+                    "plateau_detected": lr_step_info.get("plateau_detected", False),
+                    "gradient_accumulation_steps": gradient_accumulation_steps,
+                }
+
+                # Log significant LR events (but skip warmup spam)
+                adjustment_type = lr_step_info.get("adjustment_type", "")
+                if lr_step_info.get("lr_reduced", False) or lr_step_info.get("lr_adjusted", False):
+                    # Only log if NOT warmup (warmup spams every step)
+                    if adjustment_type != "warmup":
+                        new_lr_val = lr_step_info.get('new_lr') or lr_step_info.get('lr') or lr_step_info.get('current_lr') or 0.0
+                        print(
+                            f"    🔽 LR adjusted at optimizer step {optimizer_step} (micro-step {self.step_count})"
+                        )
+                        print(f"        New LR: {new_lr_val:.2e}")
+
+                # Log LR schedule progress periodically
+                if optimizer_step % 100 == 0:
+                    phase = lr_step_info.get("phase", "unknown")
+                    current_lr_val = lr_step_info.get('lr') or lr_step_info.get('current_lr') or lr_step_info.get('new_lr') or 0.0
+                    print(
+                        f"    📈 LR Schedule: optimizer_step={optimizer_step}, phase={phase}, "
+                        f"lr={current_lr_val:.2e}, gradient_accum={gradient_accumulation_steps}"
+                    )
+            else:
+                # Not an optimizer step, just accumulating gradients
+                accumulation_step = (
+                    self.step_count % gradient_accumulation_steps
+                ) + 1
+                warmup_info = {
+                    "warmup_step": self.step_count,
+                    "accumulation_step": accumulation_step,
+                    "gradient_accumulation_steps": gradient_accumulation_steps,
+                    "accumulating": True,
+                }
+                lr_info = {
+                    "lr_step": self.step_count,
+                    "accumulation_step": accumulation_step,
+                    "gradient_accumulation_steps": gradient_accumulation_steps,
+                    "accumulating": True,
+                }
 
             current_lr = optimizer.param_groups[0]["lr"]
 
@@ -2282,7 +2488,7 @@ class EnhancedModularTrainer:
             step_info = self.metrics_collector.end_step(
                 loss=total_loss.item(),
                 learning_rate=current_lr,
-                grad_norm=grad_norm.item() if (grad_norm is not None and torch.is_tensor(grad_norm)) else (grad_norm if grad_norm is not None else None),
+                grad_norm=grad_norm.item() if (grad_norm is not None and torch.is_tensor(grad_norm)) else (grad_norm if grad_norm is not None else None),  # type: ignore[union-attr]
                 forward_time=forward_time,
                 backward_time=backward_time,
                 optimizer_time=opt_time,
@@ -2294,14 +2500,14 @@ class EnhancedModularTrainer:
                 "memory_cached": step_info.memory_cached,
             }
 
-        # Log metrics asynchronously
-        if self.async_logger and self.performance_manager.should_log_step(
-            self.step_count
-        ):
+        # Log metrics asynchronously - reduced frequency for performance
+        # Only log detailed metrics every 100 steps instead of every step
+        if self.async_logger and self.step_count % 100 == 0:
             # Calculate iterations per second
+            batch_time = step_metrics.get("batch_time", 1.0)
             it_per_sec = (
-                1.0 / step_metrics.get("batch_time", 1.0)
-                if step_metrics.get("batch_time", 0) > 0
+                1.0 / batch_time
+                if batch_time is not None and batch_time > 0
                 else 0.0
             )
 
@@ -2311,7 +2517,7 @@ class EnhancedModularTrainer:
                 "train/learning_rate": current_lr,
                 "train/grad_norm": (grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm) if grad_norm is not None else 0.0,
                 "train/grad_norm_pre_clip": (
-                    grad_norm_pre_clip if grad_norm_pre_clip is not None else 0.0
+                    grad_norm_pre_clip.item() if torch.is_tensor(grad_norm_pre_clip) else grad_norm_pre_clip if grad_norm_pre_clip is not None else 0.0  # type: ignore[union-attr]
                 ),
                 "train/it_per_sec": it_per_sec,
                 # Add batch time and memory metrics with train/ prefix for consistent grouping
@@ -2319,6 +2525,77 @@ class EnhancedModularTrainer:
                 "train/memory_allocated_gb": step_metrics.get("memory_allocated", 0.0),
                 "train/memory_cached_gb": step_metrics.get("memory_cached", 0.0),
             }
+
+            # Add gradient health statistics with custom step metric
+            if hasattr(self, "gradient_health") and self.gradient_health is not None:
+                grad_health_stats = self.gradient_health.get_health_summary()
+                metrics.update({
+                    "gradient_step": self.step_count,
+                    "gradient/explosion_rate": grad_health_stats.get("explosion_rate", 0.0),
+                    "gradient/total_explosions": grad_health_stats.get("total_explosions", 0),
+                    "gradient/mean_norm": grad_health_stats.get("mean_grad_norm", 0.0),
+                    "gradient/std_norm": grad_health_stats.get("std_grad_norm", 0.0),
+                    "gradient/max_norm": grad_health_stats.get("max_grad_norm", 0.0),
+                    "gradient/min_norm": grad_health_stats.get("min_grad_norm", 0.0),
+                    "gradient/clip_value": self.gradient_health.get_clip_value(self.step_count),
+                })
+
+            # Add MoE-specific metrics if available - only log expensive per-expert stats every 500 steps
+            if hasattr(outputs, 'router_logits') and outputs.router_logits is not None:
+                router_logits = outputs.router_logits
+                if isinstance(router_logits, (list, tuple)):
+                    router_logits = router_logits[0] if len(router_logits) > 0 else None
+
+                if router_logits is not None and torch.is_tensor(router_logits):
+                    # Calculate expert selection statistics
+                    expert_probs = torch.softmax(router_logits, dim=-1)
+                    expert_selections = torch.argmax(expert_probs, dim=-1)
+
+                    # Expert usage distribution
+                    num_experts = expert_probs.size(-1)
+                    expert_counts = torch.zeros(num_experts, device=router_logits.device)
+                    for i in range(num_experts):
+                        expert_counts[i] = (expert_selections == i).sum().float()
+
+                    total_selections = expert_counts.sum()
+                    if total_selections > 0:
+                        expert_usage = expert_counts / total_selections
+
+                        # Only log per-expert usage every 500 steps (expensive)
+                        if self.step_count % 500 == 0:
+                            # Log per-expert usage (all experts, not capped)
+                            for i in range(num_experts):
+                                metrics[f"train/moe/expert_{i}_usage"] = expert_usage[i].item()
+
+                            # Also log as percentage for better readability
+                            for i in range(num_experts):
+                                metrics[f"train/moe/expert_{i}_usage_pct"] = expert_usage[i].item() * 100.0
+
+                        # Log aggregate MoE metrics (lightweight)
+                        metrics.update({
+                            "train/moe/expert_entropy": -(expert_usage * torch.log(expert_usage + 1e-10)).sum().item(),
+                            "train/moe/expert_max_usage": expert_usage.max().item(),
+                            "train/moe/expert_min_usage": expert_usage.min().item(),
+                            "train/moe/expert_usage_std": expert_usage.std().item(),
+                            "train/moe/expert_balance": 1.0 - (expert_usage.max() - expert_usage.min()).item(),
+                            "train/moe/num_experts": float(num_experts),
+                        })
+
+                    # Router confidence metrics
+                    max_probs = expert_probs.max(dim=-1)[0]
+                    metrics.update({
+                        "train/moe/router_confidence_mean": max_probs.mean().item(),
+                        "train/moe/router_confidence_std": max_probs.std().item(),
+                        "train/moe/router_confidence_min": max_probs.min().item(),
+                        "train/moe/router_confidence_max": max_probs.max().item(),
+                    })
+
+            # Add expert indices statistics if available
+            if hasattr(outputs, 'expert_indices') and outputs.expert_indices is not None:
+                expert_indices = outputs.expert_indices
+                if torch.is_tensor(expert_indices):
+                    unique_experts = torch.unique(expert_indices).numel()
+                    metrics["train/moe/active_experts"] = float(unique_experts)
 
             # Add dynamic batching metrics if enabled
             if self.dynamic_batch_sizer is not None:
@@ -2345,7 +2622,15 @@ class EnhancedModularTrainer:
             # Add individual auxiliary loss components
             for name, loss_value in aux_losses.items():
                 if name != "total":
-                    metrics[f"train/aux_{name}"] = loss_value.item()
+                    # Handle both tensor and scalar values
+                    if isinstance(loss_value, torch.Tensor):
+                        metrics[f"train/aux_{name}"] = loss_value.item()
+                    elif isinstance(loss_value, (int, float)):
+                        metrics[f"train/aux_{name}"] = float(loss_value)
+                    elif isinstance(loss_value, list):
+                        # For per-token losses from MTP
+                        for i, val in enumerate(loss_value):
+                            metrics[f"train/aux_{name}_token{i+1}"] = float(val)
 
             self.async_logger.log_metrics(metrics, self.step_count)
 
@@ -2395,12 +2680,12 @@ class EnhancedModularTrainer:
                     memory_oom_risk=memory_health.get("oom_risk", 0.0),
                     # Gradient metrics
                     gradient_norm=(
-                        grad_norm.item()
+                        grad_norm.item()  # type: ignore[union-attr]
                         if grad_norm is not None and hasattr(grad_norm, "item")
                         else (grad_norm if grad_norm is not None else 0.0)
                     ),
                     gradient_norm_pre_clip=(
-                        grad_norm_pre_clip.item()
+                        grad_norm_pre_clip.item()  # type: ignore[union-attr]
                         if grad_norm_pre_clip is not None
                         and hasattr(grad_norm_pre_clip, "item")
                         else (
@@ -2461,11 +2746,14 @@ class EnhancedModularTrainer:
         # Record training metrics for distributed health monitoring
         if self.health_checker:
             self.health_checker.record_training_metrics(
-                step=self.step_count,
                 loss=total_loss.item(),
-                learning_rate=current_lr,
-                gradient_norm=(grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm) if grad_norm is not None else 0.0,
+                gradient_norm=(grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm) if grad_norm is not None else 0.0,  # type: ignore[union-attr]
+                learning_rate=current_lr
             )
+
+        # CRITICAL FIX: Increment step count at END of step, after optimizer.step() completes
+        # This ensures all gradient accumulation logic uses the correct step number
+        self.step_count += 1
 
         # Return step results with comprehensive monitoring info
         return {
@@ -2473,12 +2761,12 @@ class EnhancedModularTrainer:
             "main_loss": main_loss.item(),
             "learning_rate": current_lr,
             "grad_norm": (
-                grad_norm.item()
+                grad_norm.item()  # type: ignore[union-attr]
                 if grad_norm is not None and hasattr(grad_norm, "item")
                 else (grad_norm if grad_norm is not None else 0.0)
             ),
             "grad_norm_pre_clip": (
-                grad_norm_pre_clip.item()
+                grad_norm_pre_clip.item()  # type: ignore[union-attr]
                 if grad_norm_pre_clip is not None
                 and hasattr(grad_norm_pre_clip, "item")
                 else (grad_norm_pre_clip if grad_norm_pre_clip is not None else 0.0)
@@ -2508,11 +2796,7 @@ class EnhancedModularTrainer:
         """
         self._last_validation_loss = validation_loss
 
-        # FIXED: Use adaptive_lr_manager if available, skip old lr_manager if so
-        if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
-            # New adaptive LR manager handles validation in train.py
-            pass
-        elif hasattr(self, "lr_manager") and self.lr_manager is not None:
+        if hasattr(self, "lr_manager") and self.lr_manager is not None:
             # Pass the new validation loss to the LR manager for plateau detection
             # Don't pass training_step here to avoid incrementing step counter
             lr_step_info = self.lr_manager.step(validation_loss)
@@ -2539,7 +2823,8 @@ class EnhancedModularTrainer:
                     loss.backward(retain_graph=not is_final_task)
 
                     task_gradients[task_name] = []
-                    for param in self.model.parameters():
+                    base_model = self._get_base_model
+                    for param in base_model.parameters():
                         if param.grad is not None:
                             task_gradients[task_name].append(param.grad.clone())
                         else:
@@ -2557,7 +2842,8 @@ class EnhancedModularTrainer:
 
                 # Update model parameters with modified gradients
                 # modified_gradients is a list, not a dict
-                for param, grad in zip(self.model.parameters(), modified_gradients):
+                base_model = self._get_base_model
+                for param, grad in zip(base_model.parameters(), modified_gradients):
                     param.grad = grad.clone() if grad is not None else None
 
             except Exception as e:
@@ -2572,7 +2858,7 @@ class EnhancedModularTrainer:
             optimizer.zero_grad(set_to_none=True)
             task_losses["main"].backward()
 
-    def save_checkpoint(self, checkpoint_dir: str, tag: str = None) -> str:
+    def save_checkpoint(self, checkpoint_dir: str, tag: Optional[str] = None) -> str:
         """
         Save checkpoint with DeepSpeed support and distributed synchronization.
 
@@ -2601,10 +2887,22 @@ class EnhancedModularTrainer:
             else:
                 print(f"✅ Distributed checkpoint coordination successful")
         if self.deepspeed_engine:
-            # DeepSpeed checkpoint saving
-            self.deepspeed_engine.save_checkpoint(checkpoint_dir, tag)
-            # DeepSpeed returns None, construct path manually
+            # DeepSpeed checkpoint saving with client_state
             from pathlib import Path
+
+            # CRITICAL: Build client_state dict with training metadata
+            client_state = {
+                "step": self.step_count,
+                "step_count": self.step_count,
+                "epoch": self.epoch_count,
+                "epoch_count": self.epoch_count,
+                "loss": self.best_loss,
+                "best_loss": self.best_loss,
+            }
+
+            # Save with client_state
+            self.deepspeed_engine.save_checkpoint(checkpoint_dir, tag, client_state=client_state)
+            # DeepSpeed returns None, construct path manually
             checkpoint_path = Path(checkpoint_dir) / (tag or f"step_{self.step_count}")
             print(f" DeepSpeed checkpoint saved: {checkpoint_path}")
             return str(checkpoint_path)
@@ -2612,17 +2910,18 @@ class EnhancedModularTrainer:
             # Standard PyTorch checkpoint saving
             from pathlib import Path
 
-            import torch
+            import torch  # type: ignore[import]
 
-            checkpoint_dir = Path(checkpoint_dir)
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint_dir_path = Path(checkpoint_dir)
+            checkpoint_dir_path.mkdir(parents=True, exist_ok=True)
 
             checkpoint_file = (
-                checkpoint_dir / f"checkpoint{'_' + tag if tag else ''}.pt"
+                checkpoint_dir_path / f"checkpoint{'_' + tag if tag else ''}.pt"
             )
 
+            base_model = self._get_base_model
             checkpoint = {
-                "model_state_dict": self.model.state_dict(),
+                "model_state_dict": base_model.state_dict(),
                 "step_count": self.step_count,
                 "epoch_count": self.epoch_count,
                 "best_loss": self.best_loss,
@@ -2653,10 +2952,7 @@ class EnhancedModularTrainer:
                 }
 
             # CRITICAL FIX: Save learning rate manager state
-            # FIXED: Save adaptive_lr_manager state if it's being used (check it first)
-            if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
-                checkpoint["adaptive_lr_manager_state"] = self.adaptive_lr_manager.get_state_dict()
-            elif hasattr(self, "lr_manager") and self.lr_manager is not None:
+            if hasattr(self, "lr_manager") and self.lr_manager is not None:
                 checkpoint["lr_manager_state"] = {
                     "current_step": self.lr_manager.current_step,
                     "warmup_steps": self.lr_manager.warmup_steps,
@@ -2671,10 +2967,10 @@ class EnhancedModularTrainer:
                 # Save plateau detector state if adaptive LR is enabled
                 if self.lr_manager.plateau_detector is not None:
                     checkpoint["lr_manager_state"]["plateau_detector"] = {
-                        "best_loss": self.lr_manager.plateau_detector.best_loss,
-                        "patience_counter": self.lr_manager.plateau_detector.patience_counter,
-                        "num_reductions": self.lr_manager.plateau_detector.num_reductions,
-                        "checks_since_last_reduction": self.lr_manager.plateau_detector.checks_since_last_reduction,
+                        "best_loss": self.lr_manager.plateau_detector.best_loss,  # type: ignore[attr-defined]
+                        "patience_counter": self.lr_manager.plateau_detector.patience_counter,  # type: ignore[attr-defined]
+                        "num_reductions": self.lr_manager.plateau_detector.num_reductions,  # type: ignore[attr-defined]
+                        "checks_since_last_reduction": self.lr_manager.plateau_detector.checks_since_last_reduction,  # type: ignore[attr-defined]
                     }
 
             # Save observability state (Phase 7)
@@ -2695,7 +2991,7 @@ class EnhancedModularTrainer:
 
             return str(checkpoint_file)
 
-    def load_checkpoint(self, checkpoint_path: str, tag: str = None) -> Dict[str, Any]:
+    def load_checkpoint(self, checkpoint_path: str, tag: Optional[str] = None) -> Dict[str, Any]:
         """
         Load checkpoint with DeepSpeed support.
 
@@ -2712,12 +3008,39 @@ class EnhancedModularTrainer:
                 checkpoint_path, tag
             )
             print(f"DeepSpeed checkpoint loaded: {checkpoint_path}")
+
+            # CRITICAL FIX: Restore training state from client_state
+            if client_state:
+                # Restore step count
+                self.step_count = client_state.get("step", client_state.get("step_count", 0))
+                self.epoch_count = client_state.get("epoch", client_state.get("epoch_count", 0))
+                self.best_loss = client_state.get("loss", client_state.get("best_loss", float("inf")))
+
+                print(
+                    f"   ✓ Training state: step={self.step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
+                )
+
+                # Mark states as restored
+                restored_states = {
+                    "model": True,  # DeepSpeed handles model state
+                    "optimizer": True,  # DeepSpeed handles optimizer state
+                }
+
+                # Return properly structured result
+                return {
+                    "step_count": self.step_count,
+                    "epoch_count": self.epoch_count,
+                    "best_loss": self.best_loss,
+                    "restored_states": restored_states,
+                    "checkpoint_file": str(checkpoint_path),
+                }
+
             return client_state or {}
         else:
             # Standard PyTorch checkpoint loading with device-agnostic handling
             from pathlib import Path
 
-            import torch
+            import torch  # type: ignore[import]
 
             checkpoint_file = Path(checkpoint_path)
             if not checkpoint_file.exists():
@@ -2748,7 +3071,8 @@ class EnhancedModularTrainer:
                             k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                             for k, v in model_state.items()
                         }
-                    self.model.load_state_dict(model_state)
+                    base_model = self._get_base_model
+                    base_model.load_state_dict(model_state)
                     print("   ✓ Model state restored")
                 except Exception as e:
                     print(f"   ❌ Failed to restore model state: {e}")
@@ -2764,7 +3088,8 @@ class EnhancedModularTrainer:
                 try:
                     # Verify optimizer has correct parameter groups matching loaded model
                     num_param_groups = len(self.optimizer.param_groups)
-                    num_model_params = sum(1 for _ in self.model.parameters())
+                    base_model = self._get_base_model
+                    num_model_params = sum(1 for _ in base_model.parameters())
 
                     optimizer_state = checkpoint["optimizer_state_dict"]
 
@@ -2814,10 +3139,10 @@ class EnhancedModularTrainer:
                 and "adaptive_lr_manager_state" in checkpoint
             ):
                 try:
-                    self.adaptive_lr_manager.load_state_dict(checkpoint["adaptive_lr_manager_state"])
+                    self.adaptive_lr_manager.load_state_dict(checkpoint["adaptive_lr_manager_state"])  # type: ignore[attr-defined]
                     print(
-                        f"   ✓ Adaptive LR manager state restored: step={self.adaptive_lr_manager.step_count}, "
-                        f"best_loss={self.adaptive_lr_manager.best_loss:.4f}, reductions={self.adaptive_lr_manager.lr_reductions}"
+                        f"   ✓ Adaptive LR manager state restored: step={self.adaptive_lr_manager.step_count}, "  # type: ignore[attr-defined]
+                        f"best_loss={self.adaptive_lr_manager.best_loss:.4f}, reductions={self.adaptive_lr_manager.lr_reductions}"  # type: ignore[attr-defined]
                     )
                     restored_states["adaptive_lr_manager"] = True
                 except Exception as e:
@@ -2844,10 +3169,10 @@ class EnhancedModularTrainer:
                     # Restore plateau detector state if exists
                     if "plateau_detector" in lr_state and self.lr_manager.plateau_detector is not None:
                         pd_state = lr_state["plateau_detector"]
-                        self.lr_manager.plateau_detector.best_loss = pd_state.get("best_loss", float('inf'))
-                        self.lr_manager.plateau_detector.patience_counter = pd_state.get("patience_counter", 0)
-                        self.lr_manager.plateau_detector.num_reductions = pd_state.get("num_reductions", 0)
-                        self.lr_manager.plateau_detector.checks_since_last_reduction = pd_state.get("checks_since_last_reduction", 0)
+                        self.lr_manager.plateau_detector.best_loss = pd_state.get("best_loss", float('inf'))  # type: ignore[attr-defined]
+                        self.lr_manager.plateau_detector.patience_counter = pd_state.get("patience_counter", 0)  # type: ignore[attr-defined]
+                        self.lr_manager.plateau_detector.num_reductions = pd_state.get("num_reductions", 0)  # type: ignore[attr-defined]
+                        self.lr_manager.plateau_detector.checks_since_last_reduction = pd_state.get("checks_since_last_reduction", 0)  # type: ignore[attr-defined]
 
                     phase = "recovery" if self.lr_manager.in_recovery else ("warmup" if self.lr_manager.current_step < self.lr_manager.warmup_steps else "main")
                     print(
@@ -2891,7 +3216,7 @@ class EnhancedModularTrainer:
                     self.gradient_health.explosion_threshold = gh_state.get(
                         "explosion_threshold", 5.0
                     )
-                    self.gradient_health.current_clip_value = gh_state.get(
+                    self.gradient_health.current_clip_value = gh_state.get(  # type: ignore[attr-defined]
                         "clip_value", 1.0
                     )
                     self.gradient_health.total_explosions = gh_state.get(
@@ -2946,15 +3271,15 @@ class EnhancedModularTrainer:
                         self.loss_health.loss_history.extend(
                             lh_state["loss_history"][-100:]
                         )
-                    self.loss_health.spike_threshold = lh_state.get(
+                    self.loss_health.spike_threshold = lh_state.get(  # type: ignore[attr-defined]
                         "spike_threshold", 5.0
                     )
-                    self.loss_health.nan_count = lh_state.get("nan_count", 0)
-                    self.loss_health.inf_count = lh_state.get("inf_count", 0)
-                    self.loss_health.spike_count = lh_state.get("spike_count", 0)
+                    self.loss_health.nan_count = lh_state.get("nan_count", 0)  # type: ignore[attr-defined]
+                    self.loss_health.inf_count = lh_state.get("inf_count", 0)  # type: ignore[attr-defined]
+                    self.loss_health.spike_count = lh_state.get("spike_count", 0)  # type: ignore[attr-defined]
 
                     print(
-                        f"   ✓ Loss health restored: {self.loss_health.nan_count} NaN, {self.loss_health.inf_count} Inf, {self.loss_health.spike_count} spikes"
+                        f"   ✓ Loss health restored: {self.loss_health.nan_count} NaN, {self.loss_health.inf_count} Inf, {self.loss_health.spike_count} spikes"  # type: ignore[attr-defined]
                     )
                     restored_states["loss_health"] = True
                 except Exception as e:
@@ -3076,12 +3401,7 @@ class EnhancedModularTrainer:
         if self.metrics_collector:
             stats["metrics"] = self.metrics_collector.get_performance_summary()
 
-        if self.adaptive_lr_manager:
-            stats["adaptive_lr"] = self.adaptive_lr_manager.get_lr_statistics()
-        else:
-            stats["adaptive_lr"] = {"status": "disabled"}
-
-        if self.warmup_scheduler:
+        if hasattr(self, 'warmup_scheduler') and self.warmup_scheduler:
             stats["warmup"] = self.warmup_scheduler._get_warmup_info()
 
         if self.async_logger:
@@ -3157,12 +3477,12 @@ class EnhancedModularTrainer:
 
             # Reset loss health monitor to prevent immediate re-triggering
             if hasattr(self, "loss_health"):
-                self.loss_health.reset_history()
+                self.loss_health.reset_history()  # type: ignore[attr-defined]
                 print("     ✓ Loss health monitor history reset")
 
             # Reset gradient health monitor
             if hasattr(self, "gradient_health"):
-                self.gradient_health.reset_history()
+                self.gradient_health.reset_history()  # type: ignore[attr-defined]
                 print("     ✓ Gradient health monitor history reset")
 
             # Lower learning rate to reduce instability

@@ -10,9 +10,9 @@ These components enable efficient mixture-of-experts training with improved
 load balancing and reduced computational overhead.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
 from typing import Optional, Tuple
 
 

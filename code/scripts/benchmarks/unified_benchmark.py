@@ -37,10 +37,10 @@ Usage:
 import argparse
 import os
 import sys
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+import torch  # type: ignore[import-not-found]
+import torch.nn as nn  # type: ignore[import-not-found]
+import torch.nn.functional as F  # type: ignore[import-not-found]
+from torch.utils.data import DataLoader, Dataset  # type: ignore[import-not-found]
 import numpy as np
 import json
 import time
@@ -1562,6 +1562,7 @@ class UnifiedBenchmarkSuite:
 
     def _run_gpu_benchmarks(self, iterations: int) -> Dict[str, Any]:
         """Comprehensive GPU benchmarking suite."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         gpu_results = {}
 
         # 1. Compute Performance Tests
@@ -1573,44 +1574,45 @@ class UnifiedBenchmarkSuite:
         gpu_results['memory_bandwidth'] = self._benchmark_gpu_memory_comprehensive(iterations)
 
         # 3. Attention Mechanism Tests
-        if self.system_capabilities.supports_flash_attention:
+        if self.system_capabilities and self.system_capabilities.supports_flash_attention:
             logger.info("Testing attention mechanisms...")
-            gpu_results['attention_performance'] = self._benchmark_attention_mechanisms(iterations)
+            gpu_results['attention_performance'] = self._benchmark_attention_mechanisms(iterations)  # type: ignore[attr-defined]
 
         # 4. Mixed Precision Training Tests
         logger.info("Testing mixed precision training...")
-        gpu_results['mixed_precision_training'] = self._benchmark_mixed_precision_training(iterations)
+        gpu_results['mixed_precision_training'] = self._benchmark_mixed_precision_training(iterations)  # type: ignore[attr-defined]
 
         # 5. AI Workload Specific Tests
         logger.info("Testing AI-specific workloads...")
-        gpu_results['ai_workloads'] = self._benchmark_ai_workloads(iterations)
+        gpu_results['ai_workloads'] = self._benchmark_ai_workloads(iterations)  # type: ignore[attr-defined]
 
         return gpu_results
 
     def _run_cpu_benchmarks(self, iterations: int) -> Dict[str, Any]:
         """Comprehensive CPU benchmarking suite."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         cpu_results = {}
 
         # 1. DataLoader Performance Tests
         logger.info("Testing DataLoader performance...")
-        cpu_results['dataloader_performance'] = self._benchmark_dataloader_performance(iterations)
+        cpu_results['dataloader_performance'] = self._benchmark_dataloader_performance(iterations)  # type: ignore[attr-defined]
 
         # 2. CPU Training Performance Tests
         logger.info("Testing CPU training performance...")
-        cpu_results['cpu_training_performance'] = self._benchmark_cpu_training_performance(iterations)
+        cpu_results['cpu_training_performance'] = self._benchmark_cpu_training_performance(iterations)  # type: ignore[attr-defined]
 
         # 3. Multi-threading Performance Tests
         logger.info("Testing multi-threading performance...")
-        cpu_results['threading_performance'] = self._benchmark_threading_performance(iterations)
+        cpu_results['threading_performance'] = self._benchmark_threading_performance(iterations)  # type: ignore[attr-defined]
 
         # 4. Memory-Intensive Workload Tests
         logger.info("Testing memory-intensive workloads...")
-        cpu_results['memory_intensive_performance'] = self._benchmark_memory_intensive_workloads(iterations)
+        cpu_results['memory_intensive_performance'] = self._benchmark_memory_intensive_workloads(iterations)  # type: ignore[attr-defined]
 
         # 5. CPU AI Acceleration Tests
         if self.system_capabilities.supports_cpu_bf16 or self.system_capabilities.supports_amx:
             logger.info("Testing CPU AI acceleration features...")
-            cpu_results['cpu_ai_acceleration'] = self._benchmark_cpu_ai_acceleration(iterations)
+            cpu_results['cpu_ai_acceleration'] = self._benchmark_cpu_ai_acceleration(iterations)  # type: ignore[attr-defined]
 
         return cpu_results
 
@@ -1620,25 +1622,27 @@ class UnifiedBenchmarkSuite:
 
         # 1. Load Balancing Tests
         logger.info("Testing CPU/GPU load balancing...")
-        combined_results['load_balancing'] = self._benchmark_load_balancing(iterations)
+        combined_results['load_balancing'] = self._benchmark_load_balancing(iterations)  # type: ignore[attr-defined]
 
         # 2. Data Pipeline Tests
         logger.info("Testing data pipeline efficiency...")
-        combined_results['data_pipeline'] = self._benchmark_data_pipeline_efficiency(iterations)
+        combined_results['data_pipeline'] = self._benchmark_data_pipeline_efficiency(iterations)  # type: ignore[attr-defined]
 
         # 3. Memory Transfer Tests
         logger.info("Testing CPU-GPU memory transfers...")
-        combined_results['memory_transfer'] = self._benchmark_memory_transfer_efficiency(iterations)
+        combined_results['memory_transfer'] = self._benchmark_memory_transfer_efficiency(iterations)  # type: ignore[attr-defined]
 
         return combined_results
 
     def _benchmark_gpu_compute_comprehensive(self, iterations: int) -> Dict[str, Any]:
         """Comprehensive GPU compute benchmarking across all supported precisions."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         if not self.system_capabilities.gpu_model:
             return {}
 
         # Scale matrix sizes based on GPU memory
         memory_gb = self.system_capabilities.gpu_memory_gb
+        assert memory_gb is not None, "GPU memory info must be available"
         matrix_sizes = []
 
         if memory_gb >= 80:
@@ -1693,6 +1697,10 @@ class UnifiedBenchmarkSuite:
                         # FP8 typically requires special handling - fallback to FP16 for now
                         a = torch.randn(m, k, dtype=torch.float16, device=self.device)
                         b = torch.randn(k, n, dtype=torch.float16, device=self.device)
+                    else:
+                        # Default to fp32 for unknown precision
+                        a = torch.randn(m, k, dtype=torch.float32, device=self.device)
+                        b = torch.randn(k, n, dtype=torch.float32, device=self.device)
 
                     # Warmup
                     for _ in range(5):
@@ -1745,10 +1753,12 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_gpu_memory_comprehensive(self, iterations: int) -> Dict[str, Any]:
         """Comprehensive GPU memory bandwidth benchmarking."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         if not self.system_capabilities.gpu_model:
             return {}
 
         memory_gb = self.system_capabilities.gpu_memory_gb
+        assert memory_gb is not None, "GPU memory info must be available"
         max_memory_mb = int(memory_gb * 1024 * 0.8)  # Use 80% of available memory
 
         # Test different memory sizes
@@ -1815,6 +1825,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_attention_mechanisms(self, iterations: int) -> Dict[str, Any]:
         """Benchmark attention mechanism performance."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         if not self.system_capabilities.supports_flash_attention:
             return {}
 
@@ -1829,7 +1840,8 @@ class UnifiedBenchmarkSuite:
                 try:
                     # Skip if too large for memory
                     memory_estimate = batch_size * seq_len * 768 * 4 / (1024**3)  # Rough estimate
-                    if memory_estimate > self.system_capabilities.gpu_memory_gb * 0.8:
+                    gpu_mem = self.system_capabilities.gpu_memory_gb or 8
+                    if memory_estimate > gpu_mem * 0.8:
                         continue
 
                     config = {'batch_size': batch_size, 'sequence_length': seq_len}
@@ -1891,6 +1903,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_mixed_precision_training(self, iterations: int) -> Dict[str, Any]:
         """Benchmark mixed precision training performance."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         # Create a more realistic transformer model
         class TransformerBlock(nn.Module):
             def __init__(self, embed_dim: int, num_heads: int, ff_dim: int):
@@ -1915,7 +1928,7 @@ class UnifiedBenchmarkSuite:
                 return x
 
         # Scale model based on GPU memory
-        memory_gb = self.system_capabilities.gpu_memory_gb if self.system_capabilities.gpu_model else 8
+        memory_gb = self.system_capabilities.gpu_memory_gb or 8
 
         if memory_gb >= 40:
             embed_dim, num_heads, ff_dim, num_layers = 1024, 16, 4096, 8
@@ -2073,6 +2086,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_cnn_workload(self, iterations: int) -> Dict[str, Any]:
         """Benchmark CNN inference workload."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         try:
             # Create ResNet-like model
             model = nn.Sequential(
@@ -2095,7 +2109,7 @@ class UnifiedBenchmarkSuite:
             ).to(self.device)
 
             # Scale batch size based on memory
-            memory_gb = self.system_capabilities.gpu_memory_gb if self.system_capabilities.gpu_model else 4
+            memory_gb = self.system_capabilities.gpu_memory_gb or 4
             batch_size = min(64, max(1, int(memory_gb * 8)))
 
             input_tensor = torch.randn(batch_size, 3, 224, 224, device=self.device)
@@ -2134,6 +2148,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_language_model_workload(self, iterations: int) -> Dict[str, Any]:
         """Benchmark language model inference workload."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         try:
             # Simple transformer decoder
             embed_dim = 512
@@ -2149,7 +2164,7 @@ class UnifiedBenchmarkSuite:
             ).to(self.device)
 
             # Scale based on memory
-            memory_gb = self.system_capabilities.gpu_memory_gb if self.system_capabilities.gpu_model else 4
+            memory_gb = self.system_capabilities.gpu_memory_gb or 4
             batch_size = min(32, max(1, int(memory_gb * 4)))
             seq_len = min(512, max(64, int(memory_gb * 64)))
 
@@ -2189,6 +2204,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_embedding_workload(self, iterations: int) -> Dict[str, Any]:
         """Benchmark embedding operations."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         try:
             vocab_size = 100000
             embed_dim = 768
@@ -2196,7 +2212,7 @@ class UnifiedBenchmarkSuite:
             embedding = nn.Embedding(vocab_size, embed_dim).to(self.device)
 
             # Scale based on memory
-            memory_gb = self.system_capabilities.gpu_memory_gb if self.system_capabilities.gpu_model else 4
+            memory_gb = self.system_capabilities.gpu_memory_gb or 4
             batch_size = min(512, max(16, int(memory_gb * 32)))
             seq_len = min(1024, max(128, int(memory_gb * 128)))
 
@@ -2237,6 +2253,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_dataloader_performance(self, iterations: int) -> Dict[str, Any]:
         """Benchmark DataLoader performance with different configurations."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         # Dummy dataset for testing
         class DummyDataset(Dataset):
             def __init__(self, size: int, data_complexity: int = 1024):
@@ -2318,6 +2335,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_cpu_training_performance(self, iterations: int) -> Dict[str, Any]:
         """Benchmark CPU training performance with different thread configurations."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         # Simple model for CPU training
         class CPUTrainingModel(nn.Module):
             def __init__(self, input_size: int = 1024, hidden_sizes: List[int] = [512, 256, 128],
@@ -2342,7 +2360,7 @@ class UnifiedBenchmarkSuite:
                 return self.network(x)
 
         # Test different thread configurations
-        max_threads = self.system_capabilities.optimal_torch_threads
+        max_threads = self.system_capabilities.optimal_torch_threads or 4
         thread_configs = [1, 2, 4, max_threads]
         if max_threads > 8:
             thread_configs.append(max_threads // 2)
@@ -2353,6 +2371,8 @@ class UnifiedBenchmarkSuite:
         original_threads = torch.get_num_threads()
 
         for num_threads in thread_configs:
+            model = None
+            optimizer = None
             try:
                 # Set thread count
                 torch.set_num_threads(num_threads)
@@ -2363,7 +2383,7 @@ class UnifiedBenchmarkSuite:
                 criterion = nn.CrossEntropyLoss()
 
                 # Scale batch size based on system memory and threads
-                memory_gb = self.system_capabilities.system_memory_gb
+                memory_gb = self.system_capabilities.system_memory_gb or 8
                 base_batch_size = min(128, max(16, int(memory_gb * 4)))
                 batch_size = min(base_batch_size, max(8, base_batch_size // (num_threads // 2 + 1)))
 
@@ -2409,8 +2429,10 @@ class UnifiedBenchmarkSuite:
                 continue
             finally:
                 # Cleanup
-                if 'model' in locals():
-                    del model, optimizer
+                if model is not None:
+                    del model
+                if optimizer is not None:
+                    del optimizer
 
         # Restore original thread count
         torch.set_num_threads(original_threads)
@@ -2418,6 +2440,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_threading_performance(self, iterations: int) -> Dict[str, Any]:
         """Benchmark multi-threading performance for CPU-intensive tasks."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         def cpu_intensive_task(task_size: int) -> float:
             """CPU-intensive computation task."""
             result = 0.0
@@ -2482,6 +2505,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_memory_intensive_workloads(self, iterations: int) -> Dict[str, Any]:
         """Benchmark memory-intensive workloads."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         workloads = {}
 
         # 1. Large matrix operations
@@ -2497,6 +2521,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_matrix_operations(self, iterations: int) -> Dict[str, Any]:
         """Benchmark large matrix operations on CPU."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         try:
             # Scale matrix size based on available memory
             memory_gb = self.system_capabilities.system_memory_gb
@@ -2555,6 +2580,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_memory_bandwidth_stress(self, iterations: int) -> Dict[str, Any]:
         """Stress test memory bandwidth with large arrays."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         try:
             # Use up to 50% of available memory
             memory_gb = self.system_capabilities.system_memory_gb
@@ -2615,6 +2641,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_cache_performance(self, iterations: int) -> Dict[str, Any]:
         """Benchmark cache performance with different access patterns."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         try:
             l3_cache_kb = self.system_capabilities.cpu_cache_l3_kb
 
@@ -2680,6 +2707,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_cpu_ai_acceleration(self, iterations: int) -> Dict[str, Any]:
         """Benchmark CPU AI acceleration features (AVX, AMX, etc.)."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         results = {}
 
         # Test different precision modes if supported
@@ -2829,6 +2857,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_load_balancing(self, iterations: int) -> Dict[str, Any]:
         """Benchmark CPU/GPU load balancing with different workload distributions."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         if not self.system_capabilities.gpu_model:
             return {'note': 'GPU not available for load balancing tests'}
 
@@ -2923,6 +2952,7 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_data_pipeline_efficiency(self, iterations: int) -> Dict[str, Any]:
         """Benchmark data pipeline efficiency with different configurations."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         # Test dataset for pipeline benchmarking
         class PipelineDataset(Dataset):
             def __init__(self, size: int, complexity: str = 'medium'):
@@ -3049,11 +3079,12 @@ class UnifiedBenchmarkSuite:
 
     def _benchmark_memory_transfer_efficiency(self, iterations: int) -> Dict[str, Any]:
         """Benchmark CPU-GPU memory transfer efficiency."""
+        assert self.system_capabilities is not None, "System capabilities must be initialized"
         if not self.system_capabilities.gpu_model:
             return {'note': 'GPU not available for memory transfer tests'}
 
         # Test different data sizes for transfers
-        gpu_memory_gb = self.system_capabilities.gpu_memory_gb
+        gpu_memory_gb = self.system_capabilities.gpu_memory_gb or 8
         max_size_mb = min(gpu_memory_gb * 1024 * 0.1, 1000)  # Use up to 10% of GPU memory, max 1GB
 
         transfer_sizes_mb = [1, 10, 50, 100, 500]
@@ -3393,6 +3424,7 @@ class ModelCapacityAnalyzer:
                 base_efficiency *= 1.1
 
         effective_tflops = peak_tflops * base_efficiency
+        efficiency_factor = base_efficiency
 
         # Calculate time per sample
         time_per_sample = flops_per_sample / (effective_tflops * 1e12) if effective_tflops > 0 else 1.0
@@ -3750,8 +3782,10 @@ Examples:
 
         if capabilities.gpu_model:
             print(f"\n GPU: {capabilities.gpu_model}")
-            print(f"   Memory: {capabilities.gpu_memory_gb:.1f} GB")
-            print(f"   Architecture: {capabilities.gpu_architecture.value}")
+            gpu_mem = capabilities.gpu_memory_gb or 0
+            print(f"   Memory: {gpu_mem:.1f} GB")
+            arch_value = capabilities.gpu_architecture.value if capabilities.gpu_architecture else "Unknown"
+            print(f"   Architecture: {arch_value}")
             if capabilities.gpu_ai_score:
                 print(f"   AI Score: {capabilities.gpu_ai_score:.0f}")
         else:

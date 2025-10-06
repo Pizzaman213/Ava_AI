@@ -6,7 +6,7 @@ optimizer states, and training metadata. It ensures robust checkpoint
 management for resuming training and model deployment.
 """
 
-import torch
+import torch  # type: ignore[import]
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
@@ -151,10 +151,10 @@ def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
         >>> if latest:
         ...     load_checkpoint(latest, model)
     """
-    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir_path = Path(checkpoint_dir)
 
     # Check for metadata file
-    metadata_path = checkpoint_dir / 'checkpoint_metadata.json'
+    metadata_path = checkpoint_dir_path / 'checkpoint_metadata.json'
     if metadata_path.exists():
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
@@ -162,7 +162,7 @@ def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
                 return metadata['latest_checkpoint']
 
     # Fall back to finding newest .pt file
-    checkpoints = list(checkpoint_dir.glob('*.pt'))
+    checkpoints = list(checkpoint_dir_path.glob('*.pt'))
     if checkpoints:
         return str(max(checkpoints, key=lambda p: p.stat().st_mtime))
 
@@ -179,15 +179,15 @@ def find_best_checkpoint(checkpoint_dir: str) -> Optional[str]:
     Returns:
         Path to best checkpoint or None if not found
     """
-    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir_path = Path(checkpoint_dir)
 
     # Check for best model file
-    best_path = checkpoint_dir / 'best_model.pt'
+    best_path = checkpoint_dir_path / 'best_model.pt'
     if best_path.exists():
         return str(best_path)
 
     # Check metadata
-    metadata_path = checkpoint_dir / 'checkpoint_metadata.json'
+    metadata_path = checkpoint_dir_path / 'checkpoint_metadata.json'
     if metadata_path.exists():
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)

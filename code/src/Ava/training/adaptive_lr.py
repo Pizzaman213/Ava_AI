@@ -5,7 +5,7 @@ This module provides sophisticated learning rate management with real-time
 loss monitoring, plateau detection, spike detection, and stability-based adjustments.
 """
 
-import torch
+import torch  # type: ignore[import]
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from collections import deque
@@ -140,17 +140,21 @@ class AdaptiveLearningRateManager:
             'adjustment_reason': None
         }
 
-        # FIXED: Handle warmup phase first
+        # FIXED: Emergency spike detection BEFORE warmup handling
+        # This protects against divergence even during warmup
+        if self._detect_loss_spike(avg_recent_loss):
+            adjustment = self._handle_loss_spike(avg_recent_loss)
+            lr_info.update(adjustment)
+            # Mark as emergency during warmup for logging
+            if self.config.warmup_steps > 0 and self.step_count <= self.config.warmup_steps:
+                lr_info['emergency_during_warmup'] = True
+            return lr_info
+
+        # Handle warmup phase
         if self.config.warmup_steps > 0 and self.step_count <= self.config.warmup_steps:
             warmup_adjustment = self._handle_warmup()
             lr_info.update(warmup_adjustment)
             self.lr_stats['warmup_steps_completed'] = self.step_count
-            return lr_info
-
-        # Emergency spike detection (immediate action) - only after warmup
-        if self._detect_loss_spike(avg_recent_loss):
-            adjustment = self._handle_loss_spike(avg_recent_loss)
-            lr_info.update(adjustment)
             return lr_info
 
         # Regular interval checks

@@ -2,6 +2,14 @@
 Training utilities and advanced training techniques.
 """
 
+# Note: The following files have been moved to _archived/training/:
+# - profiling_tools.py
+# - dynamic_batch_sampler.py
+# - progressive_batch_scheduler.py
+# - qlora_utils.py
+# - distributed_optimizations.py
+# These are optional training strategies/tools not used in the default pipeline
+
 from .gradient_surgery import (
     GradientSurgeon,
     AdaptiveGradientSurgeon,
@@ -36,13 +44,6 @@ from .advanced_warmup import (
     create_adaptive_warmup_config
 )
 
-from .adaptive_lr import (
-    AdaptiveLearningRateManager,
-    AdaptiveLRConfig,
-    create_conservative_lr_config,
-    create_aggressive_lr_config,
-    create_balanced_lr_config
-)
 
 from .performance_modes import (
     PerformanceModeManager,
@@ -100,12 +101,6 @@ __all__ = [
     "create_polynomial_warmup_config",
     "create_adaptive_warmup_config",
 
-    # Adaptive Learning Rate
-    "AdaptiveLearningRateManager",
-    "AdaptiveLRConfig",
-    "create_conservative_lr_config",
-    "create_aggressive_lr_config",
-    "create_balanced_lr_config",
 
     # Performance Modes
     "PerformanceModeManager",

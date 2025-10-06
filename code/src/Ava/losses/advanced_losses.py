@@ -5,9 +5,9 @@ This module implements various advanced loss functions including contrastive
 learning, auxiliary losses, and specialized training objectives.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
 from typing import Dict, List, Optional, Tuple, Union
 import math
 
@@ -59,6 +59,8 @@ class ContrastiveLoss(nn.Module):
         elif self.loss_type == "standard":
             return self._standard_contrastive_loss(embeddings, labels, positive_pairs, negative_pairs)
         elif self.loss_type == "triplet":
+            if labels is None:
+                raise ValueError("Labels required for triplet loss")
             return self._triplet_loss(embeddings, labels)
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}")
@@ -103,7 +105,7 @@ class ContrastiveLoss(nn.Module):
 
         # Create labels (positive indices)
         if positive_pairs is not None:
-            pos_labels = positive_indices[:len(anchor_embeds)]
+            pos_labels = positive_pairs[:len(anchor_embeds), 1]
         else:
             pos_labels = torch.arange(len(anchor_embeds), len(anchor_embeds)*2, device=embeddings.device)
 
@@ -125,15 +127,19 @@ class ContrastiveLoss(nn.Module):
                 raise ValueError("Either pairs or labels must be provided")
             positive_pairs, negative_pairs = self._generate_pairs_from_labels(labels)
 
+        # At this point, pairs are guaranteed to be tensors
+        pos_pairs: torch.Tensor = positive_pairs
+        neg_pairs: torch.Tensor = negative_pairs
+
         # Compute distances for positive pairs
         pos_distances = torch.norm(
-            embeddings[positive_pairs[:, 0]] - embeddings[positive_pairs[:, 1]],
+            embeddings[pos_pairs[:, 0]] - embeddings[pos_pairs[:, 1]],
             p=2, dim=-1
         )
 
         # Compute distances for negative pairs
         neg_distances = torch.norm(
-            embeddings[negative_pairs[:, 0]] - embeddings[negative_pairs[:, 1]],
+            embeddings[neg_pairs[:, 0]] - embeddings[neg_pairs[:, 1]],
             p=2, dim=-1
         )
 
@@ -288,7 +294,8 @@ class DiversityLoss(nn.Module):
         if len(expert_outputs) < 2:
             return torch.tensor(0.0, device=expert_outputs[0].device)
 
-        diversity_loss = 0.0
+        device = expert_outputs[0].device
+        diversity_loss = torch.tensor(0.0, device=device)
         num_pairs = 0
 
         for i in range(len(expert_outputs)):
@@ -310,7 +317,11 @@ class DiversityLoss(nn.Module):
                 diversity_loss += similarity
                 num_pairs += 1
 
-        return self.diversity_weight * diversity_loss / num_pairs if num_pairs > 0 else torch.tensor(0.0)
+        if num_pairs > 0:
+            return self.diversity_weight * diversity_loss / num_pairs
+        else:
+            device = expert_outputs[0].device if expert_outputs else 'cpu'
+            return torch.tensor(0.0, device=device)
 
 
 class AuxiliaryLoss(nn.Module):
@@ -549,7 +560,7 @@ class AdaptiveLossScaling(nn.Module):
         # Learnable loss weights (in log space for stability)
         self.log_weights = nn.Parameter(torch.tensor(init_weights).log())
 
-    def forward(self, losses: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, losses: List[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute adaptively weighted loss.
 
@@ -557,7 +568,7 @@ class AdaptiveLossScaling(nn.Module):
             losses: List of individual loss values
 
         Returns:
-            Combined weighted loss
+            Tuple of (combined weighted loss, normalized weights)
         """
         weights = torch.exp(self.log_weights)
 
@@ -565,9 +576,12 @@ class AdaptiveLossScaling(nn.Module):
         weights = weights / weights.sum()
 
         # Compute weighted loss
-        weighted_loss = sum(w * loss for w, loss in zip(weights, losses))
+        weighted_loss_val = sum(w * loss for w, loss in zip(weights, losses))
+        # Ensure it's a tensor, not just 0
+        if not isinstance(weighted_loss_val, torch.Tensor):
+            weighted_loss_val = torch.tensor(0.0, device=weights.device)
 
-        return weighted_loss, weights
+        return weighted_loss_val, weights
 
 
 class CompositeLoss(nn.Module):

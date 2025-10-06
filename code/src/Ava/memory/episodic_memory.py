@@ -5,9 +5,9 @@ Implements episodic memory mechanisms to prevent catastrophic forgetting
 and enable continual learning through selective experience replay.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 from dataclasses import dataclass
@@ -334,7 +334,7 @@ class ExperienceReplay(nn.Module):
         self,
         current_batch_size: int,
         current_hidden_states: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Get a batch of memories for replay.
 
@@ -385,7 +385,7 @@ class ExperienceReplay(nn.Module):
 
         labels = None
         if all(m.labels is not None for m in sampled_memories):
-            labels = torch.stack([m.labels.squeeze(0) for m in sampled_memories])
+            labels = torch.stack([m.labels.squeeze(0) for m in sampled_memories])  # type: ignore[union-attr]
 
         return input_ids, attention_mask, labels
 

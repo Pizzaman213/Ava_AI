@@ -10,11 +10,11 @@ out-of-memory errors during training:
 - Memory usage forecasting
 """
 
-import torch
+import torch  # type: ignore[import]
 import psutil
 import gc
 import time
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional, Tuple, Callable
 from collections import deque
 import logging
 import numpy as np
@@ -53,8 +53,8 @@ def get_gpu_compute_utilization(device: int = 0) -> float:
         return 0.75  # Assume reasonable utilization if NVML not available
 
     try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device)
-        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device)  # type: ignore[union-attr]
+        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore[union-attr]
         gpu_util = utilization.gpu / 100.0  # Convert percentage to fraction
 
         # Clamp to valid range [0.0, 1.0]
@@ -79,7 +79,8 @@ class MemoryMonitor:
         critical_threshold: float = 0.96,  # Increased from 0.95 for better stability
         emergency_threshold: float = 0.98,
         history_size: int = 100,
-        memory_headroom_gb: float = 1.0
+        memory_headroom_gb: float = 1.0,
+        silent_mode: bool = False  # NEW: Suppress memory warnings
     ):
         """
         Initialize memory monitor.
@@ -91,12 +92,14 @@ class MemoryMonitor:
             emergency_threshold: Threshold to trigger emergency cleanup
             history_size: Number of memory measurements to keep
             memory_headroom_gb: GB of memory to reserve for safety
+            silent_mode: If True, suppress memory warning messages (only log at DEBUG level)
         """
         self.target_utilization = target_utilization
         self.warning_threshold = warning_threshold
         self.critical_threshold = critical_threshold
         self.emergency_threshold = emergency_threshold
         self.memory_headroom_gb = memory_headroom_gb
+        self.silent_mode = silent_mode
 
         # Memory history tracking
         self.gpu_memory_history = deque(maxlen=history_size)
@@ -122,11 +125,17 @@ class MemoryMonitor:
                     self.memory_headroom_gb,
                     total_memory * 0.1  # Reserve at most 10% of total memory
                 )
-                logger.info(f"GPU {i}: {total_memory:.1f}GB total, {self.reserved_memory[i]:.1f}GB reserved")
+                if not self.silent_mode:
+                    logger.info(f"GPU {i}: {total_memory:.1f}GB total, {self.reserved_memory[i]:.1f}GB reserved")
+                else:
+                    logger.debug(f"GPU {i}: {total_memory:.1f}GB total, {self.reserved_memory[i]:.1f}GB reserved")
 
         # CPU memory info
         self.total_cpu_memory = psutil.virtual_memory().total / (1024**3)
-        logger.info(f"CPU: {self.total_cpu_memory:.1f}GB total")
+        if not self.silent_mode:
+            logger.info(f"CPU: {self.total_cpu_memory:.1f}GB total")
+        else:
+            logger.debug(f"CPU: {self.total_cpu_memory:.1f}GB total")
 
     def get_memory_stats(self, device: Optional[int] = None) -> Dict[str, float]:
         """
@@ -146,13 +155,14 @@ class MemoryMonitor:
                 device = torch.cuda.current_device()
 
             try:
-                torch.cuda.synchronize(device)
-                allocated = torch.cuda.memory_allocated(device) / (1024**3)
-                cached = torch.cuda.memory_reserved(device) / (1024**3)
-                total = self.total_gpu_memory.get(device, 0)
+                current_device = device  # Type assertion - device is not None here
+                torch.cuda.synchronize(current_device)
+                allocated = torch.cuda.memory_allocated(current_device) / (1024**3)
+                cached = torch.cuda.memory_reserved(current_device) / (1024**3)
+                total = self.total_gpu_memory.get(current_device, 0)
 
                 # Get actual GPU compute utilization (not memory utilization)
-                gpu_compute_util = get_gpu_compute_utilization(device)
+                gpu_compute_util = get_gpu_compute_utilization(current_device)
 
                 # Calculate memory utilization (what we should monitor for memory warnings)
                 memory_utilization = cached / total if total > 0 else 0  # Use cached (reserved) memory
@@ -233,7 +243,7 @@ class MemoryMonitor:
 
         self.batch_size_history.append(batch_size)
 
-    def check_memory_health(self, batch_size: int, device: Optional[int] = None) -> Dict[str, any]:
+    def check_memory_health(self, batch_size: int, device: Optional[int] = None) -> Dict[str, Any]:
         """
         Check memory health and recommend actions.
 
@@ -336,7 +346,7 @@ class MemoryMonitor:
         # Combine risks
         total_risk = min(1.0, base_risk + trend_risk + batch_risk)
 
-        return total_risk
+        return float(total_risk)
 
     def _detect_memory_leak(self) -> bool:
         """
@@ -412,7 +422,10 @@ class MemoryMonitor:
         after_stats = self.get_memory_stats()
 
         freed_gb = before_stats['gpu_cached_gb'] - after_stats['gpu_cached_gb']
-        logger.info(f"Memory cleanup: freed {freed_gb:.2f}GB GPU memory")
+        if not self.silent_mode:
+            logger.info(f"Memory cleanup: freed {freed_gb:.2f}GB GPU memory")
+        else:
+            logger.debug(f"Memory cleanup: freed {freed_gb:.2f}GB GPU memory")
 
         return {
             'before_allocated': before_stats['gpu_allocated_gb'],
@@ -501,7 +514,7 @@ class MemoryMonitor:
 
         return False
 
-    def get_memory_summary(self) -> Dict[str, any]:
+    def get_memory_summary(self) -> Dict[str, Any]:
         """Get comprehensive memory usage summary."""
         current_stats = self.get_memory_stats()
 

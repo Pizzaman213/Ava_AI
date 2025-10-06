@@ -11,7 +11,7 @@ Implements the compatibility rules from Phase 6:
 """
 
 from enum import Enum
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional, Set, Any
 from dataclasses import dataclass
 import logging
 
@@ -49,7 +49,7 @@ class FeatureCompatibilityValidator:
         self.compatibility_rules = self._build_compatibility_matrix()
         self.feature_dependencies = self._build_dependency_matrix()
 
-    def _build_compatibility_matrix(self) -> Dict[str, Dict[str, str]]:
+    def _build_compatibility_matrix(self) -> Dict[str, Dict[str, Any]]:
         """
         Build the feature compatibility matrix.
 

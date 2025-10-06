@@ -174,18 +174,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import torch
+import torch  # type: ignore[import-not-found]
 import yaml
 from tqdm import tqdm
+
+# OPTIMIZATION: Enable TF32 for Ampere GPUs (3060/3070/3080/3090/A100) - 8x faster matmul
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True  # Auto-tune kernels for your input sizes
+    print("✓ TF32 enabled for CUDA operations (Ampere GPU optimization)")
+    print("✓ cuDNN benchmark mode enabled (auto-tuning)")
 
 # Suppress asyncio socket warnings
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message="socket.send()")
 
 # Add project root to path
-sys.path.append("/project/code")
+project_root = Path(__file__).resolve().parents[2]  # Go up to /project/code
+sys.path.insert(0, str(project_root))
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer  # type: ignore[import-not-found]
 
 # Import new modular components
 from src.Ava.config import EnhancedTrainingConfig, TrainingConfigManager
@@ -194,11 +203,12 @@ from src.Ava.config.feature_compatibility import (
     validate_training_config,
 )
 from src.Ava.data_streaming import create_streaming_dataloaders
-from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel
+from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel  # type: ignore[import-not-found]
 from src.Ava.multi_column_data import create_multi_column_dataloader
-from src.Ava.observability.health_dashboard import HealthDashboard
-from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
-from src.Ava.observability.training_validator import TrainingValidator
+# Observability modules removed for simplicity
+# from src.Ava.observability.health_dashboard import HealthDashboard
+# from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
+# from src.Ava.observability.training_validator import TrainingValidator
 from src.Ava.training.adaptive_lr import AdaptiveLearningRateManager, AdaptiveLRConfig
 from src.Ava.training.enhanced_trainer import EnhancedModularTrainer
 from src.Ava.training.progressive_training import (
@@ -218,7 +228,7 @@ except ImportError:
     print(" Weights & Biases not installed. Install with: pip install wandb")
 
 try:
-    import deepspeed
+    import deepspeed  # type: ignore[import]
 
     DEEPSPEED_AVAILABLE = True
 except ImportError:
@@ -291,7 +301,7 @@ def create_model_and_tokenizer(
 
     # Initialize tokenizer
     tokenizer_name = config_dict.get("tokenizer", {}).get("name", "gpt2")
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)  # type: ignore[name-defined]
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -499,6 +509,7 @@ def create_dataloaders(
             buffer_size=training_config.data.buffer_size,
             max_samples=training_config.data.max_samples,
             num_workers=num_workers,
+            enable_bucketing=False,  # Temporarily disable bucketing to ensure data flows
         )
 
         # Minimum samples validation (Phase 2.1)
@@ -557,19 +568,61 @@ def setup_optimizer_and_lr_management(
     lr = float(lr)
     weight_decay = float(weight_decay)
 
-    # Create optimizer
+    # Create optimizer with proper weight decay exclusions
+    # CRITICAL FIX: Don't apply weight decay to biases and LayerNorm parameters
+    # This is a well-known best practice that significantly improves LLM training
     optimizer_type = training_cfg.get("optimizer", "adamw").lower()
+
+    # Parameters that should not have weight decay
+    no_decay = ['bias', 'LayerNorm.weight', 'layernorm.weight', 'ln_f.weight', 'ln_', 'norm.weight']
+
+    # CRITICAL FIX: Ensure all parameters are accounted for
+    decay_params = []
+    no_decay_params = []
+    total_trainable_params = 0
+
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        total_trainable_params += p.numel()
+
+        if any(nd in n for nd in no_decay):
+            no_decay_params.append(p)
+        else:
+            decay_params.append(p)
+
+    optimizer_grouped_parameters = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': no_decay_params, 'weight_decay': 0.0}
+    ]
 
     if optimizer_type == "adamw":
         optimizer = torch.optim.AdamW(
-            model.parameters(), lr=lr, weight_decay=weight_decay, betas=(0.9, 0.95)
+            optimizer_grouped_parameters, lr=lr, betas=(0.9, 0.95)
         )
     elif optimizer_type == "adam":
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=lr, weight_decay=weight_decay
+            optimizer_grouped_parameters, lr=lr
         )
     else:
         raise ValueError(f"Unsupported optimizer: {optimizer_type}")
+
+    # CRITICAL FIX: Validate all parameters are accounted for
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_no_decay_params = sum(p.numel() for p in no_decay_params)
+    total_optimizer_params = num_decay_params + num_no_decay_params
+
+    print(f" Optimizer parameter groups:")
+    print(f"   With weight decay: {num_decay_params:,} parameters")
+    print(f"   Without weight decay: {num_no_decay_params:,} parameters")
+    print(f"   Total: {total_optimizer_params:,} / {total_trainable_params:,} trainable parameters")
+
+    if total_optimizer_params != total_trainable_params:
+        raise ValueError(
+            f"Parameter count mismatch! Optimizer has {total_optimizer_params:,} parameters "
+            f"but model has {total_trainable_params:,} trainable parameters. "
+            f"Some parameters are missing from optimizer groups!"
+        )
 
     # Phase 3.1: Set up adaptive learning rate management if enabled
     adaptive_lr_manager = None
@@ -592,22 +645,40 @@ def setup_optimizer_and_lr_management(
             )  # Use config value, fallback to 3000
             print(f"   Warmup steps: {warmup_steps} (from config - total steps unknown)")
 
+        # Load adaptive LR config from YAML or use defaults
+        adaptive_lr_cfg = getattr(training_config.training, "adaptive_lr", {})
+        print(f"   DEBUG: adaptive_lr_cfg type = {type(adaptive_lr_cfg)}")
+        print(f"   DEBUG: adaptive_lr_cfg = {adaptive_lr_cfg}")
+
+        # Helper to get value from dict or object
+        def get_cfg(cfg, key, default):
+            if isinstance(cfg, dict):
+                return cfg.get(key, default)
+            return getattr(cfg, key, default)
+
         adaptive_config = AdaptiveLRConfig(
-            warmup_steps=warmup_steps,  # FIXED: Pass warmup steps to config
-            batch_loss_window=100,
-            plateau_patience=500,
-            plateau_factor=0.5,
-            lr_check_interval=50,  # FIXED: More responsive - check every 50 batches
-            min_lr=1e-7,
-            max_lr=lr * 2.0,  # Allow up to 2x initial LR
-            stability_threshold=5,
-            increase_factor=1.05,
+            warmup_steps=warmup_steps,
+            batch_loss_window=get_cfg(adaptive_lr_cfg, "batch_loss_window", 100),
+            plateau_patience=get_cfg(adaptive_lr_cfg, "plateau_patience", 500),
+            plateau_factor=get_cfg(adaptive_lr_cfg, "plateau_factor", 0.5),
+            lr_check_interval=get_cfg(adaptive_lr_cfg, "lr_check_interval", 50),
+            min_lr=get_cfg(adaptive_lr_cfg, "min_lr", 1e-7),
+            max_lr=get_cfg(adaptive_lr_cfg, "max_lr", lr * 2.0),
+            stability_threshold=get_cfg(adaptive_lr_cfg, "stability_threshold", 5),
+            increase_factor=get_cfg(adaptive_lr_cfg, "increase_factor", 1.05),
+            min_improvement=get_cfg(adaptive_lr_cfg, "min_improvement", 0.0002),
+            divergence_threshold=get_cfg(adaptive_lr_cfg, "divergence_threshold", 3.0),
+            emergency_factor=get_cfg(adaptive_lr_cfg, "emergency_factor", 0.5),
         )
 
         adaptive_lr_manager = AdaptiveLearningRateManager(optimizer, adaptive_config)
         print(
-            f"✓ Adaptive LR manager initialized with warmup, plateau detection and stability-based increases"
+            f"✓ Adaptive LR manager initialized with warmup, plateau detection, and stability increases"
         )
+        print(f"   Divergence threshold: {adaptive_config.divergence_threshold}x (loss spikes tolerated up to {adaptive_config.divergence_threshold}x best loss)")
+        print(f"   Emergency LR reduction: {adaptive_config.emergency_factor}x (cuts LR to {adaptive_config.emergency_factor*100:.0f}% on emergency)")
+        print(f"   Min improvement: {adaptive_config.min_improvement} (plateau detection threshold)")
+        print(f"   Plateau patience: {adaptive_config.plateau_patience} steps")
 
     return optimizer, adaptive_lr_manager
 
@@ -648,7 +719,7 @@ def setup_wandb(
             else f"moe_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
 
-        wandb_run = wandb.init(
+        wandb_run = wandb.init(  # type: ignore[attr-defined]
             project=training_config.wandb.wandb_project,
             name=training_config.wandb.wandb_name or run_name,
             config=wandb_config,
@@ -657,6 +728,21 @@ def setup_wandb(
             dir=str(run_manager.run_dir) if run_manager else "./wandb",
             save_code=True,
         )
+
+        # Define metric types to prevent panel rendering issues
+        wandb.define_metric("train/grad_norm", summary="mean")
+        wandb.define_metric("train/grad_norm_pre_clip", summary="mean")
+        wandb.define_metric("train/loss", summary="min")
+        wandb.define_metric("train/learning_rate", summary="last")
+        wandb.define_metric("val/loss", summary="min")
+
+        # Define gradient metrics with custom step for middle tab positioning
+        wandb.define_metric("gradient_step")
+        wandb.define_metric("gradient/*", step_metric="gradient_step")
+
+        # Define MoE metrics with custom step for separate tab
+        wandb.define_metric("moe_step")
+        wandb.define_metric("moe/*", step_metric="moe_step")
 
         print(f"WandB initialized: {wandb_run.name}")
         return wandb_run
@@ -708,6 +794,9 @@ def train_epoch(
     total_epochs: int,
     adaptive_lr_manager: Optional[AdaptiveLearningRateManager] = None,
     progressive_manager: Optional[ProgressiveTrainingManager] = None,
+    run_manager=None,
+    config_dict: Optional[dict] = None,
+    training_config=None,
 ) -> dict:
     """Train for one epoch with Phase 3-5 enhancements."""
     trainer.model.train()
@@ -736,10 +825,10 @@ def train_epoch(
     )
 
     for batch_idx, batch in enumerate(progress_bar):
-        # Move batch to device
-        input_ids = batch["input_ids"].to(trainer.device)
-        attention_mask = batch["attention_mask"].to(trainer.device)
-        labels = batch.get("labels", input_ids).to(trainer.device)
+        # Move batch to device with non-blocking transfers for performance
+        input_ids = batch["input_ids"].to(trainer.device, non_blocking=True)
+        attention_mask = batch["attention_mask"].to(trainer.device, non_blocking=True)
+        labels = batch.get("labels", input_ids).to(trainer.device, non_blocking=True)
 
         # Track actual dimensions for accurate metrics
         actual_batch_size = input_ids.size(0)
@@ -783,8 +872,16 @@ def train_epoch(
                 epoch_stats["adaptive_lr_adjustments"] += 1
                 step_results["lr_adjusted"] = True
                 step_results["lr_adjustment_reason"] = lr_adjustment.get(
-                    "reason", "unknown"
+                    "adjustment_reason", "unknown"
                 )
+
+                # Log LLM-specific warnings if present (disabled)
+                # if lr_adjustment.get("adjustment_type") == "llm_issue_reduction":
+                #     print(f"\n⚠️  LLM Learning Issue Detected at step {trainer.step_count}:")
+                #     for warning in lr_adjustment.get("llm_warnings", []):
+                #         print(f"   [{warning['severity'].upper()}] {warning['type']}: {warning['message']}")
+                #         print(f"   → {warning['suggestion']}")
+                #     print(f"   Action: Reduced LR from {lr_adjustment['old_lr']:.2e} to {lr_adjustment['new_lr']:.2e}\n")
 
         # Update epoch statistics (CRITICAL FIX: detach to prevent memory leak)
         # Accumulating raw loss tensors keeps computation graph in memory
@@ -793,6 +890,43 @@ def train_epoch(
             loss_val = loss_val.detach().item()
         epoch_stats["total_loss"] += loss_val
         epoch_stats["num_batches"] += 1
+
+        # Periodic checkpoint saving based on save_steps
+        if config_dict and run_manager:
+            save_steps = config_dict.get("training", {}).get("save_steps", None)
+            current_step = trainer.step_count
+            if save_steps is not None and save_steps > 0:
+                # OPTIMIZATION: Skip checkpoint at step 0 to save time
+                if current_step > 0 and current_step % save_steps == 0:
+                    print(f"\n💾 Saving periodic checkpoint at step {current_step}...")
+                    try:
+                        periodic_data = {
+                            "config": config_dict,
+                            "training_config": (
+                                training_config.__dict__
+                                if training_config and hasattr(training_config, "__dict__")
+                                else str(training_config) if training_config else None
+                            ),
+                            "training_progress": {
+                                "current_epoch": epoch,
+                                "total_epochs": total_epochs,
+                                "current_batch": batch_idx,
+                                "training_complete": False,
+                            }
+                        }
+
+                        run_manager.save_checkpoint(
+                            model_state=trainer.model.state_dict(),
+                            optimizer_state=optimizer.state_dict(),
+                            epoch=epoch,
+                            step=current_step,
+                            loss=loss_val,
+                            is_best=False,
+                            additional_data=periodic_data,
+                        )
+                        print(f"✓ Checkpoint saved at step {current_step}")
+                    except Exception as e:
+                        print(f"⚠️  Failed to save checkpoint: {e}")
 
         # Update progress bar
         if show_progress and trainer.performance_manager.should_update_progress(
@@ -808,17 +942,17 @@ def train_epoch(
             try:
                 if input_ids is not None:
                     # Always use actual batch size from current batch (most reliable)
-                    postfix["BS"] = input_ids.shape[0]
+                    postfix["BS"] = str(input_ids.shape[0])
                 elif hasattr(trainer, 'dynamic_batch_sizer') and trainer.dynamic_batch_sizer:
                     current_batch_size = trainer.dynamic_batch_sizer.current_batch_size
-                    postfix["BS"] = current_batch_size
+                    postfix["BS"] = str(current_batch_size)
                 elif hasattr(trainer, 'config') and hasattr(trainer.config, 'training'):
-                    postfix["BS"] = getattr(trainer.config.training, 'batch_size', 12)
+                    postfix["BS"] = str(getattr(trainer.config.training, 'batch_size', 12))
                 else:
-                    postfix["BS"] = 12
+                    postfix["BS"] = "12"
             except Exception as e:
                 # If all else fails, default to 12
-                postfix["BS"] = 12
+                postfix["BS"] = "12"
 
             progress_bar.set_postfix(postfix)
 
@@ -1199,6 +1333,52 @@ def main():
         )
         print(f"✓ DeepSpeed config loaded: enabled={training_config.deepspeed.use_deepspeed}, zero_stage={training_config.deepspeed.zero_stage}")
 
+    # Load adaptive_lr config from YAML
+    if "training" in config_dict and "adaptive_lr" in config_dict["training"]:
+        adaptive_lr_yaml = config_dict["training"]["adaptive_lr"]
+        training_config.training.adaptive_lr = adaptive_lr_yaml
+        print(f"✓ Adaptive LR config loaded from YAML: {len(adaptive_lr_yaml)} parameters")
+
+    # Merge enhanced_features from YAML into training_config
+    if "enhanced_features" in config_dict:
+        ef = config_dict["enhanced_features"]
+
+        # Merge losses configuration
+        if "losses" in ef:
+            losses_yaml = ef["losses"]
+            # Update DeepSeek loss settings directly (removed use_deepseek_loss check)
+            training_config.losses.use_multi_token_prediction = losses_yaml.get("use_multi_token_prediction", True)
+            training_config.losses.num_future_tokens = losses_yaml.get("num_future_tokens", 3)
+            training_config.losses.mtp_weight = losses_yaml.get("mtp_weight", 0.1)
+            training_config.losses.initial_temperature = losses_yaml.get("initial_temperature", 1.0)
+            training_config.losses.adaptive_temperature = losses_yaml.get("adaptive_temperature", True)
+            training_config.losses.label_smoothing = losses_yaml.get("label_smoothing", 0.1)
+            training_config.losses.use_moe_balancing = losses_yaml.get("use_moe_balancing", True)
+            training_config.losses.gradient_balance_weight = losses_yaml.get("gradient_balance_weight", 0.1)
+            if losses_yaml.get("use_multi_token_prediction", False):
+                print("✓ Multi-token prediction loss configuration loaded from YAML")
+            # Update other loss settings
+            training_config.losses.use_auxiliary_loss = losses_yaml.get("auxiliary_loss", True)
+            if not args.use_focal_loss:
+                training_config.losses.use_focal_loss = losses_yaml.get("focal_loss", False)
+            if not args.use_contrastive_loss:
+                training_config.losses.use_contrastive_loss = losses_yaml.get("contrastive_loss", False)
+            if not args.use_diversity_loss:
+                training_config.losses.use_diversity_loss = losses_yaml.get("diversity_loss", False)
+            if not args.adaptive_loss_scaling:
+                training_config.losses.adaptive_loss_scaling = losses_yaml.get("adaptive_loss_scaling", False)
+
+    # Also merge model configuration for DeepSeek loss
+    if "model" in config_dict:
+        model_yaml = config_dict["model"]
+        # Create model config if it doesn't exist
+        if not hasattr(training_config, 'model'):
+            from src.Ava.config.training_config import ModelConfig
+            training_config.model = ModelConfig()
+        training_config.model.vocab_size = model_yaml.get("vocab_size", 32000)
+        training_config.model.hidden_size = model_yaml.get("hidden_size", 4096)
+        training_config.model.num_experts = model_yaml.get("num_experts", None)
+
     # Merge YAML training config into training_config.training
     if "training" in config_dict:
         yaml_training = config_dict["training"]
@@ -1207,6 +1387,20 @@ def main():
         if training_config.training.batch_size is None and "batch_size" in yaml_training:
             training_config.training.batch_size = yaml_training["batch_size"]
             print(f"✓ Batch size loaded from YAML: {training_config.training.batch_size}")
+
+        # Merge learning_rate if not set via command line
+        if training_config.training.learning_rate is None and "learning_rate" in yaml_training:
+            training_config.training.learning_rate = yaml_training["learning_rate"]
+            print(f"✓ Learning rate loaded from YAML: {training_config.training.learning_rate}")
+
+        # Merge epochs if not set via command line
+        if training_config.training.epochs is None:
+            if "num_epochs" in yaml_training:
+                training_config.training.epochs = yaml_training["num_epochs"]
+                print(f"✓ Num epochs loaded from YAML: {training_config.training.epochs}")
+            elif "epochs" in yaml_training:
+                training_config.training.epochs = yaml_training["epochs"]
+                print(f"✓ Epochs loaded from YAML: {training_config.training.epochs}")
 
         # Merge dynamic_batching if present in YAML
         if "dynamic_batching" in yaml_training:
@@ -1284,6 +1478,16 @@ def main():
 
     param_count = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Model: {param_count:.1f}M parameters")
+
+    # OPTIMIZATION: Enable torch.compile for 20-40% speedup (PyTorch 2.0+)
+    try:
+        import torch._dynamo as dynamo
+        dynamo.config.suppress_errors = True  # Suppress compilation errors
+        model = torch.compile(model, mode='reduce-overhead')
+        print("✓ Model compiled with torch.compile (reduce-overhead mode)")
+    except Exception as e:
+        print(f"⚠️  torch.compile not available or failed: {e}")
+        print("   Continuing without compilation (PyTorch 2.0+ required)")
 
     # 5. Create dataloaders
     print("Setting up data loaders...")
@@ -1470,9 +1674,6 @@ def main():
             enable_dynamic_batch=getattr(
                 training_config.training.progressive, "enable_dynamic_batch", True
             ),
-            enable_binary_search_oom=getattr(
-                training_config.training.progressive, "enable_binary_search_oom", True
-            ),
             min_batch_size=getattr(
                 training_config.training.progressive, "min_batch_size", 1
             ),
@@ -1485,16 +1686,17 @@ def main():
         )
 
         progressive_manager = ProgressiveTrainingManager(
-            config=progressive_config,
-            dataset=train_loader.dataset if hasattr(train_loader, "dataset") else None,
-            tokenizer=tokenizer,
-            device=str(device),
+            initial_sequence_length=progressive_config.initial_seq_length,
+            target_sequence_length=progressive_config.final_seq_length,
+            growth_strategy=progressive_config.length_schedule,
+            growth_interval_steps=progressive_config.length_growth_steps,
+            min_performance_threshold=0.8,
         )
 
         print(
             f"✓ Progressive training enabled with sequence scaling, curriculum learning, and dynamic batching"
         )
-        trainer.progressive_manager = progressive_manager
+        trainer.progressive_manager = progressive_manager  # type: ignore[attr-defined]
 
     # 7. Set up optimizer and training components with Phase 3 enhancements
     print("Setting up optimizer and training components...")
@@ -1528,8 +1730,8 @@ def main():
     # Attach adaptive LR manager to trainer and disable old lr_manager
     if adaptive_lr_manager:
         # Replace old lr_manager with new adaptive one AFTER setup_training
-        trainer.adaptive_lr_manager = adaptive_lr_manager
-        trainer.lr_manager = None  # Disable old IntelligentLRManager to avoid conflicts
+        trainer.adaptive_lr_manager = adaptive_lr_manager  # type: ignore[attr-defined]
+        trainer.lr_manager = None  # type: ignore[attr-defined]  # Disable old IntelligentLRManager to avoid conflicts
         print("   ✓ Old LR manager disabled, using new adaptive LR manager")
 
     print("Training setup:")
@@ -1547,47 +1749,28 @@ def main():
     health_dashboard = None
     hierarchical_logger = None
 
-    observability_enabled = getattr(training_config, "enable_observability", True)
+    observability_enabled = False  # Disabled - observability modules removed
     if observability_enabled:
-        print("\n📊 Setting up Phase 7 Enhanced Observability...")
-
-        # Initialize hierarchical logging
-        hierarchical_logger = HierarchicalLogger(
-            name="training",
-            min_level=LogLevel.INFO,
-            enable_console=True,
-            enable_file=True,
-            log_dir="logs/observability",
-        )
-
-        # Initialize health dashboard
-        health_dashboard = HealthDashboard(
-            update_interval=30,  # Update every 30 seconds
-            enable_plots=(
-                not training_config.performance.ultra_fast_mode
-                if hasattr(training_config, "performance")
-                else True
-            ),
-        )
-
-        # Connect to trainer
-        if hasattr(trainer, "observability_manager"):
-            trainer.observability_manager.set_dashboard(health_dashboard)
-            trainer.observability_manager.set_logger(hierarchical_logger)
-
-        print(
-            "✓ Enhanced observability initialized: hierarchical logging + health dashboard"
-        )
+        print("\n📊 Observability disabled (modules removed for simplicity)")
+        # observability_enabled = getattr(training_config, "enable_observability", True)
+        # hierarchical_logger = HierarchicalLogger(...)
+        # health_dashboard = HealthDashboard(...)
+        pass
 
     # 8.5. Phase 8: Testing Infrastructure Integration
-    testing_enabled = getattr(training_config, "enable_testing", False)
+    testing_enabled = False  # Disabled - TrainingValidator removed
     if testing_enabled:
+        print("\n📊 Testing infrastructure disabled (modules removed for simplicity)")
+        # training_validator = TrainingValidator()
+        pass
+
+    if False:  # Old validation code disabled
         print("\n" + "=" * 50)
         print("PHASE 8: COMPREHENSIVE TESTING VALIDATION")
         print("=" * 50)
 
         # Initialize training validator
-        training_validator = TrainingValidator()
+        # training_validator = TrainingValidator()
 
         # Run pre-flight checks
         print("🧪 Running pre-flight validation checks...")
@@ -1620,14 +1803,14 @@ def main():
             print("✅ All pre-flight validation checks passed")
 
         # Set up continuous monitoring
-        trainer.training_validator = training_validator
+        trainer.training_validator = training_validator  # type: ignore[attr-defined]
         print("✓ Continuous training validation enabled")
         print("=" * 50)
 
     # Run checkpoint resume smoke test (if enabled)
     smoke_test_enabled = getattr(
         (
-            training_config.testing
+            training_config.testing  # type: ignore[attr-defined]
             if hasattr(training_config, "testing")
             else type("", (), {"run_resume_smoke_test": True})()
         ),
@@ -1678,6 +1861,7 @@ def main():
             f"Early stopping enabled: patience={early_stopping_patience}, min_delta={early_stopping_min_delta:.4f}"
         )
 
+    epoch = 0  # Initialize epoch in case loop doesn't execute
     for epoch in range(1, num_epochs + 1):
         print(f"\nEpoch {epoch}/{num_epochs}")
 
@@ -1691,6 +1875,9 @@ def main():
                 num_epochs,
                 adaptive_lr_manager=getattr(trainer, "adaptive_lr_manager", None),
                 progressive_manager=getattr(trainer, "progressive_manager", None),
+                run_manager=run_manager,
+                config_dict=config_dict,
+                training_config=training_config,
             )
 
             # Enhanced training progress reporting
@@ -1714,12 +1901,34 @@ def main():
 
             print(f"  Train: {' '.join(progress_info)}")
 
+            # Check if we should evaluate based on eval_steps from config
+            eval_steps = config_dict.get("training", {}).get("eval_steps", None)
+            current_step = trainer.step_count
+            should_evaluate = False
+
+            if eval_steps is not None and eval_steps > 0:
+                # Evaluate based on step interval
+                should_evaluate = (current_step % eval_steps == 0)
+            else:
+                # Default: evaluate every epoch
+                should_evaluate = True
+
             # Evaluate with same precision as training
-            use_bf16 = getattr(training_config.training, "mixed_precision", "fp16") == "bf16"
-            val_loss = evaluate_model(model, val_loader, device, use_bf16=use_bf16)
+            if should_evaluate:
+                use_bf16 = getattr(training_config.training, "mixed_precision", "fp16") == "bf16"
+                val_loss = evaluate_model(model, val_loader, device, use_bf16=use_bf16)
+            else:
+                # Skip validation for this epoch
+                val_loss = None
+                skip_validation_based_logic = True
 
             # Handle different validation outcomes
-            if val_loss is None:
+            if val_loss is None and not should_evaluate:
+                # Skipped validation due to eval_steps interval
+                print(f"  Val: Skipped (next eval at step {(current_step // eval_steps + 1) * eval_steps if eval_steps else 'N/A'})")
+                wandb_val_loss = None
+                skip_validation_based_logic = True
+            elif val_loss is None:
                 # Empty validation set
                 print("  Val: No validation data available")
                 # Don't update adaptive LR or save checkpoint based on validation
@@ -1743,7 +1952,7 @@ def main():
                 # FIXED: Update adaptive LR manager with validation loss for plateau detection
                 if hasattr(trainer, 'adaptive_lr_manager') and trainer.adaptive_lr_manager:
                     if hasattr(trainer.adaptive_lr_manager, 'update_validation_loss'):
-                        trainer.adaptive_lr_manager.update_validation_loss(val_loss)
+                        trainer.adaptive_lr_manager.update_validation_loss(val_loss)  # type: ignore[attr-defined]
                     elif hasattr(trainer.adaptive_lr_manager, 'step'):
                         # Fallback: Some implementations use step() for validation too
                         trainer.adaptive_lr_manager.step(val_loss)
@@ -1773,7 +1982,7 @@ def main():
                     # Only log validation loss if it's valid
                     if wandb_val_loss is not None:
                         log_data["val/loss"] = wandb_val_loss
-                    wandb.log(log_data)
+                    wandb.log(log_data)  # type: ignore[attr-defined]
                 except Exception as e:
                     print(f" WandB logging failed: {e}")
 
@@ -1819,7 +2028,7 @@ def main():
                     # Progressive training state (Phase 5) - Disabled
                     # if hasattr(trainer, 'progressive_manager') and trainer.progressive_manager is not None:
                     #     try:
-                    #         additional_data['progressive_training_state'] = trainer.progressive_manager.get_state()
+                    #         additional_data['progressive_training_state'] = trainer.progressive_manager.get_state()  # type: ignore[attr-defined]
                     #         print("    ✓ Progressive training state saved")
                     #     except Exception as e:
                     #         print(f"    ⚠️  Failed to save progressive training state: {e}")
@@ -1917,6 +2126,38 @@ def main():
                     )
                     print(f"  Best model saved: {val_loss:.4f}")
 
+            # Periodic checkpoint saving based on save_steps
+            save_steps = config_dict.get("training", {}).get("save_steps", None)
+            if save_steps is not None and save_steps > 0 and run_manager:
+                # OPTIMIZATION: Skip checkpoint at step 0 to save time
+                if current_step > 0 and current_step % save_steps == 0:
+                    # Collect checkpoint state
+                    periodic_data = {
+                        "config": config_dict,
+                        "training_config": (
+                            training_config.__dict__
+                            if hasattr(training_config, "__dict__")
+                            else str(training_config)
+                        ),
+                        "training_progress": {
+                            "current_epoch": epoch,
+                            "total_epochs": num_epochs,
+                            "best_val_loss": best_val_loss,
+                            "training_complete": False,
+                        }
+                    }
+
+                    run_manager.save_checkpoint(
+                        model_state=model.state_dict(),
+                        optimizer_state=optimizer.state_dict(),
+                        epoch=epoch,
+                        step=trainer.step_count,
+                        loss=train_results["avg_loss"],  # Use training loss for periodic saves
+                        is_best=False,
+                        additional_data=periodic_data,
+                    )
+                    print(f"  Periodic checkpoint saved at step {current_step}")
+
             # Early stopping logic (only for valid validation losses)
             if (
                 early_stopping_enabled
@@ -1959,7 +2200,7 @@ def main():
                             try:
                                 import wandb
 
-                                wandb.log(
+                                wandb.log(  # type: ignore[attr-defined]
                                     {
                                         "early_stopping/triggered": True,
                                         "early_stopping/best_epoch": best_epoch,
@@ -2047,11 +2288,11 @@ def main():
         # Progressive training final state (Phase 5)
         if (
             hasattr(trainer, "progressive_manager")
-            and trainer.progressive_manager is not None
+            and trainer.progressive_manager is not None  # type: ignore[attr-defined]
         ):
             try:
                 additional_data["progressive_training_final_state"] = (
-                    trainer.progressive_manager.get_final_state()
+                    trainer.progressive_manager.get_final_state()  # type: ignore[attr-defined]
                 )
                 print("    ✓ Final progressive training state saved")
             except Exception as e:
@@ -2074,7 +2315,7 @@ def main():
             try:
                 additional_data["gradient_health_state"] = {
                     "explosion_threshold": trainer.gradient_health.explosion_threshold,
-                    "clip_value": trainer.gradient_health.current_clip_value,
+                    "clip_value": trainer.gradient_health.current_clip_value,  # type: ignore[attr-defined]
                     "total_explosions": trainer.gradient_health.total_explosions,
                     "total_steps": trainer.gradient_health.total_steps,
                     "recent_explosions": list(
@@ -2087,13 +2328,13 @@ def main():
                         trainer.gradient_health.grad_norm_pre_clip_history
                     )[-100:],
                 }
-                print("    ✓ Final gradient health monitor state saved")
+                print("    ��� Final gradient health monitor state saved")
             except Exception as e:
                 print(f"    ⚠️  Failed to save final gradient health state: {e}")
 
         if hasattr(trainer, "memory_monitor") and trainer.memory_monitor is not None:
             try:
-                memory_stats = trainer.memory_monitor.get_current_stats()
+                memory_stats = trainer.memory_monitor.get_current_stats()  # type: ignore[attr-defined]
                 additional_data["memory_monitor_state"] = {
                     "memory_history": memory_stats.get("memory_history", [])[-50:],
                     "emergency_count": memory_stats.get("emergency_count", 0),
@@ -2107,9 +2348,9 @@ def main():
             try:
                 additional_data["loss_health_state"] = {
                     "loss_history": list(trainer.loss_health.loss_history)[-100:],
-                    "spike_threshold": trainer.loss_health.spike_threshold,
-                    "nan_count": trainer.loss_health.nan_count,
-                    "inf_count": trainer.loss_health.inf_count,
+                    "spike_threshold": trainer.loss_health.spike_threshold,  # type: ignore[attr-defined]
+                    "nan_count": trainer.loss_health.nan_count,  # type: ignore[attr-defined]
+                    "inf_count": trainer.loss_health.inf_count,  # type: ignore[attr-defined]
                     "spike_count": trainer.loss_health.spike_count,
                 }
                 print("    ✓ Final loss health monitor state saved")
@@ -2199,8 +2440,8 @@ def main():
             lr_stats = trainer.adaptive_lr_manager.get_statistics()
             print(f"   Adaptive LR adjustments: {lr_stats.get('total_adjustments', 0)}")
 
-        if hasattr(trainer, "progressive_manager") and trainer.progressive_manager:
-            prog_stats = trainer.progressive_manager.get_statistics()
+        if hasattr(trainer, "progressive_manager") and trainer.progressive_manager:  # type: ignore[attr-defined]
+            prog_stats = trainer.progressive_manager.get_statistics()  # type: ignore[attr-defined]
             print(
                 f"   Progressive training updates: {prog_stats.get('total_updates', 0)}"
             )
@@ -2219,14 +2460,14 @@ def main():
     # Distributed training cleanup (Phase 4)
     if hasattr(trainer, "distributed_manager") and trainer.distributed_manager:
         print("   Cleaning up distributed training processes...")
-        trainer.distributed_manager.cleanup_distributed()
+        trainer.distributed_manager.cleanup_distributed()  # type: ignore[attr-defined]
 
     # Progressive training cleanup
-    if hasattr(trainer, "progressive_manager") and trainer.progressive_manager:
+    if hasattr(trainer, "progressive_manager") and trainer.progressive_manager:  # type: ignore[attr-defined]
         print("   Saving progressive training state...")
         # Save curriculum learning progress and difficulty scores
         try:
-            trainer.progressive_manager.save_state()
+            trainer.progressive_manager.save_state()  # type: ignore[attr-defined]
         except Exception as e:
             print(f"   Warning: Could not save progressive training state: {e}")
 
@@ -2241,7 +2482,7 @@ def main():
     if "hierarchical_logger" in locals() and hierarchical_logger:
         print("   Flushing hierarchical logs...")
         try:
-            hierarchical_logger.flush()
+            hierarchical_logger.flush()  # type: ignore[attr-defined]
         except Exception as e:
             print(f"   Warning: Hierarchical logger cleanup failed: {e}")
 
@@ -2252,7 +2493,7 @@ def main():
         try:
             import wandb
 
-            wandb.finish()
+            wandb.finish()  # type: ignore[attr-defined]
         except ImportError:
             pass
 

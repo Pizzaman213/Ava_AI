@@ -6,8 +6,8 @@ in multi-task learning scenarios, ensuring that optimization for one task
 doesn't negatively interfere with other tasks.
 """
 
-import torch
-import torch.nn as nn
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
 from typing import Dict, List, Optional, Tuple, Union, Any
 import numpy as np
 from collections import defaultdict
@@ -369,7 +369,7 @@ class AdaptiveGradientSurgeon:
 
     def __init__(
         self,
-        methods: List[str] = None,
+        methods: Optional[List[str]] = None,
         conflict_threshold: float = 0.3,
         adaptation_frequency: int = 100
     ):
@@ -415,7 +415,7 @@ class AdaptiveGradientSurgeon:
                 cos_sim = torch.dot(g_i, g_j) / (g_i.norm() * g_j.norm() + 1e-8)
                 conflicts.append(max(0, -cos_sim.item()))  # Only negative similarities
 
-        return np.mean(conflicts) if conflicts else 0.0
+        return float(np.mean(conflicts)) if conflicts else 0.0
 
     def _gradients_to_matrix(self, gradients: Dict[str, List[torch.Tensor]]) -> torch.Tensor:
         """Convert gradient dictionary to matrix format."""

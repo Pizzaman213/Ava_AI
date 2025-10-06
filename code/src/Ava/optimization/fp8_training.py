@@ -18,10 +18,10 @@ References:
 - Transformer Engine: https://github.com/NVIDIA/TransformerEngine
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.cuda.amp import GradScaler
+import torch  # type: ignore[import]
+import torch.nn as nn  # type: ignore[import]
+import torch.nn.functional as F  # type: ignore[import]
+from torch.cuda.amp import GradScaler  # type: ignore[import]
 import numpy as np
 from typing import Dict, List, Optional, Tuple, Any, Union
 from dataclasses import dataclass
@@ -34,13 +34,16 @@ logger = logging.getLogger(__name__)
 
 # Try to import Transformer Engine
 try:
-    import transformer_engine.pytorch as te
-    from transformer_engine.common import recipe
-    from transformer_engine.pytorch import DotProductAttention
+    import transformer_engine.pytorch as te  # type: ignore[import]
+    from transformer_engine.common import recipe  # type: ignore[import]
+    from transformer_engine.pytorch import DotProductAttention  # type: ignore[import]
     TE_AVAILABLE = True
     logger.info("Transformer Engine available for FP8 training")
 except ImportError:
     TE_AVAILABLE = False
+    te = None  # type: ignore[assignment]
+    recipe = None  # type: ignore[assignment]
+    DotProductAttention = None  # type: ignore[assignment,misc]
     logger.warning("Transformer Engine not available. FP8 training will use fallback implementations.")
 
 
@@ -126,10 +129,10 @@ class FP8Handler:
         logger.info("Initializing Transformer Engine for FP8 training")
 
         # Create FP8 recipe
-        self.te_recipe = recipe.DelayedScaling(
+        self.te_recipe = recipe.DelayedScaling(  # type: ignore[possibly-unbound]
             margin=self.config.margin,
             interval=self.config.interval,
-            fp8_format=recipe.Format.E4M3 if self.config.fp8_format == FP8Format.E4M3 else recipe.Format.E5M2,
+            fp8_format=recipe.Format.E4M3 if self.config.fp8_format == FP8Format.E4M3 else recipe.Format.E5M2,  # type: ignore[possibly-unbound]
             amax_history_len=1024,
             amax_compute_algo="max",
             override_linear_precision=(
@@ -168,7 +171,7 @@ class FP8Handler:
         """Context manager for FP8 autocast."""
         if TE_AVAILABLE and self.te_recipe is not None:
             # Use Transformer Engine autocast
-            with te.fp8_autocast(enabled=self.config.enable_fp8, fp8_recipe=self.te_recipe):
+            with te.fp8_autocast(enabled=self.config.enable_fp8, fp8_recipe=self.te_recipe):  # type: ignore[possibly-unbound]
                 yield
         else:
             # Use fallback implementation
@@ -271,7 +274,7 @@ class FP8Linear(nn.Module):
 
         if TE_AVAILABLE:
             # Use Transformer Engine Linear
-            self.linear = te.Linear(
+            self.linear = te.Linear(  # type: ignore[possibly-unbound]
                 in_features,
                 out_features,
                 bias=bias,
@@ -318,7 +321,7 @@ class FP8MultiHeadAttention(nn.Module):
 
         if TE_AVAILABLE:
             # Use Transformer Engine MultiHeadAttention
-            self.attention = te.MultiheadAttention(
+            self.attention = te.MultiheadAttention(  # type: ignore[possibly-unbound]
                 embed_dim,
                 num_heads,
                 dropout=dropout,
@@ -381,7 +384,7 @@ class FP8LayerNorm(nn.Module):
 
         if TE_AVAILABLE:
             # Use Transformer Engine LayerNorm
-            self.layer_norm = te.LayerNorm(
+            self.layer_norm = te.LayerNorm(  # type: ignore[possibly-unbound]
                 normalized_shape,
                 eps=eps,
                 elementwise_affine=elementwise_affine,
@@ -428,7 +431,7 @@ class FP8TransformerLayer(nn.Module):
 
         if TE_AVAILABLE:
             # Use Transformer Engine TransformerLayer
-            self.transformer_layer = te.TransformerLayer(
+            self.transformer_layer = te.TransformerLayer(  # type: ignore[possibly-unbound]
                 hidden_size=embed_dim,
                 ffn_hidden_size=ff_dim,
                 num_attention_heads=num_heads,
@@ -521,7 +524,7 @@ class FP8ModelWrapper(nn.Module):
                     module.in_features,
                     module.out_features,
                     bias=module.bias is not None,
-                    device=module.weight.device,
+                    device=str(module.weight.device),
                     dtype=module.weight.dtype
                 )
 
@@ -535,11 +538,13 @@ class FP8ModelWrapper(nn.Module):
                 logger.info(f"Replaced Linear layer: {name}")
 
             elif isinstance(module, nn.LayerNorm):
+                # Convert normalized_shape tuple to list for compatibility
+                norm_shape = list(module.normalized_shape) if isinstance(module.normalized_shape, tuple) else module.normalized_shape
                 fp8_norm = FP8LayerNorm(
-                    module.normalized_shape,
+                    norm_shape,
                     eps=module.eps,
                     elementwise_affine=module.elementwise_affine,
-                    device=module.weight.device if module.weight is not None else None,
+                    device=str(module.weight.device) if module.weight is not None else None,
                     dtype=module.weight.dtype if module.weight is not None else None
                 )
 

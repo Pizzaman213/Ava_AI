@@ -18,18 +18,18 @@ Usage:
 
 import argparse
 import sys
-import torch
+import torch  # type: ignore[import-not-found]
 import yaml
 from pathlib import Path
 
 # Add project root to path
 sys.path.append('/project/code')
 
-from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
+from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
 from src.Ava.multi_column_data import create_multi_column_dataloader
 from src.Ava.evaluation import ModelEvaluator, PerplexityEvaluator
 from src.Ava.utils import setup_logging, load_checkpoint
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer  # type: ignore[import-not-found]
 
 
 def main():
