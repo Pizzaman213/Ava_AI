@@ -56,5 +56,5 @@ cover/
 data/scratch/*
 !data/scratch/.gitkeep
 
-# Allow data_prep scripts to be uploaded
-!code/scripts/data_prep/
+# Allow data_prep folder to be uploaded
+!code/scripts/data_prep/**
