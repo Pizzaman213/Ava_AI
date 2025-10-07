@@ -282,12 +282,12 @@ fp16: false  # Disabled in favor of bf16
 bf16: true  # Enabled for better numerical stability in MoE training (DEFAULT for speed!)
 # Learning Rate Finder - Find optimal learning rate automatically
 lr_finder:
-  enabled: false  # Set to true to run LR finder before training
+  enabled: true  # Set to true to run LR finder before training
   start_lr: 1.0e-8  # Starting learning rate for search
-  end_lr: 1.0  # Maximum learning rate to test
-  num_iterations: 100  # Number of test iterations
+  end_lr: 0.1  # Maximum learning rate to test
+  num_iterations: 200  # Number of test iterations
   suggestion_method: steepest  # Method for LR suggestion (steepest/minimum/valley)
-  use_suggested_lr: false  # Automatically apply suggested LR if true
+  use_suggested_lr: true  # Automatically apply suggested LR if true
   # Note: Enable with CLI: --run-lr-finder --lr-finder-use-suggested
 wandb:
   enabled: true

@@ -86,6 +86,9 @@ best_model.pt
 checkpoint-*/
 
 # Data files and datasets
+# Exception: Allow scripts/data_prep folder
+!scripts/data_prep/
+!scripts/data_prep/**
 data/
 data/*
 data/**
