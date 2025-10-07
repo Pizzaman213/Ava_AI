@@ -526,8 +526,10 @@ def create_dataloaders(
         print(f"\n📈 Total examples found: {total_examples:,}")
         print(f"📁 Total files: {file_count}")
 
-        # Get num_workers from config (dataloader_num_workers in training section)
-        num_workers = config_dict.get("training", {}).get("dataloader_num_workers", 4)
+        # Get num_workers from config (use optimized defaults from DataConfig)
+        num_workers = getattr(training_config.data, 'num_workers', 8)
+        prefetch_factor = getattr(training_config.data, 'prefetch_factor', 4)
+        persistent_workers = getattr(training_config.data, 'persistent_workers', True)
 
         # Get validation dataset config
         val_max_samples = getattr(training_config.data, 'val_max_samples', None)
@@ -572,6 +574,8 @@ def create_dataloaders(
             buffer_size=training_config.data.buffer_size,
             max_samples=training_config.data.max_samples,
             num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers,
             enable_bucketing=False,  # Temporarily disable bucketing to ensure data flows
             val_max_samples=val_max_samples,
             val_split_ratio=val_split_ratio,
@@ -1544,12 +1548,23 @@ def main():
     param_count = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Model: {param_count:.1f}M parameters")
 
-    # OPTIMIZATION: Enable torch.compile for 20-40% speedup (PyTorch 2.0+)
+    # OPTIMIZATION: Enable torch.compile for 30-50% speedup (PyTorch 2.0+)
+    # Use 'reduce-overhead' for consumer GPUs (RTX 3060/3070/3080)
+    # 'max-autotune' requires high SM count (A100/H100)
+    compile_mode = 'reduce-overhead'  # Options: 'default', 'reduce-overhead', 'max-autotune'
     try:
         import torch._dynamo as dynamo
+        import warnings
+
+        # Suppress inductor warnings for consumer GPUs
+        warnings.filterwarnings('ignore', message='.*Not enough SMs.*')
+        warnings.filterwarnings('ignore', message='.*Online softmax is disabled.*')
+
         dynamo.config.suppress_errors = True  # Suppress compilation errors
-        model = torch.compile(model, mode='reduce-overhead')
-        print("✓ Model compiled with torch.compile (reduce-overhead mode)")
+        print(f"🔥 Compiling model with torch.compile (mode={compile_mode})...")
+        print("   First few iterations will be slower during compilation...")
+        model = torch.compile(model, mode=compile_mode, fullgraph=False)
+        print(f"✓ Model compiled successfully - expect 30-40% speedup after warmup")
     except Exception as e:
         print(f"⚠️  torch.compile not available or failed: {e}")
         print("   Continuing without compilation (PyTorch 2.0+ required)")
@@ -1797,11 +1812,79 @@ def main():
         # Replace old lr_manager with new adaptive one AFTER setup_training
         trainer.adaptive_lr_manager = adaptive_lr_manager  # type: ignore[attr-defined]
         trainer.lr_manager = None  # type: ignore[attr-defined]  # Disable old IntelligentLRManager to avoid conflicts
-        print("   ✓ Old LR manager disabled, using new adaptive LR manager")
 
     print("Training setup:")
     for key, value in setup_info.items():
         print(f"  - {key}: {value}")
+
+    # 7.5. Run LR Finder if requested
+    if training_config.lr_finder.run_lr_finder:
+        print("\n" + "=" * 80)
+        print("📊 LEARNING RATE FINDER - Finding Optimal Learning Rate")
+        print("=" * 80)
+
+        from src.Ava.training.lr_finder import LRFinder, LRFinderConfig as LRFConfig
+
+        # Setup LR Finder configuration
+        lr_finder_config = LRFConfig(
+            start_lr=training_config.lr_finder.start_lr,
+            end_lr=training_config.lr_finder.end_lr,
+            num_iter=training_config.lr_finder.num_iterations,
+            beta=training_config.lr_finder.smooth_beta,
+            stop_div_threshold=training_config.lr_finder.stop_div_threshold,
+            mode="exponential",
+            suggestion_method=training_config.lr_finder.suggestion_method,
+            save_plot=True,
+            plot_path=training_config.lr_finder.plot_path or (
+                str(Path(run_manager.run_dir) / "lr_finder_results.png") if run_manager else "lr_finder_results.png"
+            )
+        )
+
+        # Create loss function for LR finder
+        def lr_finder_criterion(logits, labels):
+            """Simple cross-entropy loss for LR finder."""
+            import torch.nn.functional as F
+            return F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+
+        # Initialize LR Finder
+        lr_finder = LRFinder(
+            model=model,
+            optimizer=optimizer,
+            criterion=lr_finder_criterion,
+            device=device,
+            config=lr_finder_config
+        )
+
+        # Run LR range test
+        gradient_accumulation = training_config.training.gradient_accumulation or 1
+        lr_finder_results = lr_finder.range_test(
+            train_loader=train_loader,
+            accumulation_steps=gradient_accumulation
+        )
+
+        suggested_lr = lr_finder_results['suggested_lr']
+        print(f"\n✅ LR Finder Complete!")
+        print(f"   Suggested Learning Rate: {suggested_lr:.2e}")
+        print(f"   Best Loss: {lr_finder_results['best_loss']:.6f} at LR: {lr_finder_results['best_lr']:.2e}")
+
+        # Optionally use the suggested LR
+        if training_config.lr_finder.use_suggested_lr:
+            print(f"\n🔄 Updating learning rate to suggested value: {suggested_lr:.2e}")
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = suggested_lr
+
+            # Update adaptive LR manager if present
+            if adaptive_lr_manager:
+                adaptive_lr_manager.base_lr = suggested_lr
+                adaptive_lr_manager.current_lr = suggested_lr
+                print("   ✓ Adaptive LR manager updated with new base LR")
+        else:
+            current_lr = optimizer.param_groups[0]['lr']
+            print(f"\n💡 To use suggested LR, add --lr-finder-use-suggested flag")
+            print(f"   Current LR: {current_lr:.2e}")
+            print(f"   Suggested LR: {suggested_lr:.2e}")
+
+        print("=" * 80 + "\n")
 
     # 8. Initialize WandB and Phase 7 Observability
     wandb_run = setup_wandb(

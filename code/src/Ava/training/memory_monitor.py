@@ -137,12 +137,13 @@ class MemoryMonitor:
         else:
             logger.debug(f"CPU: {self.total_cpu_memory:.1f}GB total")
 
-    def get_memory_stats(self, device: Optional[int] = None) -> Dict[str, float]:
+    def get_memory_stats(self, device: Optional[int] = None, skip_sync: bool = False) -> Dict[str, float]:
         """
         Get current memory statistics.
 
         Args:
             device: GPU device index (None for current device)
+            skip_sync: Skip synchronization for performance (use cached values)
 
         Returns:
             Dictionary with memory statistics
@@ -156,7 +157,9 @@ class MemoryMonitor:
 
             try:
                 current_device = device  # Type assertion - device is not None here
-                torch.cuda.synchronize(current_device)
+                # SPEED OPTIMIZATION: Skip synchronization unless explicitly needed
+                if not skip_sync:
+                    torch.cuda.synchronize(current_device)
                 allocated = torch.cuda.memory_allocated(current_device) / (1024**3)
                 cached = torch.cuda.memory_reserved(current_device) / (1024**3)
                 total = self.total_gpu_memory.get(current_device, 0)
@@ -389,12 +392,14 @@ class MemoryMonitor:
         Returns:
             Memory stats before and after cleanup
         """
-        before_stats = self.get_memory_stats()
+        # SPEED OPTIMIZATION: Use skip_sync for before stats (we don't need exact sync here)
+        before_stats = self.get_memory_stats(skip_sync=True)
 
-        # Only do cleanup if there's significant cached memory (> 0.5GB)
+        # SPEED OPTIMIZATION: Only do cleanup if there's significant cached memory (> 1GB, not 0.5GB)
+        # Increased threshold to reduce unnecessary cleanup operations
         if torch.cuda.is_available():
             cached_gb = before_stats.get('gpu_cached_gb', 0)
-            if cached_gb > 0.5:  # Only cleanup if > 0.5GB cached
+            if cached_gb > 1.0:  # Only cleanup if > 1GB cached (was 0.5GB)
                 torch.cuda.empty_cache()
 
         # CPU cleanup
@@ -411,15 +416,19 @@ class MemoryMonitor:
                 for _ in range(2):
                     gc.collect()
 
+                # SPEED OPTIMIZATION: Skip synchronization even in aggressive mode unless emergency
                 # Synchronize only current device (not all devices - major bottleneck removed)
                 if torch.cuda.is_available():
-                    torch.cuda.synchronize()  # Current device only
+                    # Only sync if we're in true emergency (>99% memory usage)
+                    if before_stats.get('gpu_cached_gb', 0) / self.total_gpu_memory.get(torch.cuda.current_device(), 12.0) > 0.99:
+                        torch.cuda.synchronize()  # Current device only
                     torch.cuda.empty_cache()
 
             except Exception as e:
                 logger.warning(f"Aggressive cleanup failed: {e}")
 
-        after_stats = self.get_memory_stats()
+        # SPEED OPTIMIZATION: Use skip_sync for after stats too
+        after_stats = self.get_memory_stats(skip_sync=True)
 
         freed_gb = before_stats['gpu_cached_gb'] - after_stats['gpu_cached_gb']
         if not self.silent_mode:
