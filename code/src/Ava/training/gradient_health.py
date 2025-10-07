@@ -73,20 +73,20 @@ class GradientHealthMonitor:
         """
         Get adaptive gradient clip value for current step.
 
-        For MoE models, use a more conservative approach that maintains higher clipping values.
+        For MoE models, INCREASE clip value during training (reversed warmup).
+        Start tight, then loosen as model stabilizes.
         """
         if step >= self.warmup_steps:
             return self.final_clip_value
 
-        # For MoE models, use a gentler reduction to maintain higher clip values
-        # Instead of linear warmup, use a slower decay curve
+        # MoE REVERSED WARMUP: Start strict, gradually increase clipping threshold
+        # This prevents early explosions while allowing larger gradients once stable
         progress = min(1.0, step / self.warmup_steps)
-        # Use square root for gentler reduction that keeps higher values longer
-        decay_factor = 1.0 - (progress ** 0.5) * 0.5  # Only reduce by 50% at most
-        clip_value = self.initial_clip_value * decay_factor
+        # Smooth curve: gradual increase from initial to final
+        clip_value = self.initial_clip_value + (self.final_clip_value - self.initial_clip_value) * (progress ** 0.5)
 
-        # Ensure we don't go below final_clip_value
-        return max(clip_value, self.final_clip_value)
+        # Ensure we stay within bounds
+        return max(min(clip_value, self.final_clip_value), self.initial_clip_value)
 
     def check_gradient_health(
         self,
@@ -179,7 +179,7 @@ class GradientHealthMonitor:
 
         # Determine if we should skip this step
         recent_explosion_count = len(self.recent_explosions)
-        should_skip = total_norm > 100.0  # Critical threshold
+        should_skip = (total_norm > 10.0 or not np.isfinite(total_norm))  # CRITICAL: Much lower + NaN check
         should_reduce_lr = recent_explosion_count >= self.explosion_window // 2
 
         return {
