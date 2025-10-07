@@ -179,7 +179,7 @@ class GradientHealthMonitor:
 
         # Determine if we should skip this step
         recent_explosion_count = len(self.recent_explosions)
-        should_skip = (total_norm > 10.0 or not np.isfinite(total_norm))  # CRITICAL: Much lower + NaN check
+        should_skip = not np.isfinite(total_norm)  # Only skip on NaN/Inf, NOT on large gradients (let clipping work!)
         should_reduce_lr = recent_explosion_count >= self.explosion_window // 2
 
         return {

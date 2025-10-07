@@ -121,7 +121,7 @@ DATASETS_CONFIG = {
     },
     
     "openwebtext": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 500000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 5000000,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "description": "Open-source recreation of GPT-2's WebText training dataset",
         "example_command": "python download_datasets.py --dataset 'openwebtext' --max-samples 5000"
@@ -147,7 +147,7 @@ DATASETS_CONFIG = {
     # RedPajama dataset removed - requires special handling with subsets
     # Use alternative datasets like c4, openwebtext, or fineweb instead
     "HuggingFaceFW/fineweb": {
-        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 2000000,
+        "splits": ["train"], "subset": None, "streaming_safe": True, "max_samples": 20000000,
         "categories": ["rag", "web"], "tokens": "very_high", "large": True,
         "description": "High-quality web text filtered from CommonCrawl",
         "example_command": "python download_datasets.py --dataset 'HuggingFaceFW/fineweb' --max-samples 5000"
@@ -774,7 +774,7 @@ class DatasetDownloader:
         return False
 
     def download_all(self, datasets: Optional[List[str]] = None,
-                    parallel: bool = True, max_workers: int = 4):
+                    parallel: bool = True, max_workers: int = 64):
         """Download all configured datasets"""
         # Select datasets to download
         if datasets:
@@ -1055,7 +1055,7 @@ Examples:
     # Download configuration
     parser.add_argument("--parallel", action="store_true",
                       help="Download datasets in parallel")
-    parser.add_argument("--max-workers", type=int, default=2,
+    parser.add_argument("--max-workers", type=int, default=20,
                       help="Maximum parallel workers")
     parser.add_argument("--skip-large", action="store_true",
                       help="Skip datasets marked as large")

@@ -206,6 +206,8 @@ HuggingFaceH4_self_instruct/
 # Any dataset folder following the naming pattern (org_name or org_dataset-name)
 *_*-*/
 *_*/
+# But keep the data_prep scripts
+!scripts/data_prep/
 
 # Logs
 *.log

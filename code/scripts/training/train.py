@@ -167,12 +167,19 @@ Or auto-discover the latest trained model:
 """
 
 import logging
+import os
 import sys
 import time
 import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+# Suppress torch.compile warnings early
+os.environ['TORCHINDUCTOR_MAX_AUTOTUNE'] = '0'
+warnings.filterwarnings('ignore', category=UserWarning, module='torch._inductor')
+warnings.filterwarnings('ignore', message='.*Not enough SMs.*')
+warnings.filterwarnings('ignore', message='.*Online softmax is disabled.*')
 
 import torch  # type: ignore[import-not-found]
 import yaml

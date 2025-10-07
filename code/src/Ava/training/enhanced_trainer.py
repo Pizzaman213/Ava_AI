@@ -225,7 +225,7 @@ class EnhancedModularTrainer:
             final_clip_value=get_config_value(gh_config, 'final_clip_value', 5.0),  # REVERSED: MoE needs higher later
             warmup_steps=get_config_value(gh_config, 'warmup_steps', 2000),
             history_size=100,
-            explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 5.0),  # CRITICAL: Much lower threshold
+            explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 1000.0),  # DISABLED: Let gradient clipping work
         )
         self.loss_health = LossHealthMonitor(
             history_size=100, spike_threshold_sigma=3.0, divergence_threshold=2.0

@@ -19,20 +19,20 @@ model:
   expert_capacity_factor: 1.25  # Buffer size multiplier for expert capacity (prevents overflow)
   router_type: deepseek  # Routing algorithm: 'deepseek' uses gradient-based load balancing
   router_aux_loss_coef: 0.0  # Auxiliary load balancing loss weight (0 = auxiliary-free approach)
-  router_jitter_noise: 0.05  # Noise added to router logits - INCREASED from 0.02 to prevent gradient vanishing in router
+  router_jitter_noise: 0.01  # Noise added to router logits - REDUCED: Lower noise for stability
 
   # Positional Encoding & Caching
   use_cache: true  # Enable KV-cache for faster autoregressive generation
   rope_theta: 10000.0  # RoPE (Rotary Position Embedding) base frequency
 
   # Regularization (Dropout)
-  attention_dropout: 0.05  # Dropout rate in attention layers - INCREASED from 0.0 to prevent activation saturation
-  hidden_dropout: 0.05  # Dropout rate in FFN layers - INCREASED from 0.0 to help gradient flow
+  attention_dropout: 0.1  # Dropout rate in attention layers - INCREASED to prevent activation saturation
+  hidden_dropout: 0.1  # Dropout rate in FFN layers - INCREASED to help gradient flow and stability
 
   # Optimization & Stability
   use_flash_attention: true  # Use Flash Attention for memory efficiency and speed
-  layer_norm_eps: 1e-5  # Small epsilon for numerical stability in LayerNorm
-  initializer_range: 0.01  # Weight initialization std dev - OPTIMIZED: Lower value for stable training
+  layer_norm_eps: 1e-3  # LARGE epsilon for BF16 numerical stability (100x larger to prevent div-by-zero)
+  initializer_range: 0.001  # Weight initialization std dev - ULTRA-SMALL for maximum stability
   hidden_act: gelu  # Activation function (GELU is standard for transformers)
 
   # DeepSpeed Settings (MoE-specific)
@@ -45,23 +45,23 @@ training:
   gradient_accumulation_steps: 4  # Accumulate to effective batch_size=32 (same total)
 
   # Gradient Management
-  max_gradient_norm: 5.0  # Clip gradients to prevent explosion - increased to allow larger gradients during warmup
+  max_gradient_norm: 0.3  # Clip gradients to prevent explosion - ULTRA-AGGRESSIVE clipping for stability
 
   # Training Duration
   num_epochs: 1  # Number of full passes through the dataset (increased to train longer)
   max_steps: -1  # Maximum training steps (-1 = train for full num_epochs)
 
   # Learning Rate Schedule (~98k total steps with 1.17M examples, batch 12)
-  warmup_steps: 2000  # Linear LR warmup - reduced for faster initial learning
-  learning_rate: 0.006  # Peak learning rate - FIXED: Increased 60x for pre-training (was 0.0001 = too low!)
+  warmup_steps: 10000  # Linear LR warmup - VERY LONG for maximum stability
+  learning_rate: 0.0001  # Peak learning rate - VERY CONSERVATIVE for stability (was 0.0003)
   lr_scheduler_type: cosine  # Cosine decay schedule (smooth decay after warmup)
-  lr_end: 1.0e-05  # Final learning rate at end of training
+  lr_end: 1.0e-07  # Final learning rate at end of training
 
   # Adaptive Learning Rate Manager Configuration
   adaptive_lr:
-    enabled: true  # Use adaptive LR manager instead of standard scheduler
+    enabled: false  # DISABLED: Use fixed warmup schedule for more predictable training
     min_lr: 1.0e-6  # Minimum learning rate floor
-    max_lr: 0.012  # Maximum learning rate (2x base LR) - increased to match new peak LR
+    max_lr: 0.0006  # Maximum learning rate (2x base LR) - matched to new conservative LR
     min_improvement: 0.0001  # Minimum loss improvement to reset plateau counter (0.01%) - lowered from 0.0002
     plateau_patience: 2000  # Steps without improvement before reducing LR - increased from 500
     plateau_factor: 0.7  # Multiply LR by this on plateau (30% reduction) - gentler than 50%
@@ -73,13 +73,13 @@ training:
     emergency_factor: 0.7  # Multiply LR by this on loss spike (30% emergency reduction) - gentler than 50%
 
   # Optimizer (AdamW) Hyperparameters
-  weight_decay: 0.01  # L2 regularization - REDUCED from 0.07 to reduce gradient dampening
+  weight_decay: 0.001  # L2 regularization - MINIMAL to prevent gradient dampening
   beta1: 0.9  # Adam momentum parameter for first moment
   beta2: 0.999  # Adam momentum for second moment - INCREASED from 0.95 for better gradient estimates
   eps: 1e-8  # Small constant for numerical stability in Adam
 
   # Precision & Performance - OPTIMIZED for LLM pretraining
-  mixed_precision: bf16  # Use BFloat16 for better numerical stability than FP16
+  mixed_precision: fp16  # Use FP16 for better precision than BF16 (prevents inf gradients)
   dataloader_num_workers: 8  # OPTIMIZED: 8 parallel workers for data loading
   prefetch_factor: 4  # Prefetch 4 batches per worker (32 batches total prefetched)
   persistent_workers: true  # OPTIMIZED: Keep workers alive between epochs (reduces startup overhead)
@@ -121,10 +121,10 @@ training:
   # Gradient Health Monitoring - Detect and respond to gradient issues
   gradient_health:
     enabled: true  # Monitor gradient norms for explosions
-    initial_clip_value: 5.0  # Starting gradient clip threshold - increased for stability
-    final_clip_value: 5.0  # Ending gradient clip threshold (keep constant)
-    warmup_steps: 5000  # Gradually adjust clip value over first 5000 steps
-    explosion_threshold: 100.0  # Flag gradient explosion if norm exceeds this - relaxed threshold
+    initial_clip_value: 0.1  # Starting gradient clip threshold - VERY SMALL for early stability
+    final_clip_value: 0.3  # Ending gradient clip threshold - MATCHED to max_gradient_norm
+    warmup_steps: 10000  # Gradually adjust clip value over first 10000 steps
+    explosion_threshold: 1000.0  # DISABLED: Set very high to prevent skipping steps (let clipping work)
     explosion_window: 5  # Check for explosions over 5-step rolling window
     auto_reduce_lr: false  # Disable auto LR reduction (let warmup handle it)
     lr_reduction_factor: 0.7  # Cut LR by 30% when explosion detected (gentler)
@@ -154,7 +154,7 @@ deepspeed:
   zero_stage: 0  # Not used when disabled
   cpu_offload: false  # Not used when disabled
   nvme_offload: false  # Not used when disabled
-  precision_type: bf16  # BFloat16 for stability + speed (used by native trainer)
+  precision_type: fp16  # FP16 for better precision (prevents inf gradients)
   train_batch_size: 32  # Not used when disabled
   micro_batch_size: 8  # Not used when disabled
   gradient_accumulation_steps: 4  # Not used when disabled
@@ -187,11 +187,11 @@ enhanced_features:
     adaptive_temperature: true  # Dynamically adjust temperature based on training progress
 
     # Regularization
-    label_smoothing: 0.08  # Smooth target labels (reduced from 0.12 to help MoE routing learn sharper decisions)
+    label_smoothing: 0.1  # Smooth target labels - helps with coherent generation quality
 
     # MoE Load Balancing
     use_moe_balancing: true  # Enable auxiliary-free gradient-based load balancing
-    gradient_balance_weight: 0.08  # Weight for balancing loss (increased from 0.05 for better expert utilization)
+    gradient_balance_weight: 0.02  # Weight for balancing loss - REDUCED for gradient stability
 
     # Legacy/Alternative Loss Functions (all disabled)
     focal_loss: false  # Focal loss for hard examples
@@ -278,13 +278,13 @@ run_management:
   run_id: null
   resume_from_checkpoint: null
 device: auto
-fp16: false  # Disabled in favor of bf16
-bf16: true  # Enabled for better numerical stability in MoE training (DEFAULT for speed!)
+fp16: true  # Enabled for better precision (prevents inf gradients)
+bf16: false  # Disabled - BF16 less precise, causes overflow with MoE
 # Learning Rate Finder - Find optimal learning rate automatically
 lr_finder:
   enabled: true  # Set to true to run LR finder before training
-  start_lr: 1.0e-8  # Starting learning rate for search
-  end_lr: 0.1  # Maximum learning rate to test
+  start_lr: 1.0e-7  # Starting learning rate for search - RAISED for faster convergence
+  end_lr: 0.001  # Maximum learning rate to test - CONSERVATIVE upper bound
   num_iterations: 200  # Number of test iterations
   suggestion_method: steepest  # Method for LR suggestion (steepest/minimum/valley)
   use_suggested_lr: true  # Automatically apply suggested LR if true
@@ -325,5 +325,5 @@ stability:
 
   # Safety Checks - Stop training if catastrophic failures occur
   stop_on_nan: true  # Halt training if NaN loss/gradients detected
-  max_grad_norm_before_stop: 100.0  # Stop if gradient norm exceeds this threshold
-  max_loss_before_stop: 20.0  # Stop if loss exceeds this value (indicates divergence)
+  max_grad_norm_before_stop: 10.0  # Stop if gradient norm exceeds this threshold - STRICT
+  max_loss_before_stop: 15.0  # Stop if loss exceeds this value (indicates divergence)
