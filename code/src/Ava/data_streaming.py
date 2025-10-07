@@ -653,9 +653,9 @@ def create_streaming_dataloaders(
     batch_size: int,
     max_length: int,
     data_dir: str,
-    num_workers: int = 0,
+    num_workers: int = 8,  # Optimized: 8 parallel workers by default
     max_samples: Optional[int] = None,
-    buffer_size: int = 1000,
+    buffer_size: int = 50000,  # Optimized: 50x larger buffer for LLM pretraining
     distributed: Optional[bool] = None,
     world_size: Optional[int] = None,
     rank: Optional[int] = None,
@@ -664,7 +664,9 @@ def create_streaming_dataloaders(
     bucket_boundaries: Optional[List[int]] = None,
     max_bucket_size: int = 100,
     val_max_samples: Optional[int] = None,
-    val_split_ratio: float = 0.1
+    val_split_ratio: float = 0.1,
+    prefetch_factor: int = 4,  # New: batches to prefetch per worker
+    persistent_workers: bool = True  # New: keep workers alive
 ) -> Tuple[DataLoader, DataLoader]:
     """Create streaming train and validation dataloaders with distributed support
 
@@ -704,18 +706,34 @@ def create_streaming_dataloaders(
         print(f"Creating streaming dataloaders...")
 
     # Create streaming datasets
-    train_dataset = StreamingDataset(
-        data_dir=data_dir,
-        split='train',
-        tokenizer=tokenizer,
-        max_length=max_length,
-        max_samples=max_samples,
-        buffer_size=buffer_size,
-        dynamic_length_fn=dynamic_length_fn,
-        enable_bucketing=enable_bucketing,
-        bucket_boundaries=bucket_boundaries,
-        max_bucket_size=max_bucket_size
-    )
+    # Use InfiniteStreamingDataset to ensure continuous training across full epochs
+    if max_samples is None:
+        # Infinite streaming for full epoch training
+        train_dataset = InfiniteStreamingDataset(
+            data_dir=data_dir,
+            split='train',
+            tokenizer=tokenizer,
+            max_length=max_length,
+            buffer_size=buffer_size,
+            dynamic_length_fn=dynamic_length_fn,
+            enable_bucketing=enable_bucketing,
+            bucket_boundaries=bucket_boundaries,
+            max_bucket_size=max_bucket_size
+        )
+    else:
+        # Use regular StreamingDataset when max_samples is specified
+        train_dataset = StreamingDataset(
+            data_dir=data_dir,
+            split='train',
+            tokenizer=tokenizer,
+            max_length=max_length,
+            max_samples=max_samples,
+            buffer_size=buffer_size,
+            dynamic_length_fn=dynamic_length_fn,
+            enable_bucketing=enable_bucketing,
+            bucket_boundaries=bucket_boundaries,
+            max_bucket_size=max_bucket_size
+        )
 
     # FIX: Make validation samples configurable instead of hardcoded
     # Calculate validation samples based on config
@@ -751,9 +769,17 @@ def create_streaming_dataloaders(
         'num_workers': num_workers,
         'pin_memory': torch.cuda.is_available(),
         'drop_last': True,  # Important for distributed training
-        'prefetch_factor': 4 if num_workers > 0 else None,  # Prefetch 4 batches per worker
-        'persistent_workers': True if num_workers > 0 else False  # Keep workers alive between epochs
+        'prefetch_factor': prefetch_factor if num_workers > 0 else None,  # Use configurable prefetch_factor
+        'persistent_workers': persistent_workers if num_workers > 0 else False  # Use configurable persistent_workers
     }
+
+    if num_workers > 0:
+        print(f"⚡ Data pipeline optimizations enabled:")
+        print(f"   • {num_workers} parallel workers for data loading")
+        print(f"   • {buffer_size:,} sample buffer size")
+        print(f"   • {prefetch_factor} batches prefetched per worker")
+        print(f"   • Persistent workers: {persistent_workers}")
+        print(f"   • Total prefetch capacity: {num_workers * prefetch_factor * batch_size:,} samples")
 
     # For IterableDataset, we don't use DistributedSampler,
     # but we need to handle distributed iteration in the dataset itself
@@ -771,7 +797,7 @@ def create_streaming_dataloaders(
 class DistributedStreamingDataset(IterableDataset):
     """Wrapper for distributed streaming dataset"""
 
-    def __init__(self, base_dataset: StreamingDataset, world_size: int, rank: int):
+    def __init__(self, base_dataset: IterableDataset, world_size: int, rank: int):
         self.base_dataset = base_dataset
         self.world_size = world_size
         self.rank = rank
@@ -796,7 +822,11 @@ class InfiniteStreamingDataset(IterableDataset):
         split: str,
         tokenizer,
         max_length: int,
-        buffer_size: int = 1000
+        buffer_size: int = 1000,
+        dynamic_length_fn: Optional[Callable[[], int]] = None,
+        enable_bucketing: bool = True,
+        bucket_boundaries: Optional[List[int]] = None,
+        max_bucket_size: int = 100
     ):
         self.base_dataset = StreamingDataset(
             data_dir=data_dir,
@@ -804,7 +834,11 @@ class InfiniteStreamingDataset(IterableDataset):
             tokenizer=tokenizer,
             max_length=max_length,
             max_samples=None,
-            buffer_size=buffer_size
+            buffer_size=buffer_size,
+            dynamic_length_fn=dynamic_length_fn,
+            enable_bucketing=enable_bucketing,
+            bucket_boundaries=bucket_boundaries,
+            max_bucket_size=max_bucket_size
         )
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:

@@ -40,9 +40,9 @@ model:
   deepspeed_partition_activations: false  # Don't partition activations across GPUs
   deepspeed_moe_param_groups: true  # Group MoE parameters separately for optimization
 training:
-  # Batch Configuration
-  batch_size: 8  # Increased from 4 for better gradient estimates and faster training
-  gradient_accumulation_steps: 4  # Accumulate to effective batch_size=32
+  # Batch Configuration - OPTIMIZED to prevent OOM
+  batch_size: 8  # Increased for better GPU utilization
+  gradient_accumulation_steps: 4  # Accumulate to effective batch_size=32 (same total)
 
   # Gradient Management
   max_gradient_norm: 1.0  # Clip gradients to prevent explosion - reduced for stability with higher LR
@@ -78,10 +78,10 @@ training:
   beta2: 0.999  # Adam momentum for second moment - INCREASED from 0.95 for better gradient estimates
   eps: 1e-8  # Small constant for numerical stability in Adam
 
-  # Precision & Performance - OPTIMIZED for 16-core CPU + 61GB RAM
+  # Precision & Performance - OPTIMIZED for LLM pretraining
   mixed_precision: bf16  # Use BFloat16 for better numerical stability than FP16
-  dataloader_num_workers: 8  # FIXED: Reduced from 16 to 8 (only 7 data files, avoid worker deadlock)
-  prefetch_factor: 4  # FIXED: Reduced from 8 to 4 (8 workers × 4 = 32 batches buffered, down from 128)
+  dataloader_num_workers: 8  # OPTIMIZED: 8 parallel workers for data loading
+  prefetch_factor: 4  # Prefetch 4 batches per worker (32 batches total prefetched)
   persistent_workers: true  # OPTIMIZED: Keep workers alive between epochs (reduces startup overhead)
   gradient_checkpointing: false  # DISABLED: Speed priority for 11.6GB GPU (memory sufficient without it)
 
@@ -144,7 +144,7 @@ data:
   max_samples: null  # FIXED: Training max_samples (null = use all data)
   val_max_samples: null  # FIXED: Validation max_samples (null = use val_split_ratio)
   val_split_ratio: 0.1  # FIXED: Validation split ratio (10% of training data)
-  buffer_size: 2000  # FIXED: Streaming buffer size (reduced from 20000)
+  buffer_size: 50000  # OPTIMIZED: Large buffer for LLM pretraining (50x increase)
 
   # DataLoader Settings
   dataloader_drop_last: true  # Drop incomplete final batch (ensures consistent batch sizes)
@@ -215,6 +215,7 @@ enhanced_features:
     memory_replay_ratio: 0.01
     memory_replay_strategy: random
     silent_mode: true  # Suppress memory warnings (still monitors, just doesn't print)
+    enable_auto_grad_accumulation: false  # DISABLED: Auto-adjusting grad_accum slows training
   quantization:
     quantization_aware: false
     use_nvfp4: true  # ENABLED: NVFP4 WEIGHT_ONLY mode (~4x weight compression)
@@ -226,14 +227,14 @@ enhanced_features:
     use_hadamard_transform: false  # Not needed for NVFP4
 data_loading:
   streaming: true
-  buffer_size: 2000  # FIXED: Reduced from 20000 to 2000 for faster startup (still 2K samples × 16 workers = 32K buffer total)
+  buffer_size: 50000  # OPTIMIZED: Large buffer for LLM pretraining (50K samples)
   max_samples: null  # No limit - use all available data
   val_max_samples: null  # FIXED: No hardcoded limit - use val_split_ratio instead
   val_split_ratio: 0.1  # FIXED: Use 10% of training data for validation (was hardcoded to 1000 samples)
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 8  # FIXED: Reduced from 16 to 8 (we only have 7 data files, so 16 workers caused deadlock)
+  num_workers: 8  # OPTIMIZED: 8 parallel workers for maximum data pipeline throughput
   # Length-based bucketing for better GPU utilization
   enable_bucketing: true
   bucket_boundaries: [256, 512, 768, 1024]  # Optimized boundaries for progressive training
@@ -250,8 +251,13 @@ memory:
   gradient_checkpointing: false  # SPEED: Disabled (unified with training.gradient_checkpointing)
   memory_threshold_gb: 16.0  # Higher threshold with more RAM available
   enable_cpu_offload: false
-  clear_cache_frequency: 5000  # Clear less frequently with abundant RAM (was 2000)
+  clear_cache_frequency: 100000  # OPTIMIZED: Rarely clear cache (was 5000) - prevents thrashing
   silent_mode: true  # NEW: Suppress memory warnings (still monitors, just doesn't print)
+  # Memory monitor thresholds - RELAXED to prevent constant cleanup
+  target_utilization: 0.85  # Target 85% GPU memory usage
+  warning_threshold: 0.98  # Warn at 98% (was 0.92)
+  critical_threshold: 0.99  # Critical at 99% (was 0.96)
+  emergency_threshold: 0.995  # Emergency at 99.5% (was 0.98)
 evaluation:
   eval_during_training: true
   eval_metrics: perplexity  # SPEED: Only perplexity (removed BLEU for speed)
@@ -273,7 +279,16 @@ run_management:
   resume_from_checkpoint: null
 device: auto
 fp16: false  # Disabled in favor of bf16
-bf16: true  # Enabled for better numerical stability in MoE training
+bf16: true  # Enabled for better numerical stability in MoE training (DEFAULT for speed!)
+# Learning Rate Finder - Find optimal learning rate automatically
+lr_finder:
+  enabled: false  # Set to true to run LR finder before training
+  start_lr: 1.0e-8  # Starting learning rate for search
+  end_lr: 1.0  # Maximum learning rate to test
+  num_iterations: 100  # Number of test iterations
+  suggestion_method: steepest  # Method for LR suggestion (steepest/minimum/valley)
+  use_suggested_lr: false  # Automatically apply suggested LR if true
+  # Note: Enable with CLI: --run-lr-finder --lr-finder-use-suggested
 wandb:
   enabled: true
   project: Ava

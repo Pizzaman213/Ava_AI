@@ -85,6 +85,20 @@ class QuantizationConfig:
 
 
 @dataclass
+class LRFinderConfig:
+    """Configuration for Learning Rate Finder."""
+    run_lr_finder: bool = False              # Run LR Finder before training
+    start_lr: float = 1e-8                   # Starting LR for search
+    end_lr: float = 1.0                      # Ending LR for search
+    num_iterations: int = 100                # Number of iterations to test
+    suggestion_method: str = 'steepest'      # Method for suggesting LR
+    use_suggested_lr: bool = False           # Automatically use suggested LR
+    plot_path: Optional[str] = None          # Path to save plot
+    smooth_beta: float = 0.98                # Loss smoothing factor
+    stop_div_threshold: float = 4.0          # Stop if loss diverges
+
+
+@dataclass
 class EpisodicMemoryConfig:
     """Configuration for episodic memory."""
     use_episodic_memory: bool = True          # Enable episodic memory
@@ -98,6 +112,7 @@ class EpisodicMemoryConfig:
     memory_performance_window: int = 100     # Performance window
     task_id: int = 0                         # Task ID
     silent_mode: bool = False                # Suppress memory warnings in console
+    enable_auto_grad_accumulation: bool = False  # Enable auto gradient accumulation adjustment
 
 
 @dataclass
@@ -107,7 +122,10 @@ class DataConfig:
     max_length: int = 512                     # Max sequence length
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = True                    # Streaming loader
-    buffer_size: int = 1000                   # Streaming buffer size
+    buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
+    num_workers: int = 8                      # Parallel data loading workers
+    prefetch_factor: int = 4                  # Batches to prefetch per worker
+    persistent_workers: bool = True           # Keep workers alive between epochs
 
 
 @dataclass
@@ -299,6 +317,7 @@ class EnhancedTrainingConfig:
     gradient: GradientConfig = field(default_factory=GradientConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
+    lr_finder: LRFinderConfig = field(default_factory=LRFinderConfig)
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
 
@@ -430,6 +449,24 @@ Examples:
         quant_group.add_argument('--use-torchao-nvfp4', action='store_true',
                                 help='Use TorchAO native NVFP4 implementation if available')
 
+        # Learning Rate Finder
+        lr_finder_group = parser.add_argument_group('Learning Rate Finder')
+        lr_finder_group.add_argument('--run-lr-finder', action='store_true',
+                                    help='Run LR Finder before training to find optimal learning rate')
+        lr_finder_group.add_argument('--lr-finder-start', type=float, default=1e-8,
+                                    help='Starting LR for LR finder (default: 1e-8)')
+        lr_finder_group.add_argument('--lr-finder-end', type=float, default=1.0,
+                                    help='Ending LR for LR finder (default: 1.0)')
+        lr_finder_group.add_argument('--lr-finder-iterations', type=int, default=100,
+                                    help='Number of iterations for LR finder (default: 100)')
+        lr_finder_group.add_argument('--lr-finder-method', type=str, default='steepest',
+                                    choices=['steepest', 'minimum', 'valley'],
+                                    help='Method for suggesting LR from results (default: steepest)')
+        lr_finder_group.add_argument('--lr-finder-use-suggested', action='store_true',
+                                    help='Automatically use the suggested LR from LR finder')
+        lr_finder_group.add_argument('--lr-finder-plot-path', type=str, default=None,
+                                    help='Path to save LR finder plot (default: auto-generated in run dir)')
+
         # Episodic memory for continual learning
         memory_group = parser.add_argument_group('Episodic Memory')
         memory_group.add_argument('--use-episodic-memory', action='store_true', default=False,
@@ -469,8 +506,14 @@ Examples:
                                help='Use streaming data loader for large datasets (default: True)')
         data_group.add_argument('--no-streaming', dest='streaming', action='store_false',
                                help='Disable streaming and load all data into memory')
-        data_group.add_argument('--buffer-size', type=int, default=1000,
-                               help='Buffer size for streaming data loader')
+        data_group.add_argument('--buffer-size', type=int, default=50000,
+                               help='Buffer size for streaming data loader (default: 50000, optimized for LLM pretraining)')
+        data_group.add_argument('--num-workers', type=int, default=8,
+                               help='Number of parallel data loading workers (default: 8)')
+        data_group.add_argument('--prefetch-factor', type=int, default=4,
+                               help='Number of batches to prefetch per worker (default: 4)')
+        data_group.add_argument('--no-persistent-workers', dest='persistent_workers', action='store_false', default=True,
+                               help='Disable persistent workers (workers restart each epoch)')
 
         # === MULTI-COLUMN DATA ARGUMENTS ===
         multi_col_group = parser.add_argument_group('Multi-Column Data')
@@ -699,6 +742,16 @@ Examples:
                 use_torchao_nvfp4=args.use_torchao_nvfp4
             ),
 
+            lr_finder=LRFinderConfig(
+                run_lr_finder=args.run_lr_finder,
+                start_lr=args.lr_finder_start,
+                end_lr=args.lr_finder_end,
+                num_iterations=args.lr_finder_iterations,
+                suggestion_method=args.lr_finder_method,
+                use_suggested_lr=args.lr_finder_use_suggested,
+                plot_path=args.lr_finder_plot_path
+            ),
+
             memory=EpisodicMemoryConfig(
                 use_episodic_memory=args.use_episodic_memory,
                 memory_capacity=args.memory_capacity,
@@ -717,7 +770,10 @@ Examples:
                 max_length=args.max_length,
                 max_samples=args.max_samples,
                 streaming=args.streaming,
-                buffer_size=args.buffer_size
+                buffer_size=args.buffer_size,
+                num_workers=args.num_workers,
+                prefetch_factor=args.prefetch_factor,
+                persistent_workers=args.persistent_workers
             ),
 
             multi_column_data=MultiColumnDataConfig(

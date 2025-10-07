@@ -24,8 +24,8 @@ model:
   use_cross_attention: false
   use_episodic_memory: false
 training:
-  batch_size: 4
-  gradient_accumulation_steps: 8
+  batch_size: 8
+  gradient_accumulation_steps: 4
   max_gradient_norm: 0.5
   num_epochs: 10
   max_steps: -1
@@ -37,8 +37,8 @@ training:
   eps: 1e-8
   lr_scheduler_type: cosine
   mixed_precision: fp16
-  dataloader_num_workers: 4
-  gradient_checkpointing: true
+  dataloader_num_workers: 8
+  gradient_checkpointing: false
   eval_strategy: steps
   eval_steps: 500
   save_strategy: steps
@@ -63,10 +63,12 @@ data:
   tokenizer_name: gpt2
   padding_side: right
   truncation: true
-  train_batch_size: 4
-  eval_batch_size: 8
+  train_batch_size: 8
+  eval_batch_size: 16
   dataloader_drop_last: true
   dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4
+  dataloader_persistent_workers: true
 device: auto
 fp16: true
 bf16: false
