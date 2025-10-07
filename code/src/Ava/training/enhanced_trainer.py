@@ -211,13 +211,21 @@ class EnhancedModularTrainer:
         )
         self.scaler_last_reset = 0
 
-        # Initialize gradient and loss health monitors with DeepSeek-appropriate settings
+        # Initialize gradient and loss health monitors with config settings
+        gh_config = config.training.gradient_health if hasattr(config.training, 'gradient_health') else {}
+
+        # Handle both dict and object config formats
+        def get_config_value(cfg, key, default):
+            if isinstance(cfg, dict):
+                return cfg.get(key, default)
+            return getattr(cfg, key, default)
+
         self.gradient_health = GradientHealthMonitor(
-            initial_clip_value=5.0,  # Higher initial clipping for MoE stability
-            final_clip_value=3.0,    # Increased from 2.0 - MoE needs higher clipping
-            warmup_steps=1000,       # Reduced warmup for faster convergence
+            initial_clip_value=get_config_value(gh_config, 'initial_clip_value', 5.0),
+            final_clip_value=get_config_value(gh_config, 'final_clip_value', 3.0),
+            warmup_steps=get_config_value(gh_config, 'warmup_steps', 1000),
             history_size=100,
-            explosion_threshold=30.0,  # Further increased - DeepSeek MoE has higher gradient norms
+            explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 30.0),
         )
         self.loss_health = LossHealthMonitor(
             history_size=100, spike_threshold_sigma=3.0, divergence_threshold=2.0
