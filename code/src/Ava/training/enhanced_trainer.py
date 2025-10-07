@@ -221,11 +221,11 @@ class EnhancedModularTrainer:
             return getattr(cfg, key, default)
 
         self.gradient_health = GradientHealthMonitor(
-            initial_clip_value=get_config_value(gh_config, 'initial_clip_value', 5.0),
-            final_clip_value=get_config_value(gh_config, 'final_clip_value', 3.0),
-            warmup_steps=get_config_value(gh_config, 'warmup_steps', 1000),
+            initial_clip_value=get_config_value(gh_config, 'initial_clip_value', 1.0),
+            final_clip_value=get_config_value(gh_config, 'final_clip_value', 5.0),  # REVERSED: MoE needs higher later
+            warmup_steps=get_config_value(gh_config, 'warmup_steps', 2000),
             history_size=100,
-            explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 30.0),
+            explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 5.0),  # CRITICAL: Much lower threshold
         )
         self.loss_health = LossHealthMonitor(
             history_size=100, spike_threshold_sigma=3.0, divergence_threshold=2.0

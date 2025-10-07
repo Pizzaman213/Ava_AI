@@ -1,6 +1,4 @@
 # Python
-# Exception: Allow scripts/data_prep folder contents
-!scripts/data_prep/__pycache__/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -88,18 +86,13 @@ best_model.pt
 checkpoint-*/
 
 # Data files and datasets
-# Exception: Allow scripts/data_prep folder and its contents
-!scripts/data_prep/
-!scripts/data_prep/**
-!scripts/data_prep/*.py
-!scripts/data_prep/*.txt
-!scripts/data_prep/*.log
-data/
-data/*
-data/**
-datasets/
-datasets/*
-datasets/**
+# Exclude data directories but NOT scripts/data_prep
+/data/
+/data/*
+/data/**
+/datasets/
+/datasets/*
+/datasets/**
 
 # Dataset download script outputs
 download_summary.json
@@ -215,8 +208,6 @@ HuggingFaceH4_self_instruct/
 *_*/
 
 # Logs
-# Exception: Allow scripts/data_prep logs
-!scripts/data_prep/*.log
 *.log
 logs/
 logs/*
