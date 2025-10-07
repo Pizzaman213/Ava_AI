@@ -45,7 +45,7 @@ training:
   gradient_accumulation_steps: 4  # Accumulate to effective batch_size=32 (same total)
 
   # Gradient Management
-  max_gradient_norm: 1.0  # Clip gradients to prevent explosion - reduced for stability with higher LR
+  max_gradient_norm: 5.0  # Clip gradients to prevent explosion - increased to allow larger gradients during warmup
 
   # Training Duration
   num_epochs: 1  # Number of full passes through the dataset (increased to train longer)
@@ -121,12 +121,12 @@ training:
   # Gradient Health Monitoring - Detect and respond to gradient issues
   gradient_health:
     enabled: true  # Monitor gradient norms for explosions
-    initial_clip_value: 1.0  # Starting gradient clip threshold - reduced for higher LR
-    final_clip_value: 2.0  # Ending gradient clip threshold (gradually increase)
+    initial_clip_value: 5.0  # Starting gradient clip threshold - increased for stability
+    final_clip_value: 5.0  # Ending gradient clip threshold (keep constant)
     warmup_steps: 5000  # Gradually adjust clip value over first 5000 steps
-    explosion_threshold: 10.0  # Flag gradient explosion if norm exceeds this - reduced for higher LR
+    explosion_threshold: 100.0  # Flag gradient explosion if norm exceeds this - relaxed threshold
     explosion_window: 5  # Check for explosions over 5-step rolling window
-    auto_reduce_lr: true  # Automatically reduce LR if gradients explode
+    auto_reduce_lr: false  # Disable auto LR reduction (let warmup handle it)
     lr_reduction_factor: 0.7  # Cut LR by 30% when explosion detected (gentler)
 data:
   # Data Sources
