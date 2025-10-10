@@ -1,107 +1,116 @@
 specVersion: v2
 specMinorVersion: 2
 meta:
-  name: ava-ai
-  image: project-ava-ai
-  description: PyTorch AI Development Environment
-  labels: []
-  createdOn: "2024-09-14T17:01:37Z"
-  defaultBranch: main
+    name: Ava_AI
+    image: project-ava_ai
+    description: ""
+    labels: []
+    createdOn: "2025-09-14T17:01:37Z"
+    defaultBranch: main
 layout:
-  - path: code/
-    type: code
-    storage: git
-  - path: models/
-    type: models
-    storage: gitlfs
-  - path: data/
-    type: data
-    storage: gitlfs
-  - path: data/scratch/
-    type: data
-    storage: gitignore
+    - path: code/
+      type: code
+      storage: git
+    - path: models/
+      type: models
+      storage: gitlfs
+    - path: data/
+      type: data
+      storage: gitlfs
+    - path: data/scratch/
+      type: data
+      storage: gitignore
 environment:
-  base:
-    registry: nvcr.io
-    image: nvidia/pytorch:24.09-py3
-    build_timestamp: "20240915000000"
-    name: PyTorch with CUDA 12.6
-    supported_architectures: []
-    cuda_version: "12.6.0"
-    description: PyTorch with CUDA 12.6 and Python 3.10
-    entrypoint_script: ""
-    labels:
-      - cuda12.6
-      - pytorch
-    apps:
-      - name: jupyterlab
-        type: jupyterlab
-        class: webapp
-        start_command: jupyter lab --allow-root --port 8888 --ip 0.0.0.0 --no-browser --NotebookApp.base_url=$PROXY_PREFIX --NotebookApp.default_url=/lab --NotebookApp.allow_origin='*'
-        health_check_command: "[ $(echo url=$(jupyter lab list | head -n 2 | tail -n 1 | cut -f1 -d' ' | grep -v 'Currently' | sed 's@/?@/lab?@g') | curl -o /dev/null -s -w '%{http_code}' --config -) == '200' ]"
-        stop_command: jupyter lab stop 8888
-        user_msg: ""
-        logfile_path: ""
-        timeout_seconds: 60
+    base:
+        registry: nvcr.io
+        image: nvidia/rapidsai/notebooks:24.10-cuda12.0-py3.11
+        build_timestamp: ""
+        name: RAPIDS with CUDA 12.0.1
+        supported_architectures: []
+        cuda_version: 12.0.1
+        description: RAPIDS with CUDA 12.0.1
+        entrypoint_script: /home/rapids/entrypoint.sh
+        labels:
+            - cuda12.0.1
+        apps:
+            - name: jupyterlab
+              type: jupyterlab
+              class: webapp
+              start_command: jupyter lab --allow-root --port 8888 --ip 0.0.0.0 --no-browser --NotebookApp.base_url=\$PROXY_PREFIX --NotebookApp.default_url=/lab --NotebookApp.allow_origin='*'
+              health_check_command: '[ \$(echo url=\$(jupyter lab list | head -n 2 | tail -n 1 | cut -f1 -d'' '' | grep -v ''Currently'' | sed "s@/?@/lab?@g") | curl -o /dev/null -s -w ''%{http_code}'' --config -) == ''200'' ]'
+              stop_command: jupyter lab stop 8888
+              user_msg: ""
+              logfile_path: ""
+              timeout_seconds: 60
+              icon_url: ""
+              webapp_options:
+                autolaunch: true
+                port: "8888"
+                proxy:
+                    trim_prefix: false
+                url_command: jupyter lab list | head -n 2 | tail -n 1 | cut -f1 -d' ' | grep -v 'Currently'
+        programming_languages:
+            - python3
         icon_url: ""
-        webapp_options:
-          autolaunch: true
-          port: "8888"
-          proxy:
-            trim_prefix: false
-          url_command: "jupyter lab list | head -n 2 | tail -n 1 | cut -f1 -d' ' | grep -v 'Currently'"
-    programming_languages:
-      - python3
-    icon_url: ""
-    image_version: "24.09"
-    os: linux
-    os_distro: ubuntu
-    os_distro_release: "22.04"
-    schema_version: v2
-    user_info:
-      uid: ""
-      gid: ""
-      username: ""
-    package_managers:
-      - name: apt
-        binary_path: /usr/bin/apt
-        installed_packages: []
-      - name: pip
-        binary_path: /usr/local/bin/pip
-        installed_packages:
-          - torch
-          - torchvision
-          - torchaudio
-          - jupyterlab
-          - numpy
-          - pandas
-          - matplotlib
-          - scikit-learn
-          - tensorboard
-          - transformers
-          - accelerate
-    package_manager_environment:
-      name: base
-      target: ""
+        image_version: 24.10.00
+        os: linux
+        os_distro: ubuntu
+        os_distro_release: "22.04"
+        schema_version: v2
+        user_info:
+            uid: "1001"
+            gid: "1000"
+            username: rapids
+        package_managers:
+            - name: apt
+              binary_path: /usr/bin/apt
+              installed_packages:
+                - ""
+            - name: conda3
+              binary_path: /opt/conda/bin/conda
+              installed_packages:
+                - rapids
+                - cudf
+                - cuml
+                - cugraph
+                - rmm
+                - pylibraft
+                - cuspatial
+                - cuxfilter
+                - cucim
+                - xgboost
+                - jupyterlab
+            - name: pip
+              binary_path: /opt/conda/bin/pip
+              installed_packages:
+                - jupyterlab-nvdashboard
+        package_manager_environment:
+            name: conda
+            target: /opt/conda
+    compose_file_path: ""
 execution:
-  apps:
-    - name: vscode
-      type: vs-code
-      class: native
-      start_command: ""
-      health_check_command: '[ $(ps aux | grep ".vscode-server" | grep -v grep | wc -l) -gt 4 ] && [ $(ps aux | grep "/.vscode-server/bin/.*/node .* net.createConnection" | grep -v grep | wc -l) -gt 0 ]'
-      stop_command: ""
-      user_msg: ""
-      logfile_path: ""
-      timeout_seconds: 120
-      icon_url: ""
-  resources:
-    gpu:
-      requested: 1
-    sharedMemoryMB: 20480
-  secrets: []
-  mounts:
-    - type: project
-      target: /project/
-      description: Project directory
-      options: rw
+    apps:
+        - name: VS Code
+          type: vs-code
+          class: native
+          start_command: ""
+          health_check_command: '[ \$(ps aux | grep ".vscode-server" | grep -v grep | wc -l ) -gt 4 ] && [ \$(ps aux | grep "/.vscode-server/bin/.*/node .* net.createConnection" | grep -v grep | wc -l) -gt 0 ]'
+          stop_command: ""
+          user_msg: ""
+          logfile_path: ""
+          timeout_seconds: 120
+          icon_url: ""
+    resources:
+        gpu:
+            requested: 1
+        sharedMemoryMB: 20480
+    secrets:
+        - variable: AWS_ACCESS_KEY_ID
+          description: AWS Access Key for boto3
+        - variable: AWS_SECRET_ACCESS_KEY
+          description: AWS Secret Key for boto3
+    mounts:
+        - type: project
+          target: /project/
+          description: Project directory
+          options: rw
