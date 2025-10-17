@@ -18,17 +18,22 @@ Usage:
 
 import argparse
 import sys
+import warnings
 import torch  # type: ignore[import-not-found]
 import yaml
 from pathlib import Path
 
-# Add project root to path
-sys.path.append('/project/code')
+# Suppress Pydantic field attribute warnings early (these come from dependencies)
+from pydantic._internal._generate_schema import UnsupportedFieldAttributeWarning
+warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
 
-from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
-from src.Ava.multi_column_data import create_multi_column_dataloader
-from src.Ava.evaluation import ModelEvaluator, PerplexityEvaluator
-from src.Ava.utils import setup_logging, load_checkpoint
+# Add project root to path
+sys.path.insert(0, '/project/code/src')
+
+from Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
+from Ava.multi_column_data import create_multi_column_dataloader  # type: ignore[import-not-found]
+from Ava.evaluation import PerplexityEvaluator, ComprehensiveEvaluator  # type: ignore[import-not-found]
+from Ava.utils import setup_logging, load_checkpoint  # type: ignore[import-not-found]
 from transformers import AutoTokenizer  # type: ignore[import-not-found]
 
 
@@ -149,7 +154,7 @@ def main():
     )
 
     # Initialize evaluator
-    evaluator = ModelEvaluator(model, tokenizer, device)
+    evaluator = ComprehensiveEvaluator(model=model, tokenizer=tokenizer, device=device)
 
     # Compute metrics
     logger.info("Computing evaluation metrics...")

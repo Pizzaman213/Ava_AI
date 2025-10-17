@@ -1,19 +1,13 @@
 {
   "permissions": {
     "allow": [
+      "Bash(chmod:*)",
       "Bash(python:*)",
-      "Bash(for file in layers/experts.py layers/mixture_of_activations.py layers/mixture_of_heads.py layers/routing.py losses/advanced_losses.py memory/episodic_memory.py)",
-      "Bash(do)",
-      "Bash(done)",
-      "Bash(for file in layers/mixture_of_activations.py layers/mixture_of_heads.py layers/routing.py losses/advanced_losses.py memory/episodic_memory.py multi_column_data.py)",
-      "Bash(if [ -f \"$file\" ])",
-      "Bash(then)",
-      "Bash(fi)",
-      "Bash(find:*)",
-      "Bash(mv:*)",
+      "Bash(pkill:*)",
       "Bash(python3:*)",
-      "Bash(tree:*)",
-      "Bash(rm:*)"
+      "WebSearch",
+      "Read(//home/rapids/.vscode-server/extensions/anthropic.claude-code-2.0.20-linux-x64/**)",
+      "Read(//home/rapids/.config/Code/**)"
     ],
     "deny": [],
     "ask": []

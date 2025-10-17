@@ -12,23 +12,60 @@ from typing import Optional, Dict, Any, Tuple
 import logging
 from dataclasses import dataclass, field
 
-# Import all optimization modules
-from ..optimization.gradient_optimizations import (
-    MixedPrecisionManager,
-    GradientCompressor,
-    AdaptiveGradientClipper,
-    GradientNoiseInjector
-)
-from ..optimization.fused_optimizers import create_optimizer
-from ..optimization.compilation_optimizations import (
-    optimize_for_training,
-    CompilationManager
-)
-from ..optimization.hardware_optimizations import auto_optimize_hardware
-from ..data.optimized_dataloader import create_production_dataloader
-from ..layers.advanced_attention import FlashAttentionWrapper
-from ..training.profiling_tools import ThroughputTracker, MemoryProfiler
-from ..training.distributed_optimizations import FSDPManager, setup_distributed_training
+# Import all optimization modules (with fallbacks for missing modules)
+try:
+    from ..optimization.gradient_optimizations import (  # type: ignore[import-not-found]
+        MixedPrecisionManager,
+        GradientCompressor,
+        AdaptiveGradientClipper,
+        GradientNoiseInjector
+    )
+except ImportError:
+    MixedPrecisionManager = None  # type: ignore
+    GradientCompressor = None  # type: ignore
+    AdaptiveGradientClipper = None  # type: ignore
+    GradientNoiseInjector = None  # type: ignore
+
+try:
+    from ..optimization.fused_optimizers import create_optimizer  # type: ignore[import-not-found]
+except ImportError:
+    create_optimizer = None  # type: ignore
+
+try:
+    from ..optimization.compilation_optimizations import (  # type: ignore[import-not-found]
+        optimize_for_training,
+        CompilationManager
+    )
+except ImportError:
+    optimize_for_training = None  # type: ignore
+    CompilationManager = None  # type: ignore
+
+try:
+    from ..optimization.hardware_optimizations import auto_optimize_hardware  # type: ignore[import-not-found]
+except ImportError:
+    auto_optimize_hardware = None  # type: ignore
+
+try:
+    from ..data.optimized_dataloader import create_production_dataloader  # type: ignore[import-not-found]
+except ImportError:
+    create_production_dataloader = None  # type: ignore
+
+try:
+    from ..layers.advanced_attention import FlashAttentionWrapper  # type: ignore[import-not-found]
+except ImportError:
+    FlashAttentionWrapper = None  # type: ignore
+
+try:
+    from ..training.profiling_tools import ThroughputTracker, MemoryProfiler  # type: ignore[import-not-found]
+except ImportError:
+    ThroughputTracker = None  # type: ignore
+    MemoryProfiler = None  # type: ignore
+
+try:
+    from ..training.distributed_optimizations import FSDPManager, setup_distributed_training  # type: ignore[import-not-found]
+except ImportError:
+    FSDPManager = None  # type: ignore
+    setup_distributed_training = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +149,13 @@ class UnifiedOptimizer:
         self.config = config or OptimizationConfig()
 
         # Initialize components
-        self.mixed_precision: Optional[MixedPrecisionManager] = None
-        self.gradient_compressor: Optional[GradientCompressor] = None
-        self.gradient_clipper: Optional[AdaptiveGradientClipper] = None
-        self.gradient_noise: Optional[GradientNoiseInjector] = None
-        self.throughput_tracker: Optional[ThroughputTracker] = None
-        self.memory_profiler: Optional[MemoryProfiler] = None
-        self.fsdp_manager: Optional[FSDPManager] = None
+        self.mixed_precision: Optional[Any] = None
+        self.gradient_compressor: Optional[Any] = None
+        self.gradient_clipper: Optional[Any] = None
+        self.gradient_noise: Optional[Any] = None
+        self.throughput_tracker: Optional[Any] = None
+        self.memory_profiler: Optional[Any] = None
+        self.fsdp_manager: Optional[Any] = None
 
         logger.info("Unified optimizer initialized")
 
@@ -142,22 +179,26 @@ class UnifiedOptimizer:
         logger.info("=" * 60)
 
         # Hardware optimizations (first, affects everything else)
-        if self.config.auto_optimize_hardware:
+        if self.config.auto_optimize_hardware and auto_optimize_hardware is not None:
             logger.info("\n[1/5] Hardware Optimizations")
             auto_optimize_hardware()
 
         # Distributed training setup
         if self.config.use_fsdp:
             logger.info("\n[2/5] Distributed Training (FSDP)")
-            self.fsdp_manager = FSDPManager(
-                sharding_strategy=self.config.fsdp_sharding_strategy,
-                cpu_offload=self.config.fsdp_cpu_offload,
-                mixed_precision=self.config.use_mixed_precision
-            )
-            model = self.fsdp_manager.wrap_model(model)
+            if FSDPManager is not None:
+                self.fsdp_manager = FSDPManager(
+                    sharding_strategy=self.config.fsdp_sharding_strategy,
+                    cpu_offload=self.config.fsdp_cpu_offload,
+                    mixed_precision=self.config.use_mixed_precision
+                )
+                if self.fsdp_manager is not None:
+                    model = self.fsdp_manager.wrap_model(model)
+            else:
+                logger.warning("FSDPManager not available, skipping FSDP")
 
         # Compilation
-        if self.config.use_torch_compile and not self.config.use_fsdp:
+        if self.config.use_torch_compile and not self.config.use_fsdp and optimize_for_training is not None:
             logger.info("\n[3/5] Model Compilation (torch.compile)")
             model = optimize_for_training(
                 model,
@@ -170,15 +211,15 @@ class UnifiedOptimizer:
 
         logger.info("\n[5/5] Gradient Optimizations")
         # Mixed precision
-        if self.config.use_mixed_precision:
+        if self.config.use_mixed_precision and MixedPrecisionManager is not None:
             self.mixed_precision = MixedPrecisionManager(
                 enabled=True,
                 dtype=self._get_precision_dtype()
             )
-            logger.info(f"  ✓ Mixed precision: {self.mixed_precision.dtype}")
+            logger.info(f"  ✓ Mixed precision: {self.mixed_precision.dtype if self.mixed_precision else 'N/A'}")
 
         # Gradient compression
-        if self.config.use_gradient_compression:
+        if self.config.use_gradient_compression and GradientCompressor is not None:
             self.gradient_compressor = GradientCompressor(
                 method=self.config.compression_method,
                 compression_ratio=self.config.compression_ratio
@@ -186,7 +227,7 @@ class UnifiedOptimizer:
             logger.info(f"  ✓ Gradient compression: {self.config.compression_method}")
 
         # Adaptive clipping
-        if self.config.use_adaptive_clipping:
+        if self.config.use_adaptive_clipping and AdaptiveGradientClipper is not None:
             self.gradient_clipper = AdaptiveGradientClipper(
                 clip_type=self.config.clip_type,
                 base_clip_value=self.config.base_clip_value
@@ -194,7 +235,7 @@ class UnifiedOptimizer:
             logger.info(f"  ✓ Adaptive gradient clipping: {self.config.clip_type}")
 
         # Gradient noise
-        if self.config.use_gradient_noise:
+        if self.config.use_gradient_noise and GradientNoiseInjector is not None:
             self.gradient_noise = GradientNoiseInjector()
             logger.info("  ✓ Gradient noise injection")
 
@@ -216,13 +257,22 @@ class UnifiedOptimizer:
         """
         logger.info(f"Creating optimizer: {self.config.optimizer_type}")
 
-        optimizer = create_optimizer(
-            model,
-            optimizer_type=self.config.optimizer_type,
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay,
-            betas=self.config.betas
-        )
+        if create_optimizer is not None:
+            optimizer = create_optimizer(
+                model,
+                optimizer_type=self.config.optimizer_type,
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+                betas=self.config.betas
+            )
+        else:
+            # Fallback to AdamW if create_optimizer is not available
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.config.weight_decay,
+                betas=self.config.betas
+            )
 
         return optimizer
 
@@ -247,30 +297,41 @@ class UnifiedOptimizer:
         """
         logger.info("Creating optimized dataloader...")
 
-        dataloader = create_production_dataloader(
-            dataset=dataset,
-            batch_size=batch_size,
-            device=device,
-            num_workers=self.config.num_workers,
-            use_packing=self.config.use_sequence_packing,
-            pack_block_size=self.config.pack_block_size,
-            use_dynamic_batching=self.config.use_dynamic_batching,
-            max_tokens=self.config.max_tokens,
-            shuffle=shuffle
-        )
+        if create_production_dataloader is not None:
+            dataloader = create_production_dataloader(
+                dataset=dataset,
+                batch_size=batch_size,
+                device=device,
+                num_workers=self.config.num_workers,
+                use_packing=self.config.use_sequence_packing,
+                pack_block_size=self.config.pack_block_size,
+                use_dynamic_batching=self.config.use_dynamic_batching,
+                max_tokens=self.config.max_tokens,
+                shuffle=shuffle
+            )
+        else:
+            # Fallback to standard DataLoader
+            from torch.utils.data import DataLoader
+            dataloader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                num_workers=self.config.num_workers,
+                pin_memory=True
+            )
 
         return dataloader
 
     def setup_profiling(self):
         """Setup profiling tools."""
-        if self.config.enable_throughput_tracking:
+        if self.config.enable_throughput_tracking and ThroughputTracker is not None:
             self.throughput_tracker = ThroughputTracker(
                 window_size=100,
                 log_interval=10
             )
             logger.info("✓ Throughput tracking enabled")
 
-        if self.config.enable_memory_profiling:
+        if self.config.enable_memory_profiling and MemoryProfiler is not None:
             self.memory_profiler = MemoryProfiler(
                 check_interval=100
             )

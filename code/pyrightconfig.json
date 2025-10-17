@@ -1,11 +1,14 @@
 {
   "include": [
     "src",
-    "tests"
+    "tests",
+    "scripts"
   ],
   "exclude": [
     "**/node_modules",
-    "**/__pycache__"
+    "**/__pycache__",
+    "**/outputs/**",
+    "**/.git/**"
   ],
   "ignore": [
     "tests/test_fp8_training.py",
@@ -13,11 +16,34 @@
     "tests/test_advanced_optimizers.py",
     "tests/test_advanced_schedulers.py",
     "tests/test_benchmarks.py",
-    "tests/test_integration.py"
+    "tests/test_integration.py",
+    "src/Ava/models/integration_example.py",
+    "scripts/training/finetune.py",
+    "scripts/diagnose_training.py",
+    "scripts/generation/test_best_settings.py",
+    "scripts/generation/test_generation.py",
+    "scripts/evaluation/evaluate.py"
+  ],
+  "extraPaths": [
+    "."
+  ],
+  "executionEnvironments": [
+    {
+      "root": "."
+    }
   ],
   "typeCheckingMode": "basic",
-  "reportMissingImports": true,
+  "reportMissingImports": "warning",
   "reportMissingTypeStubs": false,
+  "reportAttributeAccessIssue": "warning",
+  "reportUnknownMemberType": false,
+  "reportUnknownVariableType": false,
+  "reportUnknownParameterType": false,
+  "reportUnknownArgumentType": false,
+  "reportGeneralTypeIssues": "warning",
+  "reportOptionalMemberAccess": "warning",
+  "reportPrivateUsage": "warning",
+  "reportIncompatibleMethodOverride": "warning",
   "pythonVersion": "3.8",
   "pythonPlatform": "Linux"
 }

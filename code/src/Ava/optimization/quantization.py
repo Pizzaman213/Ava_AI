@@ -940,7 +940,7 @@ class TorchAONVFP4Wrapper:
         quantized_model = quantize_(model, self.qat_config_prepare)  # type: ignore[misc]
         print(" Model prepared for NVFP4 training")
 
-        return quantized_model
+        return quantized_model  # type: ignore[return-value]
 
     def convert_model_after_training(self, model: nn.Module) -> nn.Module:
         """Convert model to final NVFP4 format after training."""
@@ -953,7 +953,7 @@ class TorchAONVFP4Wrapper:
         final_model = quantize_(model, self.qat_config_convert)  # type: ignore[misc]
         print(" Model converted to NVFP4 format")
 
-        return final_model
+        return final_model  # type: ignore[return-value]
 
     def quantize_model_for_inference(self, model: nn.Module) -> nn.Module:
         """Quantize model directly for NVFP4 inference."""
@@ -964,7 +964,7 @@ class TorchAONVFP4Wrapper:
         quantized_model = quantize_(model, self.base_config)  # type: ignore[misc]
         print(" Model quantized for NVFP4 inference")
 
-        return quantized_model
+        return quantized_model  # type: ignore[return-value]
 
 
 class INT4Quantization:

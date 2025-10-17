@@ -3,14 +3,14 @@ model:
   num_layers: 8
   num_attention_heads: 6
   intermediate_size: 1536
-  vocab_size: 50257
+  vocab_size: 65536  # Enhanced custom tokenizer vocab size
   max_position_embeddings: 1024
   num_experts: 4
   num_experts_per_token: 2
   expert_capacity_factor: 1.5
   router_type: switch
   router_aux_loss_coef: 0.01
-  router_jitter_noise: 0.0  # Disabled during initialization for stability
+  router_jitter_noise: 0.0
   router_z_loss_coef: 0.0001
   moe_dropout: 0.0
   use_cache: true
@@ -18,26 +18,26 @@ model:
   attention_dropout: 0.0
   hidden_dropout: 0.0
   layer_norm_eps: 1e-6
-  initializer_range: 0.02  # Balanced value for MoE (not too high, not too low)
+  initializer_range: 0.02
   hidden_act: swiglu
   label_smoothing: 0.0
-  tie_word_embeddings: true
+  tie_word_embeddings: false
   dropout: 0.0
   use_moh: false
   use_moa: false
   use_rag: false
   use_cross_attention: false
   use_episodic_memory: false
-  deepspeed_activation_checkpointing: false  # SPEED: Disabled for 30% gain
+  deepspeed_activation_checkpointing: false
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
   use_flash_attention: true
 training:
-  batch_size: 16  # SPEED: Increased from 4 (removed gradient accumulation)
-  gradient_accumulation_steps: 1  # SPEED: Disabled for 50% gain (was 64)
-  max_gradient_norm: 1.0
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  max_gradient_norm: 5.0
   num_epochs: 1
-  max_steps: 500000
+  max_steps: 50000  # CRITICAL FIX: Reduced from 500k to prevent over-training (~15-20 epochs)
   warmup_steps: 2000
   warmup_type: linear
   save_total_limit: 20
@@ -47,20 +47,25 @@ training:
   beta2: 0.95
   eps: 1e-8
   lr_scheduler_type: cosine
-  lr_end: 7.499999999999999e-06
+  lr_end: 1.0e-04  # CRITICAL FIX: Increased from 7.5e-06 to prevent LR collapse (13x higher)
+  # Repetition penalty weights (Fix #2 - addresses " time time time" issue)
+  repetition_penalty_weight: 0.5      # N-gram repetition penalty weight
+  immediate_repetition_weight: 1.0    # Token-to-token repetition weight
+  min_sequence_length: 20             # Minimum tokens before allowing EOS
+  eos_penalty_weight: 5.0             # Penalty for early EOS tokens
   warmup_ratio: 0.01
-  mixed_precision: bf16  # SPEED: Changed from fp16 for better stability
-  dataloader_num_workers: 12  # SPEED: Increased from 2 for better I/O
-  gradient_checkpointing: false  # SPEED: Disabled for 30% gain
+  mixed_precision: bf16
+  dataloader_num_workers: 12
+  gradient_checkpointing: false
   use_adaptive_lr: false
   lr_patience: 1000000
   lr_reduction_factor: 1.0
   min_lr: 0.0
   eval_strategy: steps
-  eval_steps: 2000  # SPEED: Reduced frequency from 25000 (evaluate less often)
+  eval_steps: 2000
   save_strategy: steps
-  save_steps: 3000  # SPEED: Reduced frequency from 10000 (save less often)
-  logging_steps: 200  # SPEED: Reduced frequency from 100 (log less often)
+  save_steps: 3000
+  logging_steps: 200
   load_best_model_at_end: false
   metric_for_best_model: loss
   greater_is_better: false
@@ -72,21 +77,21 @@ training:
   loss_scaling: dynamic
   adam_epsilon: 1e-8
   gradient_health:
-    enabled: true
-    initial_clip_value: 5.0  # MoE needs higher clipping during warmup
-    final_clip_value: 2.0  # MoE models need 2-3x higher than dense models
+    enabled: false
+    initial_clip_value: 5.0
+    final_clip_value: 2.0
     warmup_steps: 2000
-    explosion_threshold: 30.0  # Increased from 5.0 - previous was too sensitive
+    explosion_threshold: 30.0
     explosion_window: 5
-    auto_reduce_lr: true
+    auto_reduce_lr: false
     lr_reduction_factor: 0.5
-  dynamic_batching:  # NEW: Automatic batch size adjustment based on GPU memory
-    enabled: false  # Enabled for automatic hardware adaptation
+  dynamic_batching:
+    enabled: false
     min_batch_size: 8
-    max_batch_size: 48  # Higher for tiny model (smaller memory footprint)
-    target_memory_utilization: 0.88  # Slightly higher target (more aggressive)
+    max_batch_size: 48
+    target_memory_utilization: 0.88
     adjustment_frequency: 100
-    adjustment_factor: 1.3  # More aggressive than baseline (1.2)
+    adjustment_factor: 1.3
     warmup_steps: 2000
     smooth_transitions: true
 data:
@@ -94,11 +99,11 @@ data:
   max_length: 2048
   max_train_examples: -1
   max_eval_examples: 1000
-  tokenizer_name: gpt2
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65k  # Custom enhanced tokenizer
   padding_side: right
   truncation: true
-  train_batch_size: 16  # Synced with training.batch_size
-  eval_batch_size: 24  # SPEED: Increased from 2 for faster evaluation
+  train_batch_size: 16
+  eval_batch_size: 24
   dataloader_drop_last: true
   dataloader_pin_memory: false
   shuffle: true
@@ -107,11 +112,11 @@ deepspeed:
   zero_stage: 0
   cpu_offload: false
   nvme_offload: false
-  precision: bf16  # Changed from fp16 to match training config
-  gradient_accumulation_steps: 1  # Synced with training config
-  train_batch_size: 16  # Effective batch: 16 * 1 = 16
-  micro_batch_size: 16  # Synced with training.batch_size
-  activation_checkpointing: false  # SPEED: Disabled for 30% gain
+  precision: bf16
+  gradient_accumulation_steps: 1
+  train_batch_size: 16
+  micro_batch_size: 16
+  activation_checkpointing: false
 enhanced_features:
   architecture:
     use_moh: false
@@ -131,11 +136,11 @@ enhanced_features:
     auxiliary_loss: true
     adaptive_loss_scaling: true
   gradient:
-    gradient_surgery: false  # SPEED: Disabled to avoid multi-task overhead
-    adaptive_gradient_surgery: false  # SPEED: Disabled
+    gradient_surgery: false
+    adaptive_gradient_surgery: false
     gradient_surgery_method: pcgrad
-    gradient_norm_tracking: false  # SPEED: Disabled for monitoring reduction
-    gradient_anomaly_detection: false  # SPEED: Disabled for monitoring reduction
+    gradient_norm_tracking: false
+    gradient_anomaly_detection: false
   memory:
     use_episodic_memory: false
     memory_capacity: 500
@@ -150,7 +155,7 @@ enhanced_features:
     stochastic_rounding: false
 data_loading:
   streaming: true
-  buffer_size: 15000  # SPEED: Adjusted from 100000 for better throughput
+  buffer_size: 15000
   max_samples: -1
   shuffle_seed: 42
   reshuffle_each_epoch: true
@@ -160,19 +165,21 @@ data_loading:
   multi_column: false
   use_multi_column: false
   distributed: false
+  use_weighted_mixing: true
+  mixing_temperature: 1.0
 performance:
-  ultra_fast_mode: true  # SPEED: Enable ultra-fast mode (minimal monitoring)
-  fast_progress: false  # Overridden by ultra_fast_mode
-  minimal_progress: false  # Overridden by ultra_fast_mode
-  express_mode: false  # Overridden by ultra_fast_mode
+  ultra_fast_mode: true
+  fast_progress: false
+  minimal_progress: false
+  express_mode: false
   no_sync: false
 memory:
   enable_memory_pool: true
-  pool_size_gb: 8.0  # SPEED: Adjusted for tiny model
-  gradient_checkpointing: false  # SPEED: Disabled
+  pool_size_gb: 8.0
+  gradient_checkpointing: false
   memory_threshold_gb: 8.0
   enable_cpu_offload: false
-  clear_cache_frequency: 200  # SPEED: Reduced frequency from 50
+  clear_cache_frequency: 200
 evaluation:
   eval_during_training: true
   eval_metrics: perplexity
@@ -186,8 +193,8 @@ run_management:
   run_id: null
   resume_from_checkpoint: null
 device: auto
-fp16: false  # Disabled in favor of bf16
-bf16: true  # Enabled for better numerical stability in MoE training
+fp16: false
+bf16: true
 wandb:
   enabled: true
   project: ava-moe-gpu-tiny-ultrafast
@@ -198,14 +205,20 @@ wandb:
   - ultrafast
   - optimized
   - production
+  - custom-tokenizer
+  - enhanced-65k
+  - 65k-vocab
+  - weighted-mixing
+  - pre-tokenized
   entity: null
   name: null
-  notes: "Ultra-fast training config: 2-3x speedup via disabled checkpointing, no gradient accumulation, reduced monitoring. Requires ~30% more GPU memory."
+  notes: 'Enhanced with: Qwen2.5-0.5B tokenizer (151k vocab), weighted data mixing
+    (DoReMi), pre-tokenized data'
   group: tiny-models-ultrafast
   job_type: train
   offline: false
-  cache_size: 5000  # SPEED: Increased cache from 1000
-  cache_flush_interval: 200  # SPEED: Reduced frequency from 100
+  cache_size: 5000
+  cache_flush_interval: 200
 stability:
   loss_smoothing: true
   loss_smoothing_alpha: 0.9

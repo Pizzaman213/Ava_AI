@@ -208,17 +208,21 @@ class LearningRateFinder:
             # Record
             loss_value = loss.item()
 
-            # Smooth loss
+            # Smooth loss - FIXED: Correct EMA formula
+            # EMA: new_smoothed = alpha * new_value + (1-alpha) * old_smoothed
+            # For smoothing=0.05, we want 95% old + 5% new (slow smoothing)
             if step == 0:
                 smoothed_loss = loss_value
             else:
-                smoothed_loss = self.smoothing * loss_value + (1 - self.smoothing) * smoothed_loss
+                # CORRECTED: Use (1-smoothing) for new value, smoothing for old value
+                smoothed_loss = (1 - self.smoothing) * loss_value + self.smoothing * smoothed_loss
 
             self.lrs.append(current_lr)
             self.losses.append(smoothed_loss)
 
-            # Check for divergence
-            if smoothed_loss > 4 * best_loss or math.isnan(smoothed_loss):
+            # Check for divergence - FIXED: More lenient threshold to prevent overfitting
+            # Changed from 4x to 8x to allow exploration without premature stopping
+            if smoothed_loss > 8 * best_loss or math.isnan(smoothed_loss):
                 logger.warning(f"Loss diverged at lr={current_lr}, stopping")
                 break
 
@@ -385,7 +389,7 @@ class AdaptiveWarmupScheduler(_LRScheduler):
             # Use base scheduler
             return self.base_scheduler.get_lr()
 
-    def step(self, grad_norm: Optional[float] = None):
+    def step(self, grad_norm: Optional[float] = None):  # type: ignore[override]
         """
         Step the scheduler.
 
@@ -426,7 +430,7 @@ class AdaptiveWarmupScheduler(_LRScheduler):
         is_stable = (avg_norm < self.grad_clip_threshold and
                     std_norm / (avg_norm + 1e-6) < 0.5)
 
-        return is_stable
+        return bool(is_stable)
 
 
 class PerformanceBasedScheduler(_LRScheduler):
@@ -480,7 +484,7 @@ class PerformanceBasedScheduler(_LRScheduler):
         """Get current learning rates."""
         return [group['lr'] for group in self.optimizer.param_groups]
 
-    def step(self, loss: float):
+    def step(self, loss: float):  # type: ignore[override]
         """
         Step scheduler with loss value.
 

@@ -33,13 +33,13 @@ class GPUMemoryManager:
     - Emergency cleanup procedures
     """
 
-    def __init__(self, auto_cleanup: bool = True, emergency_threshold: float = 0.9):
+    def __init__(self, auto_cleanup: bool = True, emergency_threshold: float = 0.99):
         """
         Initialize GPU Memory Manager.
 
         Args:
             auto_cleanup: Enable automatic memory cleanup
-            emergency_threshold: Memory usage threshold for emergency cleanup
+            emergency_threshold: Memory usage threshold for emergency cleanup (0.0 to 1.0, default 0.99 = 99%)
         """
         self.auto_cleanup = auto_cleanup
         self.emergency_threshold = emergency_threshold
@@ -166,12 +166,12 @@ class GPUMemoryManager:
 
         return stats
 
-    def monitor_memory(self, threshold: float = 0.8) -> bool:
+    def monitor_memory(self, threshold: float = 0.99) -> bool:
         """
         Monitor memory usage and return True if threshold exceeded.
 
         Args:
-            threshold: Memory utilization threshold (0.0 to 1.0)
+            threshold: Memory utilization threshold (0.0 to 1.0, default 0.99 = 99%)
 
         Returns:
             True if memory usage exceeds threshold
@@ -203,7 +203,7 @@ class GPUMemoryManager:
             self.cleanup_gpu_memory(aggressive=True)
 
             # Check if cleanup was successful
-            if not self.monitor_memory(threshold=0.7):  # Lower threshold after cleanup
+            if not self.monitor_memory(threshold=0.99):  # Check if still above threshold after cleanup
                 print("Emergency cleanup successful!")
                 break
 
@@ -286,7 +286,7 @@ def get_memory_stats() -> Dict[str, Any]:
     return get_memory_manager().get_memory_stats()
 
 
-def monitor_memory(threshold: float = 0.8) -> bool:
+def monitor_memory(threshold: float = 0.99) -> bool:
     """Legacy function for backwards compatibility."""
     return get_memory_manager().monitor_memory(threshold=threshold)
 

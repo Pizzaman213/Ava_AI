@@ -22,6 +22,15 @@ except ImportError:
     EnhancedMoEModel = None
     EnhancedMoEConfig = None
 
+# Adaptive Multi-Token Prediction
+try:
+    from .models.adaptive_mtp_model import AdaptiveMTPModel, AdaptiveMTPConfig
+    from .models.confidence_gate import ConfidenceGate
+    from .models.prediction_heads import MultiTokenPredictionHeads
+except ImportError:
+    AdaptiveMTPModel = AdaptiveMTPConfig = None
+    ConfidenceGate = MultiTokenPredictionHeads = None
+
 # Layer components
 try:
     from .layers.experts import ExpertBalancer, SparseExpert
@@ -40,7 +49,7 @@ except ImportError:
     HashingExpertRouting = StochasticExpertRouting = None
 
 try:
-    from .layers.attention import (
+    from .layers.attention import (  # type: ignore[import-not-found]
         EnhancedMultiheadAttention, RotaryPositionEmbedding,
         ALiBiPositionEmbedding, FlashAttention
     )
@@ -49,14 +58,14 @@ except ImportError:
     ALiBiPositionEmbedding = FlashAttention = None
 
 try:
-    from .layers.mixture_of_heads import (
+    from .layers.mixture_of_heads import (  # type: ignore[import-not-found]
         MixtureOfHeads, AdaptiveHeadAttention
     )
 except ImportError:
     MixtureOfHeads = AdaptiveHeadAttention = None
 
 try:
-    from .layers.cross_attention import (
+    from .layers.cross_attention import (  # type: ignore[import-not-found]
         MultiModalCrossAttention, PerceiversCrossAttention,
         AdaptiveCrossAttention, HierarchicalCrossAttention
     )
@@ -65,7 +74,7 @@ except ImportError:
     AdaptiveCrossAttention = HierarchicalCrossAttention = None
 
 try:
-    from .layers.mixture_of_activations import (
+    from .layers.mixture_of_activations import (  # type: ignore[import-not-found]
         MixtureOfActivations, AdaptiveActivation,
         ContextualActivation, HierarchicalActivation
     )
@@ -75,7 +84,7 @@ except ImportError:
 
 # Retrieval and RAG
 try:
-    from .retrieval import (
+    from .retrieval import (  # type: ignore[import-not-found]
         RAGSystem, AdaptiveRAG, DenseRetriever,
         KnowledgeBase, RAGFusion
     )
@@ -108,10 +117,12 @@ try:
         DiversityLoss, AuxiliaryLoss, ConsistencyLoss,
         PerplexityLoss, AdaptiveLossScaling, CompositeLoss
     )
+    from .losses.adaptive_mtp_loss import AdaptiveMTPLoss
 except ImportError:
     ContrastiveLoss = FocalLoss = LabelSmoothingLoss = None
     DiversityLoss = AuxiliaryLoss = ConsistencyLoss = None
     PerplexityLoss = AdaptiveLossScaling = CompositeLoss = None
+    AdaptiveMTPLoss = None
 
 # Evaluation
 try:
@@ -164,16 +175,18 @@ try:
         DataConfig, MultiColumnDataConfig, TrainingConfig,
         OutputConfig, RunManagementConfig, WandBConfig, PerformanceConfig
     )
+    from .config.training_config import AdaptiveMTPConfig
 except ImportError:
     EnhancedTrainingConfig = TrainingConfigManager = None
     ArchitectureConfig = RAGConfig = LossConfig = GradientConfig = None
     EvaluationConfig = QuantizationConfig = EpisodicMemoryConfig = None
     DataConfig = MultiColumnDataConfig = TrainingConfig = None
     OutputConfig = RunManagementConfig = WandBConfig = PerformanceConfig = None
+    AdaptiveMTPConfig = None
 
 # Serving
 try:
-    from .serving.fastapi_server import LLMServer
+    from .serving.fastapi_server import LLMServer  # type: ignore[import-not-found]
 except ImportError:
     LLMServer = None
 
@@ -183,6 +196,13 @@ __all__ = [
     # Core
     "EnhancedMoEModel",
     "EnhancedMoEConfig",
+
+    # Adaptive Multi-Token Prediction
+    "AdaptiveMTPModel",
+    "AdaptiveMTPConfig",
+    "ConfidenceGate",
+    "MultiTokenPredictionHeads",
+    "AdaptiveMTPLoss",
 
     # Expert layers
     "ExpertBalancer",

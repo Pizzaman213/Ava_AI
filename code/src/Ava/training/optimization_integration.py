@@ -55,12 +55,16 @@ class OptimizedTrainingSetup:
 
     def setup_hardware(self):
         """Setup hardware-specific optimizations."""
-        from Ava.optimization.hardware_optimizations import auto_optimize_hardware
+        try:
+            from Ava.optimization.hardware_optimizations import auto_optimize_hardware  # type: ignore[import-not-found]
+            self.hw_optimizer = auto_optimize_hardware()
+        except ImportError:
+            logger.warning("hardware_optimizations module not found, skipping hardware setup")
+            self.hw_optimizer = None
+            return
 
         if self.verbose:
             logger.info("\n[1/7] Setting up hardware optimizations...")
-
-        self.hw_optimizer = auto_optimize_hardware()
 
         recommended = self.hw_optimizer.get_recommended_settings()
 
@@ -84,9 +88,13 @@ class OptimizedTrainingSetup:
 
         return self.hw_optimizer
 
-    def setup_mixed_precision(self) -> 'MixedPrecisionManager':
+    def setup_mixed_precision(self):
         """Setup mixed precision training."""
-        from Ava.optimization.gradient_optimizations import MixedPrecisionManager
+        try:
+            from Ava.optimization.gradient_optimizations import MixedPrecisionManager  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning("gradient_optimizations module not found, skipping mixed precision")
+            return None
 
         if self.verbose:
             logger.info("\n[2/7] Setting up mixed precision training...")
@@ -112,7 +120,11 @@ class OptimizedTrainingSetup:
 
     def optimize_model(self, model: nn.Module) -> nn.Module:
         """Apply model optimizations."""
-        from Ava.optimization.compilation_optimizations import optimize_for_training
+        try:
+            from Ava.optimization.compilation_optimizations import optimize_for_training  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning("compilation_optimizations module not found, skipping model optimization")
+            return model
 
         if self.verbose:
             logger.info("\n[3/7] Optimizing model...")
@@ -134,7 +146,15 @@ class OptimizedTrainingSetup:
 
     def create_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
         """Create optimized optimizer."""
-        from Ava.optimization.fused_optimizers import create_optimizer
+        try:
+            from Ava.optimization.fused_optimizers import create_optimizer  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning("fused_optimizers module not found, using default AdamW")
+            return torch.optim.AdamW(
+                model.parameters(),
+                lr=self.config.get('learning_rate', 3e-4),
+                weight_decay=self.config.get('weight_decay', 0.01)
+            )
 
         if self.verbose:
             logger.info("\n[4/7] Creating optimized optimizer...")
@@ -163,7 +183,19 @@ class OptimizedTrainingSetup:
         **kwargs
     ) -> DataLoader:
         """Create optimized dataloader."""
-        from Ava.data.optimized_dataloader import create_production_dataloader
+        try:
+            from Ava.data.optimized_dataloader import create_production_dataloader  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning("optimized_dataloader module not found, using default DataLoader")
+            batch_size = batch_size or self.config.get('batch_size', 32)
+            num_workers = num_workers or self.config.get('num_workers', 4)
+            return DataLoader(
+                dataset,
+                batch_size=batch_size,
+                num_workers=num_workers or 4,  # type: ignore[arg-type]
+                shuffle=kwargs.get('shuffle', True),
+                pin_memory=kwargs.get('pin_memory', True)
+            )
 
         if self.verbose:
             logger.info("\n[5/7] Creating optimized dataloader...")
@@ -191,7 +223,14 @@ class OptimizedTrainingSetup:
 
     def setup_monitoring(self, model: Optional[nn.Module] = None):
         """Setup training monitoring."""
-        from Ava.training.profiling_tools import TrainingMonitor, ThroughputTracker, MemoryProfiler
+        try:
+            from Ava.training.profiling_tools import TrainingMonitor, ThroughputTracker, MemoryProfiler  # type: ignore[import-not-found]
+        except ImportError:
+            logger.warning("profiling_tools module not found, skipping monitoring setup")
+            self.throughput_tracker = None
+            self.memory_profiler = None
+            self.training_monitor = None
+            return
 
         if self.verbose:
             logger.info("\n[6/7] Setting up monitoring and profiling...")
@@ -222,10 +261,14 @@ class OptimizedTrainingSetup:
 
     def setup_gradient_optimization(self):
         """Setup gradient optimization components."""
-        from Ava.optimization.gradient_optimizations import (
-            AdaptiveGradientClipper,
-            GradientNoiseInjector
-        )
+        try:
+            from Ava.optimization.gradient_optimizations import (  # type: ignore[import-not-found]
+                AdaptiveGradientClipper,
+                GradientNoiseInjector
+            )
+        except ImportError:
+            logger.warning("gradient_optimizations module not found, skipping gradient optimization")
+            return None
 
         if self.verbose:
             logger.info("\n[7/7] Setting up gradient optimizations...")
@@ -302,7 +345,8 @@ class OptimizedTrainingSetup:
         monitor = self.setup_monitoring(model)
 
         # 7. Gradient optimization
-        grad_clipper, grad_noise = self.setup_gradient_optimization()
+        grad_result = self.setup_gradient_optimization()
+        grad_clipper, grad_noise = grad_result if grad_result else (None, None)
 
         return {
             'model': model,
@@ -370,9 +414,18 @@ def create_optimized_training_loop(
 
         # End monitoring
         if monitor:
+            # Safely get batch dimensions
+            if isinstance(batch, dict):
+                input_ids = batch.get('input_ids')
+                batch_size = input_ids.shape[0] if input_ids is not None else 1
+                seq_len = input_ids.shape[1] if input_ids is not None else 512
+            else:
+                batch_size = batch.shape[0] if hasattr(batch, 'shape') else 1
+                seq_len = 512
+
             stats = monitor.end_step(
-                batch_size=batch.get('input_ids').shape[0] if isinstance(batch, dict) else batch.shape[0],
-                seq_len=batch.get('input_ids').shape[1] if isinstance(batch, dict) else 512,
+                batch_size=batch_size,
+                seq_len=seq_len,
                 loss=loss.item(),
                 grad_norm=clip_stats.get('grad_norm', 0.0)
             )

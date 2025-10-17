@@ -40,6 +40,7 @@ from ..evaluation.comprehensive_eval import ComprehensiveEvaluator
 # Import existing components
 from ..losses.advanced_losses import AdaptiveLossScaling, CompositeLoss
 from ..losses.deepseek_loss import DeepSeekLoss
+from ..losses.repetition_penalty_loss import NGramRepetitionPenalty, SequenceRepetitionDetector
 from ..memory.episodic_memory import (
     AdaptiveMemoryManager,
     EpisodicMemoryBank,
@@ -190,9 +191,17 @@ class EnhancedModularTrainer:
         self._init_observability()
 
         # Training state
-        self.step_count = 0
+        # FIXED: Separate micro-steps (every forward/backward) from optimizer steps
+        self.micro_step_count = 0  # Incremented every forward/backward pass
+        self.optimizer_step_count = 0  # Incremented only when optimizer.step() is called
+        self.step_count = 0  # Legacy support - points to micro_step_count
         self.epoch_count = 0
         self.best_loss = float("inf")
+
+        # Running loss tracker for accurate checkpoint reporting
+        self.running_loss_avg = 0.0
+        self.running_loss_count = 0
+        self.running_loss_window_size = 100  # EMA over last 100 batches
 
         # Enable gradient checkpointing for memory savings if configured
         self.gradient_checkpointing_enabled = getattr(
@@ -212,7 +221,7 @@ class EnhancedModularTrainer:
         self.scaler_last_reset = 0
 
         # Initialize gradient and loss health monitors with config settings
-        gh_config = config.training.gradient_health if hasattr(config.training, 'gradient_health') else {}
+        gh_config = config.training.gradient_health if hasattr(config.training, 'gradient_health') else {}  # type: ignore[attr-defined]
 
         # Handle both dict and object config formats
         def get_config_value(cfg, key, default):
@@ -220,13 +229,19 @@ class EnhancedModularTrainer:
                 return cfg.get(key, default)
             return getattr(cfg, key, default)
 
-        self.gradient_health = GradientHealthMonitor(
-            initial_clip_value=get_config_value(gh_config, 'initial_clip_value', 1.0),
-            final_clip_value=get_config_value(gh_config, 'final_clip_value', 5.0),  # REVERSED: MoE needs higher later
-            warmup_steps=get_config_value(gh_config, 'warmup_steps', 2000),
-            history_size=100,
-            explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 1000.0),  # DISABLED: Let gradient clipping work
-        )
+        # Check if gradient health is enabled in config (default: False for speed)
+        self.gradient_health_enabled = get_config_value(gh_config, 'enabled', False)
+
+        if self.gradient_health_enabled:
+            self.gradient_health = GradientHealthMonitor(
+                initial_clip_value=get_config_value(gh_config, 'initial_clip_value', 1.0),
+                final_clip_value=get_config_value(gh_config, 'final_clip_value', 5.0),
+                warmup_steps=get_config_value(gh_config, 'warmup_steps', 2000),
+                history_size=100,
+                explosion_threshold=get_config_value(gh_config, 'explosion_threshold', 1000.0),
+            )
+        else:
+            self.gradient_health = None  # type: ignore[assignment]
         self.loss_health = LossHealthMonitor(
             history_size=100, spike_threshold_sigma=3.0, divergence_threshold=2.0
         )
@@ -235,9 +250,9 @@ class EnhancedModularTrainer:
         # Load memory config from config (supports both dict and object access)
         memory_silent = False
         target_util = 0.85
-        warning_thresh = 0.98  # Relaxed from 0.90 to prevent false alarms
-        critical_thresh = 0.99  # Relaxed from 0.95
-        emergency_thresh = 0.995  # Relaxed from 0.98
+        warning_thresh = 0.985  # SPEED FIX: Raised to 98.5% to reduce false alarms
+        critical_thresh = 0.992  # SPEED FIX: Raised to 99.2% to reduce cleanup frequency
+        emergency_thresh = 0.998  # SPEED FIX: Raised to 99.8% - only cleanup on true emergencies
 
         if hasattr(config, 'memory') and config.memory:
             if hasattr(config.memory, 'silent_mode'):
@@ -247,24 +262,31 @@ class EnhancedModularTrainer:
 
             # Load thresholds from config if available
             if hasattr(config.memory, 'target_utilization'):
-                target_util = config.memory.target_utilization
+                target_util = config.memory.target_utilization  # type: ignore[attr-defined]
             elif isinstance(config.memory, dict) and 'target_utilization' in config.memory:
                 target_util = config.memory['target_utilization']
 
             if hasattr(config.memory, 'warning_threshold'):
-                warning_thresh = config.memory.warning_threshold
+                warning_thresh = config.memory.warning_threshold  # type: ignore[attr-defined]
             elif isinstance(config.memory, dict) and 'warning_threshold' in config.memory:
                 warning_thresh = config.memory['warning_threshold']
 
             if hasattr(config.memory, 'critical_threshold'):
-                critical_thresh = config.memory.critical_threshold
+                critical_thresh = config.memory.critical_threshold  # type: ignore[attr-defined]
             elif isinstance(config.memory, dict) and 'critical_threshold' in config.memory:
                 critical_thresh = config.memory['critical_threshold']
 
             if hasattr(config.memory, 'emergency_threshold'):
-                emergency_thresh = config.memory.emergency_threshold
+                emergency_thresh = config.memory.emergency_threshold  # type: ignore[attr-defined]
             elif isinstance(config.memory, dict) and 'emergency_threshold' in config.memory:
                 emergency_thresh = config.memory['emergency_threshold']
+
+        # DEBUG: Print actual threshold values being used
+        print(f"🔧 Memory Monitor Configuration:")
+        print(f"   Target utilization: {target_util:.1%}")
+        print(f"   Warning threshold:  {warning_thresh:.1%}")
+        print(f"   Critical threshold: {critical_thresh:.1%}")
+        print(f"   Emergency threshold: {emergency_thresh:.1%}")
 
         self.memory_monitor = MemoryMonitor(
             target_utilization=target_util,
@@ -312,20 +334,25 @@ class EnhancedModularTrainer:
                 print(f"🔍 DEBUG: dynamic_batching.enabled = {enabled}")
 
                 if enabled:
-                    from .dynamic_batch_sampler import DynamicBatchSizer
+                    try:
+                        from .dynamic_batch_sampler import DynamicBatchSizer  # type: ignore[import-not-found]
+                    except ImportError:
+                        print("⚠️  dynamic_batch_sampler module not found, skipping dynamic batching")
+                        DynamicBatchSizer = None  # type: ignore
 
-                    self.dynamic_batch_sizer = DynamicBatchSizer(
-                        initial_batch_size=getattr(config.training, "batch_size", 8),
-                        min_batch_size=getattr(dynamic_batching, "min_batch_size", 1),
-                        max_batch_size=getattr(dynamic_batching, "max_batch_size", 64),
-                        target_memory_utilization=getattr(dynamic_batching, "target_memory_utilization", 0.85),
-                        adjustment_frequency=getattr(dynamic_batching, "adjustment_frequency", 100),
-                        adjustment_factor=getattr(dynamic_batching, "adjustment_factor", 1.25),
-                        warmup_steps=getattr(dynamic_batching, "warmup_steps", 500),
-                        smooth_transitions=getattr(dynamic_batching, "smooth_transitions", True),
-                        memory_monitor=self.memory_monitor
-                    )
-                    print(f"✓ Dynamic batch sizing enabled: {self.dynamic_batch_sizer.min_batch_size}-{self.dynamic_batch_sizer.max_batch_size}")
+                    if DynamicBatchSizer is not None:
+                        self.dynamic_batch_sizer = DynamicBatchSizer(
+                            initial_batch_size=getattr(config.training, "batch_size", 8),
+                            min_batch_size=getattr(dynamic_batching, "min_batch_size", 1),
+                            max_batch_size=getattr(dynamic_batching, "max_batch_size", 64),
+                            target_memory_utilization=getattr(dynamic_batching, "target_memory_utilization", 0.85),
+                            adjustment_frequency=getattr(dynamic_batching, "adjustment_frequency", 100),
+                            adjustment_factor=getattr(dynamic_batching, "adjustment_factor", 1.25),
+                            warmup_steps=getattr(dynamic_batching, "warmup_steps", 500),
+                            smooth_transitions=getattr(dynamic_batching, "smooth_transitions", True),
+                            memory_monitor=self.memory_monitor
+                        )
+                        print(f"✓ Dynamic batch sizing enabled: {self.dynamic_batch_sizer.min_batch_size}-{self.dynamic_batch_sizer.max_batch_size}")
                 else:
                     print("ℹ️ Dynamic batching configured but disabled")
             else:
@@ -572,10 +599,14 @@ class EnhancedModularTrainer:
         """Create DeepSpeed configuration dictionary."""
         ds_config = self.config.deepspeed
 
+        # FIXED: Gradient accumulation should come from training config, not deepspeed config
+        # DeepSpeed will handle gradient accumulation internally when enabled
+        gradient_accum_steps = getattr(self.config.training, "gradient_accumulation_steps", 1)
+
         config = {
             "train_batch_size": ds_config.train_batch_size or self.config.training.batch_size,
             "train_micro_batch_size_per_gpu": ds_config.micro_batch_size or self.config.training.batch_size,
-            "gradient_accumulation_steps": ds_config.gradient_accumulation_steps,
+            "gradient_accumulation_steps": gradient_accum_steps,
             "optimizer": {
                 "type": "AdamW",
                 "params": {
@@ -727,6 +758,11 @@ class EnhancedModularTrainer:
             hidden_size = getattr(self.config.model, "hidden_size", 4096)
             num_experts = getattr(self.config.model, "num_experts", None)
 
+            # Get EOS token ID from tokenizer
+            eos_token_id = None
+            if hasattr(self, 'tokenizer') and self.tokenizer is not None:
+                eos_token_id = self.tokenizer.eos_token_id
+
             self.deepseek_loss = DeepSeekLoss(
                 vocab_size=vocab_size,
                 hidden_size=hidden_size,
@@ -741,7 +777,11 @@ class EnhancedModularTrainer:
                 label_smoothing=getattr(self.config.losses, "label_smoothing", 0.1),
                 # MoE balancing settings
                 use_moe_balancing=getattr(self.config.losses, "use_moe_balancing", True),
-                gradient_balance_weight=getattr(self.config.losses, "gradient_balance_weight", 0.1)
+                gradient_balance_weight=getattr(self.config.losses, "gradient_balance_weight", 0.1),
+                # EOS penalty settings (CRITICAL FIX for early termination)
+                eos_token_id=eos_token_id,
+                min_sequence_length=getattr(self.config.training, "min_sequence_length", 20),
+                eos_penalty_weight=getattr(self.config.training, "eos_penalty_weight", 5.0)
             )
 
             # CRITICAL: Move to device and convert to BF16 if using BF16 training
@@ -763,28 +803,37 @@ class EnhancedModularTrainer:
                 ]
             ):
                 if self.config.losses.use_focal_loss:
+                    focal_alpha = getattr(self.config.losses, "focal_alpha", 1.0)
+                    focal_gamma = getattr(self.config.losses, "focal_gamma", 2.0)
+                    focal_weight = getattr(self.config.losses, "focal_loss_weight", 0.1)
                     loss_config["focal"] = {
                         "type": "focal",
-                        "alpha": 1.0,
-                        "gamma": 2.0,
-                        "weight": 0.1,
+                        "alpha": focal_alpha,
+                        "gamma": focal_gamma,
+                        "weight": focal_weight,
                     }
                 if self.config.losses.use_contrastive_loss:
+                    contrastive_weight = getattr(self.config.losses, "contrastive_loss_weight", 0.05)
+                    contrastive_temp = getattr(self.config.losses, "contrastive_temperature", 0.07)
                     loss_config["contrastive"] = {
                         "type": "contrastive",
-                        "temperature": 0.07,
-                        "weight": 0.1,
+                        "temperature": contrastive_temp,
+                        "weight": contrastive_weight,
                     }
                 if self.config.losses.use_diversity_loss:
-                    loss_config["diversity"] = {"type": "diversity", "weight": 0.01}
+                    diversity_weight = getattr(self.config.losses, "diversity_loss_weight", 0.05)
+                    loss_config["diversity"] = {"type": "diversity", "weight": diversity_weight}
 
                 # Add auxiliary loss only if enabled (for MoE stability)
                 if getattr(self.config.losses, "use_auxiliary_loss", True):
+                    aux_weight = getattr(self.config.losses, "auxiliary_loss_weight", 0.001)
+                    aux_load_balance = getattr(self.config.losses, "auxiliary_load_balancing_weight", 0.0001)
+                    aux_router_z = getattr(self.config.losses, "auxiliary_router_z_weight", 0.00001)
                     loss_config["auxiliary"] = {
                         "type": "auxiliary",
-                        "load_balancing_weight": 0.0001,
-                        "router_z_weight": 0.00001,
-                        "weight": 0.001,
+                        "load_balancing_weight": aux_load_balance,
+                        "router_z_weight": aux_router_z,
+                        "weight": aux_weight,
                     }
 
                 self.composite_loss = CompositeLoss(loss_config)
@@ -798,12 +847,55 @@ class EnhancedModularTrainer:
                 # For DeepSeek loss, we have main + mtp + moe components
                 num_losses = 3
             elif self.composite_loss is not None:
-                num_losses = len(loss_config) if 'loss_config' in locals() else 1
+                # loss_config is guaranteed to exist when composite_loss is not None
+                num_losses = len(loss_config) if loss_config else 1  # type: ignore[possibly-unbound]
             else:
                 num_losses = 1
             self.adaptive_scaler = AdaptiveLossScaling(num_losses=num_losses)
         else:
             self.adaptive_scaler = None
+
+        # Initialize repetition penalties (DEFAULT: ENABLED to prevent mode collapse)
+        # CRITICAL FIX: Support both config.enhanced_features.losses and config.losses paths
+        # Most configs have enhanced_features.losses, but allow config.losses as fallback
+        losses_config = None
+        if hasattr(self.config, 'enhanced_features') and hasattr(self.config.enhanced_features, 'losses'):
+            losses_config = self.config.enhanced_features.losses
+            print("📊 Using enhanced_features.losses config path")
+        elif hasattr(self.config, 'losses'):
+            losses_config = self.config.losses
+            print("📊 Using losses config path")
+        else:
+            print("⚠️  No losses config found, using defaults")
+
+        use_ngram_penalty = getattr(losses_config, "use_ngram_penalty", True) if losses_config else True
+        use_repetition_detector = getattr(losses_config, "use_immediate_repetition_detector", True) if losses_config else True
+
+        if use_ngram_penalty:
+            vocab_size = getattr(self.config.model, "vocab_size", 50257)
+            ngram_size = getattr(losses_config, "ngram_size", 3) if losses_config else 3
+            ngram_weight = getattr(losses_config, "ngram_penalty_weight", 2.0) if losses_config else 2.0
+
+            self.ngram_penalty = NGramRepetitionPenalty(
+                ngram_size=ngram_size,
+                penalty_weight=ngram_weight,
+                vocab_size=vocab_size
+            ).to(self.device)
+            print(f"✓ N-gram repetition penalty initialized (n={ngram_size}, weight={ngram_weight})")
+        else:
+            self.ngram_penalty = None
+            print("⚠️  N-gram repetition penalty DISABLED")
+
+        if use_repetition_detector:
+            immediate_weight = getattr(losses_config, "immediate_repetition_weight", 3.0) if losses_config else 3.0
+
+            self.repetition_detector = SequenceRepetitionDetector(
+                penalty_weight=immediate_weight
+            ).to(self.device)
+            print(f"✓ Immediate repetition detector initialized (weight={immediate_weight})")
+        else:
+            self.repetition_detector = None
+            print("⚠️  Immediate repetition detector DISABLED")
 
     def _init_gradient_surgery(self):
         """Initialize gradient surgery."""
@@ -835,9 +927,9 @@ class EnhancedModularTrainer:
                 if self.config.rag.knowledge_base_path:
                     kb_path = Path(self.config.rag.knowledge_base_path)
                     if kb_path.exists():
-                        self.knowledge_base = KnowledgeBase(embedding_dim=256)
-                        self.knowledge_base.load(kb_path)
-                        self.rag_system.set_knowledge_base(self.knowledge_base)
+                        self.knowledge_base = KnowledgeBase(embedding_dim=256)  # type: ignore[call-arg]
+                        self.knowledge_base.load(kb_path)  # type: ignore[attr-defined]
+                        self.rag_system.set_knowledge_base(self.knowledge_base)  # type: ignore[attr-defined]
                         print(f" RAG system with KB: {kb_path.name}")
                     else:
                         print(f" Knowledge base not found: {kb_path}")
@@ -856,7 +948,7 @@ class EnhancedModularTrainer:
                 "bleu_max_n": 4,
                 "rouge_types": ["rouge-1", "rouge-2", "rouge-l"],
             }
-            self.evaluator = ComprehensiveEvaluator(eval_config)
+            self.evaluator = ComprehensiveEvaluator(config=eval_config)
 
             if self.config.evaluation.eval_metrics:
                 self.eval_metrics = self.config.evaluation.eval_metrics.split(",")
@@ -1273,9 +1365,13 @@ class EnhancedModularTrainer:
             print(f"Final DeepSpeed config keys: {list(final_config.keys())}")
 
             # Wrap model for DeepSpeed compatibility
-            from ..models.deepspeed_wrapper import DeepSpeedModelWrapper
-            wrapped_model = DeepSpeedModelWrapper(self.model)
-            print("  ✓ Model wrapped for DeepSpeed compatibility")
+            try:
+                from ..models.deepspeed_wrapper import DeepSpeedModelWrapper  # type: ignore[import-not-found]
+                wrapped_model = DeepSpeedModelWrapper(self.model)
+                print("  ✓ Model wrapped for DeepSpeed compatibility")
+            except ImportError:
+                print("⚠️  deepspeed_wrapper not found, using unwrapped model")
+                wrapped_model = self.model
 
             # Initialize DeepSpeed engine with better error handling
             try:
@@ -1674,9 +1770,12 @@ class EnhancedModularTrainer:
         """
         Internal implementation of training step.
         """
-        # CRITICAL FIX: Step count will be incremented at END, after optimizer.step()
-        # For now, use current step count for all calculations
-        current_step = self.step_count
+        # Track step time for it/s calculation
+        step_start_time = time.time()
+
+        # FIXED: Use micro_step_count for gradient accumulation calculations
+        # optimizer_step_count will be incremented only when optimizer actually steps
+        current_micro_step = self.micro_step_count
 
         # Start metrics collection
         if self.metrics_collector:
@@ -1685,11 +1784,12 @@ class EnhancedModularTrainer:
         # Check memory health at start of step - estimate batch size from input
         current_batch_size = input_ids.size(0) if torch.is_tensor(input_ids) else 8
 
-        # SPEED OPTIMIZATION: Only check memory health periodically (every 100 steps) or on critical events
+        # SPEED OPTIMIZATION: Only check memory health periodically (every 500 steps)
         # Checking every step causes massive overhead with synchronization and cleanup
+        # CRITICAL FIX: Changed from 100 to 500 steps, removed early-step checks
+        # Early steps have unstable memory and trigger false alarms
         should_check_memory = (
-            self.step_count % 100 == 0 or  # Periodic check every 100 steps
-            self.step_count < 10  # Always check first 10 steps
+            self.optimizer_step_count % 500 == 0  # Check every 500 OPTIMIZER steps (not micro-steps)
         )
 
         if should_check_memory:
@@ -1708,60 +1808,20 @@ class EnhancedModularTrainer:
                 'oom_risk': 0.1,  # Low risk when not checking
             }
 
-        # Dynamic batch size adjustment if enabled
+        # REMOVED: Dynamic gradient accumulation adjustment (fundamentally flawed)
+        # The DataLoader batch size is fixed, so changing gradient_accumulation_steps
+        # doesn't increase effective batch size - it just processes more batches before
+        # stepping the optimizer, reducing training throughput.
+        # Dynamic batch size adjustment should only be done by recreating the DataLoader,
+        # which is complex and risky during training.
+
+        # We keep dynamic_batch_sizer for monitoring purposes only
         if self.dynamic_batch_sizer is not None:
-            new_batch_size, changed, reason = self.dynamic_batch_sizer.adjust_batch_size(
+            # Monitor memory and track batch size history, but don't adjust
+            _, _, _ = self.dynamic_batch_sizer.adjust_batch_size(
                 self.step_count,
                 memory_health
             )
-
-            if changed:
-                old_batch_size = self.dynamic_batch_sizer.batch_size_history[-2] if len(self.dynamic_batch_sizer.batch_size_history) > 1 else '?'
-
-                # Calculate new gradient accumulation to achieve target effective batch size
-                # effective_batch_size = dataloader_batch_size * gradient_accumulation_steps
-                # So: gradient_accumulation_steps = effective_batch_size / dataloader_batch_size
-                dataloader_batch_size = current_batch_size  # The actual batch from DataLoader
-                new_grad_accum = max(1, int(new_batch_size / dataloader_batch_size))
-
-                # Update gradient accumulation in config (this is what the training loop reads)
-                old_grad_accum = getattr(self.config.training, "gradient_accumulation_steps", 1)
-                self.config.training.gradient_accumulation_steps = new_grad_accum  # type: ignore[attr-defined]
-
-                # Also update training_params for consistency
-                self.training_params["gradient_accumulation_steps"] = new_grad_accum
-
-                print(
-                    f"📊 Step {self.step_count}: Effective batch size adjustment: "
-                    f"{old_batch_size} → {new_batch_size} "
-                    f"(gradient_accum: {old_grad_accum} → {new_grad_accum}, {reason})"
-                )
-
-                # Log to metrics if available
-                if self.metrics_collector:
-                    self.metrics_collector.record_batch_size_change(
-                        self.step_count, new_batch_size, reason
-                    )
-
-                # Log change event to WandB immediately (important events)
-                if self.async_logger:
-                    change_metrics = {
-                        "train/dynamic_batch/change_event": 1.0,
-                        "train/dynamic_batch/effective_batch_size": float(new_batch_size),
-                        "train/dynamic_batch/gradient_accumulation": float(new_grad_accum),
-                        "train/dynamic_batch/change_reason": reason,  # This will be stored as text
-                    }
-
-                    # Add old batch size if available
-                    if old_batch_size != '?':
-                        change_metrics["train/dynamic_batch/old_effective_batch_size"] = float(old_batch_size)
-                        change_metrics["train/dynamic_batch/old_gradient_accumulation"] = float(old_grad_accum)
-
-                    # Add memory utilization at time of change
-                    if memory_health:
-                        change_metrics["train/dynamic_batch/memory_at_change"] = memory_health.get("gpu_utilization", 0.0)
-
-                    self.async_logger.log_metrics(change_metrics, self.step_count)
 
         # Check collective memory health across all ranks if distributed
         collective_memory_health = None
@@ -1959,6 +2019,10 @@ class EnhancedModularTrainer:
                     input_ids=input_ids, attention_mask=attention_mask, labels=labels
                 )
 
+        # Ensure outputs is always a dict for consistent attribute access
+        if not isinstance(outputs, dict):
+            outputs = {"logits": outputs[0]} if isinstance(outputs, tuple) else {}
+
         forward_time = time.time() - start_time
 
         # Calculate losses - use DeepSeek loss if configured
@@ -1990,11 +2054,32 @@ class EnhancedModularTrainer:
                 expert_indices=expert_indices
             )
 
+            # DeepSeek loss returns total_loss = main_loss + MTP + MoE balancing
+            # This is the complete loss and should be used for backpropagation
             total_loss = loss_dict["total_loss"]
             main_loss = loss_dict.get("main_loss", total_loss)
 
-            # Extract auxiliary losses (MTP, MoE balancing, etc.)
+            # Extract auxiliary losses for logging (already included in total_loss)
             aux_losses = {k: v for k, v in loss_dict.items() if k != "total_loss" and k != "main_loss"}
+
+            # ENHANCED: Extract MTP-specific metrics for detailed monitoring
+            # This provides visibility into whether MTP is contributing to training
+            mtp_metrics = {}
+            if 'mtp_mtp_loss' in loss_dict:
+                mtp_metrics['mtp_loss'] = loss_dict['mtp_mtp_loss']
+                mtp_metrics['mtp_weight'] = loss_dict.get('mtp_mtp_weight', 0.0)
+                if 'mtp_per_token_losses' in loss_dict:
+                    per_token = loss_dict['mtp_per_token_losses']
+                    if isinstance(per_token, list) and len(per_token) > 0:
+                        mtp_metrics['mtp_token1_loss'] = per_token[0] if len(per_token) > 0 else 0.0
+                        mtp_metrics['mtp_token2_loss'] = per_token[1] if len(per_token) > 1 else 0.0
+                        mtp_metrics['mtp_token3_loss'] = per_token[2] if len(per_token) > 2 else 0.0
+
+            # Store MTP metrics separately for easy access in logging
+            self.mtp_metrics = mtp_metrics
+
+            # Store for logging
+            self.valid_aux_losses = aux_losses
         else:
             # Use model's built-in loss calculation
             main_loss = outputs.get("loss")
@@ -2009,6 +2094,9 @@ class EnhancedModularTrainer:
 
             total_loss = main_loss
             aux_losses = {}
+            # Initialize for logging
+            self.valid_aux_losses = {}
+            self.mtp_metrics = {}  # No MTP metrics without DeepSeek loss
 
         # Check loss health BEFORE proceeding
         loss_health_result = self.loss_health.check_loss_health(
@@ -2030,8 +2118,12 @@ class EnhancedModularTrainer:
                 "skip_reason": loss_health_result['reason']
             }
 
-        # Handle loss spikes - skip auxiliary losses if main loss is high
-        skip_auxiliary_losses = main_loss.item() > 5.0 or loss_health_result["is_spike"]
+        # Handle loss spikes - skip auxiliary losses if main loss is extremely high
+        # FIXED: Raised threshold from 5.0 to 10.0 to allow auxiliary losses during early training
+        # Early in training, main loss is naturally high (6-8), but auxiliary signals are crucial
+        # IMPORTANT: When using DeepSeek loss, MTP is ALREADY INCLUDED in total_loss above
+        # This flag only affects the additional composite losses (repetition penalties, etc.)
+        skip_auxiliary_losses = main_loss.item() > 10.0 or loss_health_result["is_spike"]
         if skip_auxiliary_losses and batch_idx % 500 == 0:  # Reduced logging frequency (was 100)
             logger.debug(
                 f"Skipping auxiliary losses due to high main loss: {main_loss.item():.4f}"
@@ -2039,13 +2131,23 @@ class EnhancedModularTrainer:
 
         # Apply composite loss if available and not using DeepSeek loss
         if self.composite_loss and not skip_auxiliary_losses and self.deepseek_loss is None:
+            # Extract logits from outputs (could be dict or object)
+            if isinstance(outputs, dict):
+                logits = outputs.get("logits")
+                router_logits = outputs.get("router_logits")
+                expert_outputs = outputs.get("expert_outputs")
+            else:
+                logits = outputs.logits if hasattr(outputs, "logits") else None
+                router_logits = getattr(outputs, "router_logits", None)
+                expert_outputs = getattr(outputs, "expert_outputs", None)
+
             aux_losses = self.composite_loss(
                 inputs=input_ids,
                 targets=labels,
-                logits=outputs.logits if hasattr(outputs, "logits") else None,
+                logits=logits,
                 model=self.model,
-                router_logits=getattr(outputs, "router_logits", None),
-                expert_outputs=getattr(outputs, "expert_outputs", None),
+                router_logits=router_logits,
+                expert_outputs=expert_outputs,
             )
 
             # Track auxiliary loss moving averages for auto-scaling
@@ -2053,6 +2155,7 @@ class EnhancedModularTrainer:
                 self.aux_loss_emas = {}
 
             # Validate each auxiliary loss BEFORE adding
+            # Store as instance variable for logging later
             valid_aux_losses = {}
             for name, loss_value in aux_losses.items():
                 if name == "total":
@@ -2083,21 +2186,23 @@ class EnhancedModularTrainer:
                         0.95 * self.aux_loss_emas[name] + 0.05 * current_loss_val
                     )
 
-                # CRITICAL FIX: Different scaling for router vs other auxiliary losses
-                # Router loss is ESSENTIAL for MoE training and should NOT be suppressed
+                # CRITICAL: Different handling for router/load-balance losses
+                # Router loss is ESSENTIAL for MoE training to prevent expert collapse
                 if "router" in name.lower() or "load_balance" in name.lower():
-                    # Router loss: DO NOT add to total_loss - the model already includes it!
-                    # The model applies router_aux_loss_coef in forward pass and returns it in loss
-                    # We only track it for logging purposes
+                    # CLARIFICATION: The base model (moe_model.py) does NOT compute router loss
+                    # DeepSeek loss computes it via AuxiliaryFreeMoEBalancer using gradient balancing
+                    # This gradient-based balancing is already included in DeepSeek's total_loss
+                    # So we only track router losses for logging, not adding to total_loss again
                     valid_aux_losses[name] = loss_value
-                    # DO NOT: total_loss = total_loss + loss_value  # Would double-count!
+                    # DO NOT: total_loss = total_loss + loss_value  # Would double-count DeepSeek's balancing!
                 else:
                     # Other auxiliary losses: apply conservative scaling
                     aux_ema = self.aux_loss_emas[name]
                     main_loss_val = main_loss.item()
 
-                    # Clamp to at most 0.1x main loss
-                    max_aux_loss = main_loss_val * 0.1
+                    # FIXED: Increased clamp from 0.1x to 0.5x main loss for stronger auxiliary signals
+                    # Auxiliary losses need sufficient magnitude to influence training effectively
+                    max_aux_loss = main_loss_val * 0.5
                     loss_value = torch.clamp(loss_value, max=max_aux_loss)
 
                     # Additional scaling by EMA ratio to normalize contribution
@@ -2109,6 +2214,45 @@ class EnhancedModularTrainer:
 
                     valid_aux_losses[name] = loss_value
                     total_loss = total_loss + loss_value
+
+            # Add repetition penalties if enabled
+            # CRITICAL FIX: Use logits WITH GRADIENTS for diversity penalty
+            # The NGramRepetitionPenalty has two components:
+            # 1. N-gram penalty: counts repetitions in token IDs (no gradients needed)
+            # 2. Diversity penalty: operates on logits WITH GRADIENTS (this provides backprop signal!)
+            if not skip_auxiliary_losses:
+                if hasattr(self, 'ngram_penalty') and self.ngram_penalty is not None:
+                    # NGramRepetitionPenalty.forward(logits, targets, mask)
+                    # - logits: for diversity penalty (WITH GRADIENTS) ✓
+                    # - targets: for n-gram counting (uses input_ids for context)
+                    # The diversity penalty on logits provides the gradient signal!
+                    ngram_penalties = self.ngram_penalty(logits, input_ids, attention_mask)
+
+                    if 'total_repetition_penalty' in ngram_penalties:
+                        repetition_penalty = ngram_penalties['total_repetition_penalty']
+                        if not torch.isnan(repetition_penalty) and not torch.isinf(repetition_penalty):
+                            # Scale penalty by config weight if available
+                            penalty_weight = getattr(self.config.training, 'repetition_penalty_weight', 0.5)
+                            scaled_penalty = repetition_penalty * penalty_weight
+                            valid_aux_losses['ngram_repetition'] = scaled_penalty
+                            total_loss = total_loss + scaled_penalty
+
+                if hasattr(self, 'repetition_detector') and self.repetition_detector is not None:
+                    # SequenceRepetitionDetector operates on token IDs (no gradients needed for counting)
+                    # Use input_ids to detect repetition patterns in the context
+                    immediate_penalties = self.repetition_detector(input_ids, attention_mask)
+
+                    if 'immediate_repetition_penalty' in immediate_penalties:
+                        immediate_penalty = immediate_penalties['immediate_repetition_penalty']
+                        if not torch.isnan(immediate_penalty) and not torch.isinf(immediate_penalty):
+                            # Scale penalty by config weight if available
+                            immediate_weight = getattr(self.config.training, 'immediate_repetition_weight', 1.0)
+                            scaled_immediate = immediate_penalty * immediate_weight
+                            valid_aux_losses['immediate_repetition'] = scaled_immediate
+                            total_loss = total_loss + scaled_immediate
+
+            # Store valid_aux_losses for logging
+            self.valid_aux_losses = valid_aux_losses
 
             # Log individual loss components for monitoring
             if batch_idx % 1000 == 0 and valid_aux_losses:
@@ -2147,11 +2291,12 @@ class EnhancedModularTrainer:
 
         # Handle DeepSpeed vs standard training
         if self.deepspeed_engine:
-            # CRITICAL FIX: Cannot compute gradient norm before backward pass
-            # Gradients don't exist yet! DeepSpeed handles gradient computation internally.
-            # We can only extract gradient norms from DeepSpeed after backward.
+            # FIXED: DeepSpeed handles everything internally including gradient accumulation
+            # DeepSpeed will automatically accumulate gradients over multiple backward() calls
+            # and only step() the optimizer when gradient_accumulation_steps is reached.
+            # This is configured in the DeepSpeed config (see _create_deepspeed_config).
 
-            # DeepSpeed training
+            # DeepSpeed training - handles gradient accumulation internally
             self.deepspeed_engine.backward(total_loss)
             self.deepspeed_engine.step()
 
@@ -2239,25 +2384,29 @@ class EnhancedModularTrainer:
                 self.config.training, "gradient_accumulation_steps", 1
             )
 
-            # CRITICAL FIX: Consistent gradient accumulation logic
-            # Zero gradients at START of accumulation cycle (step 0, N, 2N, ...)
+            # FIXED: Proper gradient accumulation logic
+            # Accumulate gradients over multiple steps, then step optimizer
+            # Zero gradients AFTER optimizer step (not before!)
             # Optimizer steps at END of accumulation cycle (step N-1, 2N-1, 3N-1, ...)
-            is_accumulation_start = (current_step % gradient_accumulation_steps) == 0
-            is_accumulation_complete = ((current_step + 1) % gradient_accumulation_steps) == 0
+            is_accumulation_complete = ((current_micro_step + 1) % gradient_accumulation_steps) == 0
 
-            if is_accumulation_start:
-                # CRITICAL FIX: Use set_to_none=True for 10-20% memory savings
-                optimizer.zero_grad(set_to_none=True)
+            # NOTE: We zero gradients AFTER optimizer.step() below, not here!
+            # This fixes the critical bug where gradients were cleared before stepping.
 
-            # CRITICAL FIX: Add gradient sync control for distributed training
+            # FIXED: Add gradient sync control for distributed training
             # Only synchronize gradients on the last accumulation step
             should_sync_grads = is_accumulation_complete
 
             # Check if model is wrapped in DDP
             is_ddp = isinstance(self.model, torch.nn.parallel.DistributedDataParallel)
 
-            # Use no_sync context manager for gradient accumulation in DDP
+            # FIXED: Use no_sync context manager for gradient accumulation in DDP
+            # This prevents all_reduce on every backward, only syncing when accumulation completes
             from contextlib import nullcontext
+
+            # Safety check: In DDP, all ranks must agree on sync timing
+            # This is automatically handled by is_accumulation_complete since all ranks
+            # process the same number of batches per epoch (drop_last=True in DataLoader)
             sync_context = nullcontext() if (not is_ddp or should_sync_grads) else self.model.no_sync()  # type: ignore[attr-defined]
 
             with sync_context:
@@ -2283,26 +2432,38 @@ class EnhancedModularTrainer:
                 if self.scaler is not None:
                     self.scaler.unscale_(optimizer)
 
-                # ULTRA-OPTIMIZED: Only check gradient health periodically in ultra_fast_mode
-                ultra_fast = getattr(self.config, 'performance', None) and getattr(self.config.performance, 'ultra_fast_mode', False)
-                should_check = not ultra_fast or self.step_count % 10 == 0 or self.step_count < 100
+                # ULTRA-OPTIMIZED: Only check gradient health if enabled
+                if self.gradient_health_enabled and self.gradient_health is not None:
+                    ultra_fast = getattr(self.config, 'performance', None) and getattr(self.config.performance, 'ultra_fast_mode', False)
+                    should_check = not ultra_fast or self.step_count % 10 == 0 or self.step_count < 100
 
-                if should_check:
-                    base_model = self._get_base_model
-                    grad_health_result = self.gradient_health.check_gradient_health(
-                        base_model,
-                        self.step_count,
-                        compute_histogram=(self.step_count % 5000 == 0),
-                    )
+                    if should_check:
+                        base_model = self._get_base_model
+                        grad_health_result = self.gradient_health.check_gradient_health(
+                            base_model,
+                            self.step_count,
+                            compute_histogram=(self.step_count % 5000 == 0),
+                        )
+                    else:
+                        # Skip check - use minimal result
+                        grad_health_result = {
+                            "should_skip": False,
+                            "should_reduce_lr": False,
+                            "grad_norm": 0.0,
+                            "grad_norm_pre_clip": 0.0,
+                            "is_explosion": False,
+                            "clip_value": self.gradient_health.get_clip_value(self.step_count),
+                            "recent_explosions": 0,
+                        }
                 else:
-                    # Skip check - use minimal result
+                    # Gradient health disabled - use standard clipping only
                     grad_health_result = {
                         "should_skip": False,
                         "should_reduce_lr": False,
                         "grad_norm": 0.0,
                         "grad_norm_pre_clip": 0.0,
                         "is_explosion": False,
-                        "clip_value": self.gradient_health.get_clip_value(self.step_count),
+                        "clip_value": self.config.training.max_gradient_norm if hasattr(self.config.training, 'max_gradient_norm') else 1.0,
                         "recent_explosions": 0,
                     }
             else:
@@ -2354,8 +2515,9 @@ class EnhancedModularTrainer:
                     print(
                         f"    Reducing learning rate due to gradient instability: {current_lr:.2e} -> {new_lr:.2e}"
                     )
-                    # Reset explosion counter after LR reduction
-                    self.gradient_health.reset_explosion_counter()
+                    # Reset explosion counter after LR reduction (if enabled)
+                    if self.gradient_health_enabled and self.gradient_health is not None:
+                        self.gradient_health.reset_explosion_counter()
                 else:
                     print(f"    Learning rate already at minimum ({min_lr:.2e}), trying checkpoint restore instead")
                     # Try checkpoint restore if we have persistent issues at minimum LR
@@ -2363,11 +2525,17 @@ class EnhancedModularTrainer:
                         self._attempt_checkpoint_restore("Persistent gradient explosions at minimum LR")
                         return {"loss": total_loss.item(), "learning_rate": current_lr, "restored_checkpoint": True}
 
-            # Apply adaptive gradient clipping
+            # Apply gradient clipping (adaptive if gradient_health enabled, otherwise standard)
             base_model = self._get_base_model
-            grad_norm_pre_clip_clipped, grad_norm = self.gradient_health.clip_gradients(base_model, self.step_count)
-
-            grad_norm_pre_clip = grad_health_result["grad_norm_pre_clip"]
+            if self.gradient_health_enabled and self.gradient_health is not None:
+                grad_norm_pre_clip_clipped, grad_norm = self.gradient_health.clip_gradients(base_model, self.step_count)
+                grad_norm_pre_clip = grad_health_result["grad_norm_pre_clip"]
+            else:
+                # Standard gradient clipping when gradient_health is disabled
+                max_grad_norm = grad_health_result["clip_value"]
+                grad_norm = torch.nn.utils.clip_grad_norm_(base_model.parameters(), max_grad_norm)
+                grad_norm_pre_clip = grad_norm
+                grad_norm_pre_clip_clipped = grad_norm
 
             # Log gradient health information
             # SPEED OPTIMIZATION: Reduced frequency from 1000 to 2000
@@ -2378,8 +2546,8 @@ class EnhancedModularTrainer:
                     f"explosions={grad_health_result['recent_explosions']}"
                 )
 
-            # Emergency stop check
-            if self.gradient_health.should_emergency_stop():
+            # Emergency stop check (only if gradient_health enabled)
+            if self.gradient_health_enabled and self.gradient_health is not None and self.gradient_health.should_emergency_stop():
                 raise RuntimeError(
                     f"Emergency stop: Too many gradient explosions "
                     f"({grad_health_result['recent_explosions']} recent). "
@@ -2417,7 +2585,8 @@ class EnhancedModularTrainer:
                         )
                         # Save current scale for continuity
                         current_scale = self.scaler.get_scale()
-                        self.scaler = torch.cuda.amp.GradScaler(
+                        self.scaler = torch.amp.GradScaler(
+                            'cuda',
                             init_scale=min(current_scale, 2**15),  # Cap at reasonable value
                             growth_factor=2.0,
                             backoff_factor=0.5,
@@ -2433,6 +2602,10 @@ class EnhancedModularTrainer:
                         )
                 else:
                     optimizer.step()
+
+                # CRITICAL FIX: Zero gradients AFTER optimizer step
+                # This ensures gradients from accumulation cycle are used before clearing
+                optimizer.zero_grad(set_to_none=True)
             else:
                 # Accumulating gradients, skip optimizer step
                 grad_norm = 0.0
@@ -2441,50 +2614,37 @@ class EnhancedModularTrainer:
         backward_time = time.time() - backward_start
         opt_time = backward_time  # Combined for DeepSpeed
 
-        # Intelligent learning rate management
+        # FIXED: Intelligent learning rate management - only step on optimizer updates
         if self.deepspeed_engine:
             current_lr = (
                 self.deepspeed_engine.get_lr()[0]
                 if self.deepspeed_engine.get_lr()
                 else 0.0
             )
-            warmup_info = {"warmup_step": self.step_count, "deepspeed_managed": True}
-            lr_info = {"lr_step": self.step_count, "deepspeed_managed": True}
+            warmup_info = {"warmup_step": self.optimizer_step_count, "deepspeed_managed": True}
+            lr_info = {"lr_step": self.optimizer_step_count, "deepspeed_managed": True}
         else:
-            # Use adaptive LR manager if available, otherwise fall back to intelligent LR manager
-            if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
-                # Adaptive LR manager - call every step with current loss
-                lr_step_info = self.adaptive_lr_manager.step(total_loss.item(), self.step_count)
-                gradient_accumulation_steps = 1  # Adaptive LR doesn't use gradient accumulation awareness
-                is_optimizer_step = True  # Always consider it an optimizer step for adaptive LR
+            # Only update LR when we actually step the optimizer
+            if is_accumulation_complete:
+                # Use adaptive LR manager if available, otherwise fall back to intelligent LR manager
+                if hasattr(self, "adaptive_lr_manager") and self.adaptive_lr_manager is not None:
+                    # FIXED: Adaptive LR manager - use optimizer_step_count (will be incremented after this)
+                    lr_step_info = self.adaptive_lr_manager.step(total_loss.item(), self.optimizer_step_count)
 
-            elif hasattr(self, "lr_manager") and self.lr_manager is not None:
-                # Get gradient accumulation steps from LR manager configuration
-                gradient_accumulation_steps = (
-                    self.lr_manager.config.gradient_accumulation_steps
-                )
+                elif hasattr(self, "lr_manager") and self.lr_manager is not None:
+                    # FIXED: Call lr_manager.step() only on optimizer steps with optimizer_step_count
+                    # This ensures the LR schedule progresses at the correct rate
+                    lr_step_info = self.lr_manager.step(
+                        None, training_step=self.optimizer_step_count
+                    )
+                else:
+                    # No LR manager
+                    lr_step_info = {}
 
-                # CRITICAL FIX: Call lr_manager.step() EVERY micro-step to track progress correctly
-                # LR manager needs to see all steps for proper warmup/schedule calculation
-                # We only UPDATE the optimizer LR when is_optimizer_step == True
-                lr_step_info = self.lr_manager.step(
-                    None, training_step=self.step_count
-                )
-                # Check if this is an actual optimizer step (not just gradient accumulation)
-                is_optimizer_step = (self.step_count % gradient_accumulation_steps) == 0
-            else:
-                # No LR manager
-                gradient_accumulation_steps = 1
-                is_optimizer_step = True
-                lr_step_info = {}
-
-            if is_optimizer_step:
-                # Calculate the actual optimizer step number (for logging)
-                optimizer_step = self.step_count // gradient_accumulation_steps
-
+                # This is an optimizer step - create detailed info
                 warmup_info = {
-                    "warmup_step": self.step_count,
-                    "optimizer_step": optimizer_step,
+                    "warmup_step": self.micro_step_count,
+                    "optimizer_step": self.optimizer_step_count,
                     "phase": lr_step_info.get("phase", "unknown"),
                     "plateau_patience": lr_step_info.get("plateau_patience", 0),
                     "gradient_accumulation_steps": gradient_accumulation_steps,
@@ -2492,8 +2652,8 @@ class EnhancedModularTrainer:
                 }
 
                 lr_info = {
-                    "lr_step": self.step_count,
-                    "optimizer_step": optimizer_step,
+                    "lr_step": self.micro_step_count,
+                    "optimizer_step": self.optimizer_step_count,
                     "intelligent_lr": True,
                     "lr_reduced": lr_step_info.get("lr_reduced", False),
                     "plateau_detected": lr_step_info.get("plateau_detected", False),
@@ -2507,31 +2667,33 @@ class EnhancedModularTrainer:
                     if adjustment_type != "warmup":
                         new_lr_val = lr_step_info.get('new_lr') or lr_step_info.get('lr') or lr_step_info.get('current_lr') or 0.0
                         print(
-                            f"    🔽 LR adjusted at optimizer step {optimizer_step} (micro-step {self.step_count})"
+                            f"    🔽 LR adjusted at optimizer step {self.optimizer_step_count} (micro-step {self.micro_step_count})"
                         )
                         print(f"        New LR: {new_lr_val:.2e}")
 
                 # Log LR schedule progress periodically
-                if optimizer_step % 100 == 0:
+                if self.optimizer_step_count % 100 == 0:
                     phase = lr_step_info.get("phase", "unknown")
                     current_lr_val = lr_step_info.get('lr') or lr_step_info.get('current_lr') or lr_step_info.get('new_lr') or 0.0
                     print(
-                        f"    📈 LR Schedule: optimizer_step={optimizer_step}, phase={phase}, "
+                        f"    📈 LR Schedule: optimizer_step={self.optimizer_step_count}, phase={phase}, "
                         f"lr={current_lr_val:.2e}, gradient_accum={gradient_accumulation_steps}"
                     )
             else:
                 # Not an optimizer step, just accumulating gradients
                 accumulation_step = (
-                    self.step_count % gradient_accumulation_steps
+                    self.micro_step_count % gradient_accumulation_steps
                 ) + 1
                 warmup_info = {
-                    "warmup_step": self.step_count,
+                    "warmup_step": self.micro_step_count,
+                    "optimizer_step": self.optimizer_step_count,
                     "accumulation_step": accumulation_step,
                     "gradient_accumulation_steps": gradient_accumulation_steps,
                     "accumulating": True,
                 }
                 lr_info = {
-                    "lr_step": self.step_count,
+                    "lr_step": self.micro_step_count,
+                    "optimizer_step": self.optimizer_step_count,
                     "accumulation_step": accumulation_step,
                     "gradient_accumulation_steps": gradient_accumulation_steps,
                     "accumulating": True,
@@ -2588,8 +2750,53 @@ class EnhancedModularTrainer:
                 "train/memory_cached_gb": step_metrics.get("memory_cached", 0.0),
             }
 
+            # ENHANCED: Add comprehensive loss component breakdown for debugging
+            # This helps identify which loss components are contributing and by how much
+            total_loss_val = total_loss.item()
+            main_loss_val = main_loss.item()
+
+            # Calculate percentage of total loss from main vs auxiliary
+            if total_loss_val > 0:
+                metrics["train/loss_components/main_loss_pct"] = (main_loss_val / total_loss_val) * 100.0
+                aux_total = total_loss_val - main_loss_val
+                if aux_total > 0:
+                    metrics["train/loss_components/aux_loss_total_pct"] = (aux_total / total_loss_val) * 100.0
+
+            # Add all auxiliary loss components with detailed breakdown
+            if hasattr(self, 'valid_aux_losses') and self.valid_aux_losses:
+                for name, loss_value in self.valid_aux_losses.items():
+                    if isinstance(loss_value, torch.Tensor):
+                        loss_val = loss_value.item()
+                        metrics[f"train/loss_components/{name}"] = loss_val
+                        if total_loss_val > 0:
+                            metrics[f"train/loss_components/{name}_pct"] = (loss_val / total_loss_val) * 100.0
+
+            # Add DeepSeek loss components if available (MTP, MoE balancing, etc.)
+            # These are stored in valid_aux_losses when using DeepSeek loss
+            if hasattr(self, 'deepseek_loss') and self.deepseek_loss is not None and hasattr(self, 'valid_aux_losses'):
+                for name, loss_value in self.valid_aux_losses.items():
+                    if isinstance(loss_value, torch.Tensor) and not torch.isnan(loss_value):
+                        loss_val = loss_value.item()
+                        metrics[f"train/deepseek/{name}"] = loss_val
+                        if total_loss_val > 0:
+                            metrics[f"train/deepseek/{name}_pct"] = (loss_val / total_loss_val) * 100.0
+
+            # ENHANCED: Add MTP-specific metrics for detailed monitoring
+            # This provides visibility into Multi-Token Prediction performance
+            if hasattr(self, 'mtp_metrics') and self.mtp_metrics:
+                for name, value in self.mtp_metrics.items():
+                    if isinstance(value, torch.Tensor):
+                        value = value.item()
+
+                    # Add MTP metrics under train/mtp/ namespace
+                    metrics[f"train/mtp/{name}"] = value
+
+                    # Add percentage contribution for loss values
+                    if 'loss' in name and total_loss_val > 0 and isinstance(value, (int, float)):
+                        metrics[f"train/mtp/{name}_pct"] = (value / total_loss_val) * 100.0
+
             # Add gradient health statistics with custom step metric
-            if hasattr(self, "gradient_health") and self.gradient_health is not None:
+            if self.gradient_health_enabled and hasattr(self, "gradient_health") and self.gradient_health is not None:
                 grad_health_stats = self.gradient_health.get_health_summary()
                 metrics.update({
                     "gradient_step": self.step_count,
@@ -2603,8 +2810,13 @@ class EnhancedModularTrainer:
                 })
 
             # Add MoE-specific metrics if available - only log expensive per-expert stats every 500 steps
-            if hasattr(outputs, 'router_logits') and outputs.router_logits is not None:
-                router_logits = outputs.router_logits
+            # Handle both dict and object outputs
+            if isinstance(outputs, dict):
+                router_logits = outputs.get('router_logits')
+            else:
+                router_logits = outputs.router_logits if hasattr(outputs, 'router_logits') else None
+
+            if router_logits is not None:
                 if isinstance(router_logits, (list, tuple)):
                     router_logits = router_logits[0] if len(router_logits) > 0 else None
 
@@ -2623,8 +2835,9 @@ class EnhancedModularTrainer:
                     if total_selections > 0:
                         expert_usage = expert_counts / total_selections
 
-                        # Only log per-expert usage every 500 steps (expensive)
-                        if self.step_count % 500 == 0:
+                        # FIXED: Only log per-expert usage every 2000 steps (expensive operation)
+                        # Reduced from 500 to 2000 to minimize training overhead
+                        if self.step_count % 2000 == 0:
                             # Log per-expert usage (all experts, not capped)
                             for i in range(num_experts):
                                 metrics[f"train/moe/expert_{i}_usage"] = expert_usage[i].item()
@@ -2653,8 +2866,13 @@ class EnhancedModularTrainer:
                     })
 
             # Add expert indices statistics if available
-            if hasattr(outputs, 'expert_indices') and outputs.expert_indices is not None:
-                expert_indices = outputs.expert_indices
+            # Handle both dict and object outputs
+            if isinstance(outputs, dict):
+                expert_indices = outputs.get('expert_indices')
+            else:
+                expert_indices = outputs.expert_indices if hasattr(outputs, 'expert_indices') else None
+
+            if expert_indices is not None:
                 if torch.is_tensor(expert_indices):
                     unique_experts = torch.unique(expert_indices).numel()
                     metrics["train/moe/active_experts"] = float(unique_experts)
@@ -2812,15 +3030,26 @@ class EnhancedModularTrainer:
                 learning_rate=current_lr
             )
 
-        # CRITICAL FIX: Increment step count at END of step, after optimizer.step() completes
-        # This ensures all gradient accumulation logic uses the correct step number
-        self.step_count += 1
+        # FIXED: Increment step counts at END of step
+        # Always increment micro_step_count (every forward/backward pass)
+        self.micro_step_count += 1
+        self.step_count = self.micro_step_count  # Legacy support
+
+        # Only increment optimizer_step_count when optimizer actually stepped
+        if is_accumulation_complete:
+            self.optimizer_step_count += 1
+
+        # Calculate step time and iterations per second
+        step_time = time.time() - step_start_time
+        iterations_per_sec = 1.0 / step_time if step_time > 0 else 0.0
 
         # Return step results with comprehensive monitoring info
         return {
             "loss": total_loss.item(),
             "main_loss": main_loss.item(),
             "learning_rate": current_lr,
+            "step_time": step_time,
+            "iterations_per_sec": iterations_per_sec,
             "grad_norm": (
                 grad_norm.item()  # type: ignore[union-attr]
                 if grad_norm is not None and hasattr(grad_norm, "item")
@@ -2867,6 +3096,26 @@ class EnhancedModularTrainer:
                     f"    📊 Validation loss set: {validation_loss:.4f} "
                     f"(adaptive LR enabled, patience: {lr_stats.get('plateau_patience', 'N/A')})"
                 )
+
+    def update_running_loss(self, loss: float):
+        """
+        Update exponential moving average of training loss.
+        This provides an accurate running loss for checkpoint reporting.
+
+        Args:
+            loss: Current batch loss value
+        """
+        # Exponential moving average with configurable window
+        alpha = 2.0 / (self.running_loss_window_size + 1)
+
+        if self.running_loss_count == 0:
+            # First loss - initialize
+            self.running_loss_avg = loss
+        else:
+            # Update EMA
+            self.running_loss_avg = alpha * loss + (1 - alpha) * self.running_loss_avg
+
+        self.running_loss_count += 1
 
     def _apply_gradient_surgery(self, task_losses: Dict[str, torch.Tensor], optimizer):
         """Apply gradient surgery for multi-task learning."""
@@ -2951,10 +3200,13 @@ class EnhancedModularTrainer:
             # DeepSpeed checkpoint saving with client_state
             from pathlib import Path
 
-            # CRITICAL: Build client_state dict with training metadata
+            # FIXED: Build client_state dict with training metadata
+            # Store both micro_step_count and optimizer_step_count for proper resumption
             client_state = {
-                "step": self.step_count,
-                "step_count": self.step_count,
+                "step": self.optimizer_step_count,  # Primary step count (optimizer steps)
+                "step_count": self.step_count,  # Legacy micro-step count
+                "micro_step_count": self.micro_step_count,
+                "optimizer_step_count": self.optimizer_step_count,
                 "epoch": self.epoch_count,
                 "epoch_count": self.epoch_count,
                 "loss": self.best_loss,
@@ -2983,7 +3235,9 @@ class EnhancedModularTrainer:
             base_model = self._get_base_model
             checkpoint = {
                 "model_state_dict": base_model.state_dict(),
-                "step_count": self.step_count,
+                "step_count": self.step_count,  # Legacy micro-step count
+                "micro_step_count": self.micro_step_count,
+                "optimizer_step_count": self.optimizer_step_count,
                 "epoch_count": self.epoch_count,
                 "best_loss": self.best_loss,
                 "scaler_last_reset": getattr(self, "scaler_last_reset", 0),
@@ -2998,11 +3252,12 @@ class EnhancedModularTrainer:
 
             # Save monitor states for continuity
             if hasattr(self, "gradient_health"):
-                checkpoint["gradient_health_state"] = {
-                    "total_steps": self.gradient_health.total_steps,
-                    "total_explosions": self.gradient_health.total_explosions,
-                    "stats": self.gradient_health.stats,
-                }
+                if self.gradient_health_enabled and self.gradient_health is not None:
+                    checkpoint["gradient_health_state"] = {  # type: ignore
+                        "total_steps": self.gradient_health.total_steps,
+                        "total_explosions": self.gradient_health.total_explosions,
+                        "stats": self.gradient_health.stats,
+                    }
 
             if hasattr(self, "loss_health"):
                 checkpoint["loss_health_state"] = {
@@ -3027,7 +3282,7 @@ class EnhancedModularTrainer:
                 }
                 # Save plateau detector state if adaptive LR is enabled
                 if self.lr_manager.plateau_detector is not None:
-                    checkpoint["lr_manager_state"]["plateau_detector"] = {
+                    checkpoint["lr_manager_state"]["plateau_detector"] = {  # type: ignore[index]
                         "best_loss": self.lr_manager.plateau_detector.best_loss,  # type: ignore[attr-defined]
                         "patience_counter": self.lr_manager.plateau_detector.patience_counter,  # type: ignore[attr-defined]
                         "num_reductions": self.lr_manager.plateau_detector.num_reductions,  # type: ignore[attr-defined]
@@ -3070,15 +3325,20 @@ class EnhancedModularTrainer:
             )
             print(f"DeepSpeed checkpoint loaded: {checkpoint_path}")
 
-            # CRITICAL FIX: Restore training state from client_state
+            # FIXED: Restore training state from client_state with proper step counts
             if client_state:
-                # Restore step count
-                self.step_count = client_state.get("step", client_state.get("step_count", 0))
+                # Restore both step counters with proper fallback chain
+                # Priority: optimizer_step_count > step (for optimizer step count)
+                # Priority: micro_step_count > step_count > step (for micro step count)
+                self.optimizer_step_count = client_state.get("optimizer_step_count", client_state.get("step", 0))
+                self.micro_step_count = client_state.get("micro_step_count", client_state.get("step_count", client_state.get("step", 0)))
+                self.step_count = self.micro_step_count  # Legacy support
                 self.epoch_count = client_state.get("epoch", client_state.get("epoch_count", 0))
                 self.best_loss = client_state.get("loss", client_state.get("best_loss", float("inf")))
 
                 print(
-                    f"   ✓ Training state: step={self.step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
+                    f"   ✓ Training state: optimizer_step={self.optimizer_step_count}, "
+                    f"micro_step={self.micro_step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
                 )
 
                 # Mark states as restored
@@ -3177,14 +3437,19 @@ class EnhancedModularTrainer:
                 if not has_optimizer_state:
                     print(f"   ⚠️  Optimizer state not in checkpoint (has_optimizer_state={has_optimizer_state})")
 
-            # Load basic training state
-            # CRITICAL FIX: Check both "step" and "step_count" for backwards compatibility
-            self.step_count = checkpoint.get("step", checkpoint.get("step_count", 0))
+            # FIXED: Load basic training state with proper step counters
+            # Check for new step counters, fall back to legacy for backwards compatibility
+            # Priority: optimizer_step_count > step (for optimizer step count)
+            # Priority: micro_step_count > step_count > step (for micro step count)
+            self.optimizer_step_count = checkpoint.get("optimizer_step_count", checkpoint.get("step", 0))
+            self.micro_step_count = checkpoint.get("micro_step_count", checkpoint.get("step_count", checkpoint.get("step", 0)))
+            self.step_count = self.micro_step_count  # Legacy support
             self.epoch_count = checkpoint.get("epoch", checkpoint.get("epoch_count", 0))
             self.best_loss = checkpoint.get("loss", checkpoint.get("best_loss", float("inf")))
             self.scaler_last_reset = checkpoint.get("scaler_last_reset", 0)
             print(
-                f"   ✓ Training state: step={self.step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
+                f"   ✓ Training state: optimizer_step={self.optimizer_step_count}, "
+                f"micro_step={self.micro_step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
             )
 
             # CRITICAL FIX: Track what was actually restored
@@ -3267,9 +3532,11 @@ class EnhancedModularTrainer:
             else:
                 restored_states["scaler"] = False
 
-            # Restore gradient health monitor state
+            # Restore gradient health monitor state (only if enabled)
             if (
-                hasattr(self, "gradient_health")
+                self.gradient_health_enabled
+                and hasattr(self, "gradient_health")
+                and self.gradient_health is not None
                 and "gradient_health_state" in checkpoint
             ):
                 try:
@@ -3472,7 +3739,7 @@ class EnhancedModularTrainer:
             stats["memory"] = self.gpu_manager.get_memory_stats()
 
         # Add health monitoring statistics
-        if hasattr(self, "gradient_health"):
+        if self.gradient_health_enabled and hasattr(self, "gradient_health") and self.gradient_health is not None:
             stats["gradient_health"] = self.gradient_health.get_health_summary()
 
         if hasattr(self, "loss_health"):
@@ -3542,7 +3809,7 @@ class EnhancedModularTrainer:
                 print("     ✓ Loss health monitor history reset")
 
             # Reset gradient health monitor
-            if hasattr(self, "gradient_health"):
+            if self.gradient_health_enabled and hasattr(self, "gradient_health") and self.gradient_health is not None:
                 self.gradient_health.reset_history()  # type: ignore[attr-defined]
                 print("     ✓ Gradient health monitor history reset")
 
