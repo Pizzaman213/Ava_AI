@@ -75,9 +75,9 @@ class MemoryMonitor:
     def __init__(
         self,
         target_utilization: float = 0.85,
-        warning_threshold: float = 0.92,  # Increased from 0.90 to reduce false warnings
-        critical_threshold: float = 0.96,  # Increased from 0.95 for better stability
-        emergency_threshold: float = 0.98,
+        warning_threshold: float = 0.99,  # Set to 99% to allow maximum GPU utilization
+        critical_threshold: float = 0.99,  # Set to 99% to allow maximum GPU utilization
+        emergency_threshold: float = 0.99,  # Set to 99% to trigger cleanup only at near-full capacity
         history_size: int = 100,
         memory_headroom_gb: float = 1.0,
         silent_mode: bool = False  # NEW: Suppress memory warnings
@@ -87,9 +87,9 @@ class MemoryMonitor:
 
         Args:
             target_utilization: Target GPU memory utilization (0.85 = 85%)
-            warning_threshold: Threshold to trigger warnings
-            critical_threshold: Threshold to trigger batch size reduction
-            emergency_threshold: Threshold to trigger emergency cleanup
+            warning_threshold: Threshold to trigger warnings (default 0.99 = 99%)
+            critical_threshold: Threshold to trigger batch size reduction (default 0.99 = 99%)
+            emergency_threshold: Threshold to trigger emergency cleanup (default 0.99 = 99%)
             history_size: Number of memory measurements to keep
             memory_headroom_gb: GB of memory to reserve for safety
             silent_mode: If True, suppress memory warning messages (only log at DEBUG level)

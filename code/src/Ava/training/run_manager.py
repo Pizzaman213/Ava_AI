@@ -304,7 +304,9 @@ class RunManager:
         checkpoint_data = {
             'run_id': self.run_id,
             'epoch': epoch,
-            'step': step,
+            'step': step,  # Legacy: can be either optimizer or micro steps
+            'micro_step_count': step,  # Forward compatibility: explicit micro step count
+            'optimizer_step_count': step,  # Forward compatibility: explicit optimizer step count
             'loss': loss,
             'model_state_dict': model_state,
             'optimizer_state_dict': optimizer_state,

@@ -59,11 +59,14 @@ class TextGenerator:
         top_k: int = 50,
         top_p: float = 0.9,
         repetition_penalty: float = 1.2,
+        eos_penalty: float = 1.0,
         length_penalty: float = 1.0,
         num_beams: int = 1,
         do_sample: bool = True,
         early_stopping: bool = True,
-        num_return_sequences: int = 1
+        num_return_sequences: int = 1,
+        use_ngram_blocking: bool = False,
+        ngram_size: int = 3
     ) -> Union[str, List[str]]:
         """
         Generate text from a prompt using specified decoding strategy.
@@ -76,11 +79,14 @@ class TextGenerator:
             top_k (int): Number of highest probability tokens to keep for sampling
             top_p (float): Cumulative probability threshold for nucleus sampling
             repetition_penalty (float): Penalty for repeating tokens
+            eos_penalty (float): Penalty multiplier for EOS token (>1.0 discourages EOS)
             length_penalty (float): Exponential penalty to length (for beam search)
             num_beams (int): Number of beams for beam search (1 = no beam search)
             do_sample (bool): Whether to use sampling (vs greedy/beam search)
             early_stopping (bool): Whether to stop when all beams hit EOS
             num_return_sequences (int): Number of sequences to return
+            use_ngram_blocking (bool): Block repeated n-grams to prevent repetition
+            ngram_size (int): Size of n-grams to block (default: 3)
 
         Returns:
             Generated text(s) as string or list of strings
@@ -106,10 +112,13 @@ class TextGenerator:
                 top_k=top_k,
                 top_p=top_p,
                 repetition_penalty=repetition_penalty,
+                eos_penalty=eos_penalty,
                 length_penalty=length_penalty,
                 early_stopping=early_stopping,
                 num_return_sequences=num_return_sequences,
-                do_sample=do_sample
+                do_sample=do_sample,
+                use_ngram_blocking=use_ngram_blocking,
+                ngram_size=ngram_size
             )
         else:
             outputs = self._generate_no_beam(
@@ -120,7 +129,10 @@ class TextGenerator:
                 top_k=top_k,
                 top_p=top_p,
                 repetition_penalty=repetition_penalty,
-                do_sample=do_sample
+                eos_penalty=eos_penalty,
+                do_sample=do_sample,
+                use_ngram_blocking=use_ngram_blocking,
+                ngram_size=ngram_size
             )
 
         # Decode outputs
@@ -142,7 +154,10 @@ class TextGenerator:
         top_k: int,
         top_p: float,
         repetition_penalty: float,
-        do_sample: bool
+        eos_penalty: float,
+        do_sample: bool,
+        use_ngram_blocking: bool = False,
+        ngram_size: int = 3
     ) -> List[torch.Tensor]:
         """
         Generate text without beam search (greedy or sampling).
@@ -162,12 +177,24 @@ class TextGenerator:
             outputs = self.model(generated)
             next_token_logits = outputs['logits'][:, -1, :]
 
+            # Apply EOS penalty
+            if eos_penalty != 1.0:
+                self._apply_eos_penalty(next_token_logits, eos_penalty)
+
             # Apply repetition penalty
             if repetition_penalty != 1.0:
                 self._apply_repetition_penalty(
                     next_token_logits,
                     generated,
                     repetition_penalty
+                )
+
+            # Apply n-gram blocking
+            if use_ngram_blocking:
+                self._apply_ngram_blocking(
+                    next_token_logits,
+                    generated,
+                    ngram_size
                 )
 
             # Apply temperature
@@ -219,10 +246,13 @@ class TextGenerator:
         top_k: int,
         top_p: float,
         repetition_penalty: float,
+        eos_penalty: float,
         length_penalty: float,
         early_stopping: bool,
         num_return_sequences: int,
-        do_sample: bool
+        do_sample: bool,
+        use_ngram_blocking: bool = False,
+        ngram_size: int = 3
     ) -> List[torch.Tensor]:
         """
         Generate text using beam search.
@@ -250,12 +280,24 @@ class TextGenerator:
             outputs = self.model(generated)
             next_token_logits = outputs['logits'][:, -1, :]
 
+            # Apply EOS penalty
+            if eos_penalty != 1.0:
+                self._apply_eos_penalty(next_token_logits, eos_penalty)
+
             # Apply repetition penalty
             if repetition_penalty != 1.0:
                 self._apply_repetition_penalty(
                     next_token_logits,
                     generated,
                     repetition_penalty
+                )
+
+            # Apply n-gram blocking
+            if use_ngram_blocking:
+                self._apply_ngram_blocking(
+                    next_token_logits,
+                    generated,
+                    ngram_size
                 )
 
             # Apply temperature
@@ -342,6 +384,18 @@ class TextGenerator:
             return [sequences[i, :num_return_sequences].reshape(-1, sequences.shape[-1])
                    for i in range(batch_size)]
 
+    def _apply_eos_penalty(
+        self,
+        logits: torch.Tensor,
+        penalty: float
+    ):
+        """Apply penalty to EOS token to encourage/discourage ending generation."""
+        for i in range(logits.shape[0]):
+            if logits[i, self.eos_token_id] < 0:
+                logits[i, self.eos_token_id] *= penalty
+            else:
+                logits[i, self.eos_token_id] /= penalty
+
     def _apply_repetition_penalty(
         self,
         logits: torch.Tensor,
@@ -355,6 +409,41 @@ class TextGenerator:
                     logits[i, token_id] *= penalty
                 else:
                     logits[i, token_id] /= penalty
+
+    def _apply_ngram_blocking(
+        self,
+        logits: torch.Tensor,
+        generated: torch.Tensor,
+        ngram_size: int
+    ):
+        """
+        Block n-grams that would repeat earlier sequences.
+
+        This prevents patterns like "time time time" or repeating phrases.
+        """
+        batch_size, vocab_size = logits.shape
+
+        for i in range(batch_size):
+            gen_tokens = generated[i].tolist()
+
+            # Need at least (ngram_size - 1) tokens to check
+            if len(gen_tokens) < ngram_size - 1:
+                continue
+
+            # Get the context (last ngram_size - 1 tokens)
+            context = gen_tokens[-(ngram_size - 1):]
+
+            # For each possible next token, check if it would create a repeated n-gram
+            for token_id in range(vocab_size):
+                # Construct the potential n-gram
+                potential_ngram = context + [token_id]
+
+                # Search for this n-gram in the already generated sequence
+                for j in range(len(gen_tokens) - ngram_size + 1):
+                    if gen_tokens[j:j + ngram_size] == potential_ngram:
+                        # This n-gram already exists - block it
+                        logits[i, token_id] = float('-inf')
+                        break
 
     def _top_k_top_p_filtering(
         self,

@@ -826,4 +826,4 @@ class MoEMetricsTracker:
         recent_utilization = list(self.expert_utilization_history)[-10:]
         avg_utilization = np.mean(recent_utilization)
 
-        return avg_utilization < threshold
+        return bool(avg_utilization < threshold)

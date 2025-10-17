@@ -45,7 +45,7 @@ from .fp8_training import (
 
 # Re-export modules from _archived for compatibility with optimization_integration
 try:
-    from .._archived.optimization import (
+    from .._archived.optimization import (  # type: ignore[import-not-found]
         gradient_optimizations,
         fused_optimizers,
         hardware_optimizations,

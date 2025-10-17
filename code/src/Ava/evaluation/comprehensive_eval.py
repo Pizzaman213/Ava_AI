@@ -565,13 +565,25 @@ class ComprehensiveEvaluator:
     a unified interface for model evaluation.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        model: Optional[nn.Module] = None,
+        tokenizer: Optional[Any] = None,
+        device: Optional[torch.device] = None,
+        config: Optional[Dict[str, Any]] = None
+    ):
         """
         Initialize comprehensive evaluator.
 
         Args:
+            model: Model to evaluate (can be None for initialization)
+            tokenizer: Tokenizer for text processing (can be None for initialization)
+            device: Device for computation (can be None for initialization)
             config: Configuration dictionary for evaluators
         """
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device or (next(model.parameters()).device if model else torch.device('cpu'))
         self.config = config or {}
 
         # Initialize evaluators
@@ -893,3 +905,328 @@ class ComprehensiveEvaluator:
             comparison['best_model_per_metric'][metric] = ranked[0][0] if ranked else None
 
         return comparison
+
+    def evaluate(
+        self,
+        dataloader: Any,
+        compute_perplexity: bool = True,
+        compute_accuracy: bool = True,
+        compute_expert_stats: bool = False,
+        max_batches: Optional[int] = None
+    ) -> Dict[str, float]:
+        """
+        Evaluate model on a dataloader with various metrics.
+
+        Args:
+            dataloader: DataLoader to evaluate on
+            compute_perplexity: Whether to compute perplexity
+            compute_accuracy: Whether to compute accuracy
+            compute_expert_stats: Whether to compute expert statistics
+            max_batches: Maximum number of batches to evaluate
+
+        Returns:
+            Dictionary of metrics
+        """
+        if self.model is None:
+            raise ValueError("Model not set. Initialize with model or call set_model()")
+
+        self.model.eval()
+
+        total_loss = 0.0
+        total_correct = 0
+        total_tokens = 0
+        num_batches = 0
+
+        expert_activations = defaultdict(int) if compute_expert_stats else None
+
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(dataloader):
+                if max_batches and batch_idx >= max_batches:
+                    break
+
+                # Move batch to device
+                if isinstance(batch, dict):
+                    batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                            for k, v in batch.items()}
+                    input_ids = batch.get('input_ids')
+                    attention_mask = batch.get('attention_mask')
+                else:
+                    # Handle tuple/list batches
+                    input_ids = batch[0].to(self.device) if isinstance(batch[0], torch.Tensor) else batch[0]
+                    attention_mask = batch[1].to(self.device) if len(batch) > 1 and isinstance(batch[1], torch.Tensor) else None
+
+                # Forward pass
+                if isinstance(batch, dict):
+                    outputs = self.model(**batch)
+                else:
+                    outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+
+                # Get loss
+                if hasattr(outputs, 'loss') and outputs.loss is not None:
+                    loss = outputs.loss
+                elif isinstance(outputs, dict) and 'loss' in outputs:
+                    loss = outputs['loss']
+                else:
+                    # Compute loss manually
+                    if hasattr(outputs, 'logits'):
+                        logits = outputs.logits
+                    elif isinstance(outputs, dict) and 'logits' in outputs:
+                        logits = outputs['logits']
+                    else:
+                        raise ValueError("Model outputs do not contain 'logits'")
+
+                    if input_ids is None:
+                        raise ValueError("input_ids is required for loss computation")
+
+                    labels = input_ids[:, 1:].contiguous()
+                    logits = logits[:, :-1, :].contiguous()
+                    loss_fct = torch.nn.CrossEntropyLoss()
+                    loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+
+                total_loss += loss.item()
+
+                # Compute accuracy
+                if compute_accuracy:
+                    if hasattr(outputs, 'logits'):
+                        logits = outputs.logits
+                    elif isinstance(outputs, dict) and 'logits' in outputs:
+                        logits = outputs['logits']
+                    else:
+                        raise ValueError("Model outputs do not contain 'logits'")
+
+                    if input_ids is None:
+                        raise ValueError("input_ids is required for accuracy computation")
+
+                    predictions = torch.argmax(logits[:, :-1, :], dim=-1)
+                    labels = input_ids[:, 1:]
+
+                    if attention_mask is not None:
+                        mask = attention_mask[:, 1:].bool()
+                        correct = ((predictions == labels) & mask).sum().item()
+                        total_tokens += mask.sum().item()
+                    else:
+                        correct = (predictions == labels).sum().item()
+                        total_tokens += labels.numel()
+
+                    total_correct += correct
+
+                # Collect expert stats if available
+                if compute_expert_stats and expert_activations is not None:
+                    router_logits = None
+                    if hasattr(outputs, 'router_logits'):
+                        router_logits = outputs.router_logits
+                    elif isinstance(outputs, dict) and 'router_logits' in outputs:
+                        router_logits = outputs['router_logits']
+
+                    if router_logits is not None:
+                        for layer_logits in router_logits:
+                            expert_indices = torch.argmax(layer_logits, dim=-1)
+                            for idx in expert_indices.flatten().cpu().numpy():  # type: ignore[union-attr]
+                                expert_activations[int(idx)] += 1
+
+                num_batches += 1
+
+        # Compute metrics
+        metrics = {}
+
+        if compute_perplexity:
+            avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
+            perplexity = math.exp(min(avg_loss, 20))  # Cap to avoid overflow
+            metrics['perplexity'] = perplexity
+            metrics['loss'] = avg_loss
+
+        if compute_accuracy and total_tokens > 0:
+            accuracy = total_correct / total_tokens
+            metrics['accuracy'] = accuracy
+
+        if compute_expert_stats and expert_activations:
+            total_activations = sum(expert_activations.values())
+            metrics['expert_utilization'] = {
+                f'expert_{idx}': count / total_activations
+                for idx, count in expert_activations.items()
+            }
+
+        metrics['num_batches'] = num_batches
+
+        return metrics
+
+    def evaluate_generation_quality(
+        self,
+        prompts: List[str],
+        max_length: int = 100,
+        temperature: float = 0.8,
+        top_k: int = 50,
+        top_p: float = 0.9
+    ) -> Dict[str, Any]:
+        """
+        Evaluate generation quality on a set of prompts.
+
+        Args:
+            prompts: List of prompt strings
+            max_length: Maximum generation length
+            temperature: Sampling temperature
+            top_k: Top-k sampling parameter
+            top_p: Top-p (nucleus) sampling parameter
+
+        Returns:
+            Dictionary with generation metrics
+        """
+        if self.model is None or self.tokenizer is None:
+            raise ValueError("Model and tokenizer must be set")
+
+        self.model.eval()
+
+        generated_texts = []
+        generation_times = []
+        token_counts = []
+
+        with torch.no_grad():
+            for prompt in prompts:
+                start_time = time.time()
+
+                # Tokenize prompt
+                inputs = self.tokenizer(prompt, return_tensors='pt').to(self.device)
+                input_length = inputs['input_ids'].shape[1]
+
+                # Generate - FIXED: Added repetition penalties and proper constraints
+                outputs = self.model.generate(  # type: ignore[attr-defined]
+                    **inputs,
+                    max_length=input_length + max_length,
+                    min_length=input_length + 10,  # FIXED: Minimum 10 new tokens (not forcing 50!)
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    do_sample=True,
+                    repetition_penalty=1.8,  # FIXED: Added repetition penalty
+                    no_repeat_ngram_size=2,  # FIXED: Block bigram repetition
+                    pad_token_id=self.tokenizer.eos_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
+
+                # Decode
+                generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+                generation_time = time.time() - start_time
+                num_tokens = outputs.shape[1] - input_length
+
+                generated_texts.append(generated_text)
+                generation_times.append(generation_time)
+                token_counts.append(num_tokens)
+
+        # Compute diversity (unique token ratio)
+        all_tokens = []
+        for text in generated_texts:
+            tokens = text.lower().split()
+            all_tokens.extend(tokens)
+
+        diversity = len(set(all_tokens)) / len(all_tokens) if all_tokens else 0.0
+
+        return {
+            'prompts': prompts,
+            'samples': generated_texts,
+            'average_length': np.mean(token_counts),
+            'average_time': np.mean(generation_times),
+            'diversity': diversity,
+            'generation_times': generation_times,
+            'token_counts': token_counts
+        }
+
+    def analyze_expert_utilization(
+        self,
+        dataloader: Any,
+        max_batches: int = 100
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Analyze expert utilization patterns in MoE models.
+
+        Args:
+            dataloader: DataLoader to analyze
+            max_batches: Maximum number of batches to process
+
+        Returns:
+            Dictionary with expert utilization analysis
+        """
+        if self.model is None:
+            raise ValueError("Model not set")
+
+        self.model.eval()
+
+        # Check if model has MoE layers
+        has_moe = any(hasattr(module, 'experts') or 'moe' in module.__class__.__name__.lower()
+                     for module in self.model.modules())
+
+        if not has_moe:
+            return None
+
+        expert_counts = defaultdict(int)
+        total_tokens = 0
+        layer_expert_counts = defaultdict(lambda: defaultdict(int))
+
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(dataloader):
+                if batch_idx >= max_batches:
+                    break
+
+                # Move batch to device
+                if isinstance(batch, dict):
+                    batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                            for k, v in batch.items()}
+                    outputs = self.model(**batch, output_router_logits=True)
+                else:
+                    input_ids = batch[0].to(self.device)
+                    outputs = self.model(input_ids=input_ids, output_router_logits=True)
+
+                # Extract expert assignments
+                if hasattr(outputs, 'router_logits') and outputs.router_logits is not None:
+                    for layer_idx, layer_logits in enumerate(outputs.router_logits):
+                        # layer_logits: [batch_size, seq_len, num_experts]
+                        expert_indices = torch.argmax(layer_logits, dim=-1)
+
+                        for idx in expert_indices.flatten().cpu().numpy():
+                            expert_counts[int(idx)] += 1
+                            layer_expert_counts[layer_idx][int(idx)] += 1
+
+                        total_tokens += expert_indices.numel()
+
+        if total_tokens == 0:
+            return None
+
+        # Compute statistics
+        num_experts = len(expert_counts)
+        utilization_scores = {
+            idx: count / total_tokens
+            for idx, count in expert_counts.items()
+        }
+
+        # Compute balance metrics
+        utilization_values = list(utilization_scores.values())
+        balance_score = 1.0 - (np.std(utilization_values) / np.mean(utilization_values)) if utilization_values else 0.0
+
+        # Compute entropy (higher = more balanced)
+        entropy = -sum(p * np.log(p + 1e-10) for p in utilization_values)
+        max_entropy = np.log(num_experts)
+        normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+
+        return {
+            'expert_utilization': utilization_scores,
+            'balance_score': float(balance_score),
+            'entropy': float(normalized_entropy),
+            'num_experts': num_experts,
+            'total_tokens': total_tokens,
+            'layer_expert_utilization': {
+                layer_idx: {
+                    expert_idx: count / sum(counts.values())
+                    for expert_idx, count in counts.items()
+                }
+                for layer_idx, counts in layer_expert_counts.items()
+            }
+        }
+
+    def set_model(self, model: nn.Module):
+        """Set the model for evaluation."""
+        self.model = model
+        self.device = next(model.parameters()).device
+
+    def set_tokenizer(self, tokenizer: Any):
+        """Set the tokenizer for evaluation."""
+        self.tokenizer = tokenizer

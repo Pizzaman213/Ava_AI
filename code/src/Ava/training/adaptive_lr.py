@@ -129,6 +129,12 @@ class AdaptiveLearningRateManager:
         else:
             avg_recent_loss = loss
 
+        # Determine current phase
+        if self.config.warmup_steps > 0 and self.step_count <= self.config.warmup_steps:
+            phase = "warmup"
+        else:
+            phase = "main"
+
         lr_info = {
             'step': self.step_count,
             'current_lr': current_lr,
@@ -137,7 +143,8 @@ class AdaptiveLearningRateManager:
             'best_loss': self.best_loss,
             'lr_adjusted': False,
             'adjustment_type': None,
-            'adjustment_reason': None
+            'adjustment_reason': None,
+            'phase': phase
         }
 
         # FIXED: Emergency spike detection BEFORE warmup handling

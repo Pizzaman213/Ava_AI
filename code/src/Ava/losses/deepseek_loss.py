@@ -68,7 +68,7 @@ class MultiTokenPredictionLoss(nn.Module):
         hidden_states: torch.Tensor,
         target_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Any]:
         """
         Compute multi-token prediction loss.
 
@@ -157,7 +157,10 @@ class TemperatureScaledCrossEntropy(nn.Module):
         label_smoothing: float = 0.1,
         vocab_size: Optional[int] = None,
         temperature_bounds: Tuple[float, float] = (0.5, 2.0),
-        adaptation_rate: float = 0.01
+        adaptation_rate: float = 0.01,
+        eos_token_id: Optional[int] = None,
+        min_sequence_length: int = 20,
+        eos_penalty_weight: float = 5.0
     ):
         """
         Initialize temperature-scaled cross-entropy loss.
@@ -169,6 +172,9 @@ class TemperatureScaledCrossEntropy(nn.Module):
             vocab_size: Vocabulary size (required for label smoothing)
             temperature_bounds: Min and max temperature values
             adaptation_rate: Rate of temperature adaptation
+            eos_token_id: EOS token ID for early EOS penalty
+            min_sequence_length: Minimum sequence length before allowing EOS
+            eos_penalty_weight: Penalty weight for early EOS tokens
         """
         super().__init__()
         self.register_buffer('temperature', torch.tensor(initial_temperature))
@@ -177,6 +183,11 @@ class TemperatureScaledCrossEntropy(nn.Module):
         self.vocab_size = vocab_size
         self.temperature_bounds = temperature_bounds
         self.adaptation_rate = adaptation_rate
+
+        # EOS penalty settings
+        self.eos_token_id = eos_token_id
+        self.min_sequence_length = min_sequence_length
+        self.eos_penalty_weight = eos_penalty_weight
 
         # Track loss statistics for adaptive temperature
         self.register_buffer('loss_history', torch.zeros(100))
@@ -197,8 +208,9 @@ class TemperatureScaledCrossEntropy(nn.Module):
             return
 
         # Update loss history
-        self.loss_history[self.history_ptr] = current_loss.item()
-        self.history_ptr = (self.history_ptr + 1) % 100
+        ptr = self.history_ptr.item() if isinstance(self.history_ptr, torch.Tensor) else int(self.history_ptr)
+        self.loss_history[ptr] = current_loss.item()  # type: ignore[index]
+        self.history_ptr = torch.tensor((ptr + 1) % 100)
         self.history_size = torch.min(self.history_size + 1, torch.tensor(100))
 
         # Need sufficient history for adaptation
@@ -206,7 +218,8 @@ class TemperatureScaledCrossEntropy(nn.Module):
             return
 
         # Calculate loss variance over recent history
-        recent_losses = self.loss_history[:self.history_size]
+        history_size_val = self.history_size.item() if isinstance(self.history_size, torch.Tensor) else int(self.history_size)
+        recent_losses = self.loss_history[:history_size_val]  # type: ignore[index]
         loss_variance = torch.var(recent_losses)
         loss_mean = torch.mean(recent_losses)
 
@@ -237,7 +250,7 @@ class TemperatureScaledCrossEntropy(nn.Module):
         targets: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         reduction: str = 'mean'
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Any]:
         """
         Compute temperature-scaled cross-entropy loss.
 
@@ -275,6 +288,29 @@ class TemperatureScaledCrossEntropy(nn.Module):
         else:
             # Standard cross-entropy
             loss = F.cross_entropy(logits_flat, targets_flat, reduction='none')
+
+        # CRITICAL FIX: Apply EOS penalty for early termination
+        # This prevents the model from learning to output EOS immediately
+        if self.eos_token_id is not None and self.eos_penalty_weight > 0:
+            # Reshape to [batch_size, seq_len]
+            loss_2d = loss.view(batch_size, seq_len)
+            targets_2d = targets.view(batch_size, seq_len)
+
+            # Create position indices [batch_size, seq_len]
+            positions = torch.arange(seq_len, device=targets.device).unsqueeze(0).expand(batch_size, -1)
+
+            # Find positions where target is EOS
+            eos_mask = (targets_2d == self.eos_token_id)
+
+            # Find positions before min_sequence_length
+            early_mask = (positions < self.min_sequence_length)
+
+            # Apply penalty to early EOS tokens
+            early_eos_mask = eos_mask & early_mask
+            loss_2d = loss_2d + early_eos_mask.float() * self.eos_penalty_weight
+
+            # Flatten back
+            loss = loss_2d.view(-1)
 
         # Apply attention mask if provided
         if attention_mask is not None:
@@ -340,41 +376,79 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
         self.register_buffer('expert_scores', torch.zeros(num_experts))
         self.register_buffer('total_tokens', torch.tensor(0.0))
 
+        # FIXED: Accumulation buffers for gradient accumulation support
+        # These accumulate statistics across micro-steps before applying momentum
+        self.register_buffer('_accumulated_counts', torch.zeros(num_experts))
+        self.register_buffer('_accumulated_scores', torch.zeros(num_experts))
+        self.register_buffer('_accumulated_tokens', torch.tensor(0.0))
+        self.register_buffer('_accumulation_steps', torch.tensor(0))
+
     def update_statistics(
         self,
         expert_indices: torch.Tensor,
-        expert_scores: torch.Tensor
+        expert_scores: torch.Tensor,
+        is_optimizer_step: bool = True
     ):
         """
-        Update expert utilization statistics.
+        Update expert utilization statistics with gradient accumulation support.
 
         Args:
             expert_indices: Selected expert indices [batch_size * seq_len, top_k]
             expert_scores: Expert selection scores [batch_size * seq_len, num_experts]
+            is_optimizer_step: Whether this is an actual optimizer step (not just micro-step)
+                              Set to True when optimizer.step() is called, False during gradient accumulation.
         """
         with torch.no_grad():
+            # FIXED: Accumulate statistics across micro-steps, apply momentum only on optimizer steps
+            # This prevents skewing momentum-based tracking when using gradient accumulation
+
             # Count expert usage
             for i in range(self.num_experts):
                 expert_mask = (expert_indices == i).float()
                 count = expert_mask.sum()
-                self.expert_counts[i] = (
-                    self.momentum * self.expert_counts[i] +
-                    (1 - self.momentum) * count
+                self._accumulated_counts[i] += count  # type: ignore[index]
+
+            # Track average scores (accumulate)
+            avg_scores = expert_scores.mean(dim=0)
+            self._accumulated_scores += avg_scores
+
+            # Track total token count (accumulate)
+            batch_tokens = expert_indices.shape[0]
+            self._accumulated_tokens += batch_tokens
+
+            # Increment accumulation step counter
+            self._accumulation_steps += 1
+
+            # When optimizer steps, apply momentum update and reset accumulators
+            if is_optimizer_step:
+                # Average accumulated statistics over all micro-steps
+                num_steps = max(1, self._accumulation_steps.item())
+                avg_counts = self._accumulated_counts / num_steps
+                avg_scores_per_step = self._accumulated_scores / num_steps
+                avg_tokens = self._accumulated_tokens / num_steps
+
+                # Apply momentum update with averaged statistics
+                for i in range(self.num_experts):
+                    self.expert_counts[i] = (  # type: ignore[index]
+                        self.momentum * self.expert_counts[i] +  # type: ignore[index]
+                        (1 - self.momentum) * avg_counts[i]
+                    )
+
+                self.expert_scores = (
+                    self.momentum * self.expert_scores +
+                    (1 - self.momentum) * avg_scores_per_step
                 )
 
-            # Track average scores
-            avg_scores = expert_scores.mean(dim=0)
-            self.expert_scores = (
-                self.momentum * self.expert_scores +
-                (1 - self.momentum) * avg_scores
-            )
+                self.total_tokens = (
+                    self.momentum * self.total_tokens +
+                    (1 - self.momentum) * avg_tokens
+                )
 
-            # Update total token count
-            batch_tokens = expert_indices.shape[0]
-            self.total_tokens = (
-                self.momentum * self.total_tokens +
-                (1 - self.momentum) * batch_tokens
-            )
+                # Reset accumulators
+                self._accumulated_counts.zero_()
+                self._accumulated_scores.zero_()
+                self._accumulated_tokens.zero_()
+                self._accumulation_steps.zero_()
 
     def compute_balance_gradients(
         self,
@@ -396,7 +470,7 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
             target_count = self.total_tokens / self.num_experts
 
             # Calculate imbalance for each expert
-            imbalance = self.expert_counts - target_count
+            imbalance = self.expert_counts - target_count  # type: ignore[operator]
 
             # Normalize imbalance
             if self.total_tokens > 0:
@@ -439,12 +513,14 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
         if self.training and gate_logits.requires_grad:
             grad_adjustment = self.compute_balance_gradients(gate_logits, expert_indices)
 
-            # CRITICAL FIX: Apply gradient adjustment properly without killing gradients
-            # The previous implementation multiplied by 0, which completely eliminated gradient flow
-            # New approach: add a small weighted term that contributes to gradients
+            # CRITICAL FIX: Create effective gradient signal for load balancing
+            # Previous implementation: (adjusted_logits - adjusted_logits.detach()) = 0 (no signal!)
+            # New approach: Use gate_logits directly with gradient adjustment as steering signal
+            # The gradient adjustment encourages underused experts and discourages overused ones
             adjusted_logits = gate_logits + grad_adjustment.detach()
-            # This creates a gradient signal: grad flows through gate_logits but not adjusted_logits
-            balancing_term = (adjusted_logits - adjusted_logits.detach()).mean() * gate_logits.mean()
+            # Create loss that pulls gate_logits toward balanced distribution
+            # This preserves gradients through gate_logits while steering toward balance
+            balancing_term = F.mse_loss(gate_logits, adjusted_logits.detach())
             balancing_term = balancing_term * self.gradient_balance_weight
         else:
             balancing_term = torch.tensor(0.0, device=gate_logits.device, requires_grad=False)
@@ -465,7 +541,7 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
         with torch.no_grad():
             if self.total_tokens > 0:
                 expected_count = self.total_tokens / self.num_experts
-                balance_ratio = self.expert_counts / (expected_count + 1e-6)
+                balance_ratio = self.expert_counts / (expected_count + 1e-6)  # type: ignore[operator]
                 cv = torch.std(balance_ratio) / (torch.mean(balance_ratio) + 1e-6)
             else:
                 balance_ratio = torch.ones(self.num_experts, device=gate_logits.device)
@@ -474,7 +550,7 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
         return {
             'balance_loss': balance_loss,
             'balancing_term': balancing_term,
-            'expert_counts': self.expert_counts.clone(),
+            'expert_counts': self.expert_counts.clone(),  # type: ignore[union-attr]
             'expert_balance_ratio': balance_ratio,
             'coefficient_of_variation': cv.item(),
             'gradient_weight': self.gradient_balance_weight
@@ -504,7 +580,11 @@ class DeepSeekLoss(nn.Module):
         label_smoothing: float = 0.1,
         # MoE balancing settings
         use_moe_balancing: bool = True,
-        gradient_balance_weight: float = 0.1
+        gradient_balance_weight: float = 0.1,
+        # EOS penalty settings
+        eos_token_id: Optional[int] = None,
+        min_sequence_length: int = 20,
+        eos_penalty_weight: float = 5.0
     ):
         """
         Initialize DeepSeek-style loss.
@@ -521,15 +601,21 @@ class DeepSeekLoss(nn.Module):
             label_smoothing: Label smoothing factor
             use_moe_balancing: Whether to use MoE balancing
             gradient_balance_weight: Weight for gradient-based balancing
+            eos_token_id: EOS token ID for early EOS penalty
+            min_sequence_length: Minimum sequence length before allowing EOS
+            eos_penalty_weight: Penalty weight for early EOS tokens
         """
         super().__init__()
 
-        # Main loss: temperature-scaled cross-entropy
+        # Main loss: temperature-scaled cross-entropy with EOS penalty
         self.main_loss = TemperatureScaledCrossEntropy(
             initial_temperature=initial_temperature,
             adaptive_temperature=adaptive_temperature,
             label_smoothing=label_smoothing,
-            vocab_size=vocab_size
+            vocab_size=vocab_size,
+            eos_token_id=eos_token_id,
+            min_sequence_length=min_sequence_length,
+            eos_penalty_weight=eos_penalty_weight
         )
 
         # Multi-token prediction loss
@@ -545,6 +631,7 @@ class DeepSeekLoss(nn.Module):
         # MoE load balancing (auxiliary-free)
         self.use_moe_balancing = use_moe_balancing and num_experts is not None
         if self.use_moe_balancing:
+            assert num_experts is not None, "num_experts must be provided when use_moe_balancing is True"
             self.moe_balancer = AuxiliaryFreeMoEBalancer(
                 num_experts=num_experts,
                 gradient_balance_weight=gradient_balance_weight

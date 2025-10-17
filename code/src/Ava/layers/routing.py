@@ -84,16 +84,25 @@ class SwitchTransformerRouting(nn.Module):
         # Get top expert for each token
         expert_gate, expert_index = torch.max(router_probs, dim=-1)
 
-        # Compute expert capacity with minimum of 1 to prevent zero capacity
-        expert_capacity = max(1, int(self.capacity_factor * num_tokens / self.num_experts))
+        # FIXED: Compute expert capacity with adaptive adjustment for small batches
+        # Use a dynamic capacity factor that increases for small batches to reduce token dropping
+        min_capacity_per_expert = 4  # Minimum tokens per expert
+        base_capacity = int(self.capacity_factor * num_tokens / self.num_experts)
 
-        # Warn if capacity is very low
-        if expert_capacity < 4 and num_tokens > 0:
-            import warnings
-            warnings.warn(
-                f"Very low expert capacity ({expert_capacity}) for {num_tokens} tokens and {self.num_experts} experts. "
-                f"Consider increasing batch size or capacity_factor ({self.capacity_factor})."
-            )
+        if base_capacity < min_capacity_per_expert:
+            # For small batches, increase capacity factor dynamically
+            adjusted_capacity_factor = (min_capacity_per_expert * self.num_experts) / max(num_tokens, 1)
+            expert_capacity = max(min_capacity_per_expert, int(adjusted_capacity_factor * num_tokens / self.num_experts))
+            if training and num_tokens > 0:
+                import warnings
+                warnings.warn(
+                    f"Small batch detected: Adjusting expert capacity from {base_capacity} to {expert_capacity} "
+                    f"for {num_tokens} tokens and {self.num_experts} experts. "
+                    f"Consider increasing batch size for better performance.",
+                    UserWarning
+                )
+        else:
+            expert_capacity = base_capacity
 
         # Create dispatch and combine tensors
         dispatch_tensor = torch.zeros(
@@ -553,6 +562,10 @@ class MoEPlusPlusLayer(nn.Module):
         self.intermediate_size = config.intermediate_size if hasattr(config, 'intermediate_size') else config.hidden_size * 4
         self.balance_loss_weight = getattr(config, 'balance_loss_weight', 0.01)
 
+        # FIXED: Support for gradient accumulation-aware loss scaling
+        # Auxiliary losses should be scaled by 1/gradient_accumulation_steps to prevent over-regularization
+        self.gradient_accumulation_steps = getattr(config, 'gradient_accumulation_steps', 1)
+
         # Advanced expert selector with confidence scoring
         self.expert_selector = ExpertSelector(
             hidden_size=self.hidden_size,
@@ -584,6 +597,12 @@ class MoEPlusPlusLayer(nn.Module):
         # Router dropout for regularization
         self.router_dropout = nn.Dropout(getattr(config, 'router_dropout', 0.0))
 
+        # FIXED: Add expert dropout and routing jitter for robustness
+        # Expert dropout randomly masks experts during training to prevent overfitting
+        self.expert_dropout = getattr(config, 'expert_dropout', 0.0)
+        # Routing jitter adds noise to logits for exploration
+        self.routing_jitter = getattr(config, 'routing_jitter', 0.0)
+
     def forward(self, hidden_states: torch.Tensor, temperature: float = 1.0) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, Any]]:
         """
         Forward pass through the MoE++ layer.
@@ -604,12 +623,24 @@ class MoEPlusPlusLayer(nn.Module):
         routing_weights, selected_indices, confidence_scores, router_logits = \
             self.expert_selector(hidden_states, temperature)
 
-        # Apply load balancing
+        # FIXED: Add routing jitter during training for exploration
+        if self.training and self.routing_jitter > 0:
+            noise = torch.empty_like(router_logits).uniform_(-self.routing_jitter, self.routing_jitter)
+            router_logits = router_logits + noise
+
+        # FIXED: Router logits shape handling
+        # expert_selector returns flattened logits: [batch_size * seq_len, num_experts]
+        # expert_balancer expects: [batch_size, seq_len, num_experts]
+        # Need to reshape properly to preserve batch structure
+        router_logits_3d = router_logits.view(batch_size, seq_len, -1)
+
+        # Apply load balancing with correctly shaped logits
         balanced_weights, balanced_indices = self.expert_balancer.compute_balanced_routing(
-            router_logits.unsqueeze(0), self.num_experts_per_tok
+            router_logits_3d, self.num_experts_per_tok
         )
-        balanced_weights = balanced_weights.squeeze(0)
-        balanced_indices = balanced_indices.squeeze(0)
+        # Flatten back to [batch_size * seq_len, top_k] for expert processing
+        balanced_weights = balanced_weights.view(-1, balanced_weights.shape[-1])
+        balanced_indices = balanced_indices.view(-1, balanced_indices.shape[-1])
 
         # Apply router dropout for regularization
         routing_weights = self.router_dropout(routing_weights)
@@ -620,8 +651,21 @@ class MoEPlusPlusLayer(nn.Module):
         total_compute_tokens = 0
         expert_load = torch.zeros(self.num_experts, device=hidden_states.device)
 
+        # FIXED: Expert dropout - randomly disable experts during training for robustness
+        expert_dropout_mask = None
+        if self.training and self.expert_dropout > 0:
+            # Randomly mask experts (but always keep at least one expert available)
+            dropout_probs = torch.full((self.num_experts,), 1.0 - self.expert_dropout, device=hidden_states.device)
+            expert_dropout_mask = torch.bernoulli(dropout_probs).bool()
+            # Ensure at least one expert is available
+            if not expert_dropout_mask.any():
+                expert_dropout_mask[torch.randint(0, self.num_experts, (1,))] = True
+
         # Process each expert
         for expert_idx in range(self.num_experts):
+            # FIXED: Skip expert if dropped out during training
+            if expert_dropout_mask is not None and not expert_dropout_mask[expert_idx]:
+                continue
             # Find tokens assigned to this expert
             expert_mask = (balanced_indices == expert_idx).any(dim=-1)
             # Flatten for proper indexing
@@ -638,20 +682,33 @@ class MoEPlusPlusLayer(nn.Module):
                 expert_load[expert_idx] = len(expert_tokens)
                 total_compute_tokens += (compute_mask.sum() * len(expert_tokens)).item()
 
-                # Apply weighted combination
+                # FIXED: Apply proper per-token weighted combination
                 token_indices = torch.where(flat_mask)[0]
 
-                # Get the appropriate weights for this expert
+                # Get the appropriate weights for this expert (per-token, not averaged!)
                 flat_balanced_weights = balanced_weights.view(-1, balanced_weights.shape[-1])
                 flat_balanced_indices = balanced_indices.view(-1, balanced_indices.shape[-1])
 
-                expert_weight_mask = (flat_balanced_indices[flat_mask] == expert_idx)
-                expert_weights = flat_balanced_weights[flat_mask][expert_weight_mask.any(dim=-1)]
+                # For each token assigned to this expert, find its routing weight
+                # Shape: tokens_for_expert[i] corresponds to expert_tokens[i]
+                tokens_for_expert_indices = flat_balanced_indices[flat_mask]  # [num_expert_tokens, top_k]
+                tokens_for_expert_weights = flat_balanced_weights[flat_mask]  # [num_expert_tokens, top_k]
 
-                if len(expert_weights) > 0:
-                    weighted_output = expert_output * expert_weights.mean().unsqueeze(-1)
-                else:
-                    weighted_output = expert_output * 0.5  # Default weight if no specific weight found
+                # Find which position in top_k corresponds to this expert
+                expert_weight_per_token = torch.zeros(len(expert_tokens), device=hidden_states.device)
+                for token_idx in range(len(expert_tokens)):
+                    # Find where this expert appears in the top-k for this token
+                    expert_positions = (tokens_for_expert_indices[token_idx] == expert_idx).nonzero(as_tuple=True)[0]
+                    if len(expert_positions) > 0:
+                        # Use the weight from the first position where this expert appears
+                        pos = expert_positions[0]
+                        expert_weight_per_token[token_idx] = tokens_for_expert_weights[token_idx, pos]
+                    else:
+                        # Fallback: if expert not in top-k (shouldn't happen), use small weight
+                        expert_weight_per_token[token_idx] = 0.1
+
+                # Apply per-token weights (preserves routing signal!)
+                weighted_output = expert_output * expert_weight_per_token.unsqueeze(-1)
 
                 # Accumulate weighted expert outputs
                 flat_final = final_hidden_states.view(-1, hidden_dim)
@@ -661,21 +718,27 @@ class MoEPlusPlusLayer(nn.Module):
         # Compute auxiliary losses for training stability
         aux_losses = {}
 
+        # FIXED: Scale auxiliary losses for gradient accumulation
+        # When using gradient accumulation, losses are summed over multiple micro-steps
+        # before the optimizer steps. This effectively multiplies auxiliary losses by
+        # gradient_accumulation_steps, causing over-regularization. Scale them down.
+        aux_loss_scale = 1.0 / max(1, self.gradient_accumulation_steps)
+
         # 1. Load balancing loss - encourages uniform expert usage
         load_balancing_loss = self._compute_load_balancing_loss(expert_load, batch_size * seq_len)
-        aux_losses['load_balancing'] = load_balancing_loss
+        aux_losses['load_balancing'] = load_balancing_loss * aux_loss_scale
 
         # 2. Expert diversity loss - encourages diverse expert representations
         diversity_loss = self._compute_diversity_loss(expert_outputs)
-        aux_losses['diversity'] = diversity_loss
+        aux_losses['diversity'] = diversity_loss * aux_loss_scale
 
         # 3. Confidence regularization - prevents overconfidence
         confidence_loss = self._compute_confidence_loss(confidence_scores)
-        aux_losses['confidence'] = confidence_loss
+        aux_losses['confidence'] = confidence_loss * aux_loss_scale
 
         # 4. Router z-loss - numerical stability
         z_loss = self._compute_z_loss(router_logits)
-        aux_losses['z_loss'] = z_loss
+        aux_losses['z_loss'] = z_loss * aux_loss_scale
 
         # Auxiliary information for monitoring
         aux_info = {
@@ -695,7 +758,12 @@ class MoEPlusPlusLayer(nn.Module):
         return load_variance / (avg_load ** 2 + 1e-8)
 
     def _compute_diversity_loss(self, expert_outputs: list) -> torch.Tensor:
-        """Encourage experts to learn diverse representations."""
+        """
+        Encourage experts to learn diverse representations.
+
+        FIXED: Removed .detach() to allow gradients to flow back to experts.
+        The diversity loss should influence expert specialization through gradients.
+        """
         if len(expert_outputs) < 2:
             return torch.tensor(0.0, device=expert_outputs[0].device) if expert_outputs else torch.tensor(0.0)
 
@@ -708,7 +776,8 @@ class MoEPlusPlusLayer(nn.Module):
                     out = out.unsqueeze(0)
                 elif out.dim() > 2:
                     out = out.view(-1, out.shape[-1])
-                projected = self.diversity_projection(out.detach())
+                # FIXED: Remove .detach() to allow gradient flow to experts
+                projected = self.diversity_projection(out)
                 projected_outputs.append(projected)
 
         if len(projected_outputs) < 2:

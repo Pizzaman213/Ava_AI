@@ -137,12 +137,14 @@ class SparseExpert(nn.Module):
         >>> # output: [32, 768], mask: sparsity mask, gate: computation decisions
     """
 
-    def __init__(self, input_size: int, hidden_size: int, output_size: int, sparsity_level: float = 0.5):
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, sparsity_level: float = 0.5, use_true_sparsity: bool = False):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.sparsity_level = sparsity_level
+        # FIXED: Add option for true conditional computation (saves compute but not compile-friendly)
+        self.use_true_sparsity = use_true_sparsity
 
         # Main expert network - standard FFN architecture
         self.network = nn.Sequential(
@@ -209,15 +211,36 @@ class SparseExpert(nn.Module):
         assert compute_mask is not None
         should_compute = gate_score > 0.5  # Binary decision threshold
 
-        # Initialize output tensor
-        output = torch.zeros(flat_x.shape[0], self.output_size, device=x.device)
-
-        # Only compute for tokens that pass both conditions
+        # Compute mask: combine gate decision with activation sparsity
         compute_indices = should_compute & compute_mask.any(dim=1)
-        if compute_indices.any():
-            expert_input = flat_x[compute_indices]
-            expert_output = self.network(expert_input)
-            output[compute_indices] = expert_output
+
+        # FIXED: Two computation modes - true sparsity (saves compute) vs compile-friendly (masks output)
+        if self.use_true_sparsity and not torch.jit.is_scripting():
+            # True conditional computation: only process selected tokens
+            # This saves actual computation but uses dynamic control flow
+            compute_mask_bool = compute_indices
+            num_compute = compute_mask_bool.sum().item()
+
+            if num_compute > 0:
+                # Only compute for selected tokens
+                selected_x = flat_x[compute_mask_bool]
+                selected_output = self.network(selected_x)
+
+                # Scatter back to full output
+                output = torch.zeros(flat_x.shape[0], self.output_size, device=flat_x.device, dtype=flat_x.dtype)
+                output[compute_mask_bool] = selected_output
+            else:
+                # Nothing to compute
+                output = torch.zeros(flat_x.shape[0], self.output_size, device=flat_x.device, dtype=flat_x.dtype)
+        else:
+            # Compile-friendly mode: compute everything, then mask
+            # This avoids dynamic control flow and boolean indexing
+            compute_mask_float = compute_indices.float().unsqueeze(-1)  # Shape: [N, 1]
+            expert_output = self.network(flat_x)
+
+            # Apply mask: zero out outputs where we shouldn't compute
+            # This is compile-friendly as it uses element-wise multiplication
+            output = expert_output * compute_mask_float
 
         # Reshape output back to original dimensions if needed
         if needs_reshape:

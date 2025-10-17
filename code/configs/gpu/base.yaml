@@ -3,7 +3,7 @@ model:
   num_layers: 16
   num_attention_heads: 12
   intermediate_size: 3072
-  vocab_size: 50257
+  vocab_size: 65536  # Enhanced custom tokenizer vocab size
   max_position_embeddings: 2048
   num_experts: 16
   num_experts_per_token: 2
@@ -23,12 +23,13 @@ model:
   use_rag: false
   use_cross_attention: false
   use_episodic_memory: false
+  tie_word_embeddings: false
 training:
   batch_size: 8
   gradient_accumulation_steps: 4
   max_gradient_norm: 0.5
   num_epochs: 10
-  max_steps: -1
+  max_steps: 40000  # CRITICAL FIX: Limit to prevent over-training and LR collapse (~12-15 epochs)
   warmup_steps: 2000
   learning_rate: 0.00042
   weight_decay: 0.1
@@ -36,6 +37,12 @@ training:
   beta2: 0.95
   eps: 1e-8
   lr_scheduler_type: cosine
+  lr_end: 1.0e-04  # CRITICAL FIX: Add minimum LR to prevent collapse
+  # Repetition penalty weights (Fix #2 - addresses " time time time" issue)
+  repetition_penalty_weight: 0.5      # N-gram repetition penalty weight
+  immediate_repetition_weight: 1.0    # Token-to-token repetition weight
+  min_sequence_length: 20             # Minimum tokens before allowing EOS
+  eos_penalty_weight: 5.0             # Penalty for early EOS tokens
   mixed_precision: fp16
   dataloader_num_workers: 8
   gradient_checkpointing: false
@@ -60,7 +67,7 @@ data:
   max_length: 1024
   max_train_examples: -1
   max_eval_examples: 1000
-  tokenizer_name: gpt2
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65k  # Custom enhanced tokenizer
   padding_side: right
   truncation: true
   train_batch_size: 8
@@ -80,6 +87,13 @@ wandb:
   - base
   - 500M
   - standard
+  - custom-tokenizer
+  - enhanced-65k
+  - 65k-vocab
+  - weighted-mixing
+  - pre-tokenized
+  notes: 'Enhanced with: Custom 65k tokenizer (math/code optimized), weighted data mixing
+    (DoReMi), pre-tokenized data'
 stability:
   loss_smoothing: true
   loss_smoothing_alpha: 0.9
@@ -91,3 +105,17 @@ stability:
   stop_on_nan: true
   max_grad_norm_before_stop: 100.0
   max_loss_before_stop: 20.0
+data_loading:
+  use_weighted_mixing: true
+  mixing_temperature: 1.0
+  streaming: true
+  buffer_size: 15000
+  max_samples: -1
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 4
+  persistent_workers: true
+  multi_column: false
+  use_multi_column: false
+  distributed: false

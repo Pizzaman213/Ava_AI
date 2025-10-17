@@ -33,6 +33,43 @@ class RAGConfig:
 
 
 @dataclass
+class AdaptiveMTPConfig:
+    """Configuration for Adaptive Multi-Token Prediction."""
+    # Enable/disable adaptive MTP
+    use_adaptive_mtp: bool = False            # Enable adaptive MTP system
+
+    # Core MTP settings
+    num_prediction_heads: int = 3             # Number of future tokens to predict (2-4)
+    confidence_threshold_train: float = 0.6   # Confidence threshold during training
+    confidence_threshold_inference: float = 0.7  # Threshold during inference (higher)
+
+    # Confidence gate settings
+    gate_hidden_dims: str = "512,256"         # Hidden dims for gate MLP (comma-separated)
+    gate_dropout: float = 0.1                 # Dropout in confidence gate
+    gate_activation: str = 'gelu'             # Activation function
+    use_attention_pooling: bool = False       # Use attention pooling in gate
+
+    # Prediction head settings
+    head_type: str = 'linear'                 # 'linear' or 'mlp'
+    head_intermediate_size: Optional[int] = None  # Intermediate size for MLP heads
+    head_dropout: float = 0.1                 # Dropout in prediction heads
+    share_projections: bool = False           # Share weights across heads
+
+    # Training settings
+    mtp_warmup_epochs: int = 2                # Train only primary head for first N epochs
+    confidence_reg_strength: float = 0.01     # Regularization for confident predictions
+
+    # Loss weighting
+    use_confidence_weighting: bool = True     # Weight losses by confidence
+    primary_loss_weight: float = 1.0          # Primary token always gets full weight
+    additional_loss_base_weight: float = 0.1  # Base weight for additional tokens
+
+    # Efficiency settings
+    enable_dynamic_prediction: bool = True    # Skip MTP when low confidence
+    min_confidence_for_computation: float = 0.3  # Don't compute heads below this
+
+
+@dataclass
 class LossConfig:
     """Configuration for advanced loss functions."""
     use_focal_loss: bool = True               # Focal loss
@@ -54,6 +91,13 @@ class LossConfig:
     use_moe_balancing: bool = True            # Enable auxiliary-free MoE balancing
     gradient_balance_weight: float = 0.1      # Weight for gradient-based balancing
     use_auxiliary_loss: bool = True           # Use traditional auxiliary loss (legacy)
+
+    # N-gram repetition blocking (CRITICAL for preventing mode collapse)
+    use_ngram_penalty: bool = True            # Enable n-gram repetition detection
+    ngram_size: int = 3                       # Size of n-grams to detect
+    ngram_penalty_weight: float = 0.5         # Weight for n-gram repetition penalty
+    use_immediate_repetition_detector: bool = True  # Detect consecutive token repetition
+    immediate_repetition_weight: float = 1.0  # Weight for immediate repetition penalty
 
 
 @dataclass
@@ -118,7 +162,7 @@ class EpisodicMemoryConfig:
 @dataclass
 class DataConfig:
     """Configuration for data handling."""
-    data_dir: str = '/project/code/data/processed'  # Data directory
+    data_dir: str = '/project/code/data/Testing'  # Data directory
     max_length: int = 512                     # Max sequence length
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = True                    # Streaming loader
@@ -320,6 +364,7 @@ class EnhancedTrainingConfig:
     lr_finder: LRFinderConfig = field(default_factory=LRFinderConfig)
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    adaptive_mtp: AdaptiveMTPConfig = field(default_factory=AdaptiveMTPConfig)
 
     # Data configurations
     data: DataConfig = field(default_factory=DataConfig)

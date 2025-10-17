@@ -14,6 +14,9 @@ from .advanced_losses import (
     CompositeLoss
 )
 
+from .adaptive_mtp_loss import AdaptiveMTPLoss
+from .repetition_penalty_loss import NGramRepetitionPenalty, SequenceRepetitionDetector
+
 __all__ = [
     "ContrastiveLoss",
     "FocalLoss",
@@ -23,5 +26,8 @@ __all__ = [
     "ConsistencyLoss",
     "PerplexityLoss",
     "AdaptiveLossScaling",
-    "CompositeLoss"
+    "CompositeLoss",
+    "AdaptiveMTPLoss",
+    "NGramRepetitionPenalty",
+    "SequenceRepetitionDetector",
 ]

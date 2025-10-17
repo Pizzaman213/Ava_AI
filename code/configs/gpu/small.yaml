@@ -1,329 +1,366 @@
-# Small configuration with DeepSeek-style loss for improved training dynamics
-# Features:
-#   - Multi-token prediction (3 tokens ahead)
-#   - Temperature-scaled cross-entropy with adaptive temperature
-#   - Auxiliary-free MoE load balancing (gradient-based)
-#   - Label smoothing for better generalization
 model:
-  # Model Architecture - Controls the transformer structure (100M params)
-  hidden_size: 768  # Embedding dimension - scaled up for 100M param target
-  num_layers: 8  # Transformer depth - increased for better capacity
-  num_attention_heads: 12  # Parallel attention heads per layer (divides 768 evenly: 64 per head)
-  intermediate_size: 3072  # FFN hidden layer size (4x hidden_size for optimal capacity)
-  vocab_size: 50257  # GPT-2 tokenizer vocabulary size
-  max_position_embeddings: 2048  # Maximum sequence length the model can handle
-
-  # Mixture of Experts (MoE) Configuration
-  num_experts: 4  # Total number of expert FFN networks available per MoE layer (reduced for memory/speed)
-  num_experts_per_token: 2  # Top-K routing: how many experts process each token (top-2 routing)
-  expert_capacity_factor: 1.25  # Buffer size multiplier for expert capacity (prevents overflow)
-  router_type: deepseek  # Routing algorithm: 'deepseek' uses gradient-based load balancing
-  router_aux_loss_coef: 0.0  # Auxiliary load balancing loss weight (0 = auxiliary-free approach)
-  router_jitter_noise: 0.01  # Noise added to router logits - REDUCED: Lower noise for stability
-
-  # Positional Encoding & Caching
-  use_cache: true  # Enable KV-cache for faster autoregressive generation
-  rope_theta: 10000.0  # RoPE (Rotary Position Embedding) base frequency
-
-  # Regularization (Dropout)
-  attention_dropout: 0.1  # Dropout rate in attention layers - INCREASED to prevent activation saturation
-  hidden_dropout: 0.1  # Dropout rate in FFN layers - INCREASED to help gradient flow and stability
-
-  # Optimization & Stability
-  use_flash_attention: true  # Use Flash Attention for memory efficiency and speed
-  layer_norm_eps: 1e-3  # LARGE epsilon for BF16 numerical stability (100x larger to prevent div-by-zero)
-  initializer_range: 0.001  # Weight initialization std dev - ULTRA-SMALL for maximum stability
-  hidden_act: gelu  # Activation function (GELU is standard for transformers)
-
-  # DeepSpeed Settings (MoE-specific)
-  deepspeed_activation_checkpointing: false  # SPEED: Disabled (trades memory for 30% speed gain)
-  deepspeed_partition_activations: false  # Don't partition activations across GPUs
-  deepspeed_moe_param_groups: true  # Group MoE parameters separately for optimization
+  hidden_size: 512  # Optimal for 200M with 2 experts
+  num_layers: 12  # Deep model for better reasoning (2x original)
+  num_attention_heads: 8  # head_dim = 64
+  intermediate_size: 4736  # Sized for ~100M params per expert
+  vocab_size: 65536
+  max_position_embeddings: 2048
+  num_experts: 2  # 2 experts, each ~58M params (116M total in experts)
+  num_experts_per_token: 1  # Activate 1 expert per token (50% capacity utilization)
+  expert_capacity_factor: 1.5
+  router_type: deepseek
+  router_aux_loss_coef: 0.01
+  router_jitter_noise: 0.02
+  use_cache: true
+  rope_theta: 10000.0
+  attention_dropout: 0.1
+  hidden_dropout: 0.05
+  use_flash_attention: true
+  layer_norm_eps: 1e-5
+  initializer_range: 0.01
+  hidden_act: gelu
+  deepspeed_activation_checkpointing: false
+  deepspeed_partition_activations: false
+  deepspeed_moe_param_groups: true
+  tie_word_embeddings: false
+  dropout: 0.1
 training:
-  # Batch Configuration - OPTIMIZED to prevent OOM
-  batch_size: 8  # Increased for better GPU utilization
-  gradient_accumulation_steps: 4  # Accumulate to effective batch_size=32 (same total)
-
-  # Gradient Management
-  max_gradient_norm: 0.3  # Clip gradients to prevent explosion - ULTRA-AGGRESSIVE clipping for stability
-
-  # Training Duration
-  num_epochs: 1  # Number of full passes through the dataset (increased to train longer)
-  max_steps: -1  # Maximum training steps (-1 = train for full num_epochs)
-
-  # Learning Rate Schedule (~98k total steps with 1.17M examples, batch 12)
-  warmup_steps: 10000  # Linear LR warmup - VERY LONG for maximum stability
-  learning_rate: 0.0001  # Peak learning rate - VERY CONSERVATIVE for stability (was 0.0003)
-  lr_scheduler_type: cosine  # Cosine decay schedule (smooth decay after warmup)
-  lr_end: 1.0e-07  # Final learning rate at end of training
-
-  # Adaptive Learning Rate Manager Configuration
+  batch_size: 8  # Reduced from 16 to fit 197M model
+  gradient_accumulation_steps: 4  # Reduced from 16 (effective batch = 32)
+  max_gradient_norm: 1.0
+  num_epochs: 1
+  max_steps: 30000
+  warmup_steps: 1000
+  learning_rate: 6.758181168161029e-05
+  lr_scheduler_type: cosine
+  lr_end: 2.2527270560536762e-07
+  repetition_penalty_weight: 10.0  # DOUBLED: Must match enhanced_features.losses.ngram_penalty_weight
+  immediate_repetition_weight: 15.0  # DOUBLED: Must match enhanced_features.losses.immediate_repetition_weight
+  min_sequence_length: 40  # INCREASED: Force longer outputs before allowing EOS
+  eos_penalty_weight: 2.0  # INCREASED: Much stronger penalty for early EOS
+  eos_logit_bias: -1.5  # INCREASED: Strongly discourage EOS token in logits
   adaptive_lr:
-    enabled: false  # DISABLED: Use fixed warmup schedule for more predictable training
-    min_lr: 1.0e-6  # Minimum learning rate floor
-    max_lr: 0.0006  # Maximum learning rate (2x base LR) - matched to new conservative LR
-    min_improvement: 0.0001  # Minimum loss improvement to reset plateau counter (0.01%) - lowered from 0.0002
-    plateau_patience: 2000  # Steps without improvement before reducing LR - increased from 500
-    plateau_factor: 0.7  # Multiply LR by this on plateau (30% reduction) - gentler than 50%
-    lr_check_interval: 100  # Check for plateau/improvement every N steps - increased from 50 for less noise
-    batch_loss_window: 100  # Rolling window for loss averaging
-    stability_threshold: 5  # Consecutive improvements needed for LR increase
-    increase_factor: 1.05  # Multiply LR by this on stable improvement (5% increase)
-    divergence_threshold: 5.0  # Emergency LR cut if loss spikes beyond best_loss * threshold - increased from 3.0
-    emergency_factor: 0.7  # Multiply LR by this on loss spike (30% emergency reduction) - gentler than 50%
-
-  # Optimizer (AdamW) Hyperparameters
-  weight_decay: 0.001  # L2 regularization - MINIMAL to prevent gradient dampening
-  beta1: 0.9  # Adam momentum parameter for first moment
-  beta2: 0.999  # Adam momentum for second moment - INCREASED from 0.95 for better gradient estimates
-  eps: 1e-8  # Small constant for numerical stability in Adam
-
-  # Precision & Performance - OPTIMIZED for LLM pretraining
-  mixed_precision: fp16  # Use FP16 for better precision than BF16 (prevents inf gradients)
-  dataloader_num_workers: 8  # OPTIMIZED: 8 parallel workers for data loading
-  prefetch_factor: 4  # Prefetch 4 batches per worker (32 batches total prefetched)
-  persistent_workers: true  # OPTIMIZED: Keep workers alive between epochs (reduces startup overhead)
-  gradient_checkpointing: false  # DISABLED: Speed priority for 11.6GB GPU (memory sufficient without it)
-
-  # Evaluation & Checkpointing - OPTIMIZED for speed
-  eval_strategy: steps  # Evaluate every N steps (vs every epoch)
-  eval_steps: 5000  # Run evaluation every 5000 steps - OPTIMIZED: Reduced overhead
-  save_strategy: steps  # Save checkpoints every N steps
-  save_steps: 10000  # Save checkpoint every 10000 steps - OPTIMIZED: Reduced I/O overhead
-  logging_steps: 500  # Log metrics every 500 steps - OPTIMIZED: Reduced logging overhead
-
-  # Early Stopping
-  early_stopping_patience: 6  # Stop if no improvement for 6 evaluation cycles (increased from 4 for MoE stability)
-  early_stopping_threshold: 0.01  # Minimum improvement to count as progress
-  # Progressive Training - Start with short sequences, gradually increase length
+    enabled: false
+    min_lr: 5.0e-05
+    max_lr: 0.0006
+    min_improvement: 0.0001
+    plateau_patience: 2000
+    plateau_factor: 0.7
+    lr_check_interval: 100
+    batch_loss_window: 100
+    stability_threshold: 5
+    increase_factor: 1.05
+    divergence_threshold: 5.0
+    emergency_factor: 0.7
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
+  entropy_regularization: 0.1  # INCREASED 10x: Strong entropy bonus for diverse predictions
+  output_diversity_weight: 0.5  # INCREASED 5x: Heavy penalty for low diversity outputs
+  mixed_precision: bf16
+  dataloader_num_workers: 4
+  prefetch_factor: 2
+  persistent_workers: false
+  gradient_checkpointing: false
+  eval_strategy: steps
+  eval_steps: 1000
+  save_strategy: steps
+  save_steps: 1000
+  save_total_limit: 15
+  logging_steps: 100
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.005
   progressive:
-    enable_progressive_training: true  # Enable curriculum-style sequence length growth
-    enable_sequence_scaling: true  # Dynamically scale sequence length during training
-    initial_seq_length: 256  # Start training with 256 token sequences (easier to learn)
-    final_seq_length: 1024  # End training with 1024 token sequences (full context)
-    length_schedule: exponential  # Growth curve: exponential ramp from initial → final
-    length_growth_epochs: 5  # Grow sequence length over first 5 epochs (extended from 3 for smoother transitions)
-    enable_curriculum: true  # ENABLED: Use difficulty-based sample ordering (30% faster convergence)
-    curriculum_metric: loss  # Use per-example loss for difficulty scoring
-    enable_dynamic_batch: false  # Keep disabled for now (will enable in dynamic_batching section)
-
-  # Dynamic Batching - DISABLED (removed for stability and simplicity)
+    enable_progressive_training: false
+    enable_sequence_scaling: false
+    initial_seq_length: 128
+    final_seq_length: 128
+    length_schedule: exponential
+    length_growth_epochs: 5
+    enable_curriculum: false
+    curriculum_metric: loss
+    enable_dynamic_batch: false
   dynamic_batching:
-    enabled: false  # DISABLED: Use fixed batch size for more predictable training
-    min_batch_size: 8  # Not used when disabled
-    max_batch_size: 8  # Not used when disabled
-    target_memory_utilization: 0.85  # Not used when disabled
-    adjustment_frequency: 100  # Not used when disabled
-    adjustment_factor: 1.0  # Not used when disabled
-    warmup_steps: 0  # Not used when disabled
-    smooth_transitions: false  # Not used when disabled
-
-  # Gradient Health Monitoring - Detect and respond to gradient issues
+    enabled: false
+    min_batch_size: 8
+    max_batch_size: 8
+    target_memory_utilization: 0.85
+    adjustment_frequency: 100
+    adjustment_factor: 1.0
+    warmup_steps: 0
+    smooth_transitions: false
   gradient_health:
-    enabled: true  # Monitor gradient norms for explosions
-    initial_clip_value: 0.1  # Starting gradient clip threshold - VERY SMALL for early stability
-    final_clip_value: 0.3  # Ending gradient clip threshold - MATCHED to max_gradient_norm
-    warmup_steps: 10000  # Gradually adjust clip value over first 10000 steps
-    explosion_threshold: 1000.0  # DISABLED: Set very high to prevent skipping steps (let clipping work)
-    explosion_window: 5  # Check for explosions over 5-step rolling window
-    auto_reduce_lr: false  # Disable auto LR reduction (let warmup handle it)
-    lr_reduction_factor: 0.7  # Cut LR by 30% when explosion detected (gentler)
+    enabled: false
+    initial_clip_value: 0.1
+    final_clip_value: 0.3
+    warmup_steps: 10000
+    explosion_threshold: 1000.0
+    explosion_window: 5
+    auto_reduce_lr: false
+    lr_reduction_factor: 0.7
+  max_grad_norm: 1.0
 data:
-  # Data Sources
-  data_dir: /project/code/data/processed  # Directory containing preprocessed training data
-
-  # Tokenization & Sequence Processing
-  max_length: 1024  # Maximum sequence length in tokens (reduced for speed & GPU efficiency)
-  tokenizer_name: gpt2  # Tokenizer to use (GPT-2 BPE with 50257 vocab)
-  padding_side: right  # Add padding tokens on the right side of sequences
-  truncation: true  # Truncate sequences longer than max_length
-
-  # Dataset Sampling
-  max_train_examples: null  # Limit on training samples (null = use all available data)
-  max_eval_examples: 5000  # Limit evaluation set to 5000 samples for speed
-  max_samples: null  # FIXED: Training max_samples (null = use all data)
-  val_max_samples: null  # FIXED: Validation max_samples (null = use val_split_ratio)
-  val_split_ratio: 0.1  # FIXED: Validation split ratio (10% of training data)
-  buffer_size: 50000  # OPTIMIZED: Large buffer for LLM pretraining (50x increase)
-
-  # DataLoader Settings
-  dataloader_drop_last: true  # Drop incomplete final batch (ensures consistent batch sizes)
-  dataloader_pin_memory: true  # Pin memory for faster GPU transfer
+  data_dir: /project/code/data/processed
+  max_length: 512
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65k
+  padding_side: right
+  truncation: true
+  max_train_examples: null
+  max_eval_examples: 20000
+  max_samples: null
+  val_max_samples: 20000
+  val_split_ratio: 0.15
+  buffer_size: 50000
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
 deepspeed:
-  use_deepspeed: false  # DISABLED: Using native PyTorch training instead
-  zero_stage: 0  # Not used when disabled
-  cpu_offload: false  # Not used when disabled
-  nvme_offload: false  # Not used when disabled
-  precision_type: fp16  # FP16 for better precision (prevents inf gradients)
-  train_batch_size: 32  # Not used when disabled
-  micro_batch_size: 8  # Not used when disabled
-  gradient_accumulation_steps: 4  # Not used when disabled
-  activation_checkpointing: false  # Not used when disabled
+  use_deepspeed: false
+  zero_stage: 0
+  cpu_offload: false
+  nvme_offload: false
+  precision_type: fp16
+  train_batch_size: 32
+  micro_batch_size: 8
+  gradient_accumulation_steps: 4
+  activation_checkpointing: false
 enhanced_features:
-  # Advanced Architecture Features (Experimental)
   architecture:
-    use_moh: false  # Mixture of Heads (specialized attention heads) - disabled
-    use_moa: false  # Mixture of Activations (multiple activation functions) - disabled
-    use_cross_attention: false  # Cross-attention between layers - disabled
-    use_alibi: false  # ALiBi positional encoding (alternative to RoPE) - disabled
-    expert_routing_type: deepseek  # MoE routing algorithm (matches router_type above)
-
-  # Retrieval-Augmented Generation (RAG)
+    use_moh: false
+    use_moa: false
+    use_cross_attention: true
+    use_alibi: false
+    expert_routing_type: deepseek
   rag:
-    enabled: false  # Disable RAG (no external knowledge retrieval)
-    knowledge_base_path: null  # Path to knowledge base (not used)
-    max_retrieved_docs: 5  # Number of documents to retrieve per query
-    rag_fusion_type: concatenate  # How to combine retrieved docs with input
-
-  # DeepSeek-Style Loss Configuration
+    enabled: false
+    knowledge_base_path: null
+    max_retrieved_docs: 5
+    rag_fusion_type: concatenate
   losses:
-    # Multi-Token Prediction (MTP) - Predict future tokens for better representation learning
-    use_multi_token_prediction: false  # TEMPORARILY DISABLED: dtype issue with DeepSpeed + BF16
-    num_future_tokens: 3  # Predict 3 tokens ahead (DeepSeek V2/V3 standard)
-    mtp_weight: 0.12  # Weight for MTP loss (12% of total loss, increased from 0.05 for better learning)
-
-    # Temperature-Scaled Loss - Soften/sharpen probability distributions
-    initial_temperature: 1.0  # Starting temperature (1.0 = no scaling)
-    adaptive_temperature: true  # Dynamically adjust temperature based on training progress
-
-    # Regularization
-    label_smoothing: 0.1  # Smooth target labels - helps with coherent generation quality
-
-    # MoE Load Balancing
-    use_moe_balancing: true  # Enable auxiliary-free gradient-based load balancing
-    gradient_balance_weight: 0.02  # Weight for balancing loss - REDUCED for gradient stability
-
-    # Legacy/Alternative Loss Functions (all disabled)
-    focal_loss: false  # Focal loss for hard examples
-    contrastive_loss: false  # Contrastive learning loss
-    diversity_loss: false  # Expert diversity regularization
-    auxiliary_loss: false  # Traditional auxiliary load balancing (replaced by gradient-based)
-    adaptive_loss_scaling: true  # Dynamically scale loss components
+    use_multi_token_prediction: true  # FIXED: Enable MTP to activate repetition penalties
+    num_future_tokens: 2  # REDUCED: Lighter MTP for faster training
+    mtp_weight: 0.05  # REDUCED: Lower weight to avoid interfering with main loss
+    initial_temperature: 1.2  # INCREASED: More diverse predictions
+    adaptive_temperature: true  # ENABLED: Adapt temperature based on loss
+    label_smoothing: 0.05  # ADDED: Smooth labels to prevent overconfidence
+    use_moe_balancing: true
+    gradient_balance_weight: 0.02
+    focal_loss: false
+    contrastive_loss: false
+    diversity_loss: true  # ENABLED: Encourage diverse token selection
+    auxiliary_loss: true
+    adaptive_loss_scaling: false
+    contrastive_loss_weight: 0.02
+    diversity_loss_weight: 0.1  # INCREASED: Stronger diversity incentive
+    use_ngram_penalty: true
+    ngram_size: 3  # INCREASED: Detect longer repetition patterns
+    ngram_penalty_weight: 10.0  # DOUBLED: Stronger penalty for n-gram repetition
+    use_immediate_repetition_detector: true
+    immediate_repetition_weight: 15.0  # DOUBLED: Much stronger penalty for "time time time"
+  adaptive_mtp:
+    use_adaptive_mtp: false
+    num_prediction_heads: 3
+    confidence_threshold_train: 0.6
+    confidence_threshold_inference: 0.7
+    gate_hidden_dims: 512,256
+    gate_dropout: 0.1
+    gate_activation: gelu
+    use_attention_pooling: false
+    head_type: linear
+    head_intermediate_size: null
+    head_dropout: 0.1
+    share_projections: false
+    mtp_warmup_epochs: 2
+    confidence_reg_strength: 0.01
+    use_confidence_weighting: true
+    primary_loss_weight: 1.0
+    additional_loss_base_weight: 0.1
+    enable_dynamic_prediction: true
+    min_confidence_for_computation: 0.3
   gradient:
-    gradient_surgery: false  # SPEED: Disabled to avoid multi-task overhead
-    adaptive_gradient_surgery: false  # SPEED: Disabled
+    gradient_surgery: false
+    adaptive_gradient_surgery: false
     gradient_surgery_method: pcgrad
-    gradient_norm_tracking: false  # SPEED: Disabled for monitoring reduction
-    gradient_anomaly_detection: false  # SPEED: Disabled for monitoring reduction
+    gradient_norm_tracking: false
+    gradient_anomaly_detection: false
   memory:
     use_episodic_memory: false
-    memory_capacity: 500  # Used for episodic memory buffer
+    memory_capacity: 500
     memory_selection_strategy: importance
     memory_importance_threshold: 0.7
     memory_adaptation_rate: 0.01
     memory_performance_window: 100
     memory_replay_ratio: 0.01
     memory_replay_strategy: random
-    silent_mode: true  # Suppress memory warnings (still monitors, just doesn't print)
-    enable_auto_grad_accumulation: false  # DISABLED: Auto-adjusting grad_accum slows training
+    silent_mode: true
+    enable_auto_grad_accumulation: false
   quantization:
     quantization_aware: false
-    use_nvfp4: true  # ENABLED: NVFP4 WEIGHT_ONLY mode (~4x weight compression)
-    use_torchao_nvfp4: true  # Use TorchAO implementation (RTX 3060 compatible)
-    nvfp4_mode: weight_only  # WEIGHT_ONLY works on Ampere GPUs (RTX 3060)
-    bit_width: 4  # 4-bit weights (NVFP4)
-    nvfp4_block_size: 16  # Smaller block size for better accuracy
-    stochastic_rounding: false  # Disabled for NVFP4
-    use_hadamard_transform: false  # Not needed for NVFP4
+    use_nvfp4: true
+    use_torchao_nvfp4: true
+    nvfp4_mode: weight_only
+    bit_width: 4
+    nvfp4_block_size: 16
+    stochastic_rounding: false
+    use_hadamard_transform: false
 data_loading:
   streaming: true
-  buffer_size: 50000  # OPTIMIZED: Large buffer for LLM pretraining (50K samples)
-  max_samples: null  # No limit - use all available data
-  val_max_samples: null  # FIXED: No hardcoded limit - use val_split_ratio instead
-  val_split_ratio: 0.1  # FIXED: Use 10% of training data for validation (was hardcoded to 1000 samples)
+  buffer_size: 10000
+  max_samples: null
+  val_max_samples: 20000
+  val_split_ratio: 0.15
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 8  # OPTIMIZED: 8 parallel workers for maximum data pipeline throughput
-  # Length-based bucketing for better GPU utilization
+  num_workers: 4
   enable_bucketing: true
-  bucket_boundaries: [256, 512, 768, 1024]  # Optimized boundaries for progressive training
-  max_bucket_size: 64  # Larger buckets with more RAM available (was 32)
+  bucket_boundaries:
+  - 128
+  - 256
+  - 512
+  max_bucket_size: 64
+  use_weighted_mixing: true
+  mixing_temperature: 1.0
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 2
+  persistent_workers: false
 performance:
-  ultra_fast_mode: true  # SPEED: Enable ultra-fast mode (minimal monitoring)
-  fast_progress: false  # Overridden by ultra_fast_mode
-  minimal_progress: false  # Overridden by ultra_fast_mode
-  express_mode: false  # Overridden by ultra_fast_mode
+  ultra_fast_mode: true
+  fast_progress: false
+  minimal_progress: false
+  express_mode: false
   no_sync: false
+  torch_compile:
+    enabled: false
+    mode: max-autotune
+    fullgraph: false
+    dynamic: false
+    backend: inductor
 memory:
-  enable_memory_pool: true
-  pool_size_gb: 16.0  # Large memory pool for 61GB RAM system (16GB for data caching)
-  gradient_checkpointing: false  # SPEED: Disabled (unified with training.gradient_checkpointing)
-  memory_threshold_gb: 16.0  # Higher threshold with more RAM available
+  enable_memory_pool: false
+  pool_size_gb: 24.0
+  gradient_checkpointing: false
+  memory_threshold_gb: 24.0
   enable_cpu_offload: false
-  clear_cache_frequency: 100000  # OPTIMIZED: Rarely clear cache (was 5000) - prevents thrashing
-  silent_mode: true  # NEW: Suppress memory warnings (still monitors, just doesn't print)
-  # Memory monitor thresholds - RELAXED to prevent constant cleanup
-  target_utilization: 0.85  # Target 85% GPU memory usage
-  warning_threshold: 0.98  # Warn at 98% (was 0.92)
-  critical_threshold: 0.99  # Critical at 99% (was 0.96)
-  emergency_threshold: 0.995  # Emergency at 99.5% (was 0.98)
+  clear_cache_frequency: 100000
+  silent_mode: true
+  target_utilization: 0.9
+  warning_threshold: 0.93
+  critical_threshold: 0.96
+  emergency_threshold: 0.98
 evaluation:
   eval_during_training: true
-  eval_metrics: perplexity  # SPEED: Only perplexity (removed BLEU for speed)
+  eval_metrics: perplexity
   comprehensive_eval: false
-  # MoE-specific metrics for monitoring expert behavior - OPTIMIZED
   moe_metrics:
-    track_expert_utilization: true  # Monitor which experts are being used
-    track_routing_entropy: true  # Measure routing diversity (prevents expert collapse)
-    track_load_balance: true  # Monitor load distribution across experts
-    track_expert_specialization: false  # Disabled for speed (expensive computation)
-    log_frequency: 2000  # Log MoE metrics every 2000 steps - OPTIMIZED: Reduced overhead
+    track_expert_utilization: false
+    track_routing_entropy: false
+    track_load_balance: false
+    track_expert_specialization: false
+    log_frequency: 50000
 output:
-  output_dir: outputs/small
-  save_total_limit: 5
+  output_dir: outputs/small_enhanced
+  save_total_limit: 15
   save_on_each_node: false
 run_management:
-  experiment_name: ava-small-enhanced
+  experiment_name: ava-small-enhanced-v3
   run_id: null
   resume_from_checkpoint: null
 device: auto
-fp16: true  # Enabled for better precision (prevents inf gradients)
-bf16: false  # Disabled - BF16 less precise, causes overflow with MoE
-# Learning Rate Finder - Find optimal learning rate automatically
+fp16: false
+bf16: true
 lr_finder:
-  enabled: true  # Set to true to run LR finder before training
-  start_lr: 1.0e-7  # Starting learning rate for search - RAISED for faster convergence
-  end_lr: 0.001  # Maximum learning rate to test - CONSERVATIVE upper bound
-  num_iterations: 200  # Number of test iterations
-  suggestion_method: steepest  # Method for LR suggestion (steepest/minimum/valley)
-  use_suggested_lr: true  # Automatically apply suggested LR if true
-  # Note: Enable with CLI: --run-lr-finder --lr-finder-use-suggested
+  enabled: true
+  start_lr: 1.0e-08
+  end_lr: 0.01
+  num_iterations: 1000
+  suggestion_method: fastai
+  use_suggested_lr: true
+  use_savgol_filter: true
+  savgol_window: 31
+  beta: 0.9
+  momentum_cycling: false
+  track_validation: false
+  num_runs: 1
+  gradient_accumulation_steps: 1
 wandb:
   enabled: true
   project: Ava
   tags:
   - gpu
-  - small
-  - 28M
-  - progressive-training
+  - rtx-3090-ti
+  - 150M
+  - enhanced
   - moe
-  - production
+  - custom-tokenizer
+  - enhanced-65k
+  - lr-finder-optimized
   entity: null
   name: null
-  notes: "Enhanced DeepSeek-style training with 8 experts (top-2 routing), 512 hidden dim. Progressive training (256→1024 tokens). Multi-token prediction (3 tokens), auxiliary-free balancing. ~45M parameters."
-  group: ava-small-models
+  notes: 'Enhanced config with: Fixed dropout (0.05), LR collapse prevention (lr_end=1e-04), Limited training (30k steps),
+    FastAI LR finder, Repetition penalties
+
+    [Auto-optimized 2025-10-14 10:50:00] LR: 3.65e-07, lr_end: 1.00e-05
+
+    [Auto-optimized 2025-10-14 11:25:59] LR: 3.65e-07, lr_end: 1.00e-05
+
+    [Auto-optimized 2025-10-14 11:36:18] LR: 7.94e-07, lr_end: 1.00e-05
+
+    [Auto-optimized 2025-10-14 18:03:10] LR: 7.94e-07, lr_end: 1.00e-05
+
+
+    [Auto-optimized 2025-10-15 00:19:35] LR: 1.12e-05, lr_end: 1.00e-07
+
+
+    [Auto-optimized 2025-10-15 00:32:33] LR: 1.35e-05, lr_end: 1.00e-07
+
+
+    [Auto-optimized 2025-10-15 00:42:52] LR: 9.66e-05, lr_end: 3.22e-07
+
+
+    [Auto-optimized 2025-10-15 10:19:40] LR: 9.01e-05, lr_end: 3.00e-07
+
+
+    [Auto-optimized 2025-10-15 11:00:38] LR: 2.71e-05, lr_end: 1.00e-07
+
+
+    [Auto-optimized 2025-10-15 11:26:48] LR: 1.30e-05, lr_end: 1.00e-07
+
+
+    [Auto-optimized 2025-10-15 20:05:30] LR: 1.37e-04, lr_end: 4.58e-07
+
+
+    [Auto-optimized 2025-10-15 20:56:01] LR: 1.28e-04, lr_end: 4.28e-07
+
+
+    [Auto-optimized 2025-10-15 21:13:43] LR: 6.76e-05, lr_end: 2.25e-07'
+  group: ava-enhanced-v3
   job_type: train
   offline: false
-  cache_size: 50000  # Large cache for 61GB RAM (50K metrics = ~500MB, reduces I/O)
-  cache_flush_interval: 2000  # Flush less frequently with large cache (was 1000)
+  cache_size: 10000
+  cache_flush_interval: 500
 stability:
-  # Loss Stability
-  loss_smoothing: true  # Apply exponential moving average to logged loss values
-  loss_smoothing_alpha: 0.9  # EMA decay factor (higher = smoother, slower response)
-
-  # Learning Rate Stability
-  lr_warmup_ratio: 0.1  # Fraction of training for warmup (10%)
-  lr_decay_ratio: 0.1  # Fraction of training for decay (10%)
-
-  # Gradient Synchronization
-  sync_gradients_each_step: false  # Don't force gradient sync every step (DDP optimization)
-
-  # Numerical Stability
-  use_kahan_summation: true  # Use Kahan summation for more accurate gradient accumulation
-  use_stable_embedding: true  # Use numerically stable embedding initialization
-
-  # Safety Checks - Stop training if catastrophic failures occur
-  stop_on_nan: true  # Halt training if NaN loss/gradients detected
-  max_grad_norm_before_stop: 10.0  # Stop if gradient norm exceeds this threshold - STRICT
-  max_loss_before_stop: 15.0  # Stop if loss exceeds this value (indicates divergence)
+  loss_smoothing: true
+  loss_smoothing_alpha: 0.9
+  lr_warmup_ratio: 0.0333
+  lr_decay_ratio: 0.1
+  sync_gradients_each_step: false
+  use_kahan_summation: true
+  use_stable_embedding: true
+  stop_on_nan: false
+  max_grad_norm_before_stop: 100.0
+  max_loss_before_stop: 20.0
+generation:
+  repetition_penalty: 3.0  # FURTHER INCREASED: Even stronger penalty during generation
+  eos_penalty: 0.5  # REDUCED: Allow natural endings (but still prevent premature EOS)
+  min_length: 40    # INCREASED: Match training min_sequence_length
+  temperature: 1.0  # INCREASED: Maximum diversity while maintaining coherence
+  top_k: 100        # DOUBLED: Much larger sampling pool for diversity
+  top_p: 0.95       # INCREASED: Sample from 95% probability mass
+  use_ngram_blocking: true
+  ngram_size: 3     # INCREASED: Block longer repetitive patterns
+  no_repeat_ngram_size: 4  # INCREASED: Block all 4-gram repetition
+  do_sample: true
+  num_beams: 1
