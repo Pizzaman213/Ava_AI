@@ -42,7 +42,10 @@ def download_dataset(name: str, config: str, split: str, streaming: bool = False
     try:
         if streaming or num_samples:
             # Stream for large datasets or when sampling
-            ds = load_dataset(name, config, split=split, streaming=True, trust_remote_code=True)
+            load_args = [name]
+            if config:
+                load_args.append(config)
+            ds = load_dataset(*load_args, split=split, streaming=True)
 
             # Take limited samples
             if num_samples:
@@ -57,7 +60,10 @@ def download_dataset(name: str, config: str, split: str, streaming: bool = False
                 ds = Dataset.from_list(samples)
         else:
             # Load full dataset
-            ds = load_dataset(name, config, split=split, trust_remote_code=True)
+            load_args = [name]
+            if config:
+                load_args.append(config)
+            ds = load_dataset(*load_args, split=split)
 
         # Save to disk
         output_name = name.replace("/", "_")
@@ -212,10 +218,11 @@ def main():
         num_samples=200000
     )
 
-    # BookCorpus (74k books)
+    # BookCorpus is no longer available - replaced with OpenWebText
+    # OpenWebText is an open-source recreation of WebText used to train GPT-2
     total_downloaded += download_dataset(
-        name="bookcorpus",
-        config="default",
+        name="openwebtext",
+        config=None,
         split="train",
         streaming=True,
         num_samples=100000
