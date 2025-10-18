@@ -1,41 +1,42 @@
 model:
-  hidden_size: 512  # Optimal for 200M with 2 experts
-  num_layers: 12  # Deep model for better reasoning (2x original)
-  num_attention_heads: 8  # head_dim = 64
-  intermediate_size: 4736  # Sized for ~100M params per expert
-  vocab_size: 65536
-  max_position_embeddings: 2048
-  num_experts: 2  # 2 experts, each ~58M params (116M total in experts)
-  num_experts_per_token: 1  # Activate 1 expert per token (50% capacity utilization)
+  hidden_size: 96  # 1M parameter model (~1.1M params total)
+  num_layers: 4  # 4 layers for ~1M params
+  num_attention_heads: 4  # 4 heads (head_dim = 24, even for RoPE)
+  intermediate_size: 192  # 2x hidden_size (standard FFN ratio)
+  vocab_size: 500  # Small vocab with enhanced-500 tokenizer
+  max_position_embeddings: 512  # 512 token sequences
+  num_experts: 4  # 4 experts for MoE capacity
+  num_experts_per_token: 2  # Standard MoE routing (top-2)
   expert_capacity_factor: 1.5
-  router_type: deepseek
-  router_aux_loss_coef: 0.01
-  router_jitter_noise: 0.02
+  router_type: deepseek  # FIXED: Match enhanced_features.architecture.expert_routing_type
+  router_aux_loss_coef: 0.01  # Load balancing loss coefficient
+  router_jitter_noise: 0.01  # FIXED: Reduced jitter for stability
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.1
+  attention_dropout: 0.05  # FIXED: Reduced from 0.1 for better learning
   hidden_dropout: 0.05
-  use_flash_attention: true
+  use_flash_attention: false  # FIXED: Disabled for compatibility
   layer_norm_eps: 1e-5
-  initializer_range: 0.01
+  initializer_range: 0.02  # FIXED: Increased from 0.01 to standard value
   hidden_act: gelu
   deepspeed_activation_checkpointing: false
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
-  tie_word_embeddings: false
-  dropout: 0.1
+  tie_word_embeddings: false  # FIXED: Keep untied to avoid gradient conflicts
+  dropout: 0.05  # FIXED: Reduced from 0.1
+  use_learned_position_embeddings: false  # FIXED: Use only RoPE, not both
 training:
-  batch_size: 8  # Reduced from 16 to fit 197M model
-  gradient_accumulation_steps: 4  # Reduced from 16 (effective batch = 32)
-  max_gradient_norm: 1.0
-  num_epochs: 1
-  max_steps: 30000
-  warmup_steps: 1000
-  learning_rate: 6.758181168161029e-05
+  batch_size: 128  # Larger batch size for faster training
+  gradient_accumulation_steps: 1  # No accumulation needed with batch size 128
+  max_gradient_norm: 1.0  # Standard clipping
+  num_epochs: 10  # NeuML setting: 10 epochs for small model
+  max_steps: null  # Use epochs instead of steps
+  warmup_steps: 500  # Reduced warmup for quick start
+  learning_rate: 0.0002  # Higher LR for small model
   lr_scheduler_type: cosine
-  lr_end: 2.2527270560536762e-07
-  repetition_penalty_weight: 10.0  # DOUBLED: Must match enhanced_features.losses.ngram_penalty_weight
-  immediate_repetition_weight: 15.0  # DOUBLED: Must match enhanced_features.losses.immediate_repetition_weight
+  lr_end: 1.0e-05  # Prevent LR collapse
+  repetition_penalty_weight: 0.0  # DISABLED: Major slowdown, skip for NeuML speed
+  immediate_repetition_weight: 0.0  # DISABLED: Major slowdown, skip for NeuML speed
   min_sequence_length: 40  # INCREASED: Force longer outputs before allowing EOS
   eos_penalty_weight: 2.0  # INCREASED: Much stronger penalty for early EOS
   eos_logit_bias: -1.5  # INCREASED: Strongly discourage EOS token in logits
@@ -58,17 +59,17 @@ training:
   eps: 1e-8
   entropy_regularization: 0.1  # INCREASED 10x: Strong entropy bonus for diverse predictions
   output_diversity_weight: 0.5  # INCREASED 5x: Heavy penalty for low diversity outputs
-  mixed_precision: bf16
-  dataloader_num_workers: 4
+  mixed_precision: fp16  # NeuML setting: fp16 precision
+  dataloader_num_workers: 2  # NeuML setting: 2 workers
   prefetch_factor: 2
   persistent_workers: false
-  gradient_checkpointing: false
+  gradient_checkpointing: false  # DISABLED: No checkpointing for max speed
   eval_strategy: steps
-  eval_steps: 1000
+  eval_steps: 1000  # NeuML speed: Eval less often (every 1000 steps)
   save_strategy: steps
-  save_steps: 1000
-  save_total_limit: 15
-  logging_steps: 100
+  save_steps: 1000  # NeuML speed: Save every 1000 steps
+  save_total_limit: 3  # Keep only 3 checkpoints
+  logging_steps: 10  # Log frequently for monitoring
   early_stopping_patience: 5
   early_stopping_threshold: 0.005
   progressive:
@@ -101,19 +102,19 @@ training:
     lr_reduction_factor: 0.7
   max_grad_norm: 1.0
 data:
-  data_dir: /project/code/data/processed
-  max_length: 512
-  tokenizer_name: /project/code/models/tokenizer/enhanced-65k
+  data_dir: /project/code/data/processed  # Large-scale datasets (4.8GB: FineWeb, C4, Wikipedia, Orca)
+  max_length: 512  # 512 token sequences
+  tokenizer_name: /project/code/models/tokenizer/enhanced-500
   padding_side: right
   truncation: true
-  max_train_examples: null
-  max_eval_examples: 20000
-  max_samples: null
-  val_max_samples: 20000
+  max_train_examples: null  # Use all data
+  max_eval_examples: 5000
+  max_samples: null  # No limit
+  val_max_samples: 5000
   val_split_ratio: 0.15
-  buffer_size: 50000
+  buffer_size: 10000  # Increased for larger dataset
   dataloader_drop_last: true
-  dataloader_pin_memory: true
+  dataloader_pin_memory: false
 deepspeed:
   use_deepspeed: false
   zero_stage: 0
@@ -137,9 +138,9 @@ enhanced_features:
     max_retrieved_docs: 5
     rag_fusion_type: concatenate
   losses:
-    use_multi_token_prediction: true  # FIXED: Enable MTP to activate repetition penalties
-    num_future_tokens: 2  # REDUCED: Lighter MTP for faster training
-    mtp_weight: 0.05  # REDUCED: Lower weight to avoid interfering with main loss
+    use_multi_token_prediction: false  # DISABLED: MTP uses extra memory - disable for speed
+    num_future_tokens: 1  # MINIMAL: Reduce memory overhead
+    mtp_weight: 0.01  # MINIMAL: Lower weight to avoid interfering with main loss
     initial_temperature: 1.2  # INCREASED: More diverse predictions
     adaptive_temperature: true  # ENABLED: Adapt temperature based on loss
     label_smoothing: 0.05  # ADDED: Smooth labels to prevent overconfidence
@@ -152,11 +153,11 @@ enhanced_features:
     adaptive_loss_scaling: false
     contrastive_loss_weight: 0.02
     diversity_loss_weight: 0.1  # INCREASED: Stronger diversity incentive
-    use_ngram_penalty: true
-    ngram_size: 3  # INCREASED: Detect longer repetition patterns
-    ngram_penalty_weight: 10.0  # DOUBLED: Stronger penalty for n-gram repetition
-    use_immediate_repetition_detector: true
-    immediate_repetition_weight: 15.0  # DOUBLED: Much stronger penalty for "time time time"
+    use_ngram_penalty: false  # DISABLED: Major slowdown
+    ngram_size: 3
+    ngram_penalty_weight: 0.0  # DISABLED
+    use_immediate_repetition_detector: false  # DISABLED: Major slowdown
+    immediate_repetition_weight: 0.0  # DISABLED
   adaptive_mtp:
     use_adaptive_mtp: false
     num_prediction_heads: 3
@@ -205,36 +206,36 @@ enhanced_features:
     use_hadamard_transform: false
 data_loading:
   streaming: true
-  buffer_size: 10000
+  buffer_size: 2000  # REDUCED: Smaller buffer to reduce memory
   max_samples: null
-  val_max_samples: 20000
+  val_max_samples: 5000  # REDUCED: Less validation data
   val_split_ratio: 0.15
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 4
-  enable_bucketing: true
+  num_workers: 4  # REDUCED: Fewer workers to reduce memory
+  enable_bucketing: false  # DISABLED: Bucketing uses extra memory
   bucket_boundaries:
   - 128
   - 256
   - 512
   max_bucket_size: 64
-  use_weighted_mixing: true
+  use_weighted_mixing: false  # DISABLED: Reduce memory overhead
   mixing_temperature: 1.0
   shuffle_seed: 42
   reshuffle_each_epoch: true
   drop_last_batch: true
-  prefetch_factor: 2
+  prefetch_factor: 2  # REDUCED: Less prefetch to reduce memory
   persistent_workers: false
 performance:
-  ultra_fast_mode: true
+  ultra_fast_mode: true  # ENABLED: Disable logging overhead
   fast_progress: false
-  minimal_progress: false
-  express_mode: false
+  minimal_progress: true  # ENABLED: Minimal progress bars for speed
+  express_mode: true  # ENABLED: Maximum speed mode
   no_sync: false
   torch_compile:
-    enabled: false
-    mode: max-autotune
+    enabled: true  # ENABLED: PyTorch 2.0 compilation for speed
+    mode: max-autotune  # Maximum optimization
     fullgraph: false
     dynamic: false
     backend: inductor
@@ -244,14 +245,14 @@ memory:
   gradient_checkpointing: false
   memory_threshold_gb: 24.0
   enable_cpu_offload: false
-  clear_cache_frequency: 100000
+  clear_cache_frequency: 10000  # Clean memory less often for speed
   silent_mode: true
   target_utilization: 0.9
   warning_threshold: 0.93
   critical_threshold: 0.96
   emergency_threshold: 0.98
 evaluation:
-  eval_during_training: true
+  eval_during_training: true  # ENABLED: Need for generation testing (but less frequent)
   eval_metrics: perplexity
   comprehensive_eval: false
   moe_metrics:
@@ -269,8 +270,8 @@ run_management:
   run_id: null
   resume_from_checkpoint: null
 device: auto
-fp16: false
-bf16: true
+fp16: true  # NeuML: Enable mixed precision training
+bf16: false
 lr_finder:
   enabled: true
   start_lr: 1.0e-08

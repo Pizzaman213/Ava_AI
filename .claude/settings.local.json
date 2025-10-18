@@ -7,7 +7,8 @@
       "Bash(python3:*)",
       "WebSearch",
       "Read(//home/rapids/.vscode-server/extensions/anthropic.claude-code-2.0.20-linux-x64/**)",
-      "Read(//home/rapids/.config/Code/**)"
+      "Read(//home/rapids/.config/Code/**)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []

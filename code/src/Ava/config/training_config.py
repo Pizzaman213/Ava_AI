@@ -15,18 +15,22 @@ from pathlib import Path
 
 @dataclass
 class ArchitectureConfig:
-    """Configuration for architecture enhancements."""
-    use_moh: bool = True                      # Mixture of Heads
-    use_moa: bool = True                      # Mixture of Activations
-    use_cross_attention: bool = True          # Multi-modal cross-attention
-    use_alibi: bool = True                    # ALiBi positional encoding
+    """Configuration for architecture enhancements.
+
+    IMPORTANT: Defaults should be False/minimal to allow YAML config to control features.
+    Only enable features when explicitly requested in YAML config.
+    """
+    use_moh: bool = False                     # Mixture of Heads (disabled by default)
+    use_moa: bool = False                     # Mixture of Activations (disabled by default)
+    use_cross_attention: bool = False         # Multi-modal cross-attention (disabled by default)
+    use_alibi: bool = False                   # ALiBi positional encoding (disabled by default)
     expert_routing_type: str = 'switch'       # Expert routing type
 
 
 @dataclass
 class RAGConfig:
     """Configuration for RAG system."""
-    use_rag: bool = True                      # Enable RAG
+    use_rag: bool = False                     # Enable RAG (disabled by default - YAML controls)
     knowledge_base_path: Optional[str] = None  # KB path
     max_retrieved_docs: int = 5               # Max retrieved documents
     rag_fusion_type: str = 'attention'        # Fusion strategy
@@ -60,58 +64,58 @@ class AdaptiveMTPConfig:
     confidence_reg_strength: float = 0.01     # Regularization for confident predictions
 
     # Loss weighting
-    use_confidence_weighting: bool = True     # Weight losses by confidence
+    use_confidence_weighting: bool = False    # Weight losses by confidence (YAML controls)
     primary_loss_weight: float = 1.0          # Primary token always gets full weight
     additional_loss_base_weight: float = 0.1  # Base weight for additional tokens
 
     # Efficiency settings
-    enable_dynamic_prediction: bool = True    # Skip MTP when low confidence
+    enable_dynamic_prediction: bool = False   # Skip MTP when low confidence (YAML controls)
     min_confidence_for_computation: float = 0.3  # Don't compute heads below this
 
 
 @dataclass
 class LossConfig:
     """Configuration for advanced loss functions."""
-    use_focal_loss: bool = True               # Focal loss
-    use_contrastive_loss: bool = True         # Contrastive loss
-    use_diversity_loss: bool = True           # Diversity loss
-    adaptive_loss_scaling: bool = True        # Adaptive loss scaling
+    use_focal_loss: bool = False              # Focal loss (disabled by default - YAML controls)
+    use_contrastive_loss: bool = False        # Contrastive loss (disabled by default)
+    use_diversity_loss: bool = False          # Diversity loss (disabled by default)
+    adaptive_loss_scaling: bool = False       # Adaptive loss scaling (disabled by default)
 
     # Multi-token prediction settings (DeepSeek-style)
-    use_multi_token_prediction: bool = True   # Enable MTP loss
+    use_multi_token_prediction: bool = False  # Enable MTP loss (disabled by default - YAML controls)
     num_future_tokens: int = 3                # Number of future tokens to predict
     mtp_weight: float = 0.1                   # Weight for MTP loss
 
     # Temperature scaling settings
     initial_temperature: float = 1.0          # Initial temperature for scaling
-    adaptive_temperature: bool = True         # Adapt temperature based on training
-    label_smoothing: float = 0.1              # Label smoothing factor
+    adaptive_temperature: bool = False        # Adapt temperature based on training (disabled by default)
+    label_smoothing: float = 0.0              # Label smoothing factor (0 = disabled by default)
 
     # MoE balancing settings
-    use_moe_balancing: bool = True            # Enable auxiliary-free MoE balancing
-    gradient_balance_weight: float = 0.1      # Weight for gradient-based balancing
-    use_auxiliary_loss: bool = True           # Use traditional auxiliary loss (legacy)
+    use_moe_balancing: bool = False           # Enable auxiliary-free MoE balancing (YAML controls)
+    gradient_balance_weight: float = 0.0      # Weight for gradient-based balancing
+    use_auxiliary_loss: bool = False          # Use traditional auxiliary loss (YAML controls)
 
-    # N-gram repetition blocking (CRITICAL for preventing mode collapse)
-    use_ngram_penalty: bool = True            # Enable n-gram repetition detection
+    # N-gram repetition blocking (disabled by default for speed, YAML controls)
+    use_ngram_penalty: bool = False           # Enable n-gram repetition detection (YAML controls)
     ngram_size: int = 3                       # Size of n-grams to detect
-    ngram_penalty_weight: float = 0.5         # Weight for n-gram repetition penalty
-    use_immediate_repetition_detector: bool = True  # Detect consecutive token repetition
-    immediate_repetition_weight: float = 1.0  # Weight for immediate repetition penalty
+    ngram_penalty_weight: float = 0.0         # Weight for n-gram repetition penalty
+    use_immediate_repetition_detector: bool = False  # Detect consecutive token repetition (YAML controls)
+    immediate_repetition_weight: float = 0.0  # Weight for immediate repetition penalty
 
 
 @dataclass
 class GradientConfig:
     """Configuration for gradient surgery."""
-    gradient_surgery: bool = True             # Enable gradient surgery
-    adaptive_gradient_surgery: bool = True    # Adaptive method selection
+    gradient_surgery: bool = False            # Enable gradient surgery (disabled by default)
+    adaptive_gradient_surgery: bool = False   # Adaptive method selection (disabled by default)
     gradient_surgery_method: str = 'pcgrad'   # Surgery method
 
 
 @dataclass
 class EvaluationConfig:
     """Configuration for evaluation during training."""
-    eval_during_training: bool = True         # Enable evaluation
+    eval_during_training: bool = False        # Enable evaluation (disabled by default - YAML controls)
     eval_metrics: Optional[str] = None        # Comma-separated metrics
     eval_frequency: int = 500                 # Evaluation frequency (steps)
 
@@ -145,7 +149,7 @@ class LRFinderConfig:
 @dataclass
 class EpisodicMemoryConfig:
     """Configuration for episodic memory."""
-    use_episodic_memory: bool = True          # Enable episodic memory
+    use_episodic_memory: bool = False         # Enable episodic memory (disabled by default)
     memory_capacity: int = 1000               # Memory capacity
     memory_selection_strategy: str = 'importance'  # Selection strategy
     memory_importance_threshold: float = 0.5  # Importance threshold
@@ -165,11 +169,11 @@ class DataConfig:
     data_dir: str = '/project/code/data/Testing'  # Data directory
     max_length: int = 512                     # Max sequence length
     max_samples: Optional[int] = None         # Max samples (testing)
-    streaming: bool = True                    # Streaming loader
+    streaming: bool = False                   # Streaming loader (YAML controls)
     buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
     num_workers: int = 8                      # Parallel data loading workers
     prefetch_factor: int = 4                  # Batches to prefetch per worker
-    persistent_workers: bool = True           # Keep workers alive between epochs
+    persistent_workers: bool = False          # Keep workers alive between epochs (YAML controls)
 
 
 @dataclass
@@ -197,19 +201,19 @@ class ProgressiveTrainingConfig:
     final_seq_length: int = 2048
     length_schedule: str = "linear"
     length_growth_epochs: int = 10
-    enable_length_bucketing: bool = True
+    enable_length_bucketing: bool = False     # YAML controls
 
     # Difficulty scoring (5.2 fixes)
     enable_curriculum: bool = False
     curriculum_metric: str = "loss"
-    enable_score_caching: bool = True
+    enable_score_caching: bool = False        # YAML controls
     cache_dir: str = "/tmp/difficulty_cache"
     cache_version: str = "v1.0"
 
     # Dynamic batch sizing (5.3 fixes)
     enable_dynamic_batch: bool = False
-    enable_binary_search_oom: bool = True
-    enable_dry_run_mode: bool = True
+    enable_binary_search_oom: bool = False    # YAML controls
+    enable_dry_run_mode: bool = False         # YAML controls
     min_batch_size: int = 1
     max_batch_size: int = 64
     target_gpu_utilization: float = 0.85
@@ -226,7 +230,7 @@ class DynamicBatchingConfig:
     adjustment_frequency: int = 100            # Check every N steps
     adjustment_factor: float = 1.25            # Scale factor for adjustments
     warmup_steps: int = 500                    # Don't adjust during first N steps
-    smooth_transitions: bool = True            # Use gradual adjustments
+    smooth_transitions: bool = False           # Use gradual adjustments (YAML controls)
 
 
 @dataclass
@@ -267,7 +271,7 @@ class RunManagementConfig:
 @dataclass
 class WandBConfig:
     """Configuration for Weights & Biases."""
-    use_wandb: bool = True                    # Enable WandB
+    use_wandb: bool = False                   # Enable WandB (YAML controls)
     disable_wandb: bool = False               # Disable WandB
     wandb_offline: bool = False               # Force WandB offline mode
     wandb_project: str = 'Ava'                # WandB project
@@ -289,15 +293,15 @@ class DeepSpeedConfig:
     gradient_accumulation_steps: int = 1      # Gradient accumulation
     train_batch_size: Optional[int] = None    # Global batch size
     micro_batch_size: Optional[int] = None    # Micro batch size
-    enable_mixed_precision: bool = True       # Enable FP16/BF16
+    enable_mixed_precision: bool = False      # Enable FP16/BF16 (YAML controls)
     precision_type: str = 'fp16'              # Precision type: fp16, bf16, fp32
 
     # ZeRO-specific settings
-    zero_allow_untested_optimizer: bool = True
+    zero_allow_untested_optimizer: bool = False  # YAML controls
     zero_force_ds_cpu_optimizer: bool = False
-    zero_reduce_scatter: bool = True
-    zero_overlap_comm: bool = True
-    zero_contiguous_gradients: bool = True
+    zero_reduce_scatter: bool = False         # YAML controls
+    zero_overlap_comm: bool = False           # YAML controls
+    zero_contiguous_gradients: bool = False   # YAML controls
     zero_reduce_bucket_size: int = 500000000       # 500MB
     zero_allgather_bucket_size: int = 500000000    # 500MB
     zero_stage3_prefetch_bucket_size: int = 500000000  # 500MB
@@ -305,9 +309,9 @@ class DeepSpeedConfig:
 
     # Communication settings
     communication_data_type: str = 'fp32'     # Communication data type
-    allreduce_partitions: bool = True
-    allgather_partitions: bool = True
-    overlap_comm: bool = True
+    allreduce_partitions: bool = False        # YAML controls
+    allgather_partitions: bool = False        # YAML controls
+    overlap_comm: bool = False                # YAML controls
     wall_clock_breakdown: bool = False        # Enable timing breakdown
 
     # Advanced features
@@ -315,7 +319,7 @@ class DeepSpeedConfig:
     partition_activations: bool = False       # Partition activations
     cpu_checkpointing: bool = False          # CPU activation checkpointing
     contiguous_memory_optimization: bool = False
-    synchronize_dp_processes: bool = True
+    synchronize_dp_processes: bool = False    # YAML controls
 
     # Pipeline parallelism
     pipeline_parallel_size: int = 1          # Pipeline parallel size
