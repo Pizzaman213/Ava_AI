@@ -255,22 +255,23 @@ class AntiRepetitionLoss(nn.Module):
         else:
             base_loss = base_loss_per_token.mean()
 
-        # 2. Get predicted tokens for penalty calculation
-        predicted_tokens = logits.argmax(dim=-1)  # [batch_size, seq_len]
+        # 2. CRITICAL FIX: Use ground truth labels for penalty calculation, not predictions
+        # Using predictions during early training is meaningless since they're random
+        # We want to penalize repetitive patterns in the training data itself
 
-        # 3. Calculate penalties
+        # 3. Calculate penalties on LABELS (ground truth)
         repetition_scores = self.calculate_ngram_repetition(
-            predicted_tokens, attention_mask
+            labels, attention_mask
         )
         repetition_penalty = repetition_scores.mean()
 
         eos_penalties = self.calculate_eos_penalty(
-            predicted_tokens, attention_mask
+            labels, attention_mask
         )
         eos_penalty = eos_penalties.mean()
 
         diversity_scores = self.calculate_diversity_bonus(
-            predicted_tokens, attention_mask
+            labels, attention_mask
         )
         diversity_bonus = diversity_scores.mean()
 
