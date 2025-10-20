@@ -1,0 +1,97 @@
+# Minimal RLHF Config for CPU Testing
+# This config is designed for quick testing on CPU
+
+model:
+  hidden_size: 128
+  num_layers: 2
+  num_attention_heads: 2
+  intermediate_size: 256
+  vocab_size: 65536
+  max_position_embeddings: 128
+  num_experts: 2
+  num_experts_per_token: 1
+
+data:
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65536
+  max_length: 128
+
+# RLHF Configuration - Minimal for CPU testing
+rlhf:
+  # Will use tiny test models (not actual trained models for this test)
+  policy_model_path: null  # Will create test model
+  judge_model_path: null   # Will create test model
+  reward_model_path: null
+
+  # Reward model settings
+  use_model_to_model_reward: true
+  freeze_reward_model: true
+
+  # Dataset paths
+  prompt_dataset_path: /project/code/data/rlhf/prompts.json
+  eval_prompt_dataset_path: null
+
+  # Training settings - MINIMAL for testing
+  num_epochs: 1
+  rollout_batch_size: 2  # Very small for CPU
+  num_rollouts_per_epoch: 2  # Just 2 rollouts for testing
+  max_prompt_length: 64
+
+  # Output settings
+  save_dir: /tmp/rlhf_test_output
+  log_dir: /tmp/rlhf_test_logs
+  save_every: 100
+  eval_every: 50
+  num_eval_prompts: 2
+
+  # Device
+  device: cpu
+
+  # Disable W&B for testing
+  use_wandb: false
+  wandb_project: ava-rlhf-test
+  wandb_name: cpu-test
+
+  # PPO configuration - MINIMAL
+  ppo:
+    learning_rate: 1e-5
+    batch_size: 2
+    mini_batch_size: 1
+    gradient_accumulation_steps: 1
+    max_grad_norm: 1.0
+
+    ppo_epochs: 2  # Just 2 epochs for quick test
+    clip_range: 0.2
+    clip_range_value: 0.2
+    value_loss_coef: 0.5
+    entropy_coef: 0.01
+    gamma: 1.0
+    lambda: 0.95
+
+    kl_penalty: kl
+    target_kl: 0.01
+    init_kl_coef: 0.2
+    adaptive_kl: true
+
+    # Generation settings
+    max_gen_length: 32  # Very short for CPU
+    temperature: 1.0
+    top_k: 50
+    top_p: 0.95
+
+    # Training schedule
+    num_train_epochs: 1
+    max_steps: null
+    warmup_steps: 0  # No warmup for test
+    logging_steps: 1  # Log every step
+    save_steps: 100
+    eval_steps: 50
+
+    # Reward processing
+    use_score_scaling: true
+    use_score_norm: true
+    whiten_rewards: true
+    clip_reward: 10.0
+
+    # Memory optimization
+    gradient_checkpointing: false  # Not needed for tiny model
+    mixed_precision: no  # No mixed precision on CPU

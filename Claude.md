@@ -705,24 +705,166 @@ ls -la /project/claude_docs/
 
 ---
 
+### [2025-10-20 09:45] - Fixed Evaluation Interval Configuration
+**Type**: Fix + Configuration + Documentation
+**Files Modified**: `configs/gpu/small.yaml`, `scripts/5_training/train.py`, `EVAL_STEPS_FIX.md` (new)
+**Lines Changed**: +85 / -10
+
+⚡ **CRITICAL FIX**: Evaluation was running every 8000 training steps instead of every 1000 steps as configured
+
+**Rationale**:
+- User reported generation tests not running at expected intervals (step 21,000)
+- Investigation revealed `eval_steps` was counting optimizer steps, not training steps
+- With `gradient_accumulation_steps: 8`, this meant evaluation every 8000 training steps
+- User expected evaluation every 1000 training steps for frequent generation testing
+
+**Root Cause**:
+```
+Configured: eval_steps: 1000
+Expected: Evaluation every 1000 training steps
+Actual: Evaluation every 1000 optimizer steps = 8000 training steps
+
+Timeline with gradient_accumulation_steps: 8:
+- Step 1,000: ❌ No eval (optimizer_step = 125)
+- Step 8,000: ✅ Evaluation (optimizer_step = 1000)
+- Step 16,000: ✅ Evaluation (optimizer_step = 2000)
+- Step 21,000: ❌ No eval (optimizer_step = 2625)
+- Step 24,000: ✅ Would evaluate (optimizer_step = 3000)
+```
+
+**Changes Made**:
+
+**1. Added Config Toggle** (`configs/gpu/small.yaml`):
+```yaml
+training:
+  eval_steps: 1000
+  eval_steps_type: training_steps  # NEW: 'training_steps' or 'optimizer_steps'
+```
+
+Options:
+- `training_steps` (default): Count training iterations
+- `optimizer_steps`: Count optimizer updates (old behavior)
+
+**2. Updated Training Script** (`scripts/5_training/train.py`):
+- Line ~1146: In-epoch validation logic updated
+  - Read `eval_steps_type` from config (defaults to `training_steps`)
+  - Use `trainer.step_count` for training steps
+  - Use `trainer.optimizer_step_count` for optimizer steps
+  - Log which type is being used
+- Line ~2561: End-of-epoch validation logic updated
+  - Applied same logic as in-epoch validation
+  - Consistent behavior across all evaluation checkpoints
+
+**3. Documentation** (`EVAL_STEPS_FIX.md`):
+- Comprehensive explanation of the issue
+- Timeline showing evaluation points
+- Configuration examples for different use cases
+- Backward compatibility notes
+
+**Impact**:
+
+Before Fix:
+```
+eval_steps: 1000 with gradient_accumulation_steps: 8
+→ Evaluation every 8000 training steps (1000 optimizer steps)
+→ Very infrequent generation testing
+```
+
+After Fix:
+```
+eval_steps: 1000 with eval_steps_type: training_steps
+→ Evaluation every 1000 training steps (as intended!)
+→ Frequent generation testing and checkpoint saving
+```
+
+**Evaluation Schedule Change**:
+| Training Step | Before Fix | After Fix |
+|---------------|------------|-----------|
+| 1,000 | ❌ Skip | ✅ Evaluate |
+| 2,000 | ❌ Skip | ✅ Evaluate |
+| 8,000 | ✅ Evaluate | ✅ Evaluate |
+| 21,000 | ❌ Skip | ✅ Evaluate |
+| 22,000 | ❌ Skip | ✅ Evaluate |
+
+**Testing**:
+
+✅ **Configuration Validation**:
+```bash
+# YAML syntax check
+python -c "import yaml; yaml.safe_load(open('configs/gpu/small.yaml'))"
+# Result: ✅ Valid YAML
+
+# Verify new parameter
+grep "eval_steps_type:" configs/gpu/small.yaml
+# Result: eval_steps_type: training_steps ✅
+```
+
+✅ **Code Validation**:
+- Updated two evaluation checkpoints in train.py
+- Both in-epoch and end-of-epoch validation respect new setting
+- Backward compatible: defaults to `training_steps` if not specified
+- Old behavior available via `eval_steps_type: optimizer_steps`
+
+⏳ **Runtime Verification** (Pending):
+- Next evaluation should occur at step 22,000 (~1000 steps from current)
+- Previously would have waited until step 24,000
+- User will verify generation test runs at correct interval
+
+**Configuration Examples**:
+
+```yaml
+# Frequent evaluation (every 500 training steps)
+eval_steps: 500
+eval_steps_type: training_steps
+
+# Moderate evaluation (every 1000 training steps) - DEFAULT
+eval_steps: 1000
+eval_steps_type: training_steps
+
+# Infrequent evaluation (every 1000 optimizer steps)
+eval_steps: 1000
+eval_steps_type: optimizer_steps  # Old behavior
+```
+
+**Backward Compatibility**:
+- ✅ Defaults to `training_steps` (most intuitive)
+- ✅ No breaking changes to existing code
+- ✅ Old behavior available via explicit config
+- ⚠️ Existing configs without `eval_steps_type` will now evaluate more frequently
+
+**User Action Required**:
+- None - fix takes effect immediately
+- Monitor that evaluation runs at step 22,000 (not 24,000)
+- Generation tests should now happen at expected 1000-step intervals
+
+**Related Issues/PRs**: N/A
+
+**Verification Status**:
+- Config: ✅ Updated and validated
+- Code: ✅ Fixed in 2 locations
+- Documentation: ✅ Complete guide created
+- Runtime: ⏳ Awaiting verification at step 22,000
+
+---
+
 ## Statistics
 
-### Overall Project Stats (as of 2025-10-13 21:00)
-- **Total Files in Project**: ~580 files (reduced from 629 after documentation consolidation)
+### Overall Project Stats (as of 2025-10-20 09:45)
+- **Total Files in Project**: ~581 files (+1 new doc: EVAL_STEPS_FIX.md)
 - **Source Code Files**: ~169 Python files (+18 optimization modules, +1 diagnostic script)
 - **Configuration Files**: ~30 YAML files
 - **Data Files**: 500+ JSON/Parquet files
-- **Documentation Files**: 5 consolidated guides in `/project/claude_docs/`
-- **Total Lines of Code**: ~59,500+ lines (+6,700 from optimizations, +2,800 from training fixes)
+- **Documentation Files**: 6 files (5 consolidated guides + 1 fix doc)
+- **Total Lines of Code**: ~59,585+ lines (+85 from eval fix)
 
 ### Claude Modifications
-- **Total Changes**: 8
-- **Files Created**: 24 (5 consolidated docs + 18 optimization modules + 1 diagnostic script)
-- **Files Modified**: 5 (`claude.md`, `src/Ava/evaluation/__init__.py`, `src/Ava/data/__init__.py`, `configs/gpu/small.yaml`, `/project/claude_docs/README.md`)
+- **Total Changes**: 9
+- **Files Created**: 25 (5 consolidated docs + 18 optimization modules + 1 diagnostic script + 1 fix doc)
+- **Files Modified**: 7 (added: `scripts/5_training/train.py`, `configs/gpu/small.yaml`)
 - **Files Deleted**: 46 (old scattered documentation files - all content preserved in consolidated files)
-- **Lines Added**: ~205,600+
-- **Lines Removed**: ~332,012
-- **Net Change**: -126,412 lines (documentation consolidation removed duplication)
+- **Lines Added**: ~205,685+
+- **Lines Removed**: ~332,022
+- **Net Change**: -126,337 lines (documentation consolidation removed duplication)
 
 ### Change Type Breakdown
 | Type | Count | Percentage |
@@ -1241,11 +1383,11 @@ deepspeed:
 
 ## Footer
 
-**Last Updated**: 2025-10-13 21:00
-**Total Entries**: 8
+**Last Updated**: 2025-10-20 09:45
+**Total Entries**: 9
 **Maintained By**: Claude (Anthropic AI Assistant)
 **Project**: Ava LLM Training Framework
-**Version**: 2.1.0 (Documentation Consolidation)
+**Version**: 2.2.0 (Evaluation Interval Fix)
 
 ---
 

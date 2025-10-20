@@ -115,7 +115,7 @@ class ConfigValidator:
         """Validate warmup configuration."""
         training = self.config.get('training', {})
         warmup_steps = training.get('warmup_steps', 0)
-        max_steps = training.get('max_steps', 30000)
+        max_steps = training.get('max_steps') or 30000
 
         if warmup_steps < 500:
             self.warnings.append(
@@ -123,10 +123,39 @@ class ConfigValidator:
                 f"   Recommend: 1000-2000 steps for stable training"
             )
 
-        if warmup_steps > max_steps * 0.1:
+        if max_steps and warmup_steps > max_steps * 0.1:
             self.warnings.append(
                 f"⚠️  warmup_steps ({warmup_steps}) is too long (> 10% of max_steps)\n"
                 f"   This wastes training time. Recommend: {int(max_steps * 0.05)}"
+            )
+
+        # Check for missing warmup_schedule
+        warmup_schedule = training.get('warmup_schedule') or training.get('warmup_type')
+        if not warmup_schedule:
+            self.warnings.append(
+                f"⚠️  warmup_schedule not specified\n"
+                f"   Recommend: Set 'warmup_schedule' to 'linear', 'cosine', or 'polynomial'"
+            )
+
+        # Check for inconsistent warmup across subsystems
+        inconsistencies = []
+
+        # Check gradient_health warmup
+        grad_health_warmup = training.get('gradient_health', {}).get('warmup_steps')
+        if grad_health_warmup is not None and grad_health_warmup != warmup_steps:
+            inconsistencies.append(f"   gradient_health.warmup_steps: {grad_health_warmup}")
+
+        # Check dynamic_batching warmup
+        dynamic_batch_warmup = training.get('dynamic_batching', {}).get('warmup_steps')
+        if dynamic_batch_warmup is not None and dynamic_batch_warmup != warmup_steps:
+            inconsistencies.append(f"   dynamic_batching.warmup_steps: {dynamic_batch_warmup}")
+
+        if inconsistencies:
+            self.warnings.append(
+                f"⚠️  Inconsistent warmup_steps across subsystems:\n"
+                f"   training.warmup_steps: {warmup_steps}\n" +
+                "\n".join(inconsistencies) + "\n"
+                f"   All warmup_steps should match for training stability!"
             )
 
     def validate_batch_size(self):
@@ -263,6 +292,27 @@ class ConfigValidator:
         if training.get('warmup_steps', 0) < 500:
             self.config['training']['warmup_steps'] = 1000
             self.fixes_applied.append(f"✓ Increased warmup_steps to 1000")
+
+        # Fix missing warmup_schedule
+        warmup_schedule = training.get('warmup_schedule') or training.get('warmup_type')
+        if not warmup_schedule:
+            self.config['training']['warmup_schedule'] = 'cosine'
+            self.fixes_applied.append(f"✓ Added warmup_schedule: cosine")
+
+        # Fix inconsistent warmup across subsystems
+        main_warmup = self.config.get('training', {}).get('warmup_steps', 0)
+
+        if 'gradient_health' in self.config.get('training', {}):
+            grad_health_warmup = self.config['training']['gradient_health'].get('warmup_steps')
+            if grad_health_warmup is not None and grad_health_warmup != main_warmup:
+                self.config['training']['gradient_health']['warmup_steps'] = main_warmup
+                self.fixes_applied.append(f"✓ Synchronized gradient_health.warmup_steps: {grad_health_warmup} → {main_warmup}")
+
+        if 'dynamic_batching' in self.config.get('training', {}):
+            dynamic_batch_warmup = self.config['training']['dynamic_batching'].get('warmup_steps')
+            if dynamic_batch_warmup is not None and dynamic_batch_warmup != main_warmup:
+                self.config['training']['dynamic_batching']['warmup_steps'] = main_warmup
+                self.fixes_applied.append(f"✓ Synchronized dynamic_batching.warmup_steps: {dynamic_batch_warmup} → {main_warmup}")
 
         # Disable problematic penalties
         enhanced = self.config.get('enhanced_features', {}).get('losses', {})

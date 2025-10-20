@@ -47,7 +47,27 @@ def test_generation():
     # Create model
     print("Creating model...")
     model = EnhancedMoEModel(model_config)
-    model.load_state_dict(checkpoint['model_state_dict'])
+
+    # Load state dict with compatibility for architecture changes
+    state_dict = checkpoint['model_state_dict']
+
+    # Remove keys that don't exist in current model
+    model_keys = set(model.state_dict().keys())
+    checkpoint_keys = set(state_dict.keys())
+
+    # Keys in checkpoint but not in model (will be ignored)
+    extra_keys = checkpoint_keys - model_keys
+    if extra_keys:
+        print(f"Ignoring extra keys from checkpoint: {extra_keys}")
+        state_dict = {k: v for k, v in state_dict.items() if k in model_keys}
+
+    # Keys in model but not in checkpoint (will use initialized values)
+    missing_keys = model_keys - checkpoint_keys
+    if missing_keys:
+        print(f"Missing keys (using initialized values): {missing_keys}")
+
+    # Load with strict=False to allow missing keys
+    model.load_state_dict(state_dict, strict=False)
     model = model.cuda()
     model.eval()
 

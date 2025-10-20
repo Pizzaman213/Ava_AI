@@ -94,7 +94,13 @@ class IntelligentLRManager:
         else:
             # Use explicit warmup_steps if provided, otherwise use fallback
             self.warmup_steps = warmup_steps if warmup_steps is not None else 1000
-            self.main_training_steps = 10000  # Fallback
+            # FIXED: Calculate main_training_steps from warmup_ratio instead of hardcoding
+            # This prevents LR from decaying too fast when max_steps is None
+            if config.warmup_ratio > 0:
+                estimated_total = int(self.warmup_steps / config.warmup_ratio)
+                self.main_training_steps = estimated_total - self.warmup_steps
+            else:
+                self.main_training_steps = self.warmup_steps * 20  # Fallback: 20x warmup duration
 
         # Adaptive LR state
         self.plateau_detector = PlateauDetector(

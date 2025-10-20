@@ -8,7 +8,22 @@
       "WebSearch",
       "Read(//home/rapids/.vscode-server/extensions/anthropic.claude-code-2.0.20-linux-x64/**)",
       "Read(//home/rapids/.config/Code/**)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(find /project/code/outputs/runs -name \"*.pt\" -exec ls -lh {})",
+      "Bash(awk -F',' '{print $1}')",
+      "Bash(./test_stats.sh)",
+      "Bash(awk '{printf \"\"\"\"%-40s %8s\\n\"\"\"\", $9, $5}')",
+      "Bash(bash code/scripts/6_rhlf_Finetuning/QUICK_TEST.sh)",
+      "Bash(timeout 300 python code/scripts/6_rhlf_Finetuning/test_training_cpu.py)",
+      "Bash(tee /tmp/rlhf_training_test.log)",
+      "Read(//tmp/rlhf_test_output/**)",
+      "Bash(find /project/code/outputs/runs -name \"*.pt\" -exec ls -lh {} +)",
+      "Bash(for dir in /project/code/models/tokenizer/*/)",
+      "Bash(done)",
+      "Bash(awk '$5 ~ /^0$/ || $5 == \"\"\"\"0\"\"\"\" {print \"\"\"\"EMPTY:\"\"\"\", $9}')",
+      "Bash(rm /project/code/data/processed/AlekseyKorshuk_persona_chat_conversational.jsonl)",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(sort -k2)"
     ],
     "deny": [],
     "ask": []

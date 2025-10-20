@@ -11,6 +11,76 @@ import argparse
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
+import yaml
+
+
+class DynamicConfig:
+    """
+    Dynamic configuration class that accepts any fields from YAML.
+
+    Provides both dictionary-style and attribute-style access to configuration values.
+    Automatically converts nested dictionaries to nested DynamicConfig objects.
+
+    Example:
+        config = DynamicConfig({'training': {'batch_size': 32}})
+        config.training.batch_size  # Returns 32
+        config['training']['batch_size']  # Also returns 32
+    """
+
+    def __init__(self, data: Optional[Dict[str, Any]] = None):
+        """
+        Initialize DynamicConfig from a dictionary.
+
+        Args:
+            data: Dictionary of configuration values
+        """
+        if data:
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    # Recursively convert nested dicts to DynamicConfig
+                    setattr(self, key, DynamicConfig(value))
+                else:
+                    setattr(self, key, value)
+
+    def __getitem__(self, key: str) -> Any:
+        """Support dictionary-style access: config['key']"""
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Support dictionary-style assignment: config['key'] = value"""
+        setattr(self, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Get a configuration value with a default fallback.
+
+        Args:
+            key: Configuration key
+            default: Default value if key not found
+
+        Returns:
+            Configuration value or default
+        """
+        return getattr(self, key, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert DynamicConfig back to a dictionary.
+
+        Returns:
+            Dictionary representation of configuration
+        """
+        result = {}
+        for key, value in self.__dict__.items():
+            if isinstance(value, DynamicConfig):
+                result[key] = value.to_dict()
+            else:
+                result[key] = value
+        return result
+
+    def __repr__(self) -> str:
+        """String representation of DynamicConfig"""
+        return f"DynamicConfig({self.to_dict()})"
 
 
 @dataclass
@@ -257,6 +327,7 @@ class OutputConfig:
     output_dir: str = '/project/code/outputs'  # Output directory
     save_every: int = 100                     # Save frequency
     resume: Optional[str] = None              # Resume checkpoint
+    fresh_start: bool = False                 # Force fresh start, ignore checkpoints
 
 
 @dataclass
@@ -393,6 +464,55 @@ class TrainingConfigManager:
     def __init__(self):
         self.config = None
         self._feature_dependencies = self._build_feature_dependencies()
+
+    def load_yaml_config(self, config_path: str) -> DynamicConfig:
+        """
+        Load YAML configuration file into a dynamic structure.
+
+        Args:
+            config_path: Path to YAML configuration file
+
+        Returns:
+            DynamicConfig object with all YAML fields accessible via dot notation
+
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+        """
+        config_path_obj = Path(config_path)
+
+        # If path doesn't exist, try different relative paths
+        if not config_path_obj.exists():
+            # Try relative to current directory
+            alt_path = Path.cwd() / config_path
+            if alt_path.exists():
+                config_path_obj = alt_path
+            else:
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with open(config_path_obj, "r") as f:
+            config_dict = yaml.safe_load(f)
+
+        # AUTO-SYNC: Ensure gradient_accumulation_steps is consistent across all sections
+        # This prevents the common bug where training.gradient_accumulation_steps differs
+        # from deepspeed.gradient_accumulation_steps or lr_finder.gradient_accumulation_steps
+        if 'training' in config_dict and 'gradient_accumulation_steps' in config_dict['training']:
+            master_grad_accum = config_dict['training']['gradient_accumulation_steps']
+
+            # Sync deepspeed section
+            if 'deepspeed' in config_dict:
+                if config_dict['deepspeed'].get('gradient_accumulation_steps') != master_grad_accum:
+                    print(f"⚙️  Auto-syncing deepspeed.gradient_accumulation_steps: "
+                          f"{config_dict['deepspeed'].get('gradient_accumulation_steps', 'not set')} → {master_grad_accum}")
+                    config_dict['deepspeed']['gradient_accumulation_steps'] = master_grad_accum
+
+            # Sync lr_finder section
+            if 'lr_finder' in config_dict:
+                if config_dict['lr_finder'].get('gradient_accumulation_steps') != master_grad_accum:
+                    print(f"⚙️  Auto-syncing lr_finder.gradient_accumulation_steps: "
+                          f"{config_dict['lr_finder'].get('gradient_accumulation_steps', 'not set')} → {master_grad_accum}")
+                    config_dict['lr_finder']['gradient_accumulation_steps'] = master_grad_accum
+
+        return DynamicConfig(config_dict)
 
     def create_argument_parser(self) -> argparse.ArgumentParser:
         """Create comprehensive argument parser for training."""
@@ -866,7 +986,8 @@ Examples:
             output=OutputConfig(
                 output_dir=args.output_dir,
                 save_every=args.save_every,
-                resume=args.resume
+                resume=args.resume,
+                fresh_start=args.fresh_start
             ),
 
             run_management=RunManagementConfig(
@@ -917,6 +1038,95 @@ Examples:
         self.config = config
         return config
 
+    def create_unified_config(self, args: argparse.Namespace) -> DynamicConfig:
+        """
+        Create a unified configuration by loading YAML and merging command-line arguments.
+
+        This is the new recommended way to load configuration that:
+        - Loads all YAML fields dynamically (no predefined structure needed)
+        - Merges command-line argument overrides on top
+        - Returns a DynamicConfig object with dot notation access
+
+        Args:
+            args: Parsed command-line arguments
+
+        Returns:
+            DynamicConfig object with merged YAML + CLI configuration
+
+        Example:
+            config = manager.create_unified_config(args)
+            batch_size = config.training.batch_size
+            learning_rate = config.training.learning_rate
+        """
+        # Load YAML configuration dynamically
+        yaml_config = self.load_yaml_config(args.config)
+
+        # Apply command-line overrides
+        # Only override if the argument was explicitly provided (not None)
+
+        # Training overrides
+        if hasattr(yaml_config, 'training'):
+            if args.batch_size is not None:
+                yaml_config.training.batch_size = args.batch_size
+            if args.learning_rate is not None:
+                yaml_config.training.learning_rate = args.learning_rate
+            if args.epochs is not None:
+                yaml_config.training.epochs = args.epochs
+            if args.gradient_accumulation != 1:  # 1 is the default
+                yaml_config.training.gradient_accumulation_steps = args.gradient_accumulation
+        else:
+            # Create training section if it doesn't exist
+            training_dict = {}
+            if args.batch_size is not None:
+                training_dict['batch_size'] = args.batch_size
+            if args.learning_rate is not None:
+                training_dict['learning_rate'] = args.learning_rate
+            if args.epochs is not None:
+                training_dict['epochs'] = args.epochs
+            if args.gradient_accumulation != 1:
+                training_dict['gradient_accumulation_steps'] = args.gradient_accumulation
+            if training_dict:
+                yaml_config.training = DynamicConfig(training_dict)
+
+        # Data overrides
+        if hasattr(yaml_config, 'data'):
+            if args.data_dir != '/project/code/data/processed':  # Not default
+                yaml_config.data.data_dir = args.data_dir
+            if args.max_length != 512:  # Not default
+                yaml_config.data.max_length = args.max_length
+            if args.max_samples is not None:
+                yaml_config.data.max_samples = args.max_samples
+        else:
+            # Create data section if it doesn't exist
+            data_dict = {}
+            if args.data_dir != '/project/code/data/processed':
+                data_dict['data_dir'] = args.data_dir
+            if args.max_length != 512:
+                data_dict['max_length'] = args.max_length
+            if args.max_samples is not None:
+                data_dict['max_samples'] = args.max_samples
+            if data_dict:
+                yaml_config.data = DynamicConfig(data_dict)
+
+        # Output overrides
+        if hasattr(yaml_config, 'output'):
+            if args.output_dir != '/project/code/outputs':  # Not default
+                yaml_config.output.output_dir = args.output_dir
+            if args.resume is not None:
+                yaml_config.output.resume = args.resume
+        else:
+            output_dict = {}
+            if args.output_dir != '/project/code/outputs':
+                output_dict['output_dir'] = args.output_dir
+            if args.resume is not None:
+                output_dict['resume'] = args.resume
+            if output_dict:
+                yaml_config.output = DynamicConfig(output_dict)
+
+        # Store for later access
+        self.config = yaml_config
+        return yaml_config
+
     def _enable_all_features(self, args: argparse.Namespace) -> None:
         """Enable all enhanced features when --enable-all-features is set."""
         # Architecture features
@@ -956,6 +1166,62 @@ Examples:
             'quantization_aware': ['bit_width'],
             'nvfp4': ['nvfp4_block_size']
         }
+
+    def validate_dynamic_config(self, config: DynamicConfig) -> List[str]:
+        """
+        Validate dynamic configuration and return list of warnings/errors.
+
+        Args:
+            config: DynamicConfig object to validate
+
+        Returns:
+            List of validation messages
+        """
+        messages = []
+
+        # Helper function to safely get nested attributes
+        def safe_get(obj, path, default=None):
+            """Safely get nested attribute using dot notation"""
+            parts = path.split('.')
+            for part in parts:
+                if hasattr(obj, part):
+                    obj = getattr(obj, part)
+                else:
+                    return default
+            return obj
+
+        # Check DeepSpeed settings
+        if safe_get(config, 'deepspeed.use_deepspeed', False):
+            config_file = safe_get(config, 'deepspeed.config_file')
+            if config_file and not Path(config_file).exists():
+                messages.append(f"DeepSpeed config file not found: {config_file}")
+
+            zero_stage = safe_get(config, 'deepspeed.zero_stage', 0)
+            cpu_offload = safe_get(config, 'deepspeed.cpu_offload', False)
+            nvme_offload = safe_get(config, 'deepspeed.nvme_offload', False)
+
+            if zero_stage == 3 and not cpu_offload:
+                messages.append("Warning: ZeRO stage 3 without CPU offload may cause OOM")
+
+            if nvme_offload and not cpu_offload:
+                messages.append("Warning: NVMe offload requires CPU offload to be enabled")
+
+        # Check data directory exists
+        data_dir = safe_get(config, 'data.data_dir')
+        if data_dir and not Path(data_dir).exists():
+            messages.append(f"Warning: Data directory not found: {data_dir}")
+
+        # Check performance mode conflicts
+        perf_modes = [
+            safe_get(config, 'performance.ultra_fast_mode', False),
+            safe_get(config, 'performance.fast_progress', False),
+            safe_get(config, 'performance.minimal_progress', False),
+            safe_get(config, 'performance.express_mode', False)
+        ]
+        if sum(perf_modes) > 1:
+            messages.append("Warning: Multiple performance modes enabled, may conflict")
+
+        return messages
 
     def validate_config(self, config: EnhancedTrainingConfig) -> List[str]:
         """

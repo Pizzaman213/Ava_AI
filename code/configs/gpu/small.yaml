@@ -1,11 +1,11 @@
 model:
-  hidden_size: 96
-  num_layers: 4
-  num_attention_heads: 4
-  intermediate_size: 192
-  vocab_size: 27000
-  max_position_embeddings: 512
-  num_experts: 4
+  hidden_size: 512
+  num_layers: 14
+  num_attention_heads: 8
+  intermediate_size: 2048
+  vocab_size: 65536
+  max_position_embeddings: 256  # Reduced from 512 to save memory
+  num_experts: 8
   num_experts_per_token: 2
   expert_capacity_factor: 1.5
   router_type: deepseek
@@ -13,33 +13,53 @@ model:
   router_jitter_noise: 0.01
   use_cache: true
   rope_theta: 10000.0
-  attention_dropout: 0.05
-  hidden_dropout: 0.05
-  use_flash_attention: false
+  attention_dropout: 0.15
+  hidden_dropout: 0.15
+  use_flash_attention: true  # Enable flash attention to save memory
   layer_norm_eps: 1e-5
-  initializer_range: 0.02
+  initializer_range: 0.01
   hidden_act: gelu
   deepspeed_activation_checkpointing: false
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
   tie_word_embeddings: false
-  dropout: 0.05
-  use_learned_position_embeddings: false
+  dropout: 0.15
 training:
-  batch_size: 64  # Reduced from 128 for better stability
-  gradient_accumulation_steps: 1
+  batch_size: 32  # Minimal batch size to avoid OOM
+  gradient_accumulation_steps: 2  # Effective batch = 192 (24 * 8) - FIXED: was 1, causing noisy gradients
   max_gradient_norm: 1.0
-  num_epochs: 10
+  num_epochs: 1
   max_steps: null
   warmup_steps: 500
-  learning_rate: 0.0002
+  warmup_schedule: cosine
+  learning_rate: 0.0003791838957498536  # REDUCED by 50% to prevent overfitting
   lr_scheduler_type: cosine
-  lr_end: 1.0e-05
+  lr_end: 3.791838957498536e-05  # REDUCED by 50% to match new LR
+  weight_decay: 0.15  # INCREASED from 0.1 for better regularization
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
   repetition_penalty_weight: 0.0
   immediate_repetition_weight: 0.0
   min_sequence_length: 40
   eos_penalty_weight: 2.0
   eos_logit_bias: -1.5
+  entropy_regularization: 0.1
+  output_diversity_weight: 0.5
+  mixed_precision: bf16
+  dataloader_num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  gradient_checkpointing: true
+  eval_strategy: steps
+  eval_steps: 1000
+  eval_steps_type: training_steps  # 'training_steps' or 'optimizer_steps' - controls whether eval_steps counts training iterations or optimizer updates
+  save_strategy: steps
+  save_steps: 1000
+  save_total_limit: 3
+  logging_steps: 10
+  early_stopping_patience: 3  # REDUCED from 5 for faster stopping on overfitting
+  early_stopping_threshold: 0.01  # INCREASED from 0.005 for earlier stopping
   adaptive_lr:
     enabled: false
     min_lr: 5.0e-05
@@ -53,25 +73,6 @@ training:
     increase_factor: 1.05
     divergence_threshold: 5.0
     emergency_factor: 0.7
-  weight_decay: 0.1
-  beta1: 0.9
-  beta2: 0.999
-  eps: 1e-8
-  entropy_regularization: 0.1
-  output_diversity_weight: 0.5
-  mixed_precision: fp16
-  dataloader_num_workers: 2
-  prefetch_factor: 2
-  persistent_workers: false
-  gradient_checkpointing: false
-  eval_strategy: steps
-  eval_steps: 1000
-  save_strategy: steps
-  save_steps: 1000
-  save_total_limit: 3
-  logging_steps: 10
-  early_stopping_patience: 5
-  early_stopping_threshold: 0.005
   progressive:
     enable_progressive_training: false
     enable_sequence_scaling: false
@@ -89,30 +90,25 @@ training:
     target_memory_utilization: 0.85
     adjustment_frequency: 100
     adjustment_factor: 1.0
-    warmup_steps: 0
+    warmup_steps: 500
     smooth_transitions: false
   gradient_health:
-    enabled: false
-    initial_clip_value: 0.1
-    final_clip_value: 0.3
-    warmup_steps: 10000
-    explosion_threshold: 1000.0
+    enabled: true
+    initial_clip_value: 1.0
+    final_clip_value: 1.0
+    warmup_steps: 500
+    explosion_threshold: 5.0  # REDUCED from 10.0 for earlier detection
     explosion_window: 5
-    auto_reduce_lr: false
-    lr_reduction_factor: 0.7
-  max_grad_norm: 1.0
+    auto_reduce_lr: true
+    lr_reduction_factor: 0.5
 data:
   data_dir: /project/code/data/processed
-  max_length: 512
-  tokenizer_name: /project/code/models/tokenizer/enhanced-27000
+  max_length: 256  # Match max_position_embeddings to save memory
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65536
   padding_side: right
   truncation: true
   max_train_examples: null
   max_eval_examples: 5000
-  max_samples: null
-  val_max_samples: 5000
-  val_split_ratio: 0.15
-  buffer_size: 10000
   dataloader_drop_last: true
   dataloader_pin_memory: false
 deepspeed:
@@ -121,9 +117,9 @@ deepspeed:
   cpu_offload: false
   nvme_offload: false
   precision_type: fp16
-  train_batch_size: 32
-  micro_batch_size: 8
-  gradient_accumulation_steps: 4
+  train_batch_size: 192
+  micro_batch_size: 24  # FIXED: Changed from 4 to match training.batch_size
+  gradient_accumulation_steps: 8  # FIXED: Match training.gradient_accumulation_steps
   activation_checkpointing: false
 enhanced_features:
   architecture:
@@ -143,7 +139,7 @@ enhanced_features:
     mtp_weight: 0.01
     initial_temperature: 1.2
     adaptive_temperature: true
-    label_smoothing: 0.05
+    label_smoothing: 0.1  # INCREASED from 0.05 to reduce overfitting
     use_moe_balancing: true
     gradient_balance_weight: 0.02
     focal_loss: false
@@ -153,11 +149,6 @@ enhanced_features:
     adaptive_loss_scaling: false
     contrastive_loss_weight: 0.02
     diversity_loss_weight: 0.1
-    use_ngram_penalty: false
-    ngram_size: 3
-    ngram_penalty_weight: 0.0
-    use_immediate_repetition_detector: false
-    immediate_repetition_weight: 0.0
   adaptive_mtp:
     use_adaptive_mtp: false
     num_prediction_heads: 3
@@ -190,11 +181,7 @@ enhanced_features:
     memory_selection_strategy: importance
     memory_importance_threshold: 0.7
     memory_adaptation_rate: 0.01
-    memory_performance_window: 100
-    memory_replay_ratio: 0.01
-    memory_replay_strategy: random
     silent_mode: true
-    enable_auto_grad_accumulation: false
   quantization:
     quantization_aware: false
     use_nvfp4: true
@@ -206,27 +193,27 @@ enhanced_features:
     use_hadamard_transform: false
 data_loading:
   streaming: true
-  buffer_size: 2000
+  buffer_size: 10000
   max_samples: null
   val_max_samples: 5000
   val_split_ratio: 0.15
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 4
-  enable_bucketing: false
+  num_workers: 8
+  enable_bucketing: true
   bucket_boundaries:
+  - 64
   - 128
   - 256
-  - 512
   max_bucket_size: 64
   use_weighted_mixing: false
   mixing_temperature: 1.0
   shuffle_seed: 42
   reshuffle_each_epoch: true
   drop_last_batch: true
-  prefetch_factor: 2
-  persistent_workers: false
+  prefetch_factor: 4
+  persistent_workers: true
 performance:
   ultra_fast_mode: true
   fast_progress: false
@@ -240,17 +227,17 @@ performance:
     dynamic: false
     backend: inductor
 memory:
-  enable_memory_pool: false
+  enable_memory_pool: true
   pool_size_gb: 24.0
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   memory_threshold_gb: 24.0
   enable_cpu_offload: false
-  clear_cache_frequency: 10000
+  clear_cache_frequency: 50  # More frequent cleanup to prevent OOM
   silent_mode: true
-  target_utilization: 0.9
-  warning_threshold: 0.93
-  critical_threshold: 0.96
-  emergency_threshold: 0.98
+  target_utilization: 0.75  # Lower target to prevent OOM
+  warning_threshold: 0.80
+  critical_threshold: 0.85
+  emergency_threshold: 0.90
 evaluation:
   eval_during_training: true
   eval_metrics: perplexity
@@ -263,17 +250,17 @@ evaluation:
     log_frequency: 50000
 output:
   output_dir: outputs/small_enhanced
-  save_total_limit: 15
+  save_total_limit: 3
   save_on_each_node: false
 run_management:
   experiment_name: ava-small-enhanced-v3
   run_id: null
   resume_from_checkpoint: null
 device: auto
-fp16: true
-bf16: false
+fp16: false
+bf16: true
 lr_finder:
-  enabled: true
+  enabled: false
   start_lr: 1.0e-08
   end_lr: 0.01
   num_iterations: 1000
@@ -285,60 +272,54 @@ lr_finder:
   momentum_cycling: false
   track_validation: false
   num_runs: 1
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 8  # FIXED: Match training.gradient_accumulation_steps
 wandb:
   enabled: true
   project: Ava
+  entity: null
+  name: null
+  group: ava-enhanced-v3
+  job_type: train
   tags:
   - gpu
   - rtx-3090-ti
-  - 150M
+  - 100M
   - enhanced
   - moe
   - custom-tokenizer
   - enhanced-65k
+  - 65k-vocab
   - lr-finder-optimized
-  entity: null
-  name: null
-  notes: 'Enhanced config with: Fixed dropout (0.05), LR collapse prevention (lr_end=1e-04),
-    Limited training (30k steps), FastAI LR finder, Repetition penalties
+  notes: '[FIXED 2025-10-20] Loss bouncing and overfitting fixes:
 
-    [Auto-optimized 2025-10-14 10:50:00] LR: 3.65e-07, lr_end: 1.00e-05
+    - Gradient accumulation: 1→8 (effective batch: 24→192)
 
-    [Auto-optimized 2025-10-14 11:25:59] LR: 3.65e-07, lr_end: 1.00e-05
+    - Dropout: 0.05→0.15 (all dropout types)
 
-    [Auto-optimized 2025-10-14 11:36:18] LR: 7.94e-07, lr_end: 1.00e-05
+    - Learning rate: 7.58e-04→3.79e-04 (50% reduction)
 
-    [Auto-optimized 2025-10-14 18:03:10] LR: 7.94e-07, lr_end: 1.00e-05
+    - Weight decay: 0.1→0.15
 
+    - Label smoothing: 0.05→0.1
 
-    [Auto-optimized 2025-10-15 00:19:35] LR: 1.12e-05, lr_end: 1.00e-07
+    - Early stopping: patience 5→3, threshold 0.005→0.01
 
-
-    [Auto-optimized 2025-10-15 00:32:33] LR: 1.35e-05, lr_end: 1.00e-07
+    - Gradient explosion threshold: 10.0→5.0
 
 
-    [Auto-optimized 2025-10-15 00:42:52] LR: 9.66e-05, lr_end: 3.22e-07
 
+    [FIXED 2025-10-20] Evaluation interval fix:
 
-    [Auto-optimized 2025-10-15 10:19:40] LR: 9.01e-05, lr_end: 3.00e-07
+    - Added eval_steps_type: training_steps (default)
 
+    - Previously: eval_steps counted optimizer steps (every 8000 training steps with grad_accum=8)
 
-    [Auto-optimized 2025-10-15 11:00:38] LR: 2.71e-05, lr_end: 1.00e-07
+    - Now: eval_steps counts training steps (every 1000 training steps as intended)
 
+    - Use eval_steps_type: optimizer_steps to restore old behavior
 
-    [Auto-optimized 2025-10-15 11:26:48] LR: 1.30e-05, lr_end: 1.00e-07
+    '
 
-
-    [Auto-optimized 2025-10-15 20:05:30] LR: 1.37e-04, lr_end: 4.58e-07
-
-
-    [Auto-optimized 2025-10-15 20:56:01] LR: 1.28e-04, lr_end: 4.28e-07
-
-
-    [Auto-optimized 2025-10-15 21:13:43] LR: 6.76e-05, lr_end: 2.25e-07'
-  group: ava-enhanced-v3
-  job_type: train
   offline: false
   cache_size: 10000
   cache_flush_interval: 500
@@ -365,3 +346,87 @@ generation:
   no_repeat_ngram_size: 4
   do_sample: true
   num_beams: 1
+
+# RLHF Fine-tuning Configuration
+rlhf:
+  # Model paths
+  policy_model_path: /project/code/outputs/runs/latest/model  # Path to pretrained model to finetune
+  judge_model_path: /project/code/outputs/runs/latest/model  # Path to judge model (can be same as policy)
+  reward_model_path: null  # Optional: path to pre-trained reward model
+
+  # Reward model settings
+  use_model_to_model_reward: true  # Use model-to-model rating (judge evaluates policy outputs)
+  freeze_reward_model: true  # Freeze reward model during training
+
+  # Dataset paths
+  prompt_dataset_path: /project/code/data/rlhf/prompts.json  # Path to prompts dataset
+  eval_prompt_dataset_path: /project/code/data/rlhf/eval_prompts.json  # Optional: evaluation prompts
+
+  # Training settings
+  num_epochs: 3
+  rollout_batch_size: 16  # Number of prompts to process at once (reduced for small model)
+  num_rollouts_per_epoch: 500  # Number of rollouts per epoch
+  max_prompt_length: 256
+
+  # Output settings
+  save_dir: outputs/rlhf/small
+  log_dir: logs/rlhf/small
+  save_every: 500  # Save checkpoint every N steps
+  eval_every: 250  # Evaluate every N steps
+  num_eval_prompts: 50  # Number of prompts to use for evaluation
+
+  # Device
+  device: cuda  # cuda or cpu
+
+  # Weights & Biases logging
+  use_wandb: true
+  wandb_project: ava-rlhf
+  wandb_name: rlhf-small-v1
+
+  # PPO configuration
+  ppo:
+    # Learning rate and optimization
+    learning_rate: 5.0e-7  # Very low LR for RLHF fine-tuning on small model
+    batch_size: 16  # PPO batch size
+    mini_batch_size: 4  # Mini-batch size for PPO updates
+    gradient_accumulation_steps: 4  # Gradient accumulation
+    max_grad_norm: 0.5  # Lower gradient clipping for stability
+
+    # PPO hyperparameters
+    ppo_epochs: 4  # Number of PPO epochs per batch
+    clip_range: 0.2  # PPO clipping parameter
+    clip_range_value: 0.2  # Value function clipping
+    value_loss_coef: 0.5  # Weight for value loss
+    entropy_coef: 0.01  # Entropy bonus coefficient
+    gamma: 1.0  # Discount factor (1.0 for language modeling)
+    lambda: 0.95  # GAE lambda
+
+    # KL divergence penalty
+    kl_penalty: kl  # 'kl', 'abs', or 'mse'
+    target_kl: 0.01  # Target KL divergence
+    init_kl_coef: 0.2  # Initial KL coefficient
+    adaptive_kl: true  # Adaptively adjust KL coefficient
+
+    # Generation settings
+    max_gen_length: 128  # Maximum generation length
+    temperature: 1.0  # Sampling temperature
+    top_k: 50  # Top-k sampling
+    top_p: 0.95  # Nucleus sampling
+
+    # Training schedule
+    num_train_epochs: 1
+    max_steps: null  # Optional: maximum number of steps
+    warmup_steps: 50  # Fewer warmup steps for small model
+    logging_steps: 10
+    save_steps: 500
+    eval_steps: 250
+
+    # Reward processing
+    use_score_scaling: true  # Scale rewards
+    use_score_norm: true  # Normalize rewards
+    whiten_rewards: true  # Whiten advantages
+    clip_reward: 10.0  # Clip rewards to [-clip_reward, clip_reward]
+
+    # Memory optimization
+    gradient_checkpointing: true
+    mixed_precision: bf16  # 'no', 'fp16', or 'bf16'
