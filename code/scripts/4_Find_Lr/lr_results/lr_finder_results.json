@@ -1,0 +1,20 @@
+{
+  "methods": {
+    "fastai": 0.0003065395295056483,
+    "valley": 1.6338538778098445e-05,
+    "steepest": 6.162966255132866e-05
+  },
+  "statistics": {
+    "average": 0.0001281692436116918,
+    "min": 1.6338538778098445e-05,
+    "max": 0.0003065395295056483,
+    "variance_ratio": 18.76174691439113
+  },
+  "recommendation": {
+    "lr": 6.758181168161029e-05,
+    "strategy": "geometric_mean(fastai, valley, steepest)",
+    "confidence": "LOW",
+    "alternative_higher": 0.00020274543504483086,
+    "alternative_lower": 2.0274543504483084e-05
+  }
+}
