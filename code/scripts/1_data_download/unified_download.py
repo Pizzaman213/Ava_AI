@@ -98,6 +98,14 @@ DATASETS_CONFIG = {
     # ================================
     # TIER 2: HIGH-QUALITY WEB TEXT
     # ================================
+    "togethercomputer/RedPajama-Data-1T": {
+        "splits": ["train"], "subset": "default", "streaming_safe": True,
+        "categories": ["rag", "pretraining", "web"], "tokens": "very_high", "large": True,
+        "estimated_tokens_millions": 200000, "max_samples": 10000000,
+        "default_10b": True, "quality_score": 8.5, "priority": 1,
+        "description": "1 trillion token dataset - clean-room LLaMa replication with 7 high-quality sources",
+        "subsets": ["arxiv", "c4", "common_crawl", "github", "stackexchange", "wikipedia"]
+    },
     "allenai/c4": {
         "splits": ["train"], "subset": "en", "streaming_safe": True,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
@@ -365,6 +373,10 @@ class UnifiedDownloader:
                 return '\n'.join(texts)
 
         # ========== WEB TEXT DATASETS ==========
+        if "redpajama" in dataset_name.lower():
+            if 'text' in sample:
+                return sample['text']
+
         if any(x in dataset_name.lower() for x in ['fineweb', 'c4', 'dolma', 'pile', 'openwebtext']):
             if 'text' in sample:
                 return sample['text']
