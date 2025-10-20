@@ -201,6 +201,7 @@ data_loading:
   use_multi_column: false
   distributed: false
   num_workers: 8
+  samples_per_file: 20  # NEW: Samples per file before rotation (1=max diversity, higher=less I/O)
   enable_bucketing: true
   bucket_boundaries:
   - 64

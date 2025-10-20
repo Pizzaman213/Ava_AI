@@ -174,6 +174,7 @@ class StreamingDataset(IterableDataset):
         use_weighted_mixing: bool = True,
         mixing_temperature: float = 1.0,
         data_mixer: Optional[WeightedDataMixer] = None,
+        samples_per_file: int = 1,  # New: configurable samples per file before rotation
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -182,6 +183,7 @@ class StreamingDataset(IterableDataset):
         self.max_samples = max_samples
         self.buffer_size = buffer_size
         self.dynamic_length_fn = dynamic_length_fn  # Function to get current sequence length
+        self.samples_per_file = samples_per_file  # Store configurable samples per file
 
         # Initialize length-based bucketing
         self.bucketing = LengthBasedBucketing(
@@ -536,11 +538,12 @@ class StreamingDataset(IterableDataset):
                 return
 
             if should_print:
-                print(f"  📚 Streaming from {len(set(f[0] for f in file_generators))} unique files")
+                unique_files = len(set(f[0] for f in file_generators))
+                print(f"  📚 Streaming from {unique_files} unique files (all workers access all files, rotating {self.samples_per_file} sample(s) per file)")
 
             # Interleave samples from all files
-            # SPEED OPTIMIZATION: Read large chunks to reduce file switching overhead
-            samples_per_file = 500  # Read 500 samples from each file before switching (was 100)
+            # BETTER SHUFFLING: Configurable samples per file for round-robin rotation
+            samples_per_file = self.samples_per_file  # Configurable: how many samples from each file before switching
             exhausted_files = set()
 
             while len(exhausted_files) < len(file_generators):
@@ -678,49 +681,32 @@ class StreamingDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
         """Iterate over the dataset with length-based bucketing"""
-        # CRITICAL FIX: Handle multi-worker data loading correctly
+        # IMPROVED: All workers access all files, but process different samples
+        # This provides better data mixing with the rotating shuffle approach
         worker_info = torch.utils.data.get_worker_info()
-        original_files = None  # Track original files for restoration
+
         if worker_info is not None:
-            # Split data files across workers to avoid duplication/deadlock
             num_workers = worker_info.num_workers
             worker_id = worker_info.id
-
-            # Save original files and use worker subset
-            original_files = self.data_files
-
-            # FIX: Cycle files across workers instead of modulo distribution
-            # This ensures all workers get files even when num_workers > num_files
-            if len(self.data_files) == 0:
-                worker_files = []
-            elif len(self.data_files) >= num_workers:
-                # More files than workers: distribute evenly
-                worker_files = [f for i, f in enumerate(self.data_files) if i % num_workers == worker_id]
-            else:
-                # Fewer files than workers: cycle files to give each worker at least one
-                # Each worker gets every Nth file where N = num_workers, starting at worker_id
-                worker_files = []
-                file_idx = worker_id % len(self.data_files)
-                while file_idx < len(self.data_files):
-                    worker_files.append(self.data_files[file_idx])
-                    file_idx += num_workers
-
-                # If worker still has no files, assign files in round-robin
-                if not worker_files:
-                    # Cycle through files: worker N gets file (N % num_files)
-                    worker_files = [self.data_files[worker_id % len(self.data_files)]]
         else:
-            worker_files = None  # Use all files
+            num_workers = 1
+            worker_id = 0
 
         count = 0
         buffer = []
         samples_processed = 0  # Track total samples processed from files
+        sample_index = 0  # Track sample index for worker distribution
 
-        # CRITICAL FIX: No per-sample filtering needed - we use file-based splitting
-        # Files are already split at the file level in _find_data_files()
-        # This eliminates data leakage and non-determinism issues
+        # All workers access all files for better data mixing
+        # Each worker processes every Nth sample where N = num_workers
+        for text in self._stream_examples(files_to_use=None):
+            # Worker-level sample distribution: each worker takes every Nth sample
+            if sample_index % num_workers != worker_id:
+                sample_index += 1
+                continue
 
-        for text in self._stream_examples(files_to_use=worker_files):
+            sample_index += 1
+
             if self.max_samples and count >= self.max_samples:
                 break
 
@@ -807,10 +793,6 @@ class StreamingDataset(IterableDataset):
                     print(f"⚠️  Warning: Read {samples_processed} samples but only yielded {count}")
                     print(f"    Bucketing stats: {stats['samples_in_buckets']} samples still in buckets")
 
-        # Restore original data_files if we're in a worker
-        if original_files is not None:
-            self.data_files = original_files
-
 
 def create_streaming_dataloaders(
     tokenizer,
@@ -834,6 +816,7 @@ def create_streaming_dataloaders(
     use_weighted_mixing: bool = True,  # Enhanced: Enable DoReMi-style weighted mixing
     mixing_temperature: float = 1.0,  # Enhanced: Temperature for sampling distribution
     data_mixer: Optional[WeightedDataMixer] = None,  # Enhanced: Custom data mixer
+    samples_per_file: int = 1,  # New: configurable samples per file before rotation (1=max diversity, higher=faster I/O)
 ) -> Tuple[DataLoader, DataLoader]:
     """Create streaming train and validation dataloaders with distributed support
 
@@ -845,6 +828,8 @@ def create_streaming_dataloaders(
         use_weighted_mixing: Enable quality-based weighted sampling (default: True)
         mixing_temperature: Sampling temperature (1.0 = moderate, 0.5 = sharp, 2.0 = smooth)
         data_mixer: Custom WeightedDataMixer instance (optional)
+        samples_per_file: Number of samples to read from each file before rotating (default: 1)
+                         1 = maximum diversity, higher values = reduced I/O overhead
     """
 
     # Safety check for batch_size
@@ -894,6 +879,7 @@ def create_streaming_dataloaders(
             use_weighted_mixing=use_weighted_mixing,
             mixing_temperature=mixing_temperature,
             data_mixer=data_mixer,
+            samples_per_file=samples_per_file,
         )
     else:
         # Use regular StreamingDataset when max_samples is specified
@@ -911,6 +897,7 @@ def create_streaming_dataloaders(
             use_weighted_mixing=use_weighted_mixing,
             mixing_temperature=mixing_temperature,
             data_mixer=data_mixer,
+            samples_per_file=samples_per_file,
         )
 
     # FIX: Make validation samples configurable instead of hardcoded
@@ -942,6 +929,7 @@ def create_streaming_dataloaders(
         use_weighted_mixing=False,  # Disable for validation (want representative sample)
         mixing_temperature=1.0,
         data_mixer=None,
+        samples_per_file=samples_per_file,
     )
 
     # Create dataloaders with distributed support
@@ -1011,6 +999,7 @@ class InfiniteStreamingDataset(IterableDataset):
         use_weighted_mixing: bool = True,
         mixing_temperature: float = 1.0,
         data_mixer: Optional[WeightedDataMixer] = None,
+        samples_per_file: int = 1,
     ):
         self.base_dataset = StreamingDataset(
             data_dir=data_dir,
@@ -1026,6 +1015,7 @@ class InfiniteStreamingDataset(IterableDataset):
             use_weighted_mixing=use_weighted_mixing,
             mixing_temperature=mixing_temperature,
             data_mixer=data_mixer,
+            samples_per_file=samples_per_file,
         )
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:

@@ -625,14 +625,25 @@ def create_dataloaders(
         print(f"\n📈 Total examples found: {total_examples:,}")
         print(f"📁 Total files: {file_count}")
 
-        # Get num_workers from config (use optimized defaults from DataConfig)
-        num_workers = getattr(training_config.data, 'num_workers', 8)
-        prefetch_factor = getattr(training_config.data, 'prefetch_factor', 4)
-        persistent_workers = getattr(training_config.data, 'persistent_workers', True)
+        # Get num_workers from config (prioritize data_loading section, fallback to data section)
+        if hasattr(training_config, 'data_loading'):
+            num_workers = getattr(training_config.data_loading, 'num_workers', 8)
+            prefetch_factor = getattr(training_config.data_loading, 'prefetch_factor', 4)
+            persistent_workers = getattr(training_config.data_loading, 'persistent_workers', True)
+        else:
+            # Fallback to old location for backward compatibility
+            num_workers = getattr(training_config.data, 'num_workers', 8)
+            prefetch_factor = getattr(training_config.data, 'prefetch_factor', 4)
+            persistent_workers = getattr(training_config.data, 'persistent_workers', True)
 
-        # Get validation dataset config
-        val_max_samples = getattr(training_config.data, 'val_max_samples', None)
-        val_split_ratio = getattr(training_config.data, 'val_split_ratio', 0.1)
+        # Get validation dataset config (prioritize data_loading section)
+        if hasattr(training_config, 'data_loading'):
+            val_max_samples = getattr(training_config.data_loading, 'val_max_samples', None)
+            val_split_ratio = getattr(training_config.data_loading, 'val_split_ratio', 0.1)
+        else:
+            # Fallback to data section for backward compatibility
+            val_max_samples = getattr(training_config.data, 'val_max_samples', None)
+            val_split_ratio = getattr(training_config.data, 'val_split_ratio', 0.1)
 
         # Calculate expected training metrics
         gradient_acc_steps = getattr(training_config.training, 'gradient_accumulation_steps',
@@ -653,6 +664,13 @@ def create_dataloaders(
 
         expected_steps = train_samples // effective_batch_size if train_samples > 0 else 0
 
+        # Get samples_per_file from config (prioritize data_loading section)
+        if hasattr(training_config, 'data_loading'):
+            samples_per_file = getattr(training_config.data_loading, 'samples_per_file', 1)
+        else:
+            # Fallback to data section for backward compatibility
+            samples_per_file = getattr(training_config.data, 'samples_per_file', 1)
+
         print(f"\n🎯 Training Configuration:")
         print(f"   Batch size: {batch_size}")
         print(f"   Gradient accumulation steps: {gradient_acc_steps}")
@@ -662,9 +680,11 @@ def create_dataloaders(
         print(f"   Expected training steps: {expected_steps:,}")
         print(f"   Workers: {num_workers}")
         print(f"   Buffer size: {training_config.data.buffer_size:,}")
+        print(f"   Samples per file rotation: {samples_per_file} (1=max diversity, higher=less I/O)")
         print("="*80 + "\n")
 
         print(" Creating enhanced streaming dataloaders...")
+
         train_loader, val_loader = create_streaming_dataloaders(
             tokenizer=tokenizer,
             batch_size=batch_size,
@@ -678,6 +698,7 @@ def create_dataloaders(
             enable_bucketing=False,  # Temporarily disable bucketing to ensure data flows
             val_max_samples=val_max_samples,
             val_split_ratio=val_split_ratio,
+            samples_per_file=samples_per_file,
         )
 
         # Minimum samples validation (Phase 2.1)
