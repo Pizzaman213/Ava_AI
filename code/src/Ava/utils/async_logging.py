@@ -121,7 +121,10 @@ class AsyncLogger:
 
         # Final flush
         self._flush_wandb_cache()
-        print("Async logging stopped")
+
+        # Print final statistics
+        print("\n🏁 Async logging stopped")
+        self.print_statistics()
 
     def log_metrics(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
         """
@@ -332,21 +335,39 @@ class AsyncLogger:
             return
         except Exception as e:
             # Handle specific network errors by falling back to offline mode
-            if any(keyword in str(e).lower() for keyword in ['socket', 'network', 'connection', 'timeout', 'unreachable']):
+            error_lower = str(e).lower()
+            is_network_error = any(keyword in error_lower for keyword in ['socket', 'network', 'connection', 'timeout', 'unreachable'])
+
+            if is_network_error:
                 if not self.wandb_offline:
-                    print(" WandB network error detected, switching to offline mode")
+                    print(f"⚠ WandB network error detected: {e}")
+                    print("  → Switching to offline mode (metrics will sync when network is available)")
                     self.wandb_offline = True
                     try:
                         import os
                         os.environ['WANDB_MODE'] = 'offline'
                         import wandb
+                        # Verify offline mode engaged
+                        if wandb.run:
+                            print(f"  ✓ WandB offline mode active (run will sync later)")
                         wandb.log(metrics, step=step)  # Retry in offline mode
                         return
-                    except Exception:
-                        pass
+                    except Exception as retry_error:
+                        print(f"  ✗ Offline mode retry failed: {retry_error}")
+                        print("  → Metrics will be cached for manual recovery")
+
+                # Track network errors for diagnostics
                 self.logging_stats['network_errors'] = self.logging_stats.get('network_errors', 0) + 1
+
+                # Cache metrics for later flush when network returns
+                self._cache_metrics(metrics, step)
             else:
+                # Non-network error
                 self.logging_stats['wandb_errors'] = self.logging_stats.get('wandb_errors', 0) + 1
+                print(f"⚠ WandB logging error (step {step}): {e}")
+                print(f"  Error type: {type(e).__name__}")
+                # Cache metrics for recovery
+                self._cache_metrics(metrics, step)
             return
 
     def _cache_metrics(self, metrics: Dict[str, Any], step: int) -> None:
@@ -505,6 +526,54 @@ class AsyncLogger:
         self.start_time = state_dict.get('start_time', time.time())
         self.network_retry_delay = state_dict.get('network_retry_delay', self.config.wandb_retry_delay)
         self.last_network_success = state_dict.get('last_network_success', time.time())
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive logging statistics for diagnostics."""
+        stats = {
+            'total_items_processed': self.logging_stats.get('items_processed', 0),
+            'metrics_queued': self.logging_stats.get('metrics_queued', 0),
+            'metrics_dropped': self.logging_stats.get('metrics_dropped', 0),
+            'wandb_errors': self.logging_stats.get('wandb_errors', 0),
+            'network_errors': self.logging_stats.get('network_errors', 0),
+            'cache_size': len(self.wandb_cache),
+            'wandb_offline_mode': self.wandb_offline,
+            'wandb_available': self.wandb_available,
+            'queue_size': self.log_queue.qsize() if hasattr(self, 'log_queue') and hasattr(self.log_queue, 'qsize') else 0,
+        }
+
+        # Calculate drop rate
+        total_queued = self.logging_stats.get('metrics_queued', 0)
+        total_dropped = self.logging_stats.get('metrics_dropped', 0)
+        if total_queued > 0:
+            stats['drop_rate_percent'] = (total_dropped / total_queued) * 100
+        else:
+            stats['drop_rate_percent'] = 0.0
+
+        return stats
+
+    def print_statistics(self) -> None:
+        """Print comprehensive logging statistics."""
+        stats = self.get_statistics()
+        print("\n📊 Async Logger Statistics:")
+        print(f"  ✓ Items processed: {stats['total_items_processed']}")
+        print(f"  ✓ Metrics queued: {stats['metrics_queued']}")
+
+        if stats['metrics_dropped'] > 0:
+            print(f"  ⚠ Metrics dropped: {stats['metrics_dropped']} ({stats['drop_rate_percent']:.2f}%)")
+
+        if stats['network_errors'] > 0:
+            print(f"  ⚠ Network errors: {stats['network_errors']}")
+            if stats['wandb_offline_mode']:
+                print(f"    → WandB in offline mode (will sync when network available)")
+
+        if stats['wandb_errors'] > 0:
+            print(f"  ⚠ WandB errors: {stats['wandb_errors']}")
+
+        if stats['cache_size'] > 0:
+            print(f"  📦 Cached metrics: {stats['cache_size']} (waiting for flush)")
+
+        print(f"  🔌 WandB status: {'Offline' if stats['wandb_offline_mode'] else 'Online'}")
+        print(f"  📨 Queue size: {stats['queue_size']}")
 
 
 # Context manager for automatic cleanup

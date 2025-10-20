@@ -2999,13 +2999,18 @@ class EnhancedModularTrainer:
         memory_cleanup_needed = False
 
         # SPEED OPTIMIZATION: Only cleanup on true emergencies or very rare periodic checks
-        # Reduced frequency from 2000 to 5000 for even better performance
-        if self.step_count % 5000 == 0:  # Regular cleanup interval (very rare)
+        # Use config.clear_cache_frequency if available, otherwise default to 10000
+        clear_cache_freq = getattr(self.config.memory, 'clear_cache_frequency', 10000)
+
+        if self.step_count % clear_cache_freq == 0:  # Regular cleanup interval (from config)
             memory_cleanup_needed = True
-        elif memory_health.get("status") == "emergency":  # ONLY emergency (99.5%+)
-            memory_cleanup_needed = True
-        elif memory_health.get("oom_risk", 0.0) > 0.95:  # Only extreme OOM risk (was 0.9)
-            memory_cleanup_needed = True
+        # CRITICAL FIX: Only check emergency/OOM risk when we actually checked memory health
+        # Otherwise cached values can trigger false alarms
+        elif should_check_memory:
+            if memory_health.get("status") == "emergency":  # ONLY emergency (99.5%+)
+                memory_cleanup_needed = True
+            elif memory_health.get("oom_risk", 0.0) > 0.95:  # Only extreme OOM risk (was 0.9)
+                memory_cleanup_needed = True
 
         if memory_cleanup_needed and torch.cuda.is_available():
             cleanup_aggressive = memory_health.get("status") == "emergency"

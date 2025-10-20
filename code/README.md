@@ -7,6 +7,10 @@
 
 A state-of-the-art framework for training Large Language Models (LLMs) with **Mixture of Experts (MoE)**, advanced attention mechanisms, and comprehensive optimization techniques.
 
+##  Recent Updates
+
+**2025-10-20**: Fixed evaluation interval configuration - `eval_steps` now counts training steps instead of optimizer steps. See [EVAL_STEPS_FIX.md](/EVAL_STEPS_FIX.md) for details.
+
 ##  Fastest Setup - One Command
 
 ```bash
