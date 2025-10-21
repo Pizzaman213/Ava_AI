@@ -175,7 +175,7 @@ class PPOTrainer:
         # Generate
         self.model.eval()
         with torch.no_grad():
-            gen_output = self.model.generate(
+            gen_output = self.model.generate(  # type: ignore[call-arg]
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 max_new_tokens=max_length,
@@ -392,9 +392,10 @@ class PPOTrainer:
         expanded_rewards = torch.zeros(batch_size, seq_len, device=rewards.device)
         # Put the reward at the last valid token position for each sequence
         for i in range(batch_size):
-            valid_len = attention_mask[i].sum().item()
+            valid_len: int = int(attention_mask[i].sum().item())
             if valid_len > 0:
-                expanded_rewards[i, valid_len - 1] = rewards[i]
+                idx: int = valid_len - 1
+                expanded_rewards[i, idx] = rewards[i]
 
         advantages, returns = self.compute_advantages(
             expanded_rewards,

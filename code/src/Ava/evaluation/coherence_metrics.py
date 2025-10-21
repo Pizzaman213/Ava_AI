@@ -211,11 +211,12 @@ class CoherenceMetrics:
                 'coherence_score': 0.0
             }
 
-        # Average across samples
-        avg_metrics = {
-            key: np.mean([m[key] for m in all_metrics])
-            for key in all_metrics[0].keys()
-        }
+        # Average across samples - convert to Python floats for consistency
+        avg_metrics: Dict[str, float] = {}
+        for key in all_metrics[0].keys():
+            mean_val = np.mean([m[key] for m in all_metrics])
+            # Ensure conversion to Python float, not numpy float
+            avg_metrics[key] = float(mean_val.item()) if hasattr(mean_val, 'item') else float(mean_val)
 
         # Calculate overall coherence score (0-100)
         score = 0.0
@@ -254,8 +255,22 @@ class CoherenceMetrics:
         elif 0.4 <= zipf <= 1.6:
             score += 5
 
-        avg_metrics['coherence_score'] = float(score)
-        return avg_metrics
+        # Return with coherence score added, converting all values to Python floats
+        # We rebuild the dict to ensure all values are pure Python floats, not numpy types
+        result: Dict[str, float] = {}  # type: ignore[misc]
+        for k, v in avg_metrics.items():
+            if isinstance(v, np.ndarray):
+                # Explicitly convert numpy types to Python float
+                val: float = float(v.item()) if v.ndim == 0 else float(v.mean())
+                result[k] = val  # type: ignore[assignment]
+            elif isinstance(v, (np.floating, np.integer)):
+                # Handle numpy scalar types - cast to ensure Python float
+                result[k] = float(v)  # type: ignore[assignment]
+            else:
+                # Any other type - convert to float
+                result[k] = float(v)  # type: ignore[assignment]
+        result['coherence_score'] = float(score)
+        return result  # type: ignore[return-value]
 
     @staticmethod
     def format_report(metrics: Dict[str, float]) -> str:

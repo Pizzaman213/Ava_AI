@@ -77,8 +77,12 @@ import json
 from tqdm import tqdm
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
-from pydantic._internal._generate_schema import UnsupportedFieldAttributeWarning
-warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+    warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
+except ImportError:
+    # Newer versions of Pydantic may not have this warning
+    pass
 
 # Add project root to path
 sys.path.append('/project/code')

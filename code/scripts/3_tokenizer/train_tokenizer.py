@@ -186,21 +186,21 @@ class EnhancedTokenizerTrainer:
         # 1. Whitespace (standard)
         # 2. Digits (preserve number integrity)
         # 3. Byte-level (handle all Unicode)
-        tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
+        tokenizer.pre_tokenizer = pre_tokenizers.Sequence([  # type: ignore[assignment]
             Digits(individual_digits=False),  # Keep numbers together
             ByteLevel(add_prefix_space=True),  # Byte-level encoding
         ])
 
         # Normalize Unicode (convert variants to standard form)
-        tokenizer.normalizer = normalizers.Sequence([
+        tokenizer.normalizer = normalizers.Sequence([  # type: ignore[assignment]
             NFKC(),  # Canonical decomposition + compatibility composition
         ])
 
         # Decoder
-        tokenizer.decoder = decoders.ByteLevel()
+        tokenizer.decoder = decoders.ByteLevel()  # type: ignore[assignment]
 
         # Post-processing (add special tokens)
-        tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)
+        tokenizer.post_processor = processors.ByteLevel(trim_offsets=True)  # type: ignore[assignment]
 
         return tokenizer
 

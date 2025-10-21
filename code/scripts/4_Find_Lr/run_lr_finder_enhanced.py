@@ -77,7 +77,7 @@ def run_enhanced_lr_finder(
     config_path: str,
     output_dir: str = "lr_results",
     num_runs: int = 1,
-    methods: list = None
+    methods: list | None = None
 ) -> Dict[str, Any]:
     """
     Run enhanced LR finder with multiple methods and averaging.
@@ -207,8 +207,10 @@ def run_enhanced_lr_finder(
         if field in full_config and isinstance(full_config[field], str):
             full_config[field] = float(full_config[field])
 
-    model_config = SimpleNamespace(**full_config)
-    model = EnhancedMoEModel(model_config).to(device)
+    # Import the proper config class - ModelConfig for model-specific parameters
+    from Ava.config.training_config import ModelConfig
+    model_config = ModelConfig(**full_config)
+    model = EnhancedMoEModel(model_config).to(device)  # type: ignore[arg-type]
     logger.info(f"Model created with {sum(p.numel() for p in model.parameters())/1e6:.1f}M parameters")
 
     # Create optimizer
@@ -273,8 +275,8 @@ def run_enhanced_lr_finder(
         # Otherwise model state carries over from previous run
         logger.info(f"🔄 Resetting model and optimizer for {method}...")
 
-        # Recreate model from scratch
-        model = EnhancedMoEModel(model_config).to(device)
+        # Recreate model from scratch using the ModelConfig created earlier
+        model = EnhancedMoEModel(model_config).to(device)  # type: ignore[arg-type]
 
         # Recreate optimizer
         optimizer = torch.optim.AdamW(
@@ -372,10 +374,21 @@ def run_enhanced_lr_finder(
         # 2. Use geometric mean of non-outlier methods
         # 3. Provide clear explanation of what was excluded and why
 
+        # Initialize variables for outlier detection (needed for all paths)
+        median_lr = None
+        iqr = None
+
         if len(suggested_lrs) >= 2:
             # Calculate median
             sorted_lrs = sorted(suggested_lrs.values())
             median_lr = sorted_lrs[len(sorted_lrs) // 2]
+
+            # Calculate IQR (Interquartile Range) for outlier detection
+            q1_idx = len(sorted_lrs) // 4
+            q3_idx = 3 * len(sorted_lrs) // 4
+            q1 = sorted_lrs[q1_idx] if q1_idx < len(sorted_lrs) else sorted_lrs[0]
+            q3 = sorted_lrs[q3_idx] if q3_idx < len(sorted_lrs) else sorted_lrs[-1]
+            iqr = q3 - q1 if q3 > q1 else 1.0  # Avoid division by zero
 
             # Detect outliers (methods >5x away from median)
             non_outliers = {}
@@ -432,8 +445,15 @@ def run_enhanced_lr_finder(
             strategy = "3x minimum (fallback)"
 
         # Calculate final variance for confidence assessment
-        if len(non_outliers) >= 2:
-            final_variance = non_outlier_variance
+        import numpy as np
+        # Use median_lr and iqr if they were calculated (when len >= 2), otherwise use all values
+        if median_lr is not None and iqr is not None:
+            non_outlier_values_list = [v for v in suggested_lrs.values() if abs(v - median_lr) <= 1.5 * iqr]
+        else:
+            non_outlier_values_list = list(suggested_lrs.values())
+        non_outlier_variance_calculated = np.var(non_outlier_values_list) if non_outlier_values_list else variance
+        if len(non_outlier_values_list) >= 2:
+            final_variance = non_outlier_variance_calculated
         else:
             final_variance = variance
 
@@ -522,6 +542,7 @@ def update_config_with_lr(config_path: str, suggested_lr: float, backup: bool = 
     import shutil
 
     config_file = Path(config_path)
+    backup_file = None
 
     # Create timestamped backup if requested
     if backup:
@@ -572,7 +593,7 @@ def update_config_with_lr(config_path: str, suggested_lr: float, backup: bool = 
     logger.info(f"   learning_rate: {old_lr} → {suggested_lr:.2e}")
     logger.info(f"   lr_end: {old_lr_end} → {lr_end:.2e} (1/300 of peak, ensures proper decay)")
     logger.info(f"   ✓ Validation: lr_end < learning_rate ({lr_end:.2e} < {suggested_lr:.2e})")
-    if backup:
+    if backup and backup_file:
         logger.info(f"   backup: {backup_file}")
     logger.info(f"{'='*80}\n")
 

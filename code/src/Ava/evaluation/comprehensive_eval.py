@@ -969,7 +969,7 @@ class ComprehensiveEvaluator:
                 else:
                     # Compute loss manually
                     if hasattr(outputs, 'logits'):
-                        logits = outputs.logits
+                        logits = outputs.logits  # type: ignore[attr-defined]
                     elif isinstance(outputs, dict) and 'logits' in outputs:
                         logits = outputs['logits']
                     else:
@@ -988,7 +988,7 @@ class ComprehensiveEvaluator:
                 # Compute accuracy
                 if compute_accuracy:
                     if hasattr(outputs, 'logits'):
-                        logits = outputs.logits
+                        logits = outputs.logits  # type: ignore[attr-defined]
                     elif isinstance(outputs, dict) and 'logits' in outputs:
                         logits = outputs['logits']
                     else:
@@ -1014,7 +1014,7 @@ class ComprehensiveEvaluator:
                 if compute_expert_stats and expert_activations is not None:
                     router_logits = None
                     if hasattr(outputs, 'router_logits'):
-                        router_logits = outputs.router_logits
+                        router_logits = outputs.router_logits  # type: ignore[attr-defined]
                     elif isinstance(outputs, dict) and 'router_logits' in outputs:
                         router_logits = outputs['router_logits']
 

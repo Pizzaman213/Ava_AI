@@ -19,7 +19,7 @@ from datetime import datetime
 src_path = Path(__file__).parent.parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-from Ava.models import EnhancedMoEModel
+from Ava.models import EnhancedMoEModel  # type: ignore[attr-defined]
 from Ava.config.training_config import TrainingConfig
 from transformers import AutoTokenizer
 
@@ -197,12 +197,24 @@ class CoherenceEvaluator:
     def __init__(self, model_path: str, config_path: str):
         print("Loading model and tokenizer...")
 
-        # Load config
-        self.config = TrainingConfig.from_yaml(config_path)
+        # Load config - use load method if from_yaml doesn't exist
+        import yaml
+        with open(config_path, 'r') as f:
+            config_dict = yaml.safe_load(f)
+        # Use EnhancedTrainingConfig which has all config sections including model
+        from Ava.config.training_config import EnhancedTrainingConfig, ModelConfig
+        try:
+            self.config = EnhancedTrainingConfig(**config_dict)  # type: ignore[call-arg]
+        except (TypeError, KeyError):
+            # Fallback: manually set config_file and required fields
+            config_dict['config_file'] = config_path
+            self.config = EnhancedTrainingConfig(**config_dict)  # type: ignore[call-arg]
 
-        # Load tokenizer
+        # Load tokenizer - get model config for tokenizer name
+        model_dict = config_dict.get('model', {})
+        tokenizer_name = model_dict.get('tokenizer_name', 'Qwen/Qwen2.5-0.5B')
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.config.model.tokenizer_name,
+            tokenizer_name,
             use_fast=True
         )
         if self.tokenizer.pad_token is None:
@@ -210,7 +222,12 @@ class CoherenceEvaluator:
 
         # Load model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = EnhancedMoEModel(self.config.model)
+        # Type: EnhancedMoEModel might be None from conditional import
+        if EnhancedMoEModel is None:
+            raise ImportError("EnhancedMoEModel is not available")
+        # Create ModelConfig from the model section of the config
+        model_config = ModelConfig(**model_dict)
+        self.model = EnhancedMoEModel(model_config)
 
         # Load checkpoint
         checkpoint = torch.load(model_path, map_location=self.device)
@@ -250,10 +267,14 @@ class CoherenceEvaluator:
                     max_length=512
                 ).to(self.device)
 
-                # Generate
-                outputs = self.model.generate(
-                    input_ids=inputs.input_ids,
-                    attention_mask=inputs.attention_mask,
+                # Generate - EnhancedMoEModel has a generate method
+                # Ensure we're passing tensors correctly
+                input_tensor = inputs.input_ids if isinstance(inputs.input_ids, torch.Tensor) else inputs['input_ids']
+                attention_mask = inputs.attention_mask if hasattr(inputs, 'attention_mask') else inputs.get('attention_mask')
+
+                outputs = self.model.generate(  # type: ignore[misc]
+                    input_ids=input_tensor,
+                    attention_mask=attention_mask,
                     max_length=max_length,
                     temperature=temperature,
                     top_p=top_p,
@@ -265,8 +286,9 @@ class CoherenceEvaluator:
                 )
 
                 # Decode
-                generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                token_ids = outputs[0].cpu().tolist()
+                output_tensor = outputs[0] if isinstance(outputs, torch.Tensor) else outputs
+                generated_text = self.tokenizer.decode(output_tensor, skip_special_tokens=True)
+                token_ids = output_tensor.cpu().tolist()
 
                 samples.append((generated_text, token_ids))
 

@@ -9,7 +9,7 @@ Orchestrates the full RLHF training pipeline including:
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional, Any, Iterator
+from typing import Dict, List, Optional, Any, Iterator, Union
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class RLHFConfig:
     """Configuration for RLHF training."""
     # PPO configuration
-    ppo: PPOConfig = None
+    ppo: Optional[PPOConfig] = None
 
     # Experience collection
     rollout_batch_size: int = 128
@@ -48,7 +48,7 @@ class RLHFConfig:
     num_eval_prompts: int = 50
 
     # Data
-    prompt_dataset_path: str = None
+    prompt_dataset_path: Optional[str] = None
     eval_prompt_dataset_path: Optional[str] = None
 
     # Device
@@ -104,9 +104,20 @@ class RLHFTrainer:
             if reward_model is None:
                 # Create reward model from policy model
                 from .reward_model import RewardModelConfig
-                reward_config = RewardModelConfig(
-                    hidden_size=model.config.hidden_size if hasattr(model, 'config') else 512
-                )
+                hidden_size: int = 512
+                if hasattr(model, 'config'):
+                    model_config = model.config
+                    # Type guard: ensure config is not a Tensor
+                    if not isinstance(model_config, torch.Tensor) and hasattr(model_config, 'hidden_size'):
+                        # Type: model.config.hidden_size could be int, Tensor, or other types
+                        hs_val: Any = model_config.hidden_size
+                        if isinstance(hs_val, torch.Tensor):
+                            hidden_size = int(hs_val.item())
+                        elif isinstance(hs_val, int):
+                            hidden_size = hs_val
+                        else:
+                            hidden_size = int(hs_val)
+                reward_config = RewardModelConfig(hidden_size=hidden_size)
                 self.reward_model = RewardModel(
                     base_model=model,
                     config=reward_config,
@@ -118,8 +129,8 @@ class RLHFTrainer:
                 logger.info("Using provided reward model")
 
         # Only call .to() if reward model is a nn.Module
-        if hasattr(self.reward_model, 'to'):
-            self.reward_model = self.reward_model.to(self.device)
+        if self.reward_model is not None and hasattr(self.reward_model, 'to'):
+            self.reward_model = self.reward_model.to(self.device)  # type: ignore[union-attr]
 
         # Setup PPO trainer
         if config.ppo is None:
@@ -185,7 +196,7 @@ class RLHFTrainer:
             param.requires_grad = False
         return ref_model.to(self.device)
 
-    def _load_prompts(self, path: str) -> List[str]:
+    def _load_prompts(self, path: Optional[str]) -> List[str]:
         """
         Load prompts from a file.
 
@@ -195,12 +206,15 @@ class RLHFTrainer:
         Returns:
             List of prompts
         """
-        path = Path(path)
-        if not path.exists():
-            raise FileNotFoundError(f"Prompts file not found: {path}")
+        if path is None:
+            raise ValueError("Path to prompts file not provided")
 
-        if path.suffix == '.json':
-            with open(path, 'r') as f:
+        file_path: Path = Path(path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Prompts file not found: {file_path}")
+
+        if file_path.suffix == '.json':
+            with open(file_path, 'r') as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     prompts = data
@@ -210,7 +224,7 @@ class RLHFTrainer:
                     raise ValueError("JSON file must contain a list or dict with 'prompts' key")
         else:
             # Assume text file with one prompt per line
-            with open(path, 'r') as f:
+            with open(file_path, 'r') as f:
                 prompts = [line.strip() for line in f if line.strip()]
 
         return prompts
@@ -218,7 +232,7 @@ class RLHFTrainer:
     def collect_experience(
         self,
         prompts: List[str]
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Union[torch.Tensor, List[str]]]:
         """
         Collect experience by generating responses and computing rewards.
 
@@ -229,9 +243,12 @@ class RLHFTrainer:
             Dictionary containing experience data
         """
         # Generate responses
+        max_gen_length: int = 128
+        if self.config.ppo is not None and hasattr(self.config.ppo, 'max_gen_length'):
+            max_gen_length = self.config.ppo.max_gen_length
         gen_ids, attention_mask, responses = self.ppo_trainer.generate_responses(
             prompts,
-            max_length=self.config.ppo.max_gen_length
+            max_length=max_gen_length
         )
 
         # Compute rewards
@@ -327,11 +344,31 @@ class RLHFTrainer:
             # Collect experience
             experience = self.collect_experience(batch_prompts)
 
-            # Train with PPO
-            train_stats = self.ppo_trainer.train_step(experience)
+            # Train with PPO - filter out non-tensor fields (prompts, responses)
+            batch_tensors: Dict[str, torch.Tensor] = {
+                k: v for k, v in experience.items()
+                if isinstance(v, torch.Tensor)
+            }
+            train_stats = self.ppo_trainer.train_step(batch_tensors)
 
             # Update statistics
-            epoch_stats['rewards'].append(experience['rewards'].mean().item())
+            rewards_val = experience['rewards']
+            if isinstance(rewards_val, torch.Tensor):
+                epoch_stats['rewards'].append(rewards_val.mean().item())
+            elif isinstance(rewards_val, list) and len(rewards_val) > 0:
+                # Handle list of rewards - ensure all elements are numeric
+                # Type: List could contain any type, need to handle carefully
+                numeric_rewards = [float(r) for r in rewards_val if isinstance(r, (int, float, torch.Tensor))]
+                if numeric_rewards:
+                    epoch_stats['rewards'].append(sum(numeric_rewards) / len(numeric_rewards))
+                else:
+                    epoch_stats['rewards'].append(0.0)
+            elif isinstance(rewards_val, (int, float)):
+                # Handle scalar reward value - numeric types only
+                epoch_stats['rewards'].append(float(rewards_val))
+            else:
+                # Unknown type or falsy value - default to 0
+                epoch_stats['rewards'].append(0.0)
             epoch_stats['policy_loss'].append(train_stats.get('policy_loss', 0))
             epoch_stats['kl_div'].append(train_stats.get('kl_div', 0))
             epoch_stats['entropy'].append(train_stats.get('entropy', 0))
@@ -343,7 +380,7 @@ class RLHFTrainer:
             })
 
             # Logging
-            if self.global_step % self.config.ppo.logging_steps == 0:
+            if self.config.ppo is not None and self.global_step % self.config.ppo.logging_steps == 0:
                 log_dict = {
                     'train/reward': epoch_stats['rewards'][-1],
                     'train/policy_loss': epoch_stats['policy_loss'][-1],
@@ -471,7 +508,13 @@ class RLHFTrainer:
 
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.ppo_trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.ppo_trainer.kl_coef = checkpoint.get('kl_coef', self.config.ppo.init_kl_coef)
+        # Use init_kl_coef from config if available, otherwise default to 0.01
+        # Type: config.ppo could be None, need proper null check
+        if self.config.ppo is not None:
+            default_kl_coef = self.config.ppo.init_kl_coef
+        else:
+            default_kl_coef = 0.01
+        self.ppo_trainer.kl_coef = checkpoint.get('kl_coef', default_kl_coef)
         self.global_step = checkpoint['global_step']
 
         if 'scheduler_state_dict' in checkpoint and self.ppo_trainer.lr_scheduler is not None:

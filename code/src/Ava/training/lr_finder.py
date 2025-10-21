@@ -426,7 +426,7 @@ class LRFinder:
                 return values
 
             polyorder = min(self.config.savgol_polyorder, window - 1)
-            smoothed = savgol_filter(values, window, polyorder)
+            smoothed = savgol_filter(values, window, polyorder)  # type: ignore[name-defined]
             return smoothed.tolist()
         except Exception as e:
             logger.warning(f"Savitzky-Golay filtering failed: {e}, using original values")
@@ -522,7 +522,7 @@ class LRFinder:
         # Normalized variance (coefficient of variation squared)
         if mean_loss > 0:
             normalized_var = variance / (mean_loss ** 2)
-            return normalized_var > self.config.variance_threshold
+            return bool(normalized_var > self.config.variance_threshold)  # type: ignore[return-value]
         return False
 
     def _cycle_momentum(self, current_lr: float, lr_schedule: List[float]):

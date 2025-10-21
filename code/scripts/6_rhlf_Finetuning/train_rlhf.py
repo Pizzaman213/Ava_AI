@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 import torch
+import torch.nn as nn
 import argparse
 import logging
 from transformers import AutoTokenizer
@@ -36,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_model(model_path: str, config: dict, device: str):
+def load_model(model_path: str, config: dict, device: str) -> nn.Module:
     """
     Load a model from checkpoint or create new.
 
@@ -48,17 +49,25 @@ def load_model(model_path: str, config: dict, device: str):
     Returns:
         Loaded model
     """
-    from Ava.models.moe_model import MoEModel
+    from Ava.models import EnhancedMoEModel  # type: ignore[attr-defined]
+    from typing import cast, Type
+
+    # Type narrowing: assert EnhancedMoEModel is available
+    if EnhancedMoEModel is None:  # type: ignore[has-type]
+        raise ImportError("EnhancedMoEModel is not available. Please check your installation.")
+
+    # Type assertion for Pylance - ensures type checker knows this is a valid class
+    ModelClass: Type[nn.Module] = cast(Type[nn.Module], EnhancedMoEModel)  # type: ignore[redundant-cast]
 
     logger.info(f"Loading model from {model_path}")
 
     # Load model
     if Path(model_path).exists():
-        model = MoEModel.from_pretrained(model_path)
+        model: nn.Module = ModelClass.from_pretrained(model_path)  # type: ignore[attr-defined]
         logger.info(f"Loaded existing model from {model_path}")
     else:
         # Create new model from config
-        model = MoEModel(config)
+        model = ModelClass(config)  # type: ignore[call-arg]
         logger.info("Created new model from config")
 
     return model.to(device)

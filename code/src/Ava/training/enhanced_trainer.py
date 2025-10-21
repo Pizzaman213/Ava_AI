@@ -859,8 +859,8 @@ class EnhancedModularTrainer:
         # CRITICAL FIX: Support both config.enhanced_features.losses and config.losses paths
         # Most configs have enhanced_features.losses, but allow config.losses as fallback
         losses_config = None
-        if hasattr(self.config, 'enhanced_features') and hasattr(self.config.enhanced_features, 'losses'):
-            losses_config = self.config.enhanced_features.losses
+        if hasattr(self.config, 'enhanced_features') and hasattr(self.config.enhanced_features, 'losses'):  # type: ignore[attr-defined]
+            losses_config = self.config.enhanced_features.losses  # type: ignore[attr-defined]
             print("📊 Using enhanced_features.losses config path")
         elif hasattr(self.config, 'losses'):
             losses_config = self.config.losses
@@ -2289,6 +2289,13 @@ class EnhancedModularTrainer:
         # Backward pass with timing
         backward_start = time.time()
 
+        # CRITICAL FIX: Define gradient_accumulation_steps and is_accumulation_complete early
+        # so they're available in all code paths (DeepSpeed and standard training)
+        gradient_accumulation_steps: int = getattr(
+            self.config.training, "gradient_accumulation_steps", 1
+        )
+        is_accumulation_complete: bool = ((current_micro_step + 1) % gradient_accumulation_steps) == 0
+
         # Handle DeepSpeed vs standard training
         if self.deepspeed_engine:
             # FIXED: DeepSpeed handles everything internally including gradient accumulation
@@ -2350,7 +2357,7 @@ class EnhancedModularTrainer:
 
                 # Update our gradient health monitor with DeepSpeed results
                 # Note: We can't get pre-clip norms with DeepSpeed, so we track post-clip only
-                if hasattr(self, "gradient_health") and grad_norm is not None:
+                if hasattr(self, "gradient_health") and self.gradient_health is not None and grad_norm is not None:
                     # Manually update the history since DeepSpeed handled clipping
                     self.gradient_health.grad_norm_history.append(grad_norm)
                     # For DeepSpeed, pre_clip == post_clip (we can't separate them)
@@ -2379,16 +2386,12 @@ class EnhancedModularTrainer:
                 grad_norm_pre_clip = None
         else:
             # Standard training with mixed precision support
-            # CRITICAL FIX: Get gradient accumulation steps from config
-            gradient_accumulation_steps = getattr(
-                self.config.training, "gradient_accumulation_steps", 1
-            )
+            # NOTE: gradient_accumulation_steps and is_accumulation_complete already defined above
 
             # FIXED: Proper gradient accumulation logic
             # Accumulate gradients over multiple steps, then step optimizer
             # Zero gradients AFTER optimizer step (not before!)
             # Optimizer steps at END of accumulation cycle (step N-1, 2N-1, 3N-1, ...)
-            is_accumulation_complete = ((current_micro_step + 1) % gradient_accumulation_steps) == 0
 
             # NOTE: We zero gradients AFTER optimizer.step() below, not here!
             # This fixes the critical bug where gradients were cleared before stepping.
@@ -2585,8 +2588,7 @@ class EnhancedModularTrainer:
                         )
                         # Save current scale for continuity
                         current_scale = self.scaler.get_scale()
-                        self.scaler = torch.amp.GradScaler(
-                            'cuda',
+                        self.scaler = GradScaler(
                             init_scale=min(current_scale, 2**15),  # Cap at reasonable value
                             growth_factor=2.0,
                             backoff_factor=0.5,
@@ -2773,7 +2775,10 @@ class EnhancedModularTrainer:
 
             # Add DeepSeek loss components if available (MTP, MoE balancing, etc.)
             # These are stored in valid_aux_losses when using DeepSeek loss
-            if hasattr(self, 'deepseek_loss') and self.deepseek_loss is not None and hasattr(self, 'valid_aux_losses'):
+            if (
+                hasattr(self, 'deepseek_loss') and self.deepseek_loss is not None
+                and hasattr(self, 'valid_aux_losses') and self.valid_aux_losses
+            ):
                 for name, loss_value in self.valid_aux_losses.items():
                     if isinstance(loss_value, torch.Tensor) and not torch.isnan(loss_value):
                         loss_val = loss_value.item()

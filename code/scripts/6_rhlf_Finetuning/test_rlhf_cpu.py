@@ -8,6 +8,7 @@ This script tests the RLHF pipeline with minimal settings on CPU.
 import sys
 import os
 from pathlib import Path
+from typing import Dict
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
@@ -223,11 +224,17 @@ def test_rlhf_trainer():
     test_prompts = ["What is AI?", "Explain ML:"]
     experience = trainer.collect_experience(test_prompts)
     logger.info(f"✓ Collected experience for {len(test_prompts)} prompts")
-    logger.info(f"  - Rewards: {experience['rewards'].tolist()}")
+    rewards = experience['rewards']
+    if isinstance(rewards, torch.Tensor):
+        logger.info(f"  - Rewards: {rewards.tolist()}")
+    else:
+        logger.info(f"  - Rewards: {rewards}")
 
     # Test one training step
     logger.info("Testing one training step...")
-    stats = trainer.ppo_trainer.train_step(experience)
+    # Extract only tensor fields for train_step
+    batch: Dict[str, torch.Tensor] = {k: v for k, v in experience.items() if isinstance(v, torch.Tensor) and k not in ['prompts', 'responses']}
+    stats = trainer.ppo_trainer.train_step(batch)
     logger.info(f"✓ Training step completed!")
     logger.info(f"  - Policy loss: {stats.get('policy_loss', 0):.4f}")
     logger.info(f"  - KL divergence: {stats.get('kl_div', 0):.4f}")

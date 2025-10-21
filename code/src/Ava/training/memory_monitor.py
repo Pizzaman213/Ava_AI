@@ -55,7 +55,7 @@ def get_gpu_compute_utilization(device: int = 0) -> float:
     try:
         handle = pynvml.nvmlDeviceGetHandleByIndex(device)  # type: ignore[union-attr]
         utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore[union-attr]
-        gpu_util = utilization.gpu / 100.0  # Convert percentage to fraction
+        gpu_util = float(utilization.gpu) / 100.0  # Convert percentage to fraction
 
         # Clamp to valid range [0.0, 1.0]
         return max(0.0, min(1.0, gpu_util))

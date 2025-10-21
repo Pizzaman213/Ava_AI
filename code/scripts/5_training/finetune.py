@@ -63,7 +63,7 @@ from typing import List, Optional, Tuple
 import glob
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
-from pydantic._internal._generate_schema import UnsupportedFieldAttributeWarning
+from pydantic.warnings import UnsupportedFieldAttributeWarning
 warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
 
 import torch
@@ -784,7 +784,7 @@ def main():
 
         # Import main from train.py and run it
         try:
-            from train import main as train_main
+            from train import main as train_main  # type: ignore[import]
 
             # Monkey-patch sys.argv to pass our temporary config
             original_argv = sys.argv
