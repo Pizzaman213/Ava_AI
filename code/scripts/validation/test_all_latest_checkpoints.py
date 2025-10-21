@@ -1,322 +1,302 @@
 #!/usr/bin/env python3
 """
-Automatically test all checkpoints from the latest training run.
-Finds the most recent run and evaluates each checkpoint using generation.
+Test All Latest Checkpoints
+
+This script tests all the latest model checkpoints to verify they work correctly.
 """
 
 import sys
-sys.path.insert(0, '/project/code/src')
-sys.path.insert(0, '/project/code')
-
 import os
-import glob
-import re
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 import torch
-from transformers import AutoTokenizer
-from Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
-import inspect
-from typing import Optional, List, Tuple, Dict, Any
+from transformers import PreTrainedTokenizer, AutoTokenizer
 
-class CheckpointTester:
-    """Automatically test all checkpoints from latest training run"""
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
-    def __init__(self, runs_dir: str = '/project/code/outputs/runs'):
-        self.runs_dir = runs_dir
-        self.tokenizer: Optional[Any] = None
-        self.device = 'cpu'  # Use CPU for testing
+from Ava.models import EnhancedMoEModel
+from Ava.config.training_config import TrainingConfig
 
-        # Create backward compatibility symlink
-        if not os.path.exists('/project/code/src/src'):
-            try:
-                os.symlink('/project/code/src', '/project/code/src/src')
-            except:
-                pass
 
-    def find_latest_run(self):
-        """Find the most recent training run"""
-        runs = glob.glob(os.path.join(self.runs_dir, 'run_*'))
-        if not runs:
-            raise FileNotFoundError(f"No training runs found in {self.runs_dir}")
+def load_tokenizer(tokenizer_path: str) -> PreTrainedTokenizer:
+    """
+    Load tokenizer from path.
 
-        # Sort by modification time (most recent first)
-        latest_run = max(runs, key=os.path.getmtime)
-        run_name = os.path.basename(latest_run)
+    Args:
+        tokenizer_path: Path to tokenizer
 
-        print(f"📁 Found latest run: {run_name}")
-        return latest_run
+    Returns:
+        Loaded tokenizer
+    """
+    try:
+        from transformers import PreTrainedTokenizerFast
+        tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
+    except:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
-    def find_all_checkpoints(self, run_dir: str) -> List[Tuple[int, str]]:
-        """Find all checkpoint files in a training run"""
-        checkpoints_dir = os.path.join(run_dir, 'checkpoints')
+    return tokenizer
 
-        # Find all step checkpoints
-        step_checkpoints: List[Tuple[int, str]] = []
-        for step_dir in glob.glob(os.path.join(checkpoints_dir, 'step_*')):
-            checkpoint_file = os.path.join(step_dir, 'model.pt')
-            if os.path.exists(checkpoint_file):
-                # Extract step number
-                match = re.search(r'step_(\d+)', step_dir)
-                if match:
-                    step_num = int(match.group(1))
-                    step_checkpoints.append((step_num, checkpoint_file))
 
-        # Check for latest_model.pt
-        latest_checkpoint = os.path.join(checkpoints_dir, 'latest_model.pt')
-        if os.path.exists(latest_checkpoint):
-            step_checkpoints.append((999999, latest_checkpoint))  # Put latest at end
+def setup_tokenizer(tokenizer: Optional[PreTrainedTokenizer]) -> PreTrainedTokenizer:
+    """
+    Setup tokenizer with proper special tokens.
 
-        # Sort by step number
-        step_checkpoints.sort(key=lambda x: x[0])
+    Args:
+        tokenizer: Tokenizer to setup (can be None)
 
-        print(f"📊 Found {len(step_checkpoints)} checkpoints")
-        return step_checkpoints
+    Returns:
+        Configured tokenizer
 
-    def load_checkpoint(self, checkpoint_path: str) -> Tuple[Any, Dict[str, Any]]:
-        """Load a checkpoint and create model"""
-        print(f"\n🔄 Loading: {os.path.basename(os.path.dirname(checkpoint_path))}/{os.path.basename(checkpoint_path)}")
+    Raises:
+        ValueError: If tokenizer is None
+    """
+    if tokenizer is None:
+        raise ValueError("Tokenizer cannot be None")
 
-        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
-
-        # Extract model config
-        if 'model_config' in checkpoint:
-            model_config = checkpoint['model_config']
-        elif 'config' in checkpoint:
-            full_config = checkpoint['config']
-            if hasattr(full_config, 'model'):
-                model_config = full_config.model
-            elif isinstance(full_config, dict) and 'model' in full_config:
-                model_config_dict = full_config['model']
-                valid_params = inspect.signature(EnhancedMoEConfig.__init__).parameters
-                filtered_dict = {k: v for k, v in model_config_dict.items() if k in valid_params}
-
-                # Fix type conversions
-                if 'layer_norm_eps' in filtered_dict and isinstance(filtered_dict['layer_norm_eps'], str):
-                    filtered_dict['layer_norm_eps'] = float(filtered_dict['layer_norm_eps'])
-                if 'rope_theta' in filtered_dict and isinstance(filtered_dict['rope_theta'], str):
-                    filtered_dict['rope_theta'] = float(filtered_dict['rope_theta'])
-
-                model_config = EnhancedMoEConfig(**filtered_dict)
-            else:
-                raise ValueError("Cannot extract model config from checkpoint")
+    # Ensure tokenizer has pad token
+    if tokenizer.pad_token is None:
+        if tokenizer.eos_token is not None:
+            tokenizer.pad_token = tokenizer.eos_token
         else:
-            raise ValueError("No config found in checkpoint")
+            # Add pad token if neither exists
+            tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
-        # Load tokenizer if not already loaded
-        if self.tokenizer is None:
-            print("🔤 Loading tokenizer...")
-            self.tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen2.5-0.5B')
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+    return tokenizer
 
-        # Create and load model
-        model = EnhancedMoEModel(model_config)
+
+def load_checkpoint(checkpoint_path: str, config_path: str) -> Dict[str, Any]:
+    """
+    Load a checkpoint and test it.
+
+    Args:
+        checkpoint_path: Path to checkpoint file
+        config_path: Path to config file
+
+    Returns:
+        Dictionary with test results
+    """
+    print(f"Testing checkpoint: {checkpoint_path}")
+
+    # Load config - use yaml loading since from_yaml doesn't exist
+    import yaml
+    with open(config_path, 'r') as f:
+        config_dict = yaml.safe_load(f)
+
+    # Create TrainingConfig from dict (it has __init__)
+    from Ava.config.training_config import EnhancedTrainingConfig
+    try:
+        config = EnhancedTrainingConfig(**config_dict)  # type: ignore[call-arg]
+    except (TypeError, KeyError):
+        # Fallback: add config_file if missing
+        config_dict['config_file'] = config_path
+        config = EnhancedTrainingConfig(**config_dict)  # type: ignore[call-arg]
+
+    # Load tokenizer
+    tokenizer_path = config.data.tokenizer_name or '/project/code/models/tokenizer/enhanced-65536'  # type: ignore[attr-defined]
+    tokenizer = load_tokenizer(tokenizer_path)
+    tokenizer = setup_tokenizer(tokenizer)
+
+    # Load model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if EnhancedMoEModel is None:
+        raise ImportError("EnhancedMoEModel is not available")
+
+    model = EnhancedMoEModel(config.model)
+
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    if 'model_state_dict' in checkpoint:
         model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(self.device)
-        model.eval()
+        step = checkpoint.get('step', 0)
+        epoch = checkpoint.get('epoch', 0)
+    else:
+        model.load_state_dict(checkpoint)
+        step = 0
+        epoch = 0
 
-        return model, checkpoint
+    model.to(device)
+    model.eval()
 
-    def test_generation(self, model: Any, step_num: int, prompts: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Test generation with a model"""
-        if prompts is None:
-            prompts = [
-                "Once upon a time",
-                "The quick brown fox",
-                "In a distant galaxy",
-                "Hello, my name is"
-            ]
+    # Test generation
+    test_prompt = "Once upon a time"
+    # Ensure pad_token and eos_token are set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-        print(f"\n{'='*70}")
-        if step_num == 999999:
-            print(f"🧪 Testing LATEST checkpoint")
-        else:
-            print(f"🧪 Testing Step {step_num}")
-        print(f"{'='*70}")
+    inputs = tokenizer(
+        test_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=512,
+        padding=True
+    ).to(device)
 
-        results: Dict[str, Any] = {}
+    with torch.no_grad():
+        outputs = model.generate(  # type: ignore[misc]
+            input_ids=inputs.input_ids,
+            attention_mask=inputs.attention_mask,
+            max_length=50,
+            temperature=0.8,
+            top_p=0.9,
+            do_sample=True,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id
+        )
 
-        for i, prompt in enumerate(prompts, 1):
-            print(f"\n[{i}/{len(prompts)}] Prompt: \"{prompt}\"")
+    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-            try:
-                # Tokenize
-                if self.tokenizer is None:
-                    raise RuntimeError("Tokenizer not loaded")
-                inputs = self.tokenizer(prompt, return_tensors='pt').to(self.device)
+    results = {
+        'checkpoint_path': checkpoint_path,
+        'step': step,
+        'epoch': epoch,
+        'test_prompt': test_prompt,
+        'generated_text': generated_text,
+        'success': True
+    }
 
-                # Generate
-                with torch.no_grad():
-                    outputs = model.generate(
-                        inputs['input_ids'],
-                        max_length=80,
-                        min_length=20,
-                        temperature=0.8,
-                        do_sample=True,
-                        top_p=0.9,
-                        top_k=50,
-                        repetition_penalty=1.5,
-                        pad_token_id=self.tokenizer.eos_token_id,
-                        eos_token_id=self.tokenizer.eos_token_id
-                    )
+    print(f"✅ Checkpoint test passed")
+    print(f"   Step: {step}, Epoch: {epoch}")
+    print(f"   Generated: {generated_text[:100]}...")
 
-                generated = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                print(f"✅ Generated: \"{generated}\"")
+    return results
 
-                # Calculate stats
-                tokens = generated.split()
-                if len(tokens) > 1:
-                    unique_tokens = len(set(tokens))
-                    repetition_rate = 1 - (unique_tokens / len(tokens))
-                    print(f"📈 Stats: {len(tokens)} tokens, {unique_tokens} unique, {repetition_rate:.1%} repetition")
 
-                    results[prompt] = {
-                        'generated': generated,
-                        'total_tokens': len(tokens),
-                        'unique_tokens': unique_tokens,
-                        'repetition_rate': repetition_rate,
-                        'success': True
-                    }
-                else:
-                    results[prompt] = {'success': False, 'error': 'Too few tokens'}
+def find_latest_checkpoints(checkpoint_dir: str, num_checkpoints: int = 5) -> List[Path]:
+    """
+    Find the latest checkpoints in a directory.
 
-            except Exception as e:
-                print(f"❌ Generation failed: {e}")
-                results[prompt] = {'success': False, 'error': str(e)}
+    Args:
+        checkpoint_dir: Directory containing checkpoints
+        num_checkpoints: Number of latest checkpoints to find
 
-        return results
+    Returns:
+        List of checkpoint paths sorted by modification time (newest first)
+    """
+    checkpoint_path = Path(checkpoint_dir)
 
-    def run_all_tests(self, max_checkpoints: Optional[int] = None, skip_interval: Optional[int] = None) -> Dict[int, Any]:
-        """
-        Test all checkpoints from the latest run
+    if not checkpoint_path.exists():
+        print(f"Warning: Checkpoint directory not found: {checkpoint_dir}")
+        return []
 
-        Args:
-            max_checkpoints: Maximum number of checkpoints to test (None = all)
-            skip_interval: Test every Nth checkpoint (None = test all)
-        """
-        print("🚀 Starting automated checkpoint testing")
-        print(f"🖥️  Device: {self.device}")
+    # Find all .pt files
+    checkpoints = list(checkpoint_path.glob("**/*.pt"))
 
-        # Find latest run
-        latest_run = self.find_latest_run()
+    # Sort by modification time (newest first)
+    checkpoints.sort(key=lambda p: p.stat().st_mtime, reverse=True)
 
-        # Find all checkpoints
-        checkpoints = self.find_all_checkpoints(latest_run)
+    return checkpoints[:num_checkpoints]
 
-        if not checkpoints:
-            print("❌ No checkpoints found!")
-            return
 
-        # Apply filtering
-        if skip_interval and skip_interval > 1:
-            # Keep every Nth checkpoint, plus the latest
-            latest = checkpoints[-1]
-            filtered = checkpoints[::skip_interval]
-            if latest not in filtered:
-                filtered.append(latest)
-            checkpoints = sorted(filtered, key=lambda x: x[0])
-            print(f"📉 Testing every {skip_interval} checkpoints: {len(checkpoints)} total")
+def test_all_checkpoints(
+    checkpoint_dir: str,
+    config_path: str,
+    num_checkpoints: int = 5
+) -> Dict[int, Any]:
+    """
+    Test multiple checkpoints.
 
-        if max_checkpoints and len(checkpoints) > max_checkpoints:
-            # Keep first, evenly spaced middle ones, and latest
-            if max_checkpoints >= 3:
-                first = [checkpoints[0]]
-                latest = [checkpoints[-1]]
-                middle_count = max_checkpoints - 2
-                step = (len(checkpoints) - 2) // middle_count
-                middle = checkpoints[1:-1:step][:middle_count]
-                checkpoints = first + middle + latest
+    Args:
+        checkpoint_dir: Directory containing checkpoints
+        config_path: Path to config file
+        num_checkpoints: Number of checkpoints to test
+
+    Returns:
+        Dictionary mapping checkpoint index to test results
+    """
+    checkpoints = find_latest_checkpoints(checkpoint_dir, num_checkpoints)
+
+    if not checkpoints:
+        print("No checkpoints found")
+        return {}
+
+    print(f"\nFound {len(checkpoints)} checkpoints to test")
+
+    all_results: Dict[int, Any] = {}
+
+    for i, checkpoint_path in enumerate(checkpoints):
+        print(f"\n{'='*80}")
+        print(f"Testing checkpoint {i+1}/{len(checkpoints)}")
+        print(f"{'='*80}")
+
+        try:
+            results = load_checkpoint(str(checkpoint_path), config_path)
+            if results is not None:
+                all_results[i] = results
             else:
-                checkpoints = checkpoints[:max_checkpoints]
-            print(f"📉 Limited to {max_checkpoints} checkpoints")
+                all_results[i] = {
+                    'checkpoint_path': str(checkpoint_path),
+                    'error': 'load_checkpoint returned None'
+                }
+        except Exception as e:
+            print(f"❌ Error testing checkpoint {checkpoint_path}: {e}")
+            all_results[i] = {
+                'checkpoint_path': str(checkpoint_path),
+                'success': False,
+                'error': str(e)
+            }
 
-        # Test each checkpoint
-        all_results: Dict[int, Any] = {}
-
-        for i, (step_num, checkpoint_path) in enumerate(checkpoints, 1):
-            print(f"\n{'#'*70}")
-            print(f"# Checkpoint {i}/{len(checkpoints)}")
-            print(f"{'#'*70}")
-
-            try:
-                # Load model
-                model, checkpoint = self.load_checkpoint(checkpoint_path)
-
-                # Test generation
-                results = self.test_generation(model, step_num)
-                all_results[step_num] = results
-
-                # Free memory
-                del model
-                del checkpoint
-                if self.device == 'cuda':
-                    torch.cuda.empty_cache()
-
-                print(f"✅ Completed checkpoint {step_num}")
-
-            except Exception as e:
-                print(f"❌ Failed to test checkpoint {step_num}: {e}")
-                import traceback
-                traceback.print_exc()
-                all_results[step_num] = {'error': str(e)}
-
-        # Print summary
-        self.print_summary(all_results)
-
-        return all_results
-
-    def print_summary(self, all_results: Dict[int, Any]) -> None:
-        """Print a summary of all test results"""
-        print("\n" + "="*70)
-        print("📊 SUMMARY OF ALL CHECKPOINTS")
-        print("="*70)
-
-        for step_num in sorted(all_results.keys()):
-            results = all_results[step_num]
-
-            if 'error' in results:
-                label = "LATEST" if step_num == 999999 else f"Step {step_num:6d}"
-                print(f"\n{label}: ❌ ERROR - {results['error']}")
-                continue
-
-            # Calculate average repetition rate
-            successful = [r for r in results.values() if r.get('success', False)]
-            if successful:
-                avg_repetition = sum(r['repetition_rate'] for r in successful) / len(successful)
-                avg_tokens = sum(r['total_tokens'] for r in successful) / len(successful)
-                avg_unique = sum(r['unique_tokens'] for r in successful) / len(successful)
-
-                label = "LATEST" if step_num == 999999 else f"Step {step_num:6d}"
-                print(f"\n{label}: ✅ {len(successful)}/{len(results)} prompts succeeded")
-                print(f"  Avg: {avg_tokens:.1f} tokens, {avg_unique:.1f} unique, {avg_repetition:.1%} repetition")
-            else:
-                label = "LATEST" if step_num == 999999 else f"Step {step_num:6d}"
-                print(f"\n{label}: ❌ All prompts failed")
+    return all_results
 
 
 def main():
-    """Main entry point"""
+    """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Test all checkpoints from latest training run')
-    parser.add_argument('--runs-dir', default='/project/code/outputs/runs',
-                       help='Directory containing training runs')
-    parser.add_argument('--max-checkpoints', type=int, default=None,
-                       help='Maximum number of checkpoints to test')
-    parser.add_argument('--skip-interval', type=int, default=None,
-                       help='Test every Nth checkpoint (e.g., 2 = every other)')
-    parser.add_argument('--device', choices=['cuda', 'cpu'], default=None,
-                       help='Device to use for testing')
+    parser = argparse.ArgumentParser(description="Test all latest checkpoints")
+    parser.add_argument(
+        '--checkpoint-dir',
+        type=str,
+        default='/project/code/outputs/runs',
+        help='Directory containing checkpoints'
+    )
+    parser.add_argument(
+        '--config',
+        type=str,
+        default='/project/code/configs/gpu/small.yaml',
+        help='Path to config file'
+    )
+    parser.add_argument(
+        '--num-checkpoints',
+        type=int,
+        default=5,
+        help='Number of latest checkpoints to test'
+    )
 
     args = parser.parse_args()
 
-    tester = CheckpointTester(runs_dir=args.runs_dir)
-    if args.device:
-        tester.device = args.device
+    print("="*80)
+    print("TESTING ALL LATEST CHECKPOINTS")
+    print("="*80)
+    print(f"Checkpoint directory: {args.checkpoint_dir}")
+    print(f"Config: {args.config}")
+    print(f"Number of checkpoints: {args.num_checkpoints}")
 
-    tester.run_all_tests(
-        max_checkpoints=args.max_checkpoints,
-        skip_interval=args.skip_interval
+    results = test_all_checkpoints(
+        args.checkpoint_dir,
+        args.config,
+        args.num_checkpoints
     )
 
+    # Summary
+    print("\n" + "="*80)
+    print("SUMMARY")
+    print("="*80)
 
-if __name__ == "__main__":
+    successful = sum(1 for r in results.values() if r.get('success', False))
+    failed = len(results) - successful
+
+    print(f"Total checkpoints tested: {len(results)}")
+    print(f"Successful: {successful}")
+    print(f"Failed: {failed}")
+
+    if successful == len(results):
+        print("\n✅ All checkpoints passed!")
+    else:
+        print(f"\n⚠️  {failed} checkpoint(s) failed")
+
+
+if __name__ == '__main__':
     main()

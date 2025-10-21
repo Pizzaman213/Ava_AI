@@ -166,7 +166,7 @@ class ModelToModelReward:
         self,
         judge_model: nn.Module,
         tokenizer,
-        rating_prompt_template: str = None,
+        rating_prompt_template: Optional[str] = None,
         device: str = 'cuda',
         temperature: float = 1.0,
         rating_scale: Tuple[float, float] = (0.0, 1.0)
@@ -348,10 +348,10 @@ class EnsembleRewardModel:
 
     def get_rewards(
         self,
-        input_ids: torch.Tensor = None,
-        attention_mask: torch.Tensor = None,
-        prompts: List[str] = None,
-        responses: List[str] = None
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        prompts: Optional[List[str]] = None,
+        responses: Optional[List[str]] = None
     ) -> torch.Tensor:
         """
         Get ensemble rewards.
@@ -381,4 +381,4 @@ class EnsembleRewardModel:
 
             all_rewards.append(rewards * weight)
 
-        return sum(all_rewards)
+        return torch.stack(all_rewards).sum(dim=0) if all_rewards else torch.tensor(0.0)

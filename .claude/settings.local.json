@@ -23,7 +23,16 @@
       "Bash(awk '$5 ~ /^0$/ || $5 == \"\"\"\"0\"\"\"\" {print \"\"\"\"EMPTY:\"\"\"\", $9}')",
       "Bash(rm /project/code/data/processed/AlekseyKorshuk_persona_chat_conversational.jsonl)",
       "Bash(awk '{print $5, $9}')",
-      "Bash(sort -k2)"
+      "Bash(sort -k2)",
+      "Bash(git add:*)",
+      "Bash(git config:*)",
+      "Bash(git commit:*)",
+      "Bash(git --config filter.lfs.process= --config filter.lfs.smudge= --config filter.lfs.clean= commit -m \"Fixed all 39 Pylance type errors across codebase\")",
+      "Bash(git -c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.clean= commit -m \"Fixed all 39 Pylance type errors across codebase\")",
+      "Bash(code/scripts/6_rhlf_Finetuning/train_rlhf.py )",
+      "Bash(code/scripts/evaluation/measure_coherence.py )",
+      "Bash(code/scripts/validation/test_all_latest_checkpoints.py)",
+      "Bash(xargs -I {} sh -c 'echo \"\"\"\"=== {} ===\"\"\"\" && head -3 {}')"
     ],
     "deny": [],
     "ask": []

@@ -24,7 +24,7 @@ import yaml
 from pathlib import Path
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
-from pydantic._internal._generate_schema import UnsupportedFieldAttributeWarning
+from pydantic.warnings import UnsupportedFieldAttributeWarning
 warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
 
 # Add project root to path

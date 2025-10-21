@@ -413,7 +413,7 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
             self._accumulated_scores += avg_scores
 
             # Track total token count (accumulate)
-            batch_tokens = expert_indices.shape[0]
+            batch_tokens = float(expert_indices.shape[0])
             self._accumulated_tokens += batch_tokens
 
             # Increment accumulation step counter
@@ -422,10 +422,18 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
             # When optimizer steps, apply momentum update and reset accumulators
             if is_optimizer_step:
                 # Average accumulated statistics over all micro-steps
-                num_steps = max(1, self._accumulation_steps.item())
-                avg_counts = self._accumulated_counts / num_steps
-                avg_scores_per_step = self._accumulated_scores / num_steps
-                avg_tokens = self._accumulated_tokens / num_steps
+                # CRITICAL: Cast accumulation steps to int for division
+                # Type annotation: _accumulation_steps is always a Tensor (registered buffer)
+                accum_steps_tensor: torch.Tensor = self._accumulation_steps  # type: ignore[assignment]
+                num_steps: int = max(1, int(accum_steps_tensor.item()))
+
+                # Ensure num_steps is int for float conversion
+                num_steps_float: float = float(num_steps)
+
+                # Type annotation: these are always Tensors (registered buffers)
+                avg_counts: torch.Tensor = self._accumulated_counts / num_steps_float  # type: ignore[assignment]
+                avg_scores_per_step: torch.Tensor = self._accumulated_scores / num_steps_float  # type: ignore[assignment]
+                avg_tokens: torch.Tensor = self._accumulated_tokens / num_steps_float  # type: ignore[assignment]
 
                 # Apply momentum update with averaged statistics
                 for i in range(self.num_experts):
@@ -444,17 +452,18 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
                     (1 - self.momentum) * avg_tokens
                 )
 
-                # Reset accumulators
-                self._accumulated_counts.zero_()
-                self._accumulated_scores.zero_()
-                self._accumulated_tokens.zero_()
-                self._accumulation_steps.zero_()
+                # Reset accumulators (all are tensors via register_buffer)
+                # Type: registered buffers are always Tensors
+                self._accumulated_counts.zero_()  # type: ignore[union-attr]
+                self._accumulated_scores.zero_()  # type: ignore[union-attr]
+                self._accumulated_tokens.zero_()  # type: ignore[union-attr]
+                self._accumulation_steps.zero_()  # type: ignore[union-attr]
 
     def compute_balance_gradients(
         self,
         gate_logits: torch.Tensor,
         expert_indices: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Optional[torch.Tensor]:
         """
         Compute gradient adjustments for load balancing without auxiliary loss.
 
@@ -510,6 +519,7 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
         self.update_statistics(expert_indices, expert_scores)
 
         # Compute gradient adjustments for balancing
+        balancing_term = None
         if self.training and gate_logits.requires_grad:
             grad_adjustment = self.compute_balance_gradients(gate_logits, expert_indices)
 
@@ -517,11 +527,12 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
             # Previous implementation: (adjusted_logits - adjusted_logits.detach()) = 0 (no signal!)
             # New approach: Use gate_logits directly with gradient adjustment as steering signal
             # The gradient adjustment encourages underused experts and discourages overused ones
-            adjusted_logits = gate_logits + grad_adjustment.detach()
-            # Create loss that pulls gate_logits toward balanced distribution
-            # This preserves gradients through gate_logits while steering toward balance
-            balancing_term = F.mse_loss(gate_logits, adjusted_logits.detach())
-            balancing_term = balancing_term * self.gradient_balance_weight
+            if grad_adjustment is not None:
+                adjusted_logits = gate_logits + grad_adjustment.detach()
+                # Create loss that pulls gate_logits toward balanced distribution
+                # This preserves gradients through gate_logits while steering toward balance
+                balancing_term = F.mse_loss(gate_logits, adjusted_logits.detach())
+                balancing_term = balancing_term * self.gradient_balance_weight
         else:
             balancing_term = torch.tensor(0.0, device=gate_logits.device, requires_grad=False)
 

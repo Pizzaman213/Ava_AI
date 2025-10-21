@@ -177,11 +177,13 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
 # Must be done before any imports that use Pydantic
-from pydantic._internal._generate_schema import UnsupportedFieldAttributeWarning
+from pydantic.warnings import UnsupportedFieldAttributeWarning
 warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
 
 # Suppress torch.compile warnings early
-os.environ['TORCHINDUCTOR_MAX_AUTOTUNE'] = '0'
+# Note: TORCHINDUCTOR_MAX_AUTOTUNE is now configurable via performance.torchinductor_max_autotune
+# Default to '0' here, can be overridden in main() after config is loaded
+os.environ.setdefault('TORCHINDUCTOR_MAX_AUTOTUNE', '0')
 warnings.filterwarnings('ignore', category=UserWarning, module='torch._inductor')
 warnings.filterwarnings('ignore', message='.*Not enough SMs.*')
 warnings.filterwarnings('ignore', message='.*Online softmax is disabled.*')
@@ -232,26 +234,37 @@ from src.Ava.utils import register_cleanup_handlers
 from src.Ava.evaluation import quick_coherence_test
 
 
-def compile_model_for_speed(model, mode="reduce-overhead"):
+def compile_model_for_speed(model, mode=None, fullgraph=None, dynamic=None, training_config=None):
     """
     Compile model with torch.compile for 3-10x speedup.
 
     Args:
         model: PyTorch model to compile
-        mode: "reduce-overhead" (fastest), "default", or "max-autotune"
+        mode: Compile mode (from config or "reduce-overhead")
+        fullgraph: Whether to use fullgraph (from config or False)
+        dynamic: Whether to use dynamic shapes (from config or False)
+        training_config: Training configuration for defaults
 
     Returns:
         Compiled model
     """
+    # Get defaults from config if not provided
+    if mode is None:
+        mode = getattr(training_config.performance, "default_compile_mode", "reduce-overhead") if training_config and hasattr(training_config, "performance") else "reduce-overhead"
+    if fullgraph is None:
+        fullgraph = getattr(training_config.performance, "compile_fullgraph", False) if training_config and hasattr(training_config, "performance") else False
+    if dynamic is None:
+        dynamic = getattr(training_config.performance, "compile_dynamic", False) if training_config and hasattr(training_config, "performance") else False
+
     try:
         if torch.__version__ >= "2.0.0":
             print(f"🔥 Compiling model with torch.compile (mode={mode})...")
-            # Compile with CUDA graphs for maximum speed
+            # Compile with configurable settings
             compiled = torch.compile(
                 model,
                 mode=mode,
-                fullgraph=False,  # Allow graph breaks
-                dynamic=False,     # Static shapes for CUDA graphs
+                fullgraph=fullgraph,  # Allow graph breaks
+                dynamic=dynamic,     # Static shapes for CUDA graphs
             )
             print("✅ Model compiled successfully!")
             return compiled
@@ -375,12 +388,13 @@ def create_model_and_tokenizer(
 
             filtered_config[k] = v
 
-    # Ensure critical numeric fields have defaults if missing
+    # Ensure critical numeric fields have defaults if missing (from config or fallback)
+    # Get defaults from config with fallback values
     defaults = {
-        "vocab_size": 50257,
-        "hidden_size": 768,
-        "num_layers": 12,
-        "num_attention_heads": 12,
+        "vocab_size": getattr(training_config.model, "default_vocab_size", 50257) if hasattr(training_config, "model") else 50257,
+        "hidden_size": getattr(training_config.model, "default_hidden_size", 768) if hasattr(training_config, "model") else 768,
+        "num_layers": getattr(training_config.model, "default_num_layers", 12) if hasattr(training_config, "model") else 12,
+        "num_attention_heads": getattr(training_config.model, "default_num_attention_heads", 12) if hasattr(training_config, "model") else 12,
     }
     for k, default_v in defaults.items():
         if k not in filtered_config:
@@ -392,11 +406,12 @@ def create_model_and_tokenizer(
     model = EnhancedMoEModel(model_config)
 
     # Initialize tokenizer
-    # Try multiple config locations for tokenizer name
+    # Try multiple config locations for tokenizer name (with configurable default)
+    default_tokenizer = getattr(training_config.data, "default_tokenizer_name", "Qwen/Qwen2.5-0.5B") if hasattr(training_config, "data") else "Qwen/Qwen2.5-0.5B"
     tokenizer_name = (
         config_dict.get("data", {}).get("tokenizer_name") or  # Standard location
         config_dict.get("tokenizer", {}).get("name") or        # Alternative location
-        "Qwen/Qwen2.5-0.5B"                                     # Default to Qwen
+        default_tokenizer                                       # Configurable default
     )
     print(f"Loading tokenizer: {tokenizer_name}")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)  # type: ignore[name-defined]
@@ -407,8 +422,15 @@ def create_model_and_tokenizer(
     return model, tokenizer
 
 
-def enhanced_format_detection(data_dir: Path, max_samples: int = 10) -> Dict[str, Any]:
-    """Enhanced format detection with 10-sample confidence scoring (Phase 2.2)."""
+def enhanced_format_detection(data_dir: Path, max_samples: Optional[int] = None, training_config: Optional[Any] = None) -> Dict[str, Any]:
+    """Enhanced format detection with configurable sample size (Phase 2.2)."""
+    # Get max_samples from config with fallback
+    if max_samples is None:
+        if training_config and hasattr(training_config, 'data_loading'):
+            max_samples = getattr(training_config.data_loading, 'format_detection_samples', 10)  # type: ignore[attr-defined]
+        else:
+            max_samples = 10  # Fallback default
+
     format_scores = {}
     total_files_checked = 0
 
@@ -418,7 +440,8 @@ def enhanced_format_detection(data_dir: Path, max_samples: int = 10) -> Dict[str
         files = list(data_dir.glob(pattern))
         if files:
             # Sample up to max_samples files
-            sampled = files[:max_samples] if len(files) >= max_samples else files
+            # Type guard: max_samples is guaranteed to be int by line 432
+            sampled = files[:max_samples] if len(files) >= max_samples else files  # type: ignore[operator]
             sample_files.extend(sampled)
 
     if not sample_files:
@@ -545,24 +568,38 @@ def create_dataloaders(
 
         # If no config or config path doesn't exist, try fallback locations
         if data_dir is None:
-            fallback_paths = [
-                "/project/code/data/processed",  # Priority: Use processed data
-                "/project/code/data/combined",
-                "/project/code/data",
-                "./data/processed",
-                "./data/combined",
-                "./data",
-                "../data/processed",
-                "../data",
-                "../../data",
-            ]
+            # Get fallback paths from config with defaults
+            if hasattr(training_config, 'data_loading'):
+                fallback_paths = getattr(training_config.data_loading, 'fallback_data_paths', [  # type: ignore[attr-defined]
+                    "/project/code/data/processed",  # Priority: Use processed data
+                    "/project/code/data/combined",
+                    "/project/code/data",
+                    "./data/processed",
+                    "./data/combined",
+                    "./data",
+                    "../data/processed",
+                    "../data",
+                    "../../data",
+                ])
+            else:
+                fallback_paths = [
+                    "/project/code/data/processed",
+                    "/project/code/data/combined",
+                    "/project/code/data",
+                    "./data/processed",
+                    "./data/combined",
+                    "./data",
+                    "../data/processed",
+                    "../data",
+                    "../../data",
+                ]
 
             for fallback_path in fallback_paths:
                 fallback_dir = Path(fallback_path)
                 if fallback_dir.exists():
-                    # Enhanced format detection with 10-sample confidence scoring (Phase 2.2)
+                    # Enhanced format detection with configurable sample size (Phase 2.2)
                     format_info = enhanced_format_detection(
-                        fallback_dir, max_samples=10
+                        fallback_dir, training_config=training_config
                     )
 
                     if format_info["confidence"] > 0.0:
@@ -627,9 +664,9 @@ def create_dataloaders(
 
         # Get num_workers from config (prioritize data_loading section, fallback to data section)
         if hasattr(training_config, 'data_loading'):
-            num_workers = getattr(training_config.data_loading, 'num_workers', 8)
-            prefetch_factor = getattr(training_config.data_loading, 'prefetch_factor', 4)
-            persistent_workers = getattr(training_config.data_loading, 'persistent_workers', True)
+            num_workers = getattr(training_config.data_loading, 'num_workers', 8)  # type: ignore[attr-defined]
+            prefetch_factor = getattr(training_config.data_loading, 'prefetch_factor', 4)  # type: ignore[attr-defined]
+            persistent_workers = getattr(training_config.data_loading, 'persistent_workers', True)  # type: ignore[attr-defined]
         else:
             # Fallback to old location for backward compatibility
             num_workers = getattr(training_config.data, 'num_workers', 8)
@@ -638,8 +675,8 @@ def create_dataloaders(
 
         # Get validation dataset config (prioritize data_loading section)
         if hasattr(training_config, 'data_loading'):
-            val_max_samples = getattr(training_config.data_loading, 'val_max_samples', None)
-            val_split_ratio = getattr(training_config.data_loading, 'val_split_ratio', 0.1)
+            val_max_samples = getattr(training_config.data_loading, 'val_max_samples', None)  # type: ignore[attr-defined]
+            val_split_ratio = getattr(training_config.data_loading, 'val_split_ratio', 0.1)  # type: ignore[attr-defined]
         else:
             # Fallback to data section for backward compatibility
             val_max_samples = getattr(training_config.data, 'val_max_samples', None)
@@ -666,7 +703,7 @@ def create_dataloaders(
 
         # Get samples_per_file from config (prioritize data_loading section)
         if hasattr(training_config, 'data_loading'):
-            samples_per_file = getattr(training_config.data_loading, 'samples_per_file', 1)
+            samples_per_file = getattr(training_config.data_loading, 'samples_per_file', 1)  # type: ignore[attr-defined]
         else:
             # Fallback to data section for backward compatibility
             samples_per_file = getattr(training_config.data, 'samples_per_file', 1)
@@ -749,9 +786,9 @@ def setup_optimizer_and_lr_management(
 
     # Override with command line args if provided
     lr = training_config.training.learning_rate or training_cfg.get(
-        "learning_rate", 5e-5
+        "learning_rate", getattr(training_config.training, "default_learning_rate", 5e-5)
     )
-    weight_decay = training_cfg.get("weight_decay", 0.01)
+    weight_decay = training_cfg.get("weight_decay", getattr(training_config.training, "default_weight_decay", 0.01))
 
     # Ensure values are numeric
     lr = float(lr)
@@ -762,8 +799,10 @@ def setup_optimizer_and_lr_management(
     # This is a well-known best practice that significantly improves LLM training
     optimizer_type = training_cfg.get("optimizer", "adamw").lower()
 
-    # Parameters that should not have weight decay
-    no_decay = ['bias', 'LayerNorm.weight', 'layernorm.weight', 'ln_f.weight', 'ln_', 'norm.weight']
+    # Parameters that should not have weight decay (from config or default)
+    no_decay = getattr(training_config.training, 'no_decay_patterns', [
+        'bias', 'LayerNorm.weight', 'layernorm.weight', 'ln_f.weight', 'ln_', 'norm.weight'
+    ])
 
     # CRITICAL FIX: Ensure all parameters are accounted for
     decay_params = []
@@ -786,8 +825,15 @@ def setup_optimizer_and_lr_management(
     ]
 
     if optimizer_type == "adamw":
+        # Get Adam betas from config with fallback
+        adam_betas = getattr(training_config.training, 'adam_betas', None)
+        if adam_betas is None:
+            adam_betas = (0.9, 0.95)
+        else:
+            adam_betas = tuple(adam_betas) if isinstance(adam_betas, list) else adam_betas
+
         optimizer = torch.optim.AdamW(
-            optimizer_grouped_parameters, lr=lr, betas=(0.9, 0.95)
+            optimizer_grouped_parameters, lr=lr, betas=adam_betas
         )
     elif optimizer_type == "adam":
         optimizer = torch.optim.Adam(
@@ -908,14 +954,20 @@ def setup_wandb(
             else f"moe_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
 
+        # Get wandb settings from config with defaults
+        resume_policy_raw = getattr(training_config.wandb, 'resume_policy', 'allow') if hasattr(training_config.wandb, 'resume_policy') else 'allow'
+        save_code = getattr(training_config.wandb, 'save_code', True) if hasattr(training_config.wandb, 'save_code') else True
+        # Ensure resume_policy is of correct type for wandb
+        resume_policy: bool | str = resume_policy_raw if isinstance(resume_policy_raw, (bool, str)) else 'allow'
+
         wandb_run = wandb.init(  # type: ignore[attr-defined]
             project=training_config.wandb.wandb_project,
             name=training_config.wandb.wandb_name or run_name,
             config=wandb_config,
             tags=training_config.wandb.wandb_tags,
-            resume="allow",
+            resume=resume_policy,  # type: ignore[arg-type]
             dir=str(run_manager.run_dir) if run_manager else "./wandb",
-            save_code=True,
+            save_code=save_code,
         )
 
         # Define metric types to prevent panel rendering issues
@@ -1111,11 +1163,14 @@ def train_epoch(
         epoch_stats["total_loss"] += loss_val
         epoch_stats["num_batches"] += 1
 
-        # Track recent losses for fair train/val comparison (keep last 100)
+        # Track recent losses for fair train/val comparison
+        # Get window size from config
+        recent_losses_window = getattr(training_config.evaluation, 'recent_losses_window_size', 100) if training_config else 100
+
         if 'recent_losses' not in epoch_stats:
             epoch_stats['recent_losses'] = []
         epoch_stats['recent_losses'].append(loss_val)
-        if len(epoch_stats['recent_losses']) > 100:
+        if len(epoch_stats['recent_losses']) > recent_losses_window:
             epoch_stats['recent_losses'].pop(0)
 
         # Update running loss average for accurate checkpoint reporting
@@ -1184,8 +1239,9 @@ def train_epoch(
                     if 'recent_losses' not in epoch_stats:
                         epoch_stats['recent_losses'] = []
 
-                    # Use the most recent losses (last 100 batches)
-                    recent_window = epoch_stats['recent_losses'][-100:] if len(epoch_stats['recent_losses']) > 0 else []
+                    # Use the most recent losses (configurable window size)
+                    recent_losses_window = getattr(training_config.evaluation, 'recent_losses_window_size', 100) if training_config else 100
+                    recent_window = epoch_stats['recent_losses'][-recent_losses_window:] if len(epoch_stats['recent_losses']) > 0 else []
                     if len(recent_window) > 0:
                         recent_train_loss = sum(recent_window) / len(recent_window)
                         print(f"   Recent training loss (last {len(recent_window)} batches): {recent_train_loss:.4f}")
@@ -1193,9 +1249,11 @@ def train_epoch(
                         recent_train_loss = epoch_stats['total_loss'] / max(epoch_stats['num_batches'], 1)
                         print(f"   Training loss (full epoch avg): {recent_train_loss:.4f}")
 
-                    # Run validation with more batches for better accuracy (100 batches = ~5K samples)
-                    use_bf16 = getattr(training_config, "training", None) and getattr(training_config.training, "mixed_precision", "fp16") == "bf16" if training_config else False
-                    val_result = evaluate_model(trainer.model, val_loader, device, use_bf16=use_bf16, max_batches=100)
+                    # Run validation with configurable batch limit
+                    use_bf16 = bool((getattr(training_config, "training", None) and
+                                   getattr(training_config.training, "mixed_precision", "fp16") == "bf16") if training_config else False)
+                    max_val_batches = getattr(training_config.evaluation, 'max_validation_batches', 100) if training_config else 100
+                    val_result = evaluate_model(trainer.model, val_loader, device, use_bf16=use_bf16, max_batches=max_val_batches, training_config=training_config)
 
                     # Handle tuple return (loss, perplexity)
                     if isinstance(val_result, tuple):
@@ -1212,10 +1270,14 @@ def train_epoch(
                         print(f"  Val/Train Ratio: {val_loss/recent_train_loss:.3f}")
 
                         # Warn if validation loss is suspiciously low compared to RECENT training
-                        if val_loss < recent_train_loss * 0.8:
+                        # Get thresholds from config
+                        val_train_ratio_low = getattr(training_config.evaluation, 'val_train_ratio_low_threshold', 0.8) if training_config else 0.8
+                        val_train_ratio_high = getattr(training_config.evaluation, 'val_train_ratio_high_threshold', 1.05) if training_config else 1.05
+
+                        if val_loss < recent_train_loss * val_train_ratio_low:
                             print(f"  ⚠️  WARNING: Val loss significantly lower than recent train loss")
                             print(f"      This may indicate data leakage or measurement issues")
-                        elif val_loss > recent_train_loss * 1.05:
+                        elif val_loss > recent_train_loss * val_train_ratio_high:
                             print(f"  ✅ Good: Val loss > train loss (model generalizing properly)")
 
                         # Test generation quality (if tokenizer available)
@@ -1227,13 +1289,17 @@ def train_epoch(
                             ]
                             print(f"\n  🎯 Testing generation quality...")
                             try:
+                                # Get generation test parameters from config
+                                eval_max_length = getattr(training_config.generation, 'eval_max_length', 50) if training_config else 50
+                                eval_temperature = getattr(training_config.generation, 'eval_temperature', 0.8) if training_config else 0.8
+
                                 gen_results = test_generation_quality(
                                     trainer.model,
                                     tokenizer=tokenizer,
                                     device=device,
                                     test_prompts=test_prompts,
-                                    max_length=50,
-                                    temperature=0.8
+                                    max_length=eval_max_length,
+                                    temperature=eval_temperature
                                 )
 
                                 if gen_results and 'repetition_scores' in gen_results:
@@ -1245,16 +1311,24 @@ def train_epoch(
                                     if gen_results.get('coherence'):
                                         coh = gen_results['coherence']
                                         score = coh.get('coherence_score', 0)
-                                        if score >= 75:
+
+                                        # Get thresholds from config
+                                        excellent_threshold = getattr(training_config.generation, 'coherence_excellent_threshold', 75) if training_config else 75
+                                        moderate_threshold = getattr(training_config.generation, 'coherence_moderate_threshold', 50) if training_config else 50
+                                        distinct_2_threshold = getattr(training_config.generation, 'distinct_2_threshold', 0.7) if training_config else 0.7
+                                        repetition_threshold = getattr(training_config.generation, 'repetition_threshold', 0.3) if training_config else 0.3
+                                        entropy_threshold = getattr(training_config.generation, 'entropy_threshold', 4.0) if training_config else 4.0
+
+                                        if score >= excellent_threshold:
                                             status = "✅ Excellent"
-                                        elif score >= 50:
+                                        elif score >= moderate_threshold:
                                             status = "⚠️  Moderate"
                                         else:
                                             status = "❌ Poor"
                                         print(f"  Coherence: {score:.0f}/100 ({status})")
-                                        print(f"    • Distinct-2: {coh.get('distinct_2', 0):.3f} {'✅' if coh.get('distinct_2', 0) > 0.7 else '❌'}")
-                                        print(f"    • Repetition: {coh.get('repetition', 0):.3f} {'✅' if coh.get('repetition', 0) < 0.3 else '❌'}")
-                                        print(f"    • Entropy: {coh.get('entropy', 0):.2f} {'✅' if coh.get('entropy', 0) > 4.0 else '❌'}")
+                                        print(f"    • Distinct-2: {coh.get('distinct_2', 0):.3f} {'✅' if coh.get('distinct_2', 0) > distinct_2_threshold else '❌'}")
+                                        print(f"    • Repetition: {coh.get('repetition', 0):.3f} {'✅' if coh.get('repetition', 0) < repetition_threshold else '❌'}")
+                                        print(f"    • Entropy: {coh.get('entropy', 0):.2f} {'✅' if coh.get('entropy', 0) > entropy_threshold else '❌'}")
 
                                     # Show one sample
                                     if len(gen_results['generated_texts']) > 0:
@@ -1269,6 +1343,7 @@ def train_epoch(
                         # Store in epoch stats for logging
                         if 'in_epoch_validations' not in epoch_stats:
                             epoch_stats['in_epoch_validations'] = []
+                        current_optimizer_step = trainer.optimizer_step_count if hasattr(trainer, 'optimizer_step_count') else trainer.step_count // getattr(training_config.training, 'gradient_accumulation_steps', 1)  # type: ignore[union-attr]
                         epoch_stats['in_epoch_validations'].append({
                             'step': current_optimizer_step,
                             'val_loss': val_loss,
@@ -1388,16 +1463,29 @@ def test_generation_quality(
 
             # Generate
             try:
-                generated_ids = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    max_length=min(prompt_len + max_length, 512),
-                    temperature=temperature,
-                    do_sample=True,
-                    top_p=0.9,
-                    pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-                    eos_token_id=tokenizer.eos_token_id
-                )
+                # Ensure input_ids is not a Tensor being treated as callable
+                if isinstance(input_ids, torch.Tensor):
+                    generated_ids = model.generate(  # type: ignore[misc]
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_length=min(prompt_len + max_length, 512),
+                        temperature=temperature,
+                        do_sample=True,
+                        top_p=0.9,
+                        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id
+                    )
+                else:
+                    generated_ids = model.generate(  # type: ignore[misc]
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_length=min(prompt_len + max_length, 512),
+                        temperature=temperature,
+                        do_sample=True,
+                        top_p=0.9,
+                        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id
+                    )
 
                 # Decode
                 generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
@@ -1445,7 +1533,7 @@ def test_generation_quality(
 
 
 def evaluate_model(
-    model: torch.nn.Module, dataloader, device: torch.device, use_bf16: bool = False, max_batches: int = 50
+    model: torch.nn.Module, dataloader, device: torch.device, use_bf16: bool = False, max_batches: Optional[int] = None, training_config: Optional[Any] = None
 ) -> tuple[Optional[float], Optional[float]]:
     """Evaluate model and return average loss and perplexity.
 
@@ -1454,11 +1542,19 @@ def evaluate_model(
         dataloader: Validation dataloader
         device: Device to run evaluation on
         use_bf16: Whether to use BF16 precision (should match training)
-        max_batches: Maximum number of batches to evaluate (default: 50 for fast validation)
+        max_batches: Maximum number of batches to evaluate (default: from config or 50 for fast validation)
+        training_config: Training configuration for default values
 
     Returns:
         tuple of (avg_loss, perplexity) - perplexity is exp(avg_loss)
     """
+    # Get max_batches from config if not provided
+    if max_batches is None:
+        if training_config and hasattr(training_config, 'evaluation'):
+            max_batches = getattr(training_config.evaluation, 'default_max_validation_batches', 50)
+        else:
+            max_batches = 50  # Fallback default
+
     model.eval()
     total_loss = 0.0
     num_valid_batches = 0
@@ -1472,7 +1568,8 @@ def evaluate_model(
         with torch.no_grad():
             for batch_idx, batch in enumerate(dataloader):
                 # FAST VALIDATION: Stop after max_batches to avoid long hangs
-                if batch_idx >= max_batches:
+                max_batches_safe = max_batches if max_batches is not None else 100
+                if batch_idx >= max_batches_safe:
                     break
 
                 total_batches_processed += 1
@@ -1512,7 +1609,9 @@ def evaluate_model(
                 loss = outputs["loss"]
 
                 # Clear cache periodically during evaluation to prevent memory buildup
-                if batch_idx % 50 == 0 and torch.cuda.is_available():
+                # Get cache clear frequency from config
+                cache_clear_freq = getattr(training_config.evaluation, 'cache_clear_frequency', 50) if training_config else 50
+                if batch_idx % cache_clear_freq == 0 and torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
                 # Validate loss is scalar and finite
@@ -1521,17 +1620,22 @@ def evaluate_model(
                     loss = loss.mean()
 
                 # Handle non-finite losses properly - don't skip, but track separately
+                # Get logging limits from config
+                max_nan_logs = getattr(training_config.evaluation, 'max_nan_loss_logs', 5) if training_config else 5
+                max_inf_logs = getattr(training_config.evaluation, 'max_inf_loss_logs', 5) if training_config else 5
+                max_invalid_logs = getattr(training_config.evaluation, 'max_invalid_batch_logs', 5) if training_config else 5
+
                 if torch.isnan(loss):
                     num_nan_losses += 1
                     num_invalid_batches += 1
-                    if num_nan_losses <= 5:  # Log first few occurrences
+                    if num_nan_losses <= max_nan_logs:  # Log first few occurrences
                         print(
                             f"WARNING: NaN loss in evaluation (batch {total_batches_processed})"
                         )
                 elif torch.isinf(loss):
                     num_inf_losses += 1
                     num_invalid_batches += 1
-                    if num_inf_losses <= 5:  # Log first few occurrences
+                    if num_inf_losses <= max_inf_logs:  # Log first few occurrences
                         print(
                             f"WARNING: Infinite loss in evaluation (batch {total_batches_processed}): {loss.item()}"
                         )
@@ -1546,7 +1650,7 @@ def evaluate_model(
                 else:
                     # Catch any other non-finite cases
                     num_invalid_batches += 1
-                    if num_invalid_batches <= 5:
+                    if num_invalid_batches <= max_invalid_logs:
                         print(
                             f"WARNING: Non-finite loss in evaluation (batch {total_batches_processed}): {loss.item()}"
                         )
@@ -1567,7 +1671,7 @@ def evaluate_model(
             print(
                 "⚠️  WARNING: Validation dataloader is empty - no validation metrics available"
             )
-            return None  # Return None to indicate empty validation set
+            return (None, None)  # Return tuple to match expected return type
         else:
             # All losses were invalid - this indicates severe training problems
             print(
@@ -1578,14 +1682,16 @@ def evaluate_model(
             print(
                 f"  Other invalid: {num_invalid_batches - num_nan_losses - num_inf_losses}"
             )
-            return float("inf")  # Return infinity to indicate complete failure
+            return (float("inf"), float("inf"))  # Return tuple to match expected return type
 
     avg_valid_loss = total_loss / num_valid_batches
 
     # Calculate perplexity: exp(avg_loss)
     import math
     try:
-        perplexity = math.exp(avg_valid_loss) if avg_valid_loss < 20 else float('inf')  # Avoid overflow
+        # Get perplexity overflow threshold from config
+        perplexity_threshold = getattr(training_config.evaluation, 'perplexity_overflow_threshold', 20) if training_config else 20
+        perplexity = math.exp(avg_valid_loss) if avg_valid_loss < perplexity_threshold else float('inf')  # Avoid overflow
     except:
         perplexity = None
 
@@ -1598,8 +1704,10 @@ def evaluate_model(
         print(f"    Valid batches: {num_valid_batches}, Avg loss: {avg_valid_loss:.4f}")
         print(f"    NaN losses: {num_nan_losses}, Infinite losses: {num_inf_losses}")
 
-        # If more than 20% of batches are invalid, this indicates serious problems
-        if invalid_rate > 0.2:
+        # If more than threshold of batches are invalid, this indicates serious problems
+        # Get threshold from config
+        invalid_batch_threshold = getattr(training_config.evaluation, 'invalid_batch_rate_threshold', 0.2) if training_config else 0.2
+        if invalid_rate > invalid_batch_threshold:
             print(
                 f"🚨 CRITICAL: {invalid_rate:.1%} of validation batches are invalid - training may be unstable"
             )
@@ -1758,21 +1866,49 @@ def resume_smoke_test(
 def main():
     """Main training function using modular components."""
 
-    # Apply speed optimizations FIRST (before any CUDA operations)
+    # Parse arguments early to get config
+    print(" Setting up configuration...")
+    config_manager = TrainingConfigManager()
+    parser = config_manager.create_argument_parser()
+    args = parser.parse_args()
+
+    # Parse to structured configuration
+    training_config = config_manager.parse_args_to_config(args)
+
+    # Load base config file
+    config_dict = load_config(args.config)
+
+    # Apply configurable environment variables and torch settings FIRST
     import torch
+
+    # Set TORCHINDUCTOR_MAX_AUTOTUNE from config
+    if hasattr(training_config, 'performance'):
+        torchinductor_autotune = str(getattr(training_config.performance, 'torchinductor_max_autotune', '0'))
+        os.environ['TORCHINDUCTOR_MAX_AUTOTUNE'] = torchinductor_autotune
+
     if hasattr(torch, '_inductor') and hasattr(torch._inductor, 'config'):
         try:
-            # Fix CUDAGraph dynamic shape warnings
-            torch._inductor.config.triton.cudagraph_skip_dynamic_shapes = True  # type: ignore[attr-defined]
-            torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit = None  # type: ignore[attr-defined]
+            # Fix CUDAGraph dynamic shape warnings (configurable)
+            if hasattr(training_config, 'performance'):
+                skip_dynamic = getattr(training_config.performance, 'cudagraph_skip_dynamic_shapes', True)
+                warn_limit = getattr(training_config.performance, 'cudagraph_dynamic_shape_warn_limit', None)
+                torch._inductor.config.triton.cudagraph_skip_dynamic_shapes = skip_dynamic  # type: ignore[attr-defined]
+                torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit = warn_limit  # type: ignore[attr-defined]
+            else:
+                torch._inductor.config.triton.cudagraph_skip_dynamic_shapes = True  # type: ignore[attr-defined]
+                torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit = None  # type: ignore[attr-defined]
             print("✓ CUDAGraph dynamic shape optimizations applied")
         except Exception:
             pass  # Ignore if not available
 
-    # Enable TF32 for faster matmul on Ampere GPUs
+    # Enable TF32 for faster matmul on Ampere GPUs (configurable)
     if torch.cuda.is_available():
         try:
-            torch.set_float32_matmul_precision('high')
+            if hasattr(training_config, 'performance'):
+                matmul_precision = getattr(training_config.performance, 'float32_matmul_precision', 'high')
+                torch.set_float32_matmul_precision(matmul_precision)
+            else:
+                torch.set_float32_matmul_precision('high')
             torch.backends.cudnn.benchmark = True
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -1783,14 +1919,7 @@ def main():
     # Register GPU cleanup handlers
     register_cleanup_handlers()
 
-    # 1. Parse arguments and create configuration
-    print(" Setting up configuration...")
-    config_manager = TrainingConfigManager()
-    parser = config_manager.create_argument_parser()
-    args = parser.parse_args()
-
-    # Parse to structured configuration
-    training_config = config_manager.parse_args_to_config(args)
+    # Configuration already loaded above (moved earlier to apply torch settings)
 
     # Phase 6.1: Feature Compatibility Validation
     print("\n" + "=" * 50)
@@ -1838,8 +1967,7 @@ def main():
     for message in validation_messages:
         print(f"WARNING: {message}")
 
-    # Load base config file
-    config_dict = load_config(args.config)
+    # Config dict already loaded above (moved earlier to apply torch settings)
 
     # FIXED: Load DeepSpeed config from YAML
     if "deepspeed" in config_dict:
@@ -1863,6 +1991,8 @@ def main():
         if "batch_size" in training_yaml:
             training_config.training.batch_size = training_yaml["batch_size"]
             print(f"✓ Batch size loaded from YAML: {training_config.training.batch_size}")
+        if "gradient_accumulation" in training_yaml:
+            training_config.training.gradient_accumulation = training_yaml["gradient_accumulation"]
         if "learning_rate" in training_yaml:
             training_config.training.learning_rate = training_yaml["learning_rate"]
             print(f"✓ Learning rate loaded from YAML: {training_config.training.learning_rate}")
@@ -1872,8 +2002,10 @@ def main():
         if "gradient_accumulation_steps" in training_yaml:
             # CRITICAL FIX: Set both gradient_accumulation AND gradient_accumulation_steps
             # The trainer reads gradient_accumulation_steps, not gradient_accumulation!
-            training_config.training.gradient_accumulation = training_yaml["gradient_accumulation_steps"]
-            training_config.training.gradient_accumulation_steps = training_yaml["gradient_accumulation_steps"]
+            if hasattr(training_config.training, 'gradient_accumulation'):
+                training_config.training.gradient_accumulation = training_yaml["gradient_accumulation_steps"]
+            if hasattr(training_config.training, 'gradient_accumulation_steps'):
+                training_config.training.gradient_accumulation_steps = training_yaml["gradient_accumulation_steps"]  # type: ignore[attr-defined]
             print(f"✓ Gradient accumulation loaded from YAML: {training_yaml['gradient_accumulation_steps']}")
 
         # Load adaptive_lr config from YAML
@@ -2504,6 +2636,9 @@ def main():
             print("   Consider fixing checkpoint issues before long training runs.")
         print("=" * 40)
 
+    # Initialize best_val_loss (will be updated if checkpoint is loaded)
+    best_val_loss = float("inf")
+
     # 8.6. Resume from checkpoint if specified
     if training_config.output.resume and not training_config.output.fresh_start:
         checkpoint_path = training_config.output.resume
@@ -2548,7 +2683,8 @@ def main():
     num_epochs = training_config.training.epochs or config_dict.get("training", {}).get(
         "num_epochs", 3
     )
-    best_val_loss = float("inf") if not training_config.output.resume else best_val_loss
+    # best_val_loss already initialized above, resume will update if checkpoint loaded
+    resume_training = getattr(training_config.output, 'resume', False) if hasattr(training_config, 'output') else False
 
     # Early stopping configuration
     early_stopping_patience = getattr(
@@ -2642,8 +2778,9 @@ def main():
             # Evaluate with same precision as training
             if should_evaluate:
                 use_bf16 = getattr(training_config.training, "mixed_precision", "fp16") == "bf16"
-                # End-of-epoch validation can be more thorough (100 batches)
-                val_result = evaluate_model(model, val_loader, device, use_bf16=use_bf16, max_batches=100)  # type: ignore[arg-type]
+                # End-of-epoch validation can be more thorough (configurable batches)
+                max_val_batches = getattr(training_config.evaluation, 'max_validation_batches', 100) if training_config else 100
+                val_result = evaluate_model(model, val_loader, device, use_bf16=use_bf16, max_batches=max_val_batches, training_config=training_config)  # type: ignore[arg-type]
                 # Handle tuple return
                 if isinstance(val_result, tuple):
                     val_loss, _perplexity = val_result
@@ -3244,8 +3381,8 @@ def main():
                 summary_metrics["summary/final_gpu_memory_gb"] = final_stats["memory"]["allocated_gb"]
 
             # Add training time if available
-            if hasattr(trainer, 'total_training_time'):
-                summary_metrics["summary/total_training_time_hours"] = trainer.total_training_time / 3600
+            if hasattr(trainer, 'total_training_time') and trainer.total_training_time is not None:  # type: ignore[attr-defined]
+                summary_metrics["summary/total_training_time_hours"] = trainer.total_training_time / 3600  # type: ignore[attr-defined]
 
             wandb.log(summary_metrics)  # type: ignore[attr-defined]
             print("   ✓ Summary metrics logged to WandB")

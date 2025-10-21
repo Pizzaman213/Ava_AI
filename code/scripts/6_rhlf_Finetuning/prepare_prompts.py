@@ -163,6 +163,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load or create prompts
+    prompts = []  # Initialize to avoid possibly unbound variable
     if args.create_samples:
         print(f"Creating {args.num_samples} sample prompts...")
         prompts = create_sample_prompts(args.num_samples)
@@ -196,7 +197,8 @@ def main():
 
     # Split or save all
     if args.no_split:
-        save_prompts(prompts, args.output)
+        if prompts:  # Check if prompts is not empty
+            save_prompts(prompts, args.output)
     else:
         train_prompts, eval_prompts = split_prompts(prompts, args.train_ratio)
         print(f"Split: {len(train_prompts)} train, {len(eval_prompts)} eval")

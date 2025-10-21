@@ -24,6 +24,13 @@ model:
   deepspeed_moe_param_groups: true
   tie_word_embeddings: false
   dropout: 0.15
+  # Model architecture defaults
+  default_vocab_size: 50257
+  default_hidden_size: 768
+  default_num_layers: 12
+  default_num_attention_heads: 12
+  default_vocab_size_large: 32000
+  default_hidden_size_large: 4096
 training:
   batch_size: 32  # Minimal batch size to avoid OOM
   gradient_accumulation_steps: 2  # Effective batch = 192 (24 * 8) - FIXED: was 1, causing noisy gradients
@@ -60,6 +67,21 @@ training:
   logging_steps: 10
   early_stopping_patience: 3  # REDUCED from 5 for faster stopping on overfitting
   early_stopping_threshold: 0.01  # INCREASED from 0.005 for earlier stopping
+  # Optimizer defaults
+  default_learning_rate: 5.0e-5
+  default_weight_decay: 0.01
+  adam_betas:
+    - 0.9
+    - 0.95
+  no_decay_patterns:
+    - bias
+    - LayerNorm.weight
+    - layernorm.weight
+    - ln_f.weight
+    - ln_
+    - norm.weight
+  # Training defaults
+  default_batch_size_fallback: 12
   adaptive_lr:
     enabled: false
     min_lr: 5.0e-05
@@ -73,16 +95,31 @@ training:
     increase_factor: 1.05
     divergence_threshold: 5.0
     emergency_factor: 0.7
+    # Warmup defaults
+    warmup_percentage: 0.03
+    default_warmup_steps: 3000
+    # Max LR multiplier
+    max_lr_multiplier: 2.0
   progressive:
     enable_progressive_training: false
     enable_sequence_scaling: false
     initial_seq_length: 128
     final_seq_length: 128
     length_schedule: exponential
-    length_growth_epochs: 5
+    length_growth_epochs: 1000
     enable_curriculum: false
     curriculum_metric: loss
     enable_dynamic_batch: false
+    # Progressive training defaults
+    default_initial_seq_length: 128
+    default_final_seq_length: 2048
+    default_length_growth_epochs: 10
+    default_cache_dir: /tmp/difficulty_cache
+    default_min_batch_size: 1
+    default_max_batch_size: 64
+    default_target_gpu_utilization: 0.85
+    min_performance_threshold: 0.8
+    default_num_epochs: 3
   dynamic_batching:
     enabled: false
     min_batch_size: 8
@@ -92,6 +129,13 @@ training:
     adjustment_factor: 1.0
     warmup_steps: 500
     smooth_transitions: false
+    # Dynamic batching defaults
+    default_min_batch_size: 1
+    default_max_batch_size: 64
+    default_target_memory_utilization: 0.85
+    default_adjustment_frequency: 100
+    default_adjustment_factor: 1.25
+    default_warmup_steps: 500
   gradient_health:
     enabled: true
     initial_clip_value: 1.0
@@ -111,6 +155,8 @@ data:
   max_eval_examples: 5000
   dataloader_drop_last: true
   dataloader_pin_memory: false
+  # Tokenizer defaults
+  default_tokenizer_name: Qwen/Qwen2.5-0.5B
 deepspeed:
   use_deepspeed: false
   zero_stage: 0
@@ -121,6 +167,10 @@ deepspeed:
   micro_batch_size: 24  # FIXED: Changed from 4 to match training.batch_size
   gradient_accumulation_steps: 8  # FIXED: Match training.gradient_accumulation_steps
   activation_checkpointing: false
+  # DeepSpeed defaults
+  default_zero_stage: 2
+  default_gradient_accumulation_steps: 1
+  default_precision_type: bf16
 enhanced_features:
   architecture:
     use_moh: false
@@ -149,6 +199,12 @@ enhanced_features:
     adaptive_loss_scaling: false
     contrastive_loss_weight: 0.02
     diversity_loss_weight: 0.1
+    # Loss configuration defaults
+    default_num_future_tokens: 3
+    default_mtp_weight: 0.1
+    default_initial_temperature: 1.0
+    default_label_smoothing: 0.1
+    default_gradient_balance_weight: 0.1
   adaptive_mtp:
     use_adaptive_mtp: false
     num_prediction_heads: 3
@@ -193,7 +249,7 @@ enhanced_features:
     use_hadamard_transform: false
 data_loading:
   streaming: true
-  buffer_size: 10000
+  buffer_size: 50000
   max_samples: null
   val_max_samples: 5000
   val_split_ratio: 0.15
@@ -201,7 +257,7 @@ data_loading:
   use_multi_column: false
   distributed: false
   num_workers: 8
-  samples_per_file: 20  # NEW: Samples per file before rotation (1=max diversity, higher=less I/O)
+  samples_per_file: 32  # NEW: Samples per file before rotation (1=max diversity, higher=less I/O)
   enable_bucketing: true
   bucket_boundaries:
   - 64
@@ -215,18 +271,41 @@ data_loading:
   drop_last_batch: true
   prefetch_factor: 4
   persistent_workers: true
+  # Format detection
+  format_detection_samples: 10
+  # Fallback data paths
+  fallback_data_paths:
+    - /project/code/data/processed
+    - /project/code/data/combined
+    - /project/code/data
+    - ./data/processed
+    - ./data/combined
+    - ./data
+    - ../data/processed
+    - ../data
+    - ../../data
 performance:
   ultra_fast_mode: true
   fast_progress: false
   minimal_progress: true
   express_mode: true
   no_sync: false
+  # Torch compilation settings
   torch_compile:
     enabled: true
     mode: max-autotune
     fullgraph: false
     dynamic: false
     backend: inductor
+  # Default compile mode for speed optimization
+  default_compile_mode: reduce-overhead
+  compile_fullgraph: false
+  compile_dynamic: false
+  # Environment and torch settings
+  torchinductor_max_autotune: '0'
+  cudagraph_skip_dynamic_shapes: true
+  cudagraph_dynamic_shape_warn_limit: null
+  float32_matmul_precision: high
 memory:
   enable_memory_pool: true
   pool_size_gb: 24.0
@@ -243,6 +322,23 @@ evaluation:
   eval_during_training: true
   eval_metrics: perplexity
   comprehensive_eval: false
+  # Evaluation batch processing
+  recent_losses_window_size: 100
+  max_validation_batches: 100
+  default_max_validation_batches: 50
+  cache_clear_frequency: 50
+  # Validation thresholds
+  val_train_ratio_low_threshold: 0.8
+  val_train_ratio_high_threshold: 1.05
+  invalid_batch_rate_threshold: 0.2
+  perplexity_overflow_threshold: 20
+  # Logging limits
+  max_nan_loss_logs: 5
+  max_inf_loss_logs: 5
+  max_invalid_batch_logs: 5
+  # Test batches
+  num_test_batches: 3
+  batch_size_variance_threshold: 2
   moe_metrics:
     track_expert_utilization: false
     track_routing_entropy: false
@@ -274,6 +370,10 @@ lr_finder:
   track_validation: false
   num_runs: 1
   gradient_accumulation_steps: 8  # FIXED: Match training.gradient_accumulation_steps
+  # LR Finder defaults
+  default_mode: exponential
+  save_plot: true
+  default_gradient_accumulation_steps: 1
 wandb:
   enabled: true
   project: Ava
@@ -291,6 +391,9 @@ wandb:
   - enhanced-65k
   - 65k-vocab
   - lr-finder-optimized
+  # Wandb defaults
+  resume_policy: allow
+  save_code: true
   notes: '[FIXED 2025-10-20] Loss bouncing and overfitting fixes:
 
     - Gradient accumulation: 1→8 (effective batch: 24→192)
@@ -347,6 +450,20 @@ generation:
   no_repeat_ngram_size: 4
   do_sample: true
   num_beams: 1
+  # Evaluation generation defaults
+  eval_max_length: 50
+  eval_temperature: 0.8
+  eval_top_p: 0.9
+  tokenizer_max_length: 512
+  min_tokens_for_trigrams: 4
+  trigram_size: 3
+  sample_display_max_chars: 100
+  # Quality thresholds
+  coherence_excellent_threshold: 75
+  coherence_moderate_threshold: 50
+  distinct_2_threshold: 0.7
+  repetition_threshold: 0.3
+  entropy_threshold: 4.0
 
 # RLHF Fine-tuning Configuration
 rlhf:

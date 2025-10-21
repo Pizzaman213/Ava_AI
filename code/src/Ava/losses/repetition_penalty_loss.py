@@ -8,7 +8,7 @@ preventing mode collapse where the model learns to repeat tokens.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 
 class NGramRepetitionPenalty(nn.Module):
@@ -145,7 +145,7 @@ class NGramRepetitionPenalty(nn.Module):
         logits: torch.Tensor,
         targets: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Union[torch.Tensor, float]]:
         """
         Compute repetition penalties.
 
@@ -254,7 +254,7 @@ class SequenceRepetitionDetector(nn.Module):
         self,
         token_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Union[torch.Tensor, float]]:
         """
         Detect and penalize sequence repetition.
 

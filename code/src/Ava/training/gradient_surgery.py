@@ -185,8 +185,8 @@ class GradientSurgeon:
 
             if conflict_mask.any():
                 # Randomly drop some gradient components
-                drop_prob = 0.5 * conflict_mask.float().mean()
-                dropout_mask = torch.bernoulli(torch.full((num_params,), 1 - drop_prob))
+                drop_prob = 0.5 * conflict_mask.float().mean().item()
+                dropout_mask = torch.bernoulli(torch.full((num_params,), float(1 - drop_prob)))
                 modified_grads[i] = modified_grads[i] * dropout_mask
 
         return self._matrix_to_gradients(modified_grads, gradients)

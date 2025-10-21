@@ -215,7 +215,8 @@ class SparseExpert(nn.Module):
         compute_indices = should_compute & compute_mask.any(dim=1)
 
         # FIXED: Two computation modes - true sparsity (saves compute) vs compile-friendly (masks output)
-        if self.use_true_sparsity and not torch.jit.is_scripting():
+        is_scripting = torch.jit.is_scripting() if hasattr(torch.jit, 'is_scripting') else False  # type: ignore[attr-defined]
+        if self.use_true_sparsity and not is_scripting:
             # True conditional computation: only process selected tokens
             # This saves actual computation but uses dynamic control flow
             compute_mask_bool = compute_indices

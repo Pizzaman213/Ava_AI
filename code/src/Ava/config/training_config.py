@@ -42,6 +42,14 @@ class DynamicConfig:
                 else:
                     setattr(self, key, value)
 
+    def __getattr__(self, name: str) -> Any:
+        """Allow accessing any attribute dynamically for type checkers."""
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Allow setting any attribute dynamically."""
+        super().__setattr__(name, value)
+
     def __getitem__(self, key: str) -> Any:
         """Support dictionary-style access: config['key']"""
         return getattr(self, key)
@@ -175,11 +183,23 @@ class LossConfig:
 
 
 @dataclass
+class GradientHealthConfig:
+    """Configuration for gradient health monitoring."""
+    grad_norm_history: List[float] = field(default_factory=list)  # History of gradient norms
+    grad_norm_pre_clip_history: List[float] = field(default_factory=list)  # Pre-clip norms
+    total_steps: int = 0                      # Total steps tracked
+    explosion_threshold: float = 10.0         # Threshold for gradient explosions
+    recent_explosions: List[int] = field(default_factory=list)  # Recent explosion steps
+    total_explosions: int = 0                 # Total explosions detected
+
+
+@dataclass
 class GradientConfig:
     """Configuration for gradient surgery."""
     gradient_surgery: bool = False            # Enable gradient surgery (disabled by default)
     adaptive_gradient_surgery: bool = False   # Adaptive method selection (disabled by default)
     gradient_surgery_method: str = 'pcgrad'   # Surgery method
+    health_monitoring: GradientHealthConfig = field(default_factory=GradientHealthConfig)  # Gradient health monitoring
 
 
 @dataclass
@@ -234,16 +254,41 @@ class EpisodicMemoryConfig:
 
 
 @dataclass
+class DataLoadingConfig:
+    """Configuration for data loading parameters."""
+    format_detection_samples: int = 10         # Number of files to sample for format detection
+    fallback_data_paths: list = field(default_factory=lambda: [  # Fallback paths to search for data
+        "/project/code/data/processed",
+        "/project/code/data/combined",
+        "/project/code/data",
+        "./data/processed",
+        "./data/combined",
+        "./data",
+        "../data/processed",
+        "../data",
+        "../../data"
+    ])
+
+
+@dataclass
 class DataConfig:
     """Configuration for data handling."""
     data_dir: str = '/project/code/data/Testing'  # Data directory
     max_length: int = 512                     # Max sequence length
+    tokenizer_name: Optional[str] = None      # Tokenizer name or path
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = False                   # Streaming loader (YAML controls)
     buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
     num_workers: int = 8                      # Parallel data loading workers
     prefetch_factor: int = 4                  # Batches to prefetch per worker
     persistent_workers: bool = False          # Keep workers alive between epochs (YAML controls)
+    padding_side: str = 'right'               # Tokenizer padding side
+    truncation: bool = True                   # Enable truncation
+    max_train_examples: Optional[int] = None  # Max training examples
+    max_eval_examples: Optional[int] = None   # Max evaluation examples
+    dataloader_drop_last: bool = False        # Drop last incomplete batch
+    dataloader_pin_memory: bool = False       # Pin memory for faster GPU transfer
+    default_tokenizer_name: str = 'Qwen/Qwen2.5-0.5B'  # Default tokenizer if none specified
 
 
 @dataclass
@@ -310,6 +355,7 @@ class TrainingConfig:
     epochs: Optional[int] = None              # Number of epochs
     learning_rate: Optional[float] = None     # Learning rate
     gradient_accumulation: int = 1            # Gradient accumulation
+    max_gradient_norm: float = 1.0            # Maximum gradient norm for clipping
 
     # Adaptive LR configuration
     adaptive_lr: dict = field(default_factory=dict)  # Adaptive learning rate settings
@@ -441,8 +487,12 @@ class EnhancedTrainingConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     adaptive_mtp: AdaptiveMTPConfig = field(default_factory=AdaptiveMTPConfig)
 
+    # Enhanced features (supports both losses and enhanced_features.losses paths)
+    enhanced_features: Optional[Dict[str, Any]] = None  # type: ignore[assignment]
+
     # Data configurations
     data: DataConfig = field(default_factory=DataConfig)
+    data_loading: DataLoadingConfig = field(default_factory=DataLoadingConfig)
     multi_column_data: MultiColumnDataConfig = field(default_factory=MultiColumnDataConfig)
 
     # Training configurations
@@ -1193,7 +1243,7 @@ Examples:
         # Check DeepSpeed settings
         if safe_get(config, 'deepspeed.use_deepspeed', False):
             config_file = safe_get(config, 'deepspeed.config_file')
-            if config_file and not Path(config_file).exists():
+            if config_file and isinstance(config_file, (str, Path)) and not Path(config_file).exists():
                 messages.append(f"DeepSpeed config file not found: {config_file}")
 
             zero_stage = safe_get(config, 'deepspeed.zero_stage', 0)
@@ -1208,7 +1258,7 @@ Examples:
 
         # Check data directory exists
         data_dir = safe_get(config, 'data.data_dir')
-        if data_dir and not Path(data_dir).exists():
+        if data_dir and isinstance(data_dir, (str, Path)) and not Path(data_dir).exists():
             messages.append(f"Warning: Data directory not found: {data_dir}")
 
         # Check performance mode conflicts
@@ -1218,7 +1268,7 @@ Examples:
             safe_get(config, 'performance.minimal_progress', False),
             safe_get(config, 'performance.express_mode', False)
         ]
-        if sum(perf_modes) > 1:
+        if sum(1 for mode in perf_modes if mode) > 1:
             messages.append("Warning: Multiple performance modes enabled, may conflict")
 
         return messages
@@ -1253,7 +1303,7 @@ Examples:
             config.performance.minimal_progress,
             config.performance.express_mode
         ]
-        if sum(perf_modes) > 1:
+        if sum(1 for mode in perf_modes if mode) > 1:
             messages.append("Warning: Multiple performance modes enabled, may conflict")
 
         # Check quantization settings

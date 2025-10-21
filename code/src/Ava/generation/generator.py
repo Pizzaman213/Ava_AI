@@ -390,11 +390,22 @@ class TextGenerator:
         penalty: float
     ):
         """Apply penalty to EOS token to encourage/discourage ending generation."""
+        if self.eos_token_id is None:
+            return
+        # Handle various types that eos_token_id might be (str, list[str], or int)
+        if isinstance(self.eos_token_id, (list, str)):
+            # If it's a list or string, try to convert to int, otherwise return
+            try:
+                eos_id: int = int(self.eos_token_id[0] if isinstance(self.eos_token_id, list) else self.eos_token_id)
+            except (ValueError, IndexError, TypeError):
+                return
+        else:
+            eos_id: int = int(self.eos_token_id)
         for i in range(logits.shape[0]):
-            if logits[i, self.eos_token_id] < 0:
-                logits[i, self.eos_token_id] *= penalty
+            if logits[i, eos_id] < 0:
+                logits[i, eos_id] *= penalty
             else:
-                logits[i, self.eos_token_id] /= penalty
+                logits[i, eos_id] /= penalty
 
     def _apply_repetition_penalty(
         self,
