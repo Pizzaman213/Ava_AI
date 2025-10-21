@@ -1290,8 +1290,9 @@ def train_epoch(
                             print(f"\n  🎯 Testing generation quality...")
                             try:
                                 # Get generation test parameters from config
-                                eval_max_length = getattr(training_config.generation, 'eval_max_length', 50) if training_config else 50
-                                eval_temperature = getattr(training_config.generation, 'eval_temperature', 0.8) if training_config else 0.8
+                                gen_config = getattr(training_config, 'generation', None) if training_config else None
+                                eval_max_length = getattr(gen_config, 'eval_max_length', 50) if gen_config else 50
+                                eval_temperature = getattr(gen_config, 'eval_temperature', 0.8) if gen_config else 0.8
 
                                 gen_results = test_generation_quality(
                                     trainer.model,
@@ -1313,11 +1314,11 @@ def train_epoch(
                                         score = coh.get('coherence_score', 0)
 
                                         # Get thresholds from config
-                                        excellent_threshold = getattr(training_config.generation, 'coherence_excellent_threshold', 75) if training_config else 75
-                                        moderate_threshold = getattr(training_config.generation, 'coherence_moderate_threshold', 50) if training_config else 50
-                                        distinct_2_threshold = getattr(training_config.generation, 'distinct_2_threshold', 0.7) if training_config else 0.7
-                                        repetition_threshold = getattr(training_config.generation, 'repetition_threshold', 0.3) if training_config else 0.3
-                                        entropy_threshold = getattr(training_config.generation, 'entropy_threshold', 4.0) if training_config else 4.0
+                                        excellent_threshold = getattr(gen_config, 'coherence_excellent_threshold', 75) if gen_config else 75
+                                        moderate_threshold = getattr(gen_config, 'coherence_moderate_threshold', 50) if gen_config else 50
+                                        distinct_2_threshold = getattr(gen_config, 'distinct_2_threshold', 0.7) if gen_config else 0.7
+                                        repetition_threshold = getattr(gen_config, 'repetition_threshold', 0.3) if gen_config else 0.3
+                                        entropy_threshold = getattr(gen_config, 'entropy_threshold', 4.0) if gen_config else 4.0
 
                                         if score >= excellent_threshold:
                                             status = "✅ Excellent"
