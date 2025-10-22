@@ -146,6 +146,7 @@ training:
     auto_reduce_lr: true
     lr_reduction_factor: 0.5
 data:
+  # Core data configuration
   data_dir: /project/code/data/processed
   max_length: 256  # Match max_position_embeddings to save memory
   tokenizer_name: /project/code/models/tokenizer/enhanced-65536
@@ -155,8 +156,50 @@ data:
   max_eval_examples: 5000
   dataloader_drop_last: true
   dataloader_pin_memory: false
+
   # Tokenizer defaults
   default_tokenizer_name: Qwen/Qwen2.5-0.5B
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 10000  # IMPROVED: Reduced from 50000 for better shuffling variation and less memory
+  max_samples: null
+  val_max_samples: 5000
+  val_split_ratio: 0.15
+  multi_column: false
+  use_multi_column: false
+  distributed: false
+  num_workers: 8
+  samples_per_file: 1  # IMPROVED: Changed from 32 to 1 for maximum data diversity and better shuffling
+  enable_bucketing: true
+  bucket_boundaries:
+  - 64
+  - 128
+  - 256
+  max_bucket_size: 64
+  use_weighted_mixing: false
+  mixing_temperature: 1.0
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 4
+  persistent_workers: true
+
+  # Format detection
+  format_detection_samples: 10
+
+  # Fallback data paths
+  fallback_data_paths:
+    - /project/code/data/processed
+    - /project/code/data/combined
+    - /project/code/data
+    - ./data/processed
+    - ./data/combined
+    - ./data
+    - ../data/processed
+    - ../data
+    - ../../data
+
 deepspeed:
   use_deepspeed: false
   zero_stage: 0
@@ -247,43 +290,7 @@ enhanced_features:
     nvfp4_block_size: 16
     stochastic_rounding: false
     use_hadamard_transform: false
-data_loading:
-  streaming: true
-  buffer_size: 50000
-  max_samples: null
-  val_max_samples: 5000
-  val_split_ratio: 0.15
-  multi_column: false
-  use_multi_column: false
-  distributed: false
-  num_workers: 8
-  samples_per_file: 32  # NEW: Samples per file before rotation (1=max diversity, higher=less I/O)
-  enable_bucketing: true
-  bucket_boundaries:
-  - 64
-  - 128
-  - 256
-  max_bucket_size: 64
-  use_weighted_mixing: false
-  mixing_temperature: 1.0
-  shuffle_seed: 42
-  reshuffle_each_epoch: true
-  drop_last_batch: true
-  prefetch_factor: 4
-  persistent_workers: true
-  # Format detection
-  format_detection_samples: 10
-  # Fallback data paths
-  fallback_data_paths:
-    - /project/code/data/processed
-    - /project/code/data/combined
-    - /project/code/data
-    - ./data/processed
-    - ./data/combined
-    - ./data
-    - ../data/processed
-    - ../data
-    - ../../data
+
 performance:
   ultra_fast_mode: true
   fast_progress: false

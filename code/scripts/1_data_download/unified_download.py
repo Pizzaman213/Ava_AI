@@ -396,6 +396,20 @@ class UnifiedDownloader:
             if 'query' in sample and 'answer' in sample:
                 return f"Query: {sample['query']}\nAnswer: {sample['answer']}"
 
+        # ========== MATH DATASETS ==========
+        if "metamath" in dataset_name.lower() or "gsm8k" in dataset_name.lower():
+            # Handle MetaMathQA and similar math datasets
+            query = sample.get('query') or sample.get('problem') or sample.get('question')
+            response = sample.get('response') or sample.get('solution') or sample.get('answer')
+
+            # Ensure both query and response are valid strings
+            if query and response and isinstance(query, str) and isinstance(response, str):
+                return f"Problem: {query}\nSolution: {response}"
+            elif query and isinstance(query, str):
+                return f"Problem: {query}"
+            elif response and isinstance(response, str):
+                return f"Solution: {response}"
+
         if "starcoder" in dataset_name.lower() or "stack" in dataset_name.lower():
             if 'content' in sample:
                 return sample['content']
@@ -427,8 +441,15 @@ class UnifiedDownloader:
 
         # ========== GENERIC FALLBACK ==========
         for field in ['text', 'content', 'chosen', 'response', 'output', 'story', 'narrative', 'body']:
-            if field in sample and isinstance(sample[field], str):
+            if field in sample and isinstance(sample[field], str) and sample[field]:
                 return sample[field]
+
+        # Final fallback: try query + answer combination
+        if 'query' in sample and 'answer' in sample:
+            query = sample.get('query')
+            answer = sample.get('answer')
+            if query and answer and isinstance(query, str) and isinstance(answer, str):
+                return f"Query: {query}\nAnswer: {answer}"
 
         return None
 
@@ -653,6 +674,9 @@ class UnifiedDownloader:
         if is_large and available_gb < 10:
             print(f"⚠️  Low memory ({available_gb:.1f}GB available), using streaming mode")
 
+        # Track if any file was successfully saved
+        any_saved = False
+
         # Try different strategies
         for strategy_idx, strategy in enumerate(RETRY_STRATEGIES):
             print(f"\nAttempt {strategy_idx + 1}/{len(RETRY_STRATEGIES)}: {strategy['name']}")
@@ -709,18 +733,21 @@ class UnifiedDownloader:
                         if jsonl_file.exists():
                             existing_lines = sum(1 for _ in open(jsonl_file))
                             print(f"  ⚠️  Already exists with {existing_lines:,} examples - SKIPPING")
-                            self.summary["skipped"].append(dataset_name)
+                            if dataset_name not in self.summary["skipped"]:
+                                self.summary["skipped"].append(dataset_name)
                             return True
 
                         # Stream and save samples
                         saved = 0
                         processed_count = 0
                         max_to_download = self.max_samples if self.max_samples else config.get("max_samples", 100000)
+                        if max_to_download is None:
+                            max_to_download = 100000
 
                         print(f"  Streaming up to {max_to_download:,} samples...")
 
                         with open(jsonl_file, 'w', encoding='utf-8') as jf:
-                            for idx, sample in enumerate(tqdm(dataset, total=max_to_download, desc=f"  {dataset_name}")):
+                            for idx, sample in enumerate(tqdm(dataset, total=max_to_download, desc=f"{dataset_name}")):
                                 processed_count += 1
 
                                 # Extract text
@@ -767,17 +794,25 @@ class UnifiedDownloader:
                                         print(f"  ⚠️  High memory usage ({usage_percent:.1f}%), pausing...")
                                         time.sleep(1)
 
-                        print(f"  ✅ Saved {saved:,} examples to {jsonl_file.name}")
-                        if filter_stories:
-                            print(f"  📊 Processed {processed_count:,} total samples")
+                        if saved > 0:
+                            print(f"  ✅ Saved {saved:,} examples to {jsonl_file.name}")
+                            any_saved = True
+                            if filter_stories:
+                                print(f"  📊 Processed {processed_count:,} total samples")
+                        else:
+                            # If no samples were saved, remove the empty file
+                            if jsonl_file.exists():
+                                jsonl_file.unlink()
+                            print(f"  ⚠️  No samples saved for split {split}")
 
                     except Exception as e:
                         print(f"  ✗ Failed to download split {split}: {str(e)}")
                         continue
 
-                # Success
-                self.summary["successful"].append(dataset_name)
-                return True
+                # Success if any file was saved
+                if any_saved:
+                    self.summary["successful"].append(dataset_name)
+                    return True
 
             except Exception as e:
                 print(f"  ✗ Strategy failed: {str(e)}")
@@ -932,13 +967,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # DEFAULT: Download ~10B tokens of highest-quality data
+  # DEFAULT: Download ALL available datasets
   python unified_download.py
 
-  # Download ALL available datasets
-  python unified_download.py --all
-
-  # Download specific dataset
+  # Download specific dataset only
   python unified_download.py --dataset "teknium/OpenHermes-2.5"
 
   # Download with story filtering (once upon a time)
@@ -953,10 +985,10 @@ Examples:
   python unified_download.py --anthropic --safety
 
   # Download with parallel processing
-  python unified_download.py --all --parallel --max-workers 4
+  python unified_download.py --parallel --max-workers 4
 
   # Custom limits
-  python unified_download.py --all --max-samples 10000 --batch-size 5000
+  python unified_download.py --max-samples 10000 --batch-size 5000
         """
     )
 
@@ -1050,14 +1082,11 @@ Examples:
             datasets = list(filtered_config.keys())
             print(f"\n📊 Found {len(datasets)} datasets matching categories: {set(categories)}")
         else:
-            # Default: Download 10B high-quality preset
-            datasets_10b = {name: config for name, config in DATASETS_CONFIG.items()
-                           if config.get("default_10b", False)}
-            datasets = list(datasets_10b.keys())
-
-            print(f"\n🎯 DEFAULT MODE: Downloading {len(datasets)} High-Quality Datasets")
+            # Default: Download ALL datasets
+            datasets = None  # None means all datasets in download_all()
+            print(f"\n🎯 DEFAULT MODE: Downloading ALL {len(DATASETS_CONFIG)} Available Datasets")
             total_tokens_m = sum(config.get("estimated_tokens_millions", 0)
-                                for config in datasets_10b.values())
+                                for config in DATASETS_CONFIG.values())
             print(f"   Estimated: ~{total_tokens_m/1000:.1f}B tokens\n")
 
     # Start download

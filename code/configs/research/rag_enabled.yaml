@@ -81,12 +81,6 @@ enhanced_features:
     use_nvfp4: false
 
 # Data Loading (RAG-optimized)
-data_loading:
-  streaming: true
-  buffer_size: 5000
-  distributed: false
-  multi_column: true     # Good for retrieval datasets
-
   # RAG-specific data settings
   include_retrieval_targets: true
   retrieval_corpus_path: "data/retrieval_corpus"
@@ -97,6 +91,12 @@ data:
   tokenizer_name: "gpt2"
   train_batch_size: 4
   eval_batch_size: 8
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 5000
+  distributed: false
+  multi_column: true     # Good for retrieval datasets
 
 # Performance (research-focused)
 performance:

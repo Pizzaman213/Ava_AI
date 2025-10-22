@@ -102,18 +102,18 @@ enhanced_features:
     bit_width: 4
 
 # Data Loading
-data_loading:
-  streaming: true
-  buffer_size: 10000
-  distributed: true
-  multi_column: true
-
 data:
   data_dir: "/project/code/data/processed"
   max_length: 2048
   tokenizer_name: "gpt2"
   train_batch_size: 2
   eval_batch_size: 4
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 10000
+  distributed: true
+  multi_column: true
 
 # Performance & Memory
 performance:

@@ -118,18 +118,18 @@ enhanced_features:
     use_hadamard_transform: true
 
 # Data Loading (Advanced)
-data_loading:
-  streaming: true
-  buffer_size: 20000
-  distributed: true
-  multi_column: true
-
 data:
   data_dir: "/project/code/data/processed"
   max_length: 4096
   tokenizer_name: "gpt2"
   train_batch_size: 1
   eval_batch_size: 2
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 20000
+  distributed: true
+  multi_column: true
 
 # Performance & Memory (Aggressive)
 performance:

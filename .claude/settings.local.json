@@ -32,7 +32,17 @@
       "Bash(code/scripts/6_rhlf_Finetuning/train_rlhf.py )",
       "Bash(code/scripts/evaluation/measure_coherence.py )",
       "Bash(code/scripts/validation/test_all_latest_checkpoints.py)",
-      "Bash(xargs -I {} sh -c 'echo \"\"\"\"=== {} ===\"\"\"\" && head -3 {}')"
+      "Bash(xargs -I {} sh -c 'echo \"\"\"\"=== {} ===\"\"\"\" && head -3 {}')",
+      "Bash(timeout 60 python:*)",
+      "Bash(timeout 600 bash -c 'while ps aux | grep -q \"\"[p]ython code/scripts/1_data_download/unified_download.py\"\"; do sleep 2; done; echo \"\"Download complete\"\"')",
+      "Bash(cat:*)",
+      "Bash(timeout 120 python:*)",
+      "Bash(for file in /project/code/configs/gpu/*.yaml)",
+      "Bash(do)",
+      "Bash(if grep -q \"^data:\" \"$file\")",
+      "Bash(then)",
+      "Bash(fi)",
+      "Bash(awk:*)"
     ],
     "deny": [],
     "ask": []

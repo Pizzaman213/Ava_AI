@@ -83,6 +83,21 @@ data:
   eval_batch_size: 4
   dataloader_drop_last: true
   dataloader_pin_memory: true
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 10000
+  max_samples: -1
+  multi_column: true
+  use_multi_column: false
+  distributed: true
+  use_weighted_mixing: true
+  mixing_temperature: 1.0
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 4
+  persistent_workers: true
 device: auto
 fp16: true
 bf16: false
@@ -170,22 +185,7 @@ enhanced_features:
     bit_width: 4
     nvfp4_block_size: 64
     stochastic_rounding: true
-    use_hadamard_transform: true
-data_loading:
-  streaming: true
-  buffer_size: 10000
-  max_samples: -1
-  multi_column: true
-  use_multi_column: false
-  distributed: true
-  use_weighted_mixing: true
-  mixing_temperature: 1.0
-  shuffle_seed: 42
-  reshuffle_each_epoch: true
-  drop_last_batch: true
-  prefetch_factor: 4
-  persistent_workers: true
-performance:
+    use_hadamard_transform: trueperformance:
   ultra_fast_mode: false
   fast_progress: false
   minimal_progress: true
