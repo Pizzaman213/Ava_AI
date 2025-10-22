@@ -77,6 +77,28 @@ data:
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4
   dataloader_persistent_workers: true
+
+  # Data loading configuration
+  use_weighted_mixing: true
+  mixing_temperature: 1.0
+  streaming: true
+  buffer_size: 15000
+  max_samples: -1
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 4
+  persistent_workers: true
+  multi_column: false
+  use_multi_column: false
+  distributed: false
+  num_workers: 8
+  enable_bucketing: false
+  bucket_boundaries:
+  - 256
+  - 512
+  - 1024
+  max_bucket_size: 32
 device: auto
 fp16: true
 bf16: false
@@ -105,29 +127,7 @@ stability:
   use_stable_embedding: true
   stop_on_nan: true
   max_grad_norm_before_stop: 100.0
-  max_loss_before_stop: 20.0
-data_loading:
-  use_weighted_mixing: true
-  mixing_temperature: 1.0
-  streaming: true
-  buffer_size: 15000
-  max_samples: -1
-  shuffle_seed: 42
-  reshuffle_each_epoch: true
-  drop_last_batch: true
-  prefetch_factor: 4
-  persistent_workers: true
-  multi_column: false
-  use_multi_column: false
-  distributed: false
-  num_workers: 8
-  enable_bucketing: false
-  bucket_boundaries:
-  - 256
-  - 512
-  - 1024
-  max_bucket_size: 32
-performance:
+  max_loss_before_stop: 20.0performance:
   ultra_fast_mode: false
   fast_progress: false
   minimal_progress: true

@@ -104,12 +104,6 @@ enhanced_features:
     fp8_format: "e4m3"
 
 # Data Loading (H100 optimized for throughput)
-data_loading:
-  streaming: true
-  buffer_size: 50000
-  distributed: true
-  multi_column: true
-
 data:
   data_dir: "/project/code/data/processed"
   max_length: 8192        # Very long sequences for H100
@@ -117,6 +111,12 @@ data:
   train_batch_size: 6
   eval_batch_size: 12
   dataloader_num_workers: 24  # H100 can handle high throughput
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 50000
+  distributed: true
+  multi_column: true
 
 # Performance (H100 ultra-high performance)
 performance:

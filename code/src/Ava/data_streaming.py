@@ -10,6 +10,7 @@ Enhanced with weighted data mixing based on DoReMi research:
 
 import os
 import json
+import hashlib
 import torch  # type: ignore[import]
 from torch.utils.data import IterableDataset, DataLoader, DistributedSampler  # type: ignore[import]
 from pathlib import Path
@@ -307,18 +308,23 @@ class StreamingDataset(IterableDataset):
 
         files = unique_files
 
-        # Filter out empty files (0 bytes) and very small files (<10KB - likely just metadata)
+        # Filter out empty files (0 bytes), very small files (<10KB), and non-existent files
         MIN_FILE_SIZE = 10 * 1024  # 10KB minimum
         substantial_files = []
         filtered_count = 0
         for f in files:
-            if f.stat().st_size >= MIN_FILE_SIZE:
-                substantial_files.append(f)
-            else:
+            # Check if file exists and has minimum size
+            try:
+                if f.exists() and f.stat().st_size >= MIN_FILE_SIZE:
+                    substantial_files.append(f)
+                else:
+                    filtered_count += 1
+            except (OSError, FileNotFoundError):
+                # File doesn't exist or can't be accessed
                 filtered_count += 1
 
         if filtered_count > 0:
-            print(f"   Filtered out {filtered_count} empty/tiny files (<10KB)")
+            print(f"   Filtered out {filtered_count} empty/tiny/missing files (<10KB or not found)")
 
         files = substantial_files
 
@@ -339,8 +345,9 @@ class StreamingDataset(IterableDataset):
                 split_files = []
 
                 for file_path in all_files:
-                    # Hash the filename (not the content) for deterministic splitting
-                    file_hash = hash(file_path.name) % 100
+                    # Use deterministic hash (not Python's hash() which is randomized)
+                    # hashlib.md5 provides consistent hashing across runs
+                    file_hash = int(hashlib.md5(file_path.name.encode()).hexdigest(), 16) % 100
 
                     if self.split == "train":
                         # Keep 85% for training
@@ -375,6 +382,11 @@ class StreamingDataset(IterableDataset):
 
     def _read_file(self, file_path: Path) -> Iterator[str]:
         """Read data from a single file"""
+        # Check if file exists before attempting to read
+        if not file_path.exists():
+            print(f"⚠️  File does not exist, skipping: {file_path.name}")
+            return iter([])  # Return empty iterator instead of None
+
         try:
             if file_path.suffix == '.arrow':
                 # Use robust Arrow file reader instead of skipping
@@ -497,13 +509,20 @@ class StreamingDataset(IterableDataset):
             yield text * random.randint(2, 5)
 
     def _stream_examples(self, files_to_use=None) -> Iterator[str]:
-        """Stream examples from all files with weighted sampling"""
+        """Stream examples from all files with weighted sampling and epoch-aware shuffling"""
         # Use provided files or fall back to self.data_files
         files = files_to_use if files_to_use is not None else self.data_files
 
         # Check if we're in a worker process - only print from main process
         worker_info = torch.utils.data.get_worker_info()
         should_print = worker_info is None or worker_info.id == 0
+
+        # CRITICAL FIX: If in worker process and no files, rediscover them
+        # This handles the case where file paths don't serialize across worker processes
+        if not files and worker_info is not None:
+            files = self._find_data_files()
+            if should_print:
+                print(f"  🔄 Rediscovered {len(files)} files in worker process")
 
         if not files:
             # Use synthetic data if no files found
@@ -517,9 +536,12 @@ class StreamingDataset(IterableDataset):
                 )
                 shuffled_files = weighted_files
             else:
-                # CRITICAL FIX: Deterministic shuffle for reproducibility
+                # IMPROVED: Use epoch number for variety in file order across epochs
+                # Initialize epoch counter if not present
+                epoch_num = getattr(self, '_stream_epoch_number', 0)
                 shuffled_files = list(files)
-                random.Random(42).shuffle(shuffled_files)
+                rng = random.Random(42 + epoch_num)  # Different shuffle per epoch
+                rng.shuffle(shuffled_files)
 
             # Open all files and create generators
             file_generators = []
@@ -580,6 +602,9 @@ class StreamingDataset(IterableDataset):
 
                     exhausted_files.clear()
 
+                    # Increment stream epoch counter for next restart
+                    self._stream_epoch_number = getattr(self, '_stream_epoch_number', 0) + 1
+
                     # Recreate weighted file list for next epoch
                     if self.use_weighted_mixing and self.data_mixer is not None:
                         shuffled_files = self.data_mixer.create_weighted_file_list(
@@ -587,8 +612,12 @@ class StreamingDataset(IterableDataset):
                             target_size=len(files) * 100
                         )
                     else:
-                        # CRITICAL FIX: Deterministic shuffle on restart
-                        random.Random(42).shuffle(shuffled_files)
+                        # IMPROVED: Use epoch-based seed for variety
+                        epoch_num = getattr(self, '_stream_epoch_number', 0)
+                        rng = random.Random(42 + epoch_num)
+                        shuffled_files_copy = list(files)
+                        rng.shuffle(shuffled_files_copy)
+                        shuffled_files = shuffled_files_copy
 
                     file_generators = []
                     for file_path in shuffled_files:
@@ -680,9 +709,8 @@ class StreamingDataset(IterableDataset):
         }
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
-        """Iterate over the dataset with length-based bucketing"""
-        # IMPROVED: All workers access all files, but process different samples
-        # This provides better data mixing with the rotating shuffle approach
+        """Iterate over the dataset with improved shuffling and bucketing"""
+        # IMPROVED: Better randomization strategy for both reproducibility and variety
         worker_info = torch.utils.data.get_worker_info()
 
         if worker_info is not None:
@@ -696,6 +724,7 @@ class StreamingDataset(IterableDataset):
         buffer = []
         samples_processed = 0  # Track total samples processed from files
         sample_index = 0  # Track sample index for worker distribution
+        epoch_number = getattr(self, '_epoch_number', 0)  # Track which epoch we're in
 
         # All workers access all files for better data mixing
         # Each worker processes every Nth sample where N = num_workers
@@ -715,9 +744,11 @@ class StreamingDataset(IterableDataset):
 
             # When buffer is full, process with bucketing
             if len(buffer) >= self.buffer_size:
-                # CRITICAL FIX: Use deterministic shuffling with fixed seed
-                # This ensures reproducibility across runs
-                random.Random(42).shuffle(buffer)
+                # IMPROVED: Use epoch-based seed for variety across epochs while maintaining reproducibility
+                # This ensures: same seed per epoch = reproducible, different epochs = different shuffle
+                buffer_seed = 42 + epoch_number + (samples_processed // self.buffer_size)
+                rng = random.Random(buffer_seed)
+                rng.shuffle(buffer)
 
                 # Tokenize and add to buckets
                 for buffered_text in buffer:
@@ -755,8 +786,11 @@ class StreamingDataset(IterableDataset):
 
         # Process remaining buffer
         if buffer:
-            # CRITICAL FIX: Use deterministic shuffling
-            random.Random(42).shuffle(buffer)
+            # IMPROVED: Also use epoch-based seed for consistency
+            buffer_seed = 42 + epoch_number + (samples_processed // max(self.buffer_size, 1))
+            rng = random.Random(buffer_seed)
+            rng.shuffle(buffer)
+
             for buffered_text in buffer:
                 if self.max_samples and count >= self.max_samples:
                     break
@@ -785,6 +819,9 @@ class StreamingDataset(IterableDataset):
                     yield sample
                     count += 1
 
+        # Increment epoch number for next iteration
+        self._epoch_number = epoch_number + 1
+
         # Log statistics if we processed data
         if samples_processed > 0:
             if self.bucketing.enable_bucketing:
@@ -801,7 +838,7 @@ def create_streaming_dataloaders(
     data_dir: str,
     num_workers: int = 8,  # Optimized: 8 parallel workers by default
     max_samples: Optional[int] = None,
-    buffer_size: int = 50000,  # Optimized: 50x larger buffer for LLM pretraining
+    buffer_size: int = 10000,  # IMPROVED: Reduced from 50000 for better shuffling variation without losing efficiency
     distributed: Optional[bool] = None,
     world_size: Optional[int] = None,
     rank: Optional[int] = None,

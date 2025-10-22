@@ -93,12 +93,6 @@ enhanced_features:
     use_nvfp4: false
 
 # Data Loading (A100 optimized)
-data_loading:
-  streaming: true
-  buffer_size: 20000
-  distributed: true
-  multi_column: true
-
 data:
   data_dir: "/project/code/data/processed"
   max_length: 4096        # Longer sequences for A100
@@ -106,6 +100,12 @@ data:
   train_batch_size: 4
   eval_batch_size: 8
   dataloader_num_workers: 16  # A100 can handle more workers
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 20000
+  distributed: true
+  multi_column: true
 
 # Performance (A100 optimized)
 performance:

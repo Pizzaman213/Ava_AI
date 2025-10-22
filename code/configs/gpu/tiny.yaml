@@ -107,6 +107,21 @@ data:
   dataloader_drop_last: true
   dataloader_pin_memory: false
   shuffle: true
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 15000
+  max_samples: -1
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+  prefetch_factor: 4
+  persistent_workers: true
+  multi_column: false
+  use_multi_column: false
+  distributed: false
+  use_weighted_mixing: true
+  mixing_temperature: 1.0
 deepspeed:
   use_deepspeed: false
   zero_stage: 0
@@ -152,22 +167,7 @@ enhanced_features:
     use_nvfp4: false
     bit_width: 8
     nvfp4_block_size: 64
-    stochastic_rounding: false
-data_loading:
-  streaming: true
-  buffer_size: 15000
-  max_samples: -1
-  shuffle_seed: 42
-  reshuffle_each_epoch: true
-  drop_last_batch: true
-  prefetch_factor: 4
-  persistent_workers: true
-  multi_column: false
-  use_multi_column: false
-  distributed: false
-  use_weighted_mixing: true
-  mixing_temperature: 1.0
-performance:
+    stochastic_rounding: falseperformance:
   ultra_fast_mode: true
   fast_progress: false
   minimal_progress: false
