@@ -131,12 +131,14 @@ DATASETS_CONFIG = {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "max_samples": 500000,
+        "default_10b": True,
         "description": "Open-source recreation of GPT-2's WebText training dataset"
     },
     "wikipedia": {
         "splits": ["train"], "subset": "20220301.en", "streaming_safe": True,
         "categories": ["rag", "knowledge"], "tokens": "very_high", "large": True,
         "max_samples": 100000,
+        "default_10b": True,
         "description": "English Wikipedia articles for knowledge-intensive tasks"
     },
 
@@ -151,6 +153,7 @@ DATASETS_CONFIG = {
     "iamtarun/python_code_instructions_18k_alpaca": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["code", "python"], "tokens": "medium",
+        "default_10b": True,
         "description": "Python-specific coding instructions and solutions"
     },
     "m-a-p/CodeFeedback-Filtered-Instruction": {
@@ -166,12 +169,14 @@ DATASETS_CONFIG = {
         "splits": ["train_sft", "test_sft"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "multiturn", "greeting"], "tokens": "very_high", "large": True,
         "description": "200K high-quality multi-turn conversations",
+        "default_10b": True,
         "max_samples": 200000,
     },
     "HuggingFaceH4/no_robots": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "synthetic", "greeting"], "tokens": "high",
         "description": "Human-generated conversations without AI assistance",
+        "default_10b": True,
         "max_samples": 10000,
     },
     "Anthropic/hh-rlhf": {
@@ -194,24 +199,28 @@ DATASETS_CONFIG = {
         "splits": ["train", "validation", "test"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "dialog"], "tokens": "medium",
         "max_samples": 13000,
+        "default_10b": True,
         "description": "Daily conversations covering greetings and small talk"
     },
     "empathetic_dialogues": {
         "splits": ["train", "validation", "test"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "emotion"], "tokens": "high",
         "max_samples": 25000,
+        "default_10b": True,
         "description": "Empathetic conversations with emotional context"
     },
     "AlekseyKorshuk/persona-chat": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "persona"], "tokens": "medium",
         "max_samples": 10000,
+        "default_10b": True,
         "description": "Persona-based chit-chat conversations"
     },
     "blended_skill_talk": {
         "splits": ["train", "validation", "test"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "multiskill"], "tokens": "medium",
         "max_samples": 5000,
+        "default_10b": True,
         "description": "Multi-skill conversations including greetings"
     },
     "conv_ai_2": {
@@ -229,6 +238,7 @@ DATASETS_CONFIG = {
     "roneneldan/TinyStories": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["synthetic", "stories"], "tokens": "high",
+        "default_10b": True,
         "description": "Simple stories for small language models (great for filtering 'once upon a time')"
     },
 
@@ -1029,7 +1039,7 @@ Examples:
     # Special features
     parser.add_argument("--parallel", action="store_true",
                        help="Download datasets in parallel")
-    parser.add_argument("--max-workers", type=int, default=2,
+    parser.add_argument("--max-workers", type=int, default=8,
                        help="Number of parallel workers")
     parser.add_argument("--filter-stories", action="store_true",
                        help="Filter for 'once upon a time' style stories")
