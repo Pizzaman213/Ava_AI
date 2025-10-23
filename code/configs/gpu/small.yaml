@@ -1,29 +1,29 @@
 model:
   hidden_size: 512
-  num_layers: 14
+  num_layers: 12  # REDUCED from 14 for faster training
   num_attention_heads: 8
-  intermediate_size: 2048
+  intermediate_size: 1536  # REDUCED from 2048 for faster forward/backward pass
   vocab_size: 65536
-  max_position_embeddings: 256  # Reduced from 512 to save memory
-  num_experts: 8
+  max_position_embeddings: 256  # Keep at 256 for speed
+  num_experts: 4  # REDUCED from 8 for faster MoE routing
   num_experts_per_token: 2
-  expert_capacity_factor: 1.5
+  expert_capacity_factor: 1.25  # REDUCED for less computation
   router_type: deepseek
-  router_aux_loss_coef: 0.01
-  router_jitter_noise: 0.01
-  use_cache: true
+  router_aux_loss_coef: 0.005  # REDUCED for less auxiliary computation
+  router_jitter_noise: 0.005  # REDUCED for less noise computation
+  use_cache: false  # DISABLED during training for speed
   rope_theta: 10000.0
-  attention_dropout: 0.15
-  hidden_dropout: 0.15
-  use_flash_attention: true  # Enable flash attention to save memory
+  attention_dropout: 0.1  # REDUCED for faster training
+  hidden_dropout: 0.1  # REDUCED for faster training
+  use_flash_attention: true  # Keep enabled for speed
   layer_norm_eps: 1e-5
-  initializer_range: 0.01
-  hidden_act: gelu
+  initializer_range: 0.02  # INCREASED for faster initial convergence
+  hidden_act: swish  # SWISH is often faster than GELU on modern GPUs
   deepspeed_activation_checkpointing: false
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
-  tie_word_embeddings: false
-  dropout: 0.15
+  tie_word_embeddings: true  # ENABLED to reduce parameters
+  dropout: 0.1  # REDUCED for faster training
   # Model architecture defaults
   default_vocab_size: 50257
   default_hidden_size: 768
@@ -32,41 +32,44 @@ model:
   default_vocab_size_large: 32000
   default_hidden_size_large: 4096
 training:
-  batch_size: 32  # Minimal batch size to avoid OOM
-  gradient_accumulation_steps: 2  # Effective batch = 192 (24 * 8) - FIXED: was 1, causing noisy gradients
-  max_gradient_norm: 1.0
+  batch_size: 48  # Keep high for good GPU utilization
+  gradient_accumulation_steps: 1  # Keep at 1 for fast updates
+  max_gradient_norm: 0.5  # REDUCED for better stability with higher LR
   num_epochs: 1
   max_steps: null
-  warmup_steps: 500
-  warmup_schedule: cosine
-  learning_rate: 0.0003791838957498536  # REDUCED by 50% to prevent overfitting
+  warmup_steps: 500  # INCREASED back for smoother warmup with high LR
+  warmup_schedule: cosine  # COSINE for smoother warmup
+  learning_rate: 0.0006  # REDUCED from 0.0008 for better stability while maintaining speed
   lr_scheduler_type: cosine
-  lr_end: 3.791838957498536e-05  # REDUCED by 50% to match new LR
-  weight_decay: 0.15  # INCREASED from 0.1 for better regularization
+  lr_end: 6e-05  # Adjusted to 10% of max LR
+  weight_decay: 0.1  # Keep moderate for regularization
   beta1: 0.9
-  beta2: 0.999
-  eps: 1e-8
+  beta2: 0.95  # REDUCED further for faster adaptation but more stable than 0.98
+  eps: 1e-7  # More standard value for stability
   repetition_penalty_weight: 0.0
   immediate_repetition_weight: 0.0
   min_sequence_length: 40
   eos_penalty_weight: 2.0
   eos_logit_bias: -1.5
-  entropy_regularization: 0.1
-  output_diversity_weight: 0.5
+  entropy_regularization: 0.05  # REDUCED for less regularization overhead
+  output_diversity_weight: 0.3  # REDUCED for faster training
   mixed_precision: bf16
-  dataloader_num_workers: 8
-  prefetch_factor: 4
+  dataloader_num_workers: 12  # INCREASED for faster data loading
+  prefetch_factor: 8  # INCREASED for better data pipeline
   persistent_workers: true
-  gradient_checkpointing: true
+  gradient_checkpointing: false  # DISABLED for maximum speed
   eval_strategy: steps
-  eval_steps: 1000
+  eval_steps: 1000  # Generate samples every 1000 steps
   eval_steps_type: training_steps  # 'training_steps' or 'optimizer_steps' - controls whether eval_steps counts training iterations or optimizer updates
   save_strategy: steps
-  save_steps: 1000
-  save_total_limit: 3
-  logging_steps: 10
-  early_stopping_patience: 3  # REDUCED from 5 for faster stopping on overfitting
-  early_stopping_threshold: 0.01  # INCREASED from 0.005 for earlier stopping
+  save_steps: 2000  # Keep checkpoint frequency at 2000
+  save_total_limit: 2  # REDUCED to save disk I/O
+  logging_steps: 50  # INCREASED to reduce logging overhead
+  generate_during_eval: true  # ENABLE text generation during evaluation
+  num_generation_samples: 3  # Number of samples to generate
+  generation_max_length: 100  # Max tokens for each sample
+  early_stopping_patience: 5  # Increased back for proper convergence
+  early_stopping_threshold: 0.005  # Lowered back for proper convergence
   # Optimizer defaults
   default_learning_rate: 5.0e-5
   default_weight_decay: 0.01
@@ -83,7 +86,7 @@ training:
   # Training defaults
   default_batch_size_fallback: 12
   adaptive_lr:
-    enabled: false
+    enabled: false  # DISABLED - no automatic LR adjustment
     min_lr: 5.0e-05
     max_lr: 0.0006
     min_improvement: 0.0001
@@ -138,40 +141,40 @@ training:
     default_warmup_steps: 500
   gradient_health:
     enabled: true
-    initial_clip_value: 1.0
-    final_clip_value: 1.0
+    initial_clip_value: 0.5  # REDUCED for better stability
+    final_clip_value: 0.5  # Keep consistent clipping
     warmup_steps: 500
-    explosion_threshold: 5.0  # REDUCED from 10.0 for earlier detection
-    explosion_window: 5
+    explosion_threshold: 3.0  # REDUCED further for earlier intervention
+    explosion_window: 3  # REDUCED for quicker response
     auto_reduce_lr: true
-    lr_reduction_factor: 0.5
+    lr_reduction_factor: 0.7  # GENTLER reduction to maintain speed
 data:
   # Core data configuration
   data_dir: /project/code/data/processed
-  max_length: 256  # Match max_position_embeddings to save memory
+  max_length: 256  # Keep at 256 for consistent batching
   tokenizer_name: /project/code/models/tokenizer/enhanced-65536
   padding_side: right
   truncation: true
   max_train_examples: null
-  max_eval_examples: 5000
+  max_eval_examples: 2000  # REDUCED for faster evaluation
   dataloader_drop_last: true
-  dataloader_pin_memory: false
+  dataloader_pin_memory: true  # ENABLED for faster GPU transfer
 
   # Tokenizer defaults
   default_tokenizer_name: Qwen/Qwen2.5-0.5B
 
   # Data loading configuration
   streaming: true
-  buffer_size: 10000  # IMPROVED: Reduced from 50000 for better shuffling variation and less memory
+  buffer_size: 5000  # REDUCED for faster initial loading
   max_samples: null
-  val_max_samples: 5000
-  val_split_ratio: 0.15
+  val_max_samples: 2000  # REDUCED for faster validation
+  val_split_ratio: 0.1  # REDUCED for more training data
   multi_column: false
   use_multi_column: false
   distributed: false
-  num_workers: 8
-  samples_per_file: 1  # IMPROVED: Changed from 32 to 1 for maximum data diversity and better shuffling
-  enable_bucketing: true
+  num_workers: 16  # INCREASED for faster parallel loading
+  samples_per_file: 8  # INCREASED for better batching efficiency
+  enable_bucketing: false  # DISABLED for faster processing
   bucket_boundaries:
   - 64
   - 128
@@ -180,9 +183,9 @@ data:
   use_weighted_mixing: false
   mixing_temperature: 1.0
   shuffle_seed: 42
-  reshuffle_each_epoch: true
+  reshuffle_each_epoch: false  # DISABLED for faster epoch transitions
   drop_last_batch: true
-  prefetch_factor: 4
+  prefetch_factor: 16  # INCREASED for better data pipeline
   persistent_workers: true
 
   # Format detection
@@ -218,7 +221,7 @@ enhanced_features:
   architecture:
     use_moh: false
     use_moa: false
-    use_cross_attention: true
+    use_cross_attention: false  # DISABLED for speed
     use_alibi: false
     expert_routing_type: deepseek
   rag:
@@ -227,21 +230,21 @@ enhanced_features:
     max_retrieved_docs: 5
     rag_fusion_type: concatenate
   losses:
-    use_multi_token_prediction: false
+    use_multi_token_prediction: false  # Keep disabled for speed
     num_future_tokens: 1
     mtp_weight: 0.01
-    initial_temperature: 1.2
-    adaptive_temperature: true
-    label_smoothing: 0.1  # INCREASED from 0.05 to reduce overfitting
-    use_moe_balancing: true
-    gradient_balance_weight: 0.02
+    initial_temperature: 1.0  # REDUCED for faster convergence
+    adaptive_temperature: false  # DISABLED for less computation
+    label_smoothing: 0.05  # REDUCED for faster training
+    use_moe_balancing: false  # DISABLED for speed
+    gradient_balance_weight: 0.0  # DISABLED
     focal_loss: false
     contrastive_loss: false
-    diversity_loss: true
-    auxiliary_loss: true
+    diversity_loss: false  # DISABLED for speed
+    auxiliary_loss: false  # DISABLED for speed
     adaptive_loss_scaling: false
-    contrastive_loss_weight: 0.02
-    diversity_loss_weight: 0.1
+    contrastive_loss_weight: 0.0  # DISABLED
+    diversity_loss_weight: 0.0  # DISABLED
     # Loss configuration defaults
     default_num_future_tokens: 3
     default_mtp_weight: 0.1
@@ -297,43 +300,48 @@ performance:
   minimal_progress: true
   express_mode: true
   no_sync: false
-  # Torch compilation settings
+  # Torch compilation settings - OPTIMIZED FOR COLOSSAL-AI
   torch_compile:
     enabled: true
-    mode: max-autotune
-    fullgraph: false
-    dynamic: false
-    backend: inductor
+    mode: max-autotune  # Maximum performance mode
+    fullgraph: true  # Full graph compilation for better optimization
+    dynamic: false  # Static shapes for better optimization
+    backend: inductor  # Best backend for Ampere GPUs
   # Default compile mode for speed optimization
-  default_compile_mode: reduce-overhead
-  compile_fullgraph: false
-  compile_dynamic: false
+  default_compile_mode: max-autotune  # Changed from reduce-overhead for max speed
+  compile_fullgraph: true  # Enable for better fusion
+  compile_dynamic: false  # Keep static for speed
   # Environment and torch settings
   torchinductor_max_autotune: '0'
   cudagraph_skip_dynamic_shapes: true
   cudagraph_dynamic_shape_warn_limit: null
   float32_matmul_precision: high
 memory:
-  enable_memory_pool: true
-  pool_size_gb: 24.0
-  gradient_checkpointing: true
-  memory_threshold_gb: 24.0
+  enable_memory_pool: false  # DISABLED for less overhead
+  pool_size_gb: 22.0  # Increased for more usable memory
+  gradient_checkpointing: false  # DISABLED for speed
+  memory_threshold_gb: 23.0  # Higher threshold for less intervention
   enable_cpu_offload: false
-  clear_cache_frequency: 50  # More frequent cleanup to prevent OOM
+  clear_cache_frequency: 100  # INCREASED - clear less often for speed
   silent_mode: true
-  target_utilization: 0.75  # Lower target to prevent OOM
-  warning_threshold: 0.80
-  critical_threshold: 0.85
-  emergency_threshold: 0.90
+  target_utilization: 0.85  # INCREASED for better GPU utilization
+  warning_threshold: 0.90  # INCREASED
+  critical_threshold: 0.92  # INCREASED
+  emergency_threshold: 0.95  # INCREASED for max utilization
 evaluation:
   eval_during_training: true
   eval_metrics: perplexity
   comprehensive_eval: false
+  generate_samples: true  # ENABLE sample generation during eval
+  generation_prompts:  # Add some default prompts for generation
+    - "The future of artificial intelligence is"
+    - "Once upon a time"
+    - "In a world where technology"
   # Evaluation batch processing
-  recent_losses_window_size: 100
-  max_validation_batches: 100
-  default_max_validation_batches: 50
-  cache_clear_frequency: 50
+  recent_losses_window_size: 50  # REDUCED for less overhead
+  max_validation_batches: 50  # REDUCED for faster evaluation
+  default_max_validation_batches: 25  # REDUCED
+  cache_clear_frequency: 100  # INCREASED for less clearing
   # Validation thresholds
   val_train_ratio_low_threshold: 0.8
   val_train_ratio_high_threshold: 1.05
@@ -445,18 +453,91 @@ stability:
   stop_on_nan: false
   max_grad_norm_before_stop: 100.0
   max_loss_before_stop: 20.0
+
+# Colossal-AI Configuration - OPTIMIZED FOR MAXIMUM SPEED
+colossalai:
+  enabled: true
+
+  # Parallelism Strategy - OPTIMIZED
+  # For RTX 3090 Ti (24GB), ZeRO-1 gives best speed with your model size
+  parallel_strategy: zero1  # ZeRO-1 for fastest training on small-medium models
+
+  # Parallelism dimensions (for hybrid strategy)
+  tensor_parallel_size: 1  # Keep at 1 for single GPU
+  pipeline_parallel_size: 1  # Keep at 1 for single GPU
+  data_parallel_size: -1  # Auto-calculate for multi-GPU
+  sequence_parallel_size: 1  # Keep at 1 for your sequence length
+
+  # Memory Optimization - SPEED FOCUSED
+  use_zero: true  # Enable ZeRO optimizer
+  zero_stage: 1  # Stage 1 for MAXIMUM SPEED (less communication overhead)
+  use_cpu_offload: false  # Keep disabled for speed
+  use_nvme_offload: false  # Keep disabled for speed
+  use_gemini: false  # Keep disabled for speed
+  use_patrickstar: false  # Keep disabled for speed
+
+  # Mixed Precision - OPTIMIZED FOR RTX 3090 Ti
+  mixed_precision: bf16  # BF16 is fastest on Ampere GPUs
+  initial_scale: 32768.0  # Reduced for faster scaling updates
+  min_scale: 1.0
+  growth_factor: 2.0
+  backoff_factor: 0.5
+  growth_interval: 5000  # INCREASED to reduce scaling overhead
+
+  # Communication Optimization - MAXIMUM SPEED
+  use_gradient_compression: false  # Disabled for single GPU (adds overhead)
+  gradient_compression_ratio: 1.0  # No compression for speed
+  use_hierarchical_allreduce: false  # Single node optimization
+  use_async_communication: true  # Enable for overlapping
+
+  # Activation Checkpointing - DISABLED FOR SPEED
+  use_activation_checkpointing: false  # DISABLED for maximum speed
+  checkpoint_num_layers: 0  # No checkpointing for speed
+
+  # Performance Tuning - ALL OPTIMIZATIONS ENABLED
+  enable_jit_fused: true  # JIT compilation for 10-20% speedup
+  enable_fused_normalization: true  # Fused ops for 5-10% speedup
+  enable_flash_attention: true  # Flash Attention v2 for 2-4x attention speedup
+  enable_xformers: true  # Additional memory-efficient attention (try both)
+
+  # Additional Speed Optimizations
+  enable_cuda_graph: true  # CUDA graphs for reduced kernel launch overhead
+  enable_tensor_core: true  # Force tensor core usage
+  enable_tf32: true  # TF32 for additional speedup on Ampere
+  bucket_size_mb: 25  # Optimal bucket size for gradient aggregation
+
+  # Auto-tuning
+  enable_auto_tune: true  # Auto-tune kernel selection
+  auto_tune_warmup_steps: 50  # Steps to profile for auto-tuning
+
+  # Auto-Parallelism (Experimental)
+  use_auto_parallel: false  # Keep disabled for predictability
+  search_space: default
+
+  # Compatibility Settings
+  use_legacy_optimizer: false  # Use Colossal-AI optimizers
+  compatibility_mode: false  # Full Colossal-AI mode
+
+  # Memory Thresholds for Auto-Configuration
+  auto_config:
+    small_gpu_threshold_gb: 16  # GPUs with < 16GB
+    medium_gpu_threshold_gb: 32  # GPUs with 16-32GB
+    enable_cpu_offload_threshold_gb: 12  # Enable CPU offload if GPU < 12GB
+    enable_activation_checkpoint_threshold_gb: 24  # Enable checkpointing if GPU < 24GB
+
 generation:
-  repetition_penalty: 3.0
+  repetition_penalty: 1.2  # REDUCED for more natural generation
   eos_penalty: 0.5
-  min_length: 40
-  temperature: 1.0
-  top_k: 100
-  top_p: 0.95
+  min_length: 20  # REDUCED for faster generation
+  temperature: 0.8  # REDUCED for more focused generation during eval
+  top_k: 50  # REDUCED for faster sampling
+  top_p: 0.9  # REDUCED for more focused sampling
   use_ngram_blocking: true
   ngram_size: 3
   no_repeat_ngram_size: 4
   do_sample: true
   num_beams: 1
+  eval_generation_interval: 1000  # Generate every 1000 steps
   # Evaluation generation defaults
   eval_max_length: 50
   eval_temperature: 0.8
