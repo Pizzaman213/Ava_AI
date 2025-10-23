@@ -1,0 +1,272 @@
+# Colossal-AI Gemini Memory-Optimized Configuration
+# Uses Gemini heterogeneous memory management
+# Expected: ~70% memory reduction, ~25% speed reduction
+# Gemini intelligently moves data between GPU and CPU
+
+model:
+  hidden_size: 512
+  num_layers: 12
+  num_attention_heads: 8
+  intermediate_size: 1536
+  vocab_size: 65536
+  max_position_embeddings: 256
+  num_experts: 4
+  num_experts_per_token: 2
+  expert_capacity_factor: 1.25
+  router_type: deepseek
+  router_aux_loss_coef: 0.005
+  router_jitter_noise: 0.005
+  use_cache: false
+  rope_theta: 10000.0
+  attention_dropout: 0.1
+  hidden_dropout: 0.1
+  use_flash_attention: true
+  layer_norm_eps: 1e-5
+  initializer_range: 0.02
+  hidden_act: swish
+  tie_word_embeddings: true
+  dropout: 0.1
+
+training:
+  batch_size: 24  # Smaller for memory
+  gradient_accumulation_steps: 2
+  max_gradient_norm: 0.5
+  num_epochs: 1
+  max_steps: null
+  warmup_steps: 500
+  warmup_schedule: cosine
+  learning_rate: 0.0006
+  lr_scheduler_type: cosine
+  lr_end: 6e-05
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-7
+  mixed_precision: bf16
+  dataloader_num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: false  # Free memory between epochs
+  gradient_checkpointing: false  # Colossal-AI handles this
+  eval_strategy: steps
+  eval_steps: 1000
+  eval_steps_type: training_steps
+  save_strategy: steps
+  save_steps: 2000
+  save_total_limit: 2
+  logging_steps: 50
+  generate_during_eval: true
+  num_generation_samples: 2
+  generation_max_length: 80
+
+  progressive:
+    enable_progressive_training: true
+    enable_sequence_scaling: true
+    initial_seq_length: 64
+    final_seq_length: 256
+    length_schedule: exponential
+    length_growth_epochs: 1
+
+  dynamic_batching:
+    enabled: true
+    min_batch_size: 12
+    max_batch_size: 36
+    target_memory_utilization: 0.75
+    adjustment_frequency: 100
+
+  gradient_health:
+    enabled: true
+    initial_clip_value: 0.5
+    final_clip_value: 0.5
+    explosion_threshold: 3.0
+
+data:
+  data_dir: /project/code/data/processed
+  max_length: 256
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65536
+  padding_side: right
+  truncation: true
+  max_train_examples: null
+  max_eval_examples: 1500
+  dataloader_drop_last: true
+  dataloader_pin_memory: false  # Gemini manages memory
+  default_tokenizer_name: Qwen/Qwen2.5-0.5B
+
+  streaming: true
+  buffer_size: 2000
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: false
+
+  fallback_data_paths:
+    - /project/code/data/processed
+    - /project/code/data/combined
+    - /project/code/data
+
+deepspeed:
+  use_deepspeed: false
+
+enhanced_features:
+  architecture:
+    use_moh: false
+    use_moa: false
+    use_cross_attention: false
+    use_alibi: false
+    expert_routing_type: deepseek
+
+  rag:
+    enabled: false
+
+  losses:
+    use_multi_token_prediction: false
+    label_smoothing: 0.05
+
+  memory:
+    silent_mode: true
+
+performance:
+  ultra_fast_mode: false
+  minimal_progress: true
+
+  torch_compile:
+    enabled: false  # Disable for memory
+
+  float32_matmul_precision: high
+
+memory:
+  gradient_checkpointing: false
+  enable_cpu_offload: false  # Gemini handles this
+  clear_cache_frequency: 50
+  silent_mode: true
+  target_utilization: 0.75
+  warning_threshold: 0.85
+  critical_threshold: 0.90
+  emergency_threshold: 0.93
+
+evaluation:
+  eval_during_training: true
+  eval_metrics: perplexity
+  generate_samples: true
+  max_validation_batches: 40
+
+output:
+  output_dir: outputs/small_colossalai_gemini
+  save_total_limit: 2
+
+run_management:
+  experiment_name: ava-small-colossalai-gemini
+  run_id: null
+  resume_from_checkpoint: null
+
+device: auto
+fp16: false
+bf16: true
+
+wandb:
+  enabled: true
+  project: Ava
+  group: ava-colossalai-gemini
+  tags:
+    - gpu
+    - colossalai
+    - gemini
+    - heterogeneous-memory
+    - extreme-memory-optimization
+
+stability:
+  loss_smoothing: true
+  loss_smoothing_alpha: 0.9
+  use_kahan_summation: true
+  use_stable_embedding: true
+
+# ============================================================
+# COLOSSAL-AI GEMINI CONFIGURATION
+# Advanced Heterogeneous Memory Management
+# ============================================================
+colossalai:
+  enabled: true
+
+  # ===== GEMINI MEMORY STRATEGY =====
+  # Gemini: Intelligent GPU+CPU heterogeneous memory
+  # Automatically profiles and moves data between GPU and CPU
+  # Much smarter than simple offloading
+  parallel_strategy: zero2  # Works with Gemini
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  data_parallel_size: -1
+  sequence_parallel_size: 1
+
+  # ===== GEMINI ENABLED - KEY FEATURE =====
+  use_zero: true
+  zero_stage: 2
+  use_cpu_offload: true  # Required for Gemini
+  use_nvme_offload: false  # Can enable if you have fast NVMe SSD
+  use_gemini: true  # ENABLED - Heterogeneous memory manager
+  use_patrickstar: false
+
+  # Gemini automatically:
+  # 1. Profiles memory usage patterns
+  # 2. Decides what to keep in GPU vs CPU
+  # 3. Prefetches data before needed
+  # 4. Minimizes CPU ↔ GPU transfers
+  # 5. Adapts to your model and workload
+
+  # ===== MIXED PRECISION =====
+  mixed_precision: bf16
+  initial_scale: 32768.0
+  min_scale: 1.0
+  growth_factor: 2.0
+  backoff_factor: 0.5
+  growth_interval: 5000
+
+  # ===== COMMUNICATION =====
+  use_gradient_compression: false
+  gradient_compression_ratio: 1.0
+  use_hierarchical_allreduce: false
+  use_async_communication: true
+
+  # ===== ACTIVATION CHECKPOINTING =====
+  use_activation_checkpointing: true
+  checkpoint_num_layers: 8  # More aggressive checkpointing with Gemini
+
+  # ===== PERFORMANCE OPTIMIZATIONS =====
+  # Keep these enabled - Gemini works with them
+  enable_jit_fused: true
+  enable_fused_normalization: true
+  enable_flash_attention: true
+  enable_xformers: true
+
+  enable_cuda_graph: false  # Disable for memory flexibility
+  enable_tensor_core: true
+  enable_tf32: true
+  bucket_size_mb: 25
+
+  # Auto-tuning
+  enable_auto_tune: true
+  auto_tune_warmup_steps: 50
+
+  # Auto-Parallelism
+  use_auto_parallel: false
+
+  # Compatibility
+  use_legacy_optimizer: false
+  compatibility_mode: false
+
+  # Memory thresholds
+  auto_config:
+    small_gpu_threshold_gb: 16
+    medium_gpu_threshold_gb: 32
+    enable_cpu_offload_threshold_gb: 12
+    enable_activation_checkpoint_threshold_gb: 24
+
+generation:
+  repetition_penalty: 1.2
+  eos_penalty: 0.5
+  min_length: 20
+  temperature: 0.8
+  top_k: 50
+  top_p: 0.9
+  use_ngram_blocking: true
+  ngram_size: 3
+  do_sample: true
+  num_beams: 1
