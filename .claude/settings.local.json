@@ -42,7 +42,8 @@
       "Bash(if grep -q \"^data:\" \"$file\")",
       "Bash(then)",
       "Bash(fi)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(pip install:*)"
     ],
     "deny": [],
     "ask": []
