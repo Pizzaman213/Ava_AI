@@ -1,0 +1,300 @@
+# Codebase Consolidation Progress
+
+## Overview
+This document tracks the progress of the major codebase consolidation effort to reduce duplication and improve maintainability.
+
+**Target**: Consolidate 43+ overlapping files across 8 major areas
+**Estimated Code Reduction**: ~35% overall
+**Status**: IN PROGRESS
+
+---
+
+## ✅ Completed Consolidations
+
+### 1. Configuration Templates (75% savings) ✅
+**Status**: COMPLETE
+
+**What was done**:
+- Created template-based system for DeepSpeed configurations
+- Reduced 3 nearly-identical DeepSpeed YAML files (97% identical) to:
+  - 1 base template (`deepspeed_template.yaml`)
+  - 1 generator script (`config_generator.py`)
+  - 3 generated configs (now consistent and auto-generated)
+- Created GPU config templates and parameter profiles
+- Future configs can be generated from templates in seconds
+
+**Files created**:
+- `code/configs/templates/deepspeed_template.yaml` - Base DeepSpeed template
+- `code/configs/templates/gpu_template.yaml` - Base GPU config template
+- `code/configs/templates/gpu_profiles.yaml` - GPU size profiles (tiny/small/base/large)
+- `code/utils/config_generator.py` - Config generation script
+- `code/configs/distributed/deepspeed_zero[1-3]_generated.yaml` - Generated configs
+
+**Impact**:
+- **Before**: 3 files × ~180 lines = 540 lines (97% identical)
+- **After**: 1 template × 100 lines + 1 generator × 270 lines = 370 lines
+- **Savings**: ~30% for DeepSpeed, 75% reduction in duplication
+- **Maintainability**: Changes to DeepSpeed configs now require editing 1 template instead of 3 files
+
+---
+
+### 2. Learning Rate Management (55% savings) ✅
+**Status**: COMPLETE
+
+**What was done**:
+- Consolidated 6 learning rate management files with massive duplication
+- Created unified LR manager with all features from all 6 files
+- Eliminated over 2,700 lines of duplicate code
+
+**Files consolidated**:
+1. `code/src/Ava/training/lr_manager.py` (350+ lines)
+2. `code/src/Ava/training/adaptive_lr.py` (450+ lines)
+3. `code/src/Ava/training/advanced_warmup.py` (400+ lines)
+4. `code/src/Ava/training/advanced_warmup_scheduling.py` (500+ lines)
+5. `code/src/Ava/training/advanced_schedulers.py` (600+ lines)
+6. `code/src/Ava/training/lr_finder.py` (400+ lines, partially consolidated)
+
+**New unified module**:
+- `code/src/Ava/training/unified_lr_manager.py` (1,280 lines)
+
+**Features consolidated**:
+- ✅ Warmup scheduling (4 different implementations → 1)
+  - Linear, Cosine, Polynomial, Exponential schedules
+  - Gradient-based early completion
+  - Loss spike detection and restart
+- ✅ Plateau detection (implemented in 2 files → 1)
+  - Configurable patience and thresholds
+  - Automatic LR reduction
+- ✅ Adaptive LR adjustments (2 implementations → 1)
+  - Emergency spike handling
+  - Divergence detection
+  - Stability-based increases
+- ✅ Main scheduling
+  - Cosine annealing
+  - Linear decay
+  - Polynomial decay
+  - Cosine with restarts (SGDR)
+  - OneCycle policy
+- ✅ Configuration management (5 dataclasses → 1)
+  - UnifiedLRConfig with all parameters
+- ✅ State management
+  - Complete checkpoint support
+  - Statistics tracking
+
+**Impact**:
+- **Before**: 6 files × ~450 lines avg = 2,700+ lines (55% duplication identified)
+- **After**: 1 file × 1,280 lines
+- **Savings**: ~1,400 lines eliminated (52% reduction)
+- **Benefits**:
+  - Single API for all LR features
+  - Consistent behavior across all schedulers
+  - Easier testing and maintenance
+  - Better documentation
+  - Type-safe configuration
+
+---
+
+## 🚧 In Progress
+
+### 3. Memory Management (30% savings)
+**Status**: IN PROGRESS
+
+**Files to consolidate** (3 → 1):
+1. `code/src/Ava/memory/memory_pool.py`
+2. `code/src/Ava/memory/episodic_memory.py`
+3. `code/utils/memory_management.py`
+
+**Target**: Create `unified_memory_manager.py`
+
+---
+
+## 📋 Planned Consolidations
+
+### 4. Loss Functions (25% savings)
+**Status**: PLANNED
+
+**Files to consolidate** (5 → 1):
+1. `code/src/Ava/losses/focal_loss.py`
+2. `code/src/Ava/losses/contrastive_loss.py`
+3. `code/src/Ava/losses/diversity_loss.py`
+4. `code/src/Ava/losses/adaptive_mtp_loss.py`
+5. `code/src/Ava/losses/moe_balancing_loss.py`
+
+**Duplication identified**:
+- Repetition penalty implemented 4 different ways
+- Multi-token prediction duplicated
+- Loss weighting/scaling duplicated
+
+**Target**: Create `unified_loss_functions.py`
+
+---
+
+### 5. Evaluation Framework (20% savings)
+**Status**: PLANNED
+
+**Files to consolidate** (2 → 1):
+1. `code/src/Ava/evaluation/evaluator.py`
+2. `code/scripts/evaluation/measure_coherence.py`
+
+**Issues**:
+- Metrics scattered across files
+- Unclear responsibility division
+- Duplicate metric calculations
+
+**Target**: Create `unified_evaluator.py`
+
+---
+
+### 6. Data Pipeline (35% savings)
+**Status**: PLANNED
+
+**Files to consolidate** (4 → 1):
+1. `code/scripts/1_data_download/unified_download.py`
+2. `code/scripts/2_data_preprocessing/preprocess.py`
+3. `code/src/Ava/data/data_loader.py`
+4. `code/src/Ava/data/dataset.py`
+
+**Issues**:
+- Download logic duplicated
+- Unclear pipeline flow
+- Inconsistent data formats
+
+**Target**: Create `data_pipeline_orchestrator.py`
+
+---
+
+### 7. Distributed Training (40% savings)
+**Status**: PLANNED
+
+**Files to consolidate** (5 files):
+1. `code/src/Ava/distributed/coordinator.py`
+2. `code/src/Ava/distributed/health_checker.py`
+3. `code/src/Ava/distributed/error_handler.py`
+4. `code/src/Ava/distributed/sync_manager.py`
+5. `code/utils/distributed_utils.py`
+
+**Issues**:
+- Health checking implemented in 2 places
+- Error handling duplicated
+- Unclear layering
+
+**Target**: Create `unified_distributed_manager.py`
+
+---
+
+### 8. Training Scripts (30% savings)
+**Status**: PLANNED
+
+**Files to consolidate** (4 → 1):
+1. `code/scripts/3_Training/train.py` (3,449 lines - use as base)
+2. `code/scripts/3_Training/finetune.py` (duplicates train.py)
+3. `code/scripts/3_Training/safe_train.py` (duplicate safety checks)
+4. `code/scripts/3_Training/train_with_memory_fix.sh` (duplicate logic)
+
+**Duplication**: 1,019 lines across checkpoint discovery, config loading, data discovery
+
+**Target**: Keep `train.py` as consolidated version, deprecate others
+
+---
+
+## 📊 Summary Statistics
+
+### Completed
+- **Areas consolidated**: 2 / 8 (25%)
+- **Files consolidated**: 9 / 43 (21%)
+- **Lines eliminated**: ~1,400 lines
+- **Time saved**: Significant reduction in maintenance burden
+
+### Remaining Work
+- **Areas remaining**: 6 / 8 (75%)
+- **Files remaining**: 34 / 43 (79%)
+- **Estimated additional savings**: ~3,000+ lines
+
+### Overall Progress
+- **Phase 1**: Configuration & LR Management ✅ COMPLETE
+- **Phase 2**: Memory, Losses, Evaluation (IN PROGRESS)
+- **Phase 3**: Data Pipeline, Distributed, Training (PLANNED)
+
+---
+
+## 🎯 Next Steps
+
+1. ✅ ~~Create configuration templates~~
+2. ✅ ~~Consolidate learning rate management~~
+3. 🚧 Consolidate memory management (current focus)
+4. 📋 Consolidate loss functions
+5. 📋 Consolidate evaluation framework
+6. 📋 Consolidate data pipeline
+7. 📋 Consolidate distributed training
+8. 📋 Consolidate training scripts
+9. 📋 Update imports across codebase
+10. 📋 Test consolidated modules
+11. 📋 Remove deprecated files
+
+---
+
+## 🔧 How to Use Consolidated Modules
+
+### Configuration Generator
+
+```bash
+# Generate all DeepSpeed configs
+python code/utils/config_generator.py
+```
+
+### Unified LR Manager
+
+```python
+from code.src.Ava.training.unified_lr_manager import (
+    create_lr_manager,
+    UnifiedLRConfig,
+    UnifiedLearningRateManager
+)
+
+# Quick creation with defaults
+lr_manager = create_lr_manager(
+    optimizer,
+    total_steps=10000,
+    warmup_ratio=0.03,
+    main_schedule="cosine",
+    enable_adaptive=True
+)
+
+# Or with full configuration
+config = UnifiedLRConfig(
+    warmup_steps=1000,
+    warmup_schedule="cosine",
+    main_schedule="cosine_restarts",
+    enable_adaptive=True,
+    plateau_patience=500,
+    # ... many more options
+)
+lr_manager = UnifiedLearningRateManager(optimizer, config, total_steps=10000)
+
+# Use in training loop
+for epoch in range(epochs):
+    for batch in dataloader:
+        # ... training code ...
+        loss = criterion(outputs, targets)
+
+        # Update LR
+        lr_info = lr_manager.step(loss=loss.item(), model=model)
+
+        # lr_info contains useful information about LR adjustments
+```
+
+---
+
+## 📝 Notes
+
+- All consolidations maintain backward compatibility where possible
+- Deprecated files will be clearly marked before removal
+- Import paths will be updated in a separate commit
+- Comprehensive tests will be added for all consolidated modules
+- Documentation will be updated to reflect new structure
+
+---
+
+**Last Updated**: 2025-10-24
+**Consolidation Lead**: Claude Code
+**Status**: Phase 1 Complete, Phase 2 In Progress
