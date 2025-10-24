@@ -1,0 +1,163 @@
+# DeepSpeed ZeRO Template Configuration
+# This template is used to generate ZeRO-1, ZeRO-2, and ZeRO-3 configs
+# Parameters to replace: {{ZERO_STAGE}}, {{HIDDEN_SIZE}}, {{NUM_LAYERS}}, etc.
+
+model:
+  # Model Architecture (size depends on zero_stage)
+  hidden_size: {{HIDDEN_SIZE}}
+  num_layers: {{NUM_LAYERS}}
+  num_attention_heads: {{NUM_ATTENTION_HEADS}}
+  intermediate_size: {{INTERMEDIATE_SIZE}}
+  vocab_size: 50257
+  max_position_embeddings: {{MAX_POSITION_EMBEDDINGS}}
+
+  # MoE Configuration
+  num_experts: {{NUM_EXPERTS}}
+  num_experts_per_token: {{NUM_EXPERTS_PER_TOKEN}}
+  expert_capacity_factor: {{EXPERT_CAPACITY_FACTOR}}
+  router_type: "{{ROUTER_TYPE}}"
+
+  # Enhanced Features
+  use_moh: {{USE_MOH}}
+  use_moa: {{USE_MOA}}
+  use_rag: {{USE_RAG}}
+  use_cross_attention: {{USE_CROSS_ATTENTION}}
+  num_cross_attention_layers: {{NUM_CROSS_ATTENTION_LAYERS}}
+  use_episodic_memory: {{USE_EPISODIC_MEMORY}}
+  memory_size: {{MEMORY_SIZE}}
+
+  # DeepSpeed compatibility
+  deepspeed_activation_checkpointing: true
+  deepspeed_partition_activations: {{PARTITION_ACTIVATIONS}}
+  deepspeed_moe_param_groups: true
+
+training:
+  batch_size: {{BATCH_SIZE}}
+  gradient_accumulation_steps: {{GRADIENT_ACCUMULATION_STEPS}}
+  max_gradient_norm: 1.0
+  num_epochs: {{NUM_EPOCHS}}
+  warmup_steps: {{WARMUP_STEPS}}
+  learning_rate: {{LEARNING_RATE}}
+  weight_decay: 0.01
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+
+# DeepSpeed Configuration
+deepspeed:
+  enabled: true
+  zero_stage: {{ZERO_STAGE}}
+  cpu_offload: {{CPU_OFFLOAD}}
+  nvme_offload: false
+  precision: "bf16"
+  gradient_accumulation_steps: {{GRADIENT_ACCUMULATION_STEPS}}
+  train_batch_size: {{TRAIN_BATCH_SIZE}}
+  micro_batch_size: {{BATCH_SIZE}}
+  activation_checkpointing: true
+  partition_activations: {{PARTITION_ACTIVATIONS}}
+  gradient_clipping: 1.0
+
+  # ZeRO specific settings
+  zero_allow_untested_optimizer: true
+  zero_reduce_scatter: true
+  zero_overlap_comm: true
+  zero_contiguous_gradients: true
+{{ZERO_STAGE_SPECIFIC_CONFIG}}
+
+{{CPU_OFFLOAD_CONFIG}}
+
+# Enhanced Features
+enhanced_features:
+  architecture:
+    use_moh: {{USE_MOH}}
+    use_moa: {{USE_MOA}}
+    use_cross_attention: {{USE_CROSS_ATTENTION}}
+    use_alibi: {{USE_ALIBI}}
+    expert_routing_type: "{{ROUTER_TYPE}}"
+
+  rag:
+    enabled: {{USE_RAG}}
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: {{MAX_RETRIEVED_DOCS}}
+    rag_fusion_type: {{RAG_FUSION_TYPE}}
+
+  losses:
+    focal_loss: true
+    contrastive_loss: {{CONTRASTIVE_LOSS}}
+    diversity_loss: true
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+
+  gradient:
+    gradient_surgery: true
+    adaptive_gradient_surgery: {{ADAPTIVE_GRADIENT_SURGERY}}
+    gradient_surgery_method: "{{GRADIENT_SURGERY_METHOD}}"
+
+  memory:
+    use_episodic_memory: {{USE_EPISODIC_MEMORY}}
+    memory_capacity: {{MEMORY_SIZE}}
+    memory_selection_strategy: "importance"
+    memory_replay_ratio: {{MEMORY_REPLAY_RATIO}}
+{{MEMORY_REPLAY_STRATEGY}}
+
+  quantization:
+    quantization_aware: true
+    use_nvfp4: {{USE_NVFP4}}
+    bit_width: {{BIT_WIDTH}}
+{{QUANTIZATION_EXTRAS}}
+
+# Data Loading
+data:
+  data_dir: "/project/code/data/processed"
+  max_length: {{MAX_POSITION_EMBEDDINGS}}
+  tokenizer_name: "gpt2"
+  train_batch_size: {{BATCH_SIZE}}
+  eval_batch_size: {{EVAL_BATCH_SIZE}}
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: {{BUFFER_SIZE}}
+  distributed: true
+  multi_column: {{MULTI_COLUMN}}
+
+# Performance & Memory
+performance:
+  ultra_fast_mode: false
+  fast_progress: false
+  minimal_progress: true
+  express_mode: {{EXPRESS_MODE}}
+
+memory:
+  enable_memory_pool: true
+  pool_size_gb: {{POOL_SIZE_GB}}
+  gradient_checkpointing: true
+  memory_threshold_gb: {{MEMORY_THRESHOLD_GB}}
+  enable_cpu_offload: {{CPU_OFFLOAD}}
+  clear_cache_frequency: {{CLEAR_CACHE_FREQUENCY}}
+
+# Output & Evaluation
+output:
+  output_dir: "outputs/deepspeed_zero{{ZERO_STAGE}}"
+  save_total_limit: {{SAVE_TOTAL_LIMIT}}
+  save_on_each_node: false
+
+evaluation:
+  eval_during_training: true
+  eval_metrics: "{{EVAL_METRICS}}"
+  comprehensive_eval: {{COMPREHENSIVE_EVAL}}
+
+# Run Management
+run_management:
+  experiment_name: "ava-{{MODEL_SCALE}}-zero{{ZERO_STAGE}}"
+  resume_from_checkpoint: null
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-deepspeed-zero{{ZERO_STAGE}}"
+  tags: ["deepspeed", "zero{{ZERO_STAGE}}", "{{MODEL_SCALE}}", {{ADDITIONAL_TAGS}}]
+  notes: "DeepSpeed ZeRO-{{ZERO_STAGE}} {{WANDB_NOTES}}"
+  group: "deepspeed-zero{{ZERO_STAGE}}"
+{{WANDB_EXTRAS}}
+
+# Hardware Requirements
+# {{HARDWARE_REQUIREMENTS}}

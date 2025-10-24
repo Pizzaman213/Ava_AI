@@ -1,0 +1,402 @@
+# GPU Configuration Template
+# This template is used to generate tiny, small, base, and large GPU configs
+# Parameters to replace: {{MODEL_SIZE}}, {{HIDDEN_SIZE}}, {{NUM_LAYERS}}, etc.
+
+model:
+  hidden_size: {{HIDDEN_SIZE}}
+  num_layers: {{NUM_LAYERS}}
+  num_attention_heads: {{NUM_ATTENTION_HEADS}}
+  intermediate_size: {{INTERMEDIATE_SIZE}}
+  vocab_size: {{VOCAB_SIZE}}
+  max_position_embeddings: {{MAX_POSITION_EMBEDDINGS}}
+  num_experts: {{NUM_EXPERTS}}
+  num_experts_per_token: {{NUM_EXPERTS_PER_TOKEN}}
+  expert_capacity_factor: {{EXPERT_CAPACITY_FACTOR}}
+  router_type: {{ROUTER_TYPE}}
+  router_aux_loss_coef: 0.01
+  router_jitter_noise: 0.0
+  use_cache: {{USE_CACHE}}
+  rope_theta: 10000.0
+  attention_dropout: {{ATTENTION_DROPOUT}}
+  hidden_dropout: {{HIDDEN_DROPOUT}}
+  layer_norm_eps: 1e-5
+  initializer_range: 0.02
+  hidden_act: {{HIDDEN_ACT}}
+  use_moh: {{USE_MOH}}
+  use_moa: {{USE_MOA}}
+  use_rag: {{USE_RAG}}
+  use_cross_attention: {{USE_CROSS_ATTENTION}}
+{{CROSS_ATTENTION_LAYERS}}
+  use_episodic_memory: {{USE_EPISODIC_MEMORY}}
+{{MEMORY_SIZE_CONFIG}}
+{{DEEPSPEED_CONFIG_MODEL}}
+  tie_word_embeddings: {{TIE_WORD_EMBEDDINGS}}
+{{ADDITIONAL_MODEL_CONFIG}}
+
+training:
+  batch_size: {{BATCH_SIZE}}
+  gradient_accumulation_steps: {{GRADIENT_ACCUMULATION_STEPS}}
+  max_gradient_norm: {{MAX_GRADIENT_NORM}}
+  num_epochs: {{NUM_EPOCHS}}
+  max_steps: {{MAX_STEPS}}
+  warmup_steps: {{WARMUP_STEPS}}
+  warmup_schedule: {{WARMUP_SCHEDULE}}
+  learning_rate: {{LEARNING_RATE}}
+  weight_decay: {{WEIGHT_DECAY}}
+  beta1: 0.9
+  beta2: {{BETA2}}
+  eps: {{EPS}}
+  lr_scheduler_type: {{LR_SCHEDULER_TYPE}}
+  lr_end: {{LR_END}}
+  # Repetition penalty weights
+  repetition_penalty_weight: {{REPETITION_PENALTY_WEIGHT}}
+  immediate_repetition_weight: {{IMMEDIATE_REPETITION_WEIGHT}}
+  min_sequence_length: {{MIN_SEQUENCE_LENGTH}}
+  eos_penalty_weight: {{EOS_PENALTY_WEIGHT}}
+{{EOS_LOGIT_BIAS}}
+{{ENTROPY_REG}}
+{{OUTPUT_DIVERSITY}}
+  mixed_precision: {{MIXED_PRECISION}}
+  dataloader_num_workers: {{DATALOADER_NUM_WORKERS}}
+{{PREFETCH_FACTOR}}
+{{PERSISTENT_WORKERS}}
+  gradient_checkpointing: {{GRADIENT_CHECKPOINTING}}
+  eval_strategy: steps
+  eval_steps: {{EVAL_STEPS}}
+{{EVAL_STEPS_TYPE}}
+  save_strategy: steps
+  save_steps: {{SAVE_STEPS}}
+{{SAVE_TOTAL_LIMIT}}
+  logging_steps: {{LOGGING_STEPS}}
+{{GENERATION_DURING_EVAL}}
+  early_stopping_patience: {{EARLY_STOPPING_PATIENCE}}
+  early_stopping_threshold: {{EARLY_STOPPING_THRESHOLD}}
+{{USE_EMA}}
+{{LABEL_SMOOTHING}}
+{{ADDITIONAL_TRAINING_DEFAULTS}}
+{{ADAPTIVE_LR_CONFIG}}
+{{PROGRESSIVE_CONFIG}}
+{{DYNAMIC_BATCHING_CONFIG}}
+  gradient_health:
+    enabled: true
+    initial_clip_value: {{INITIAL_CLIP_VALUE}}
+    final_clip_value: {{FINAL_CLIP_VALUE}}
+    warmup_steps: {{WARMUP_STEPS}}
+    explosion_threshold: {{EXPLOSION_THRESHOLD}}
+    explosion_window: {{EXPLOSION_WINDOW}}
+    auto_reduce_lr: true
+    lr_reduction_factor: {{LR_REDUCTION_FACTOR}}
+
+data:
+  # Core data configuration
+  data_dir: {{DATA_DIR}}
+  max_length: {{MAX_LENGTH}}
+  tokenizer_name: {{TOKENIZER_NAME}}
+  padding_side: right
+  truncation: true
+  max_train_examples: {{MAX_TRAIN_EXAMPLES}}
+  max_eval_examples: {{MAX_EVAL_EXAMPLES}}
+  dataloader_drop_last: true
+  dataloader_pin_memory: {{DATALOADER_PIN_MEMORY}}
+{{DATALOADER_PREFETCH_FACTOR}}
+{{DATALOADER_PERSISTENT_WORKERS}}
+
+{{TOKENIZER_DEFAULTS}}
+
+  # Data loading configuration
+  streaming: {{STREAMING}}
+  buffer_size: {{BUFFER_SIZE}}
+  max_samples: {{MAX_SAMPLES}}
+{{VAL_MAX_SAMPLES}}
+{{VAL_SPLIT_RATIO}}
+  multi_column: {{MULTI_COLUMN}}
+  use_multi_column: {{USE_MULTI_COLUMN}}
+  distributed: {{DISTRIBUTED}}
+  num_workers: {{NUM_WORKERS}}
+{{SAMPLES_PER_FILE}}
+  enable_bucketing: {{ENABLE_BUCKETING}}
+  bucket_boundaries: {{BUCKET_BOUNDARIES}}
+  max_bucket_size: {{MAX_BUCKET_SIZE}}
+  use_weighted_mixing: {{USE_WEIGHTED_MIXING}}
+  mixing_temperature: {{MIXING_TEMPERATURE}}
+  shuffle_seed: 42
+  reshuffle_each_epoch: {{RESHUFFLE_EACH_EPOCH}}
+  drop_last_batch: true
+  prefetch_factor: {{PREFETCH_FACTOR_DATA}}
+  persistent_workers: {{PERSISTENT_WORKERS_DATA}}
+
+{{FORMAT_DETECTION}}
+
+{{FALLBACK_DATA_PATHS}}
+
+device: auto
+fp16: {{FP16}}
+bf16: {{BF16}}
+{{ADDITIONAL_DEVICE_CONFIG}}
+
+wandb:
+  enabled: true
+  project: {{WANDB_PROJECT}}
+  tags: {{WANDB_TAGS}}
+{{WANDB_ENTITY}}
+{{WANDB_NAME}}
+  notes: {{WANDB_NOTES}}
+{{WANDB_GROUP}}
+{{WANDB_JOB_TYPE}}
+{{WANDB_OFFLINE}}
+{{WANDB_CACHE}}
+{{WANDB_ADDITIONAL}}
+
+stability:
+  loss_smoothing: true
+  loss_smoothing_alpha: 0.9
+  lr_warmup_ratio: {{LR_WARMUP_RATIO}}
+  lr_decay_ratio: {{LR_DECAY_RATIO}}
+  sync_gradients_each_step: false
+  use_kahan_summation: true
+  use_stable_embedding: true
+  stop_on_nan: {{STOP_ON_NAN}}
+  max_grad_norm_before_stop: {{MAX_GRAD_NORM_BEFORE_STOP}}
+  max_loss_before_stop: {{MAX_LOSS_BEFORE_STOP}}
+
+{{COLOSSALAI_CONFIG}}
+
+performance:
+  ultra_fast_mode: {{ULTRA_FAST_MODE}}
+  fast_progress: false
+  minimal_progress: true
+  express_mode: {{EXPRESS_MODE}}
+  no_sync: false
+{{TORCH_COMPILE_CONFIG}}
+{{PERFORMANCE_DEFAULTS}}
+{{ENVIRONMENT_SETTINGS}}
+
+memory:
+  enable_memory_pool: {{ENABLE_MEMORY_POOL}}
+  pool_size_gb: {{POOL_SIZE_GB}}
+  gradient_checkpointing: {{GRADIENT_CHECKPOINTING}}
+  memory_threshold_gb: {{MEMORY_THRESHOLD_GB}}
+  enable_cpu_offload: {{ENABLE_CPU_OFFLOAD}}
+  clear_cache_frequency: {{CLEAR_CACHE_FREQUENCY}}
+  silent_mode: true
+  target_utilization: {{TARGET_UTILIZATION}}
+  warning_threshold: {{WARNING_THRESHOLD}}
+  critical_threshold: {{CRITICAL_THRESHOLD}}
+  emergency_threshold: {{EMERGENCY_THRESHOLD}}
+
+evaluation:
+  eval_during_training: true
+  eval_metrics: {{EVAL_METRICS}}
+  comprehensive_eval: {{COMPREHENSIVE_EVAL}}
+{{GENERATION_SAMPLES}}
+{{EVAL_BATCHING}}
+{{EVAL_THRESHOLDS}}
+{{EVAL_LOGGING}}
+{{EVAL_TEST}}
+  moe_metrics:
+    track_expert_utilization: {{TRACK_EXPERT_UTIL}}
+    track_routing_entropy: {{TRACK_ROUTING_ENTROPY}}
+    track_load_balance: {{TRACK_LOAD_BALANCE}}
+    track_expert_specialization: {{TRACK_EXPERT_SPEC}}
+    log_frequency: 50000
+
+output:
+  output_dir: {{OUTPUT_DIR}}
+  save_total_limit: {{OUTPUT_SAVE_TOTAL_LIMIT}}
+  save_on_each_node: false
+
+run_management:
+  experiment_name: {{EXPERIMENT_NAME}}
+  run_id: null
+  resume_from_checkpoint: null
+
+{{DISTRIBUTED_CONFIG}}
+
+lr_finder:
+  enabled: false
+  start_lr: 1.0e-08
+  end_lr: 0.01
+  num_iterations: {{LR_FINDER_NUM_ITERATIONS}}
+  suggestion_method: fastai
+  use_suggested_lr: {{LR_FINDER_USE_SUGGESTED}}
+  use_savgol_filter: true
+  savgol_window: 31
+  beta: 0.9
+  momentum_cycling: false
+  track_validation: false
+  num_runs: 1
+  gradient_accumulation_steps: {{GRADIENT_ACCUMULATION_STEPS}}
+{{LR_FINDER_DEFAULTS}}
+
+generation:
+  repetition_penalty: {{GEN_REPETITION_PENALTY}}
+  eos_penalty: {{GEN_EOS_PENALTY}}
+  min_length: {{GEN_MIN_LENGTH}}
+  temperature: {{GEN_TEMPERATURE}}
+  top_k: {{GEN_TOP_K}}
+  top_p: {{GEN_TOP_P}}
+  use_ngram_blocking: {{GEN_USE_NGRAM_BLOCKING}}
+  ngram_size: {{GEN_NGRAM_SIZE}}
+  no_repeat_ngram_size: {{GEN_NO_REPEAT_NGRAM_SIZE}}
+  do_sample: true
+  num_beams: 1
+{{GEN_EVAL_INTERVAL}}
+{{GEN_DEFAULTS}}
+{{GEN_QUALITY}}
+
+enhanced_features:
+  architecture:
+    use_moh: {{USE_MOH}}
+    use_moa: {{USE_MOA}}
+    use_cross_attention: {{USE_CROSS_ATTENTION}}
+    use_alibi: {{USE_ALIBI}}
+    expert_routing_type: {{ROUTER_TYPE}}
+
+  rag:
+    enabled: {{USE_RAG}}
+    knowledge_base_path: {{RAG_KB_PATH}}
+    max_retrieved_docs: {{RAG_MAX_DOCS}}
+    rag_fusion_type: {{RAG_FUSION_TYPE}}
+
+  losses:
+    use_multi_token_prediction: {{USE_MULTI_TOKEN_PREDICTION}}
+    num_future_tokens: {{NUM_FUTURE_TOKENS}}
+    mtp_weight: {{MTP_WEIGHT}}
+    initial_temperature: {{INITIAL_TEMPERATURE}}
+    adaptive_temperature: {{ADAPTIVE_TEMPERATURE}}
+    label_smoothing: {{LOSS_LABEL_SMOOTHING}}
+    use_moe_balancing: {{USE_MOE_BALANCING}}
+    gradient_balance_weight: {{GRADIENT_BALANCE_WEIGHT}}
+    focal_loss: {{FOCAL_LOSS}}
+    contrastive_loss: {{CONTRASTIVE_LOSS}}
+    diversity_loss: {{DIVERSITY_LOSS}}
+    auxiliary_loss: {{AUXILIARY_LOSS}}
+    adaptive_loss_scaling: {{ADAPTIVE_LOSS_SCALING}}
+    contrastive_loss_weight: {{CONTRASTIVE_LOSS_WEIGHT}}
+    diversity_loss_weight: {{DIVERSITY_LOSS_WEIGHT}}
+{{LOSS_DEFAULTS}}
+
+{{ADAPTIVE_MTP_CONFIG}}
+
+  gradient:
+    gradient_surgery: {{GRADIENT_SURGERY}}
+    adaptive_gradient_surgery: {{ADAPTIVE_GRADIENT_SURGERY}}
+    gradient_surgery_method: {{GRADIENT_SURGERY_METHOD}}
+    gradient_norm_tracking: {{GRADIENT_NORM_TRACKING}}
+    gradient_anomaly_detection: {{GRADIENT_ANOMALY_DETECTION}}
+
+  memory:
+    use_episodic_memory: {{USE_EPISODIC_MEMORY}}
+    memory_capacity: {{MEMORY_CAPACITY}}
+    memory_selection_strategy: {{MEMORY_SELECTION_STRATEGY}}
+    memory_importance_threshold: {{MEMORY_IMPORTANCE_THRESHOLD}}
+    memory_adaptation_rate: {{MEMORY_ADAPTATION_RATE}}
+    silent_mode: true
+{{MEMORY_PERFORMANCE_WINDOW}}
+{{MEMORY_REPLAY}}
+
+  quantization:
+    quantization_aware: {{QUANTIZATION_AWARE}}
+    use_nvfp4: {{USE_NVFP4_QUANT}}
+{{TORCHAO_NVFP4}}
+    bit_width: {{BIT_WIDTH}}
+    nvfp4_block_size: {{NVFP4_BLOCK_SIZE}}
+    stochastic_rounding: {{STOCHASTIC_ROUNDING}}
+{{USE_HADAMARD_TRANSFORM}}
+
+deepspeed:
+  use_deepspeed: {{USE_DEEPSPEED}}
+  zero_stage: {{DEEPSPEED_ZERO_STAGE}}
+  cpu_offload: {{DEEPSPEED_CPU_OFFLOAD}}
+  nvme_offload: {{DEEPSPEED_NVME_OFFLOAD}}
+  precision_type: {{DEEPSPEED_PRECISION_TYPE}}
+  train_batch_size: {{DEEPSPEED_TRAIN_BATCH_SIZE}}
+  micro_batch_size: {{DEEPSPEED_MICRO_BATCH_SIZE}}
+  gradient_accumulation_steps: {{GRADIENT_ACCUMULATION_STEPS}}
+  activation_checkpointing: {{DEEPSPEED_ACTIVATION_CHECKPOINTING}}
+{{DEEPSPEED_DEFAULTS}}
+
+
+# RLHF Fine-tuning Configuration
+rlhf:
+  # Model paths
+  policy_model_path: {{RLHF_POLICY_MODEL_PATH}}
+  judge_model_path: {{RLHF_JUDGE_MODEL_PATH}}
+  reward_model_path: {{RLHF_REWARD_MODEL_PATH}}
+
+  # Reward model settings
+  use_model_to_model_reward: true
+  freeze_reward_model: true
+
+  # Dataset paths
+  prompt_dataset_path: {{RLHF_PROMPT_DATASET_PATH}}
+  eval_prompt_dataset_path: {{RLHF_EVAL_PROMPT_DATASET_PATH}}
+
+  # Training settings
+  num_epochs: {{RLHF_NUM_EPOCHS}}
+  rollout_batch_size: {{RLHF_ROLLOUT_BATCH_SIZE}}
+  num_rollouts_per_epoch: {{RLHF_NUM_ROLLOUTS_PER_EPOCH}}
+  max_prompt_length: {{RLHF_MAX_PROMPT_LENGTH}}
+
+  # Output settings
+  save_dir: {{RLHF_SAVE_DIR}}
+  log_dir: {{RLHF_LOG_DIR}}
+  save_every: {{RLHF_SAVE_EVERY}}
+  eval_every: {{RLHF_EVAL_EVERY}}
+  num_eval_prompts: 50
+
+  # Device
+  device: {{RLHF_DEVICE}}
+
+  # Weights & Biases logging
+  use_wandb: true
+  wandb_project: ava-rlhf
+  wandb_name: {{RLHF_WANDB_NAME}}
+
+  # PPO configuration
+  ppo:
+    # Learning rate and optimization
+    learning_rate: {{RLHF_PPO_LEARNING_RATE}}
+    batch_size: {{RLHF_PPO_BATCH_SIZE}}
+    mini_batch_size: {{RLHF_PPO_MINI_BATCH_SIZE}}
+    gradient_accumulation_steps: {{RLHF_PPO_GRADIENT_ACCUMULATION_STEPS}}
+    max_grad_norm: {{RLHF_PPO_MAX_GRAD_NORM}}
+
+    # PPO hyperparameters
+    ppo_epochs: 4
+    clip_range: 0.2
+    clip_range_value: 0.2
+    value_loss_coef: 0.5
+    entropy_coef: 0.01
+    gamma: 1.0
+    lambda: 0.95
+
+    # KL divergence penalty
+    kl_penalty: kl
+    target_kl: {{RLHF_PPO_TARGET_KL}}
+    init_kl_coef: {{RLHF_PPO_INIT_KL_COEF}}
+    adaptive_kl: true
+
+    # Generation settings
+    max_gen_length: {{RLHF_PPO_MAX_GEN_LENGTH}}
+    temperature: 1.0
+    top_k: 50
+    top_p: 0.95
+
+    # Training schedule
+    num_train_epochs: 1
+    max_steps: null
+    warmup_steps: {{RLHF_PPO_WARMUP_STEPS}}
+    logging_steps: 10
+    save_steps: {{RLHF_SAVE_EVERY}}
+    eval_steps: {{RLHF_EVAL_EVERY}}
+
+    # Reward processing
+    use_score_scaling: true
+    use_score_norm: true
+    whiten_rewards: true
+    clip_reward: 10.0
+
+    # Memory optimization
+    gradient_checkpointing: {{RLHF_PPO_GRADIENT_CHECKPOINTING}}
+    mixed_precision: {{RLHF_PPO_MIXED_PRECISION}}
