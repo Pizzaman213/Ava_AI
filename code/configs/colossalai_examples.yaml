@@ -1,0 +1,412 @@
+# Colossal-AI Configuration Examples
+# Copy and modify these configurations for your use case
+
+# ==============================================================================
+# EXAMPLE 1: Small Model Training (< 1B params, Single GPU)
+# ==============================================================================
+small_model_single_gpu:
+  colossalai:
+    enabled: true
+    parallel_strategy: data
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: 1
+
+    # Memory optimization
+    use_zero: false
+    zero_stage: 0
+    use_cpu_offload: false
+    use_activation_checkpointing: false
+
+    # Mixed precision
+    mixed_precision: bf16
+
+    # Performance tuning
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: true
+
+    # Communication
+    use_gradient_compression: false
+    use_async_communication: true
+
+  optimizer:
+    type: hybrid_adam
+    lr: 1e-4
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+
+
+# ==============================================================================
+# EXAMPLE 2: Medium Model Training (1-3B params, 4 GPUs)
+# ==============================================================================
+medium_model_multi_gpu:
+  colossalai:
+    enabled: true
+    parallel_strategy: zero2
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: 4
+
+    # Memory optimization
+    use_zero: true
+    zero_stage: 2
+    use_cpu_offload: false
+    use_activation_checkpointing: true
+    checkpoint_num_layers: null  # Auto
+
+    # Mixed precision
+    mixed_precision: bf16
+    initial_scale: 65536
+
+    # Performance tuning
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: true
+
+    # Communication optimization
+    use_gradient_compression: true
+    gradient_compression_ratio: 0.1
+    use_async_communication: true
+    overlap_communication: true
+
+  optimizer:
+    type: hybrid_adam
+    lr: 2e-4
+    weight_decay: 0.01
+
+  gradient_compression:
+    enabled: true
+    compression_ratio: 0.1
+    compression_type: topk
+    warmup_steps: 100
+
+
+# ==============================================================================
+# EXAMPLE 3: Large Model Training (7B+ params, 8 GPUs, Hybrid Parallelism)
+# ==============================================================================
+large_model_hybrid:
+  colossalai:
+    enabled: true
+    parallel_strategy: hybrid
+    tensor_parallel_size: 4
+    pipeline_parallel_size: 2
+    data_parallel_size: 1  # Auto-calculated
+
+    # Memory optimization
+    use_zero: true
+    zero_stage: 2
+    use_cpu_offload: false
+    use_activation_checkpointing: true
+    checkpoint_num_layers: null  # Auto
+
+    # Mixed precision
+    mixed_precision: bf16
+
+    # Performance tuning
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: true
+
+    # Communication optimization
+    use_gradient_compression: true
+    gradient_compression_ratio: 0.05
+    use_async_communication: true
+    overlap_communication: true
+
+  optimizer:
+    type: distributed_lamb
+    lr: 3e-4
+    weight_decay: 0.01
+    bias_correction: true
+    max_coeff: 10.0
+
+  shardformer:
+    enabled: true
+    enable_sequence_parallelism: true
+    enable_sequence_overlap: true
+
+
+# ==============================================================================
+# EXAMPLE 4: Memory-Constrained Training (Large model, Limited GPUs)
+# ==============================================================================
+memory_constrained:
+  colossalai:
+    enabled: true
+    parallel_strategy: zero3
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: -1  # Use all GPUs
+
+    # Aggressive memory optimization
+    use_zero: true
+    zero_stage: 3
+    use_cpu_offload: true
+    use_nvme_offload: false
+    use_gemini: false
+    use_activation_checkpointing: true
+    checkpoint_num_layers: null  # Checkpoint all
+
+    # Mixed precision
+    mixed_precision: bf16
+
+    # Performance tuning
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: false  # May conflict with offloading
+
+    # Communication optimization
+    use_gradient_compression: true
+    gradient_compression_ratio: 0.1
+    use_async_communication: true
+    overlap_communication: true
+
+  optimizer:
+    type: galore_adamw
+    lr: 1e-4
+    weight_decay: 0.01
+    use_galore: true
+    galore_rank: 128
+    galore_update_proj_gap: 200
+    galore_scale: 0.25
+
+  gradient_compression:
+    enabled: true
+    compression_ratio: 0.1
+    compression_type: topk
+    warmup_steps: 200
+
+
+# ==============================================================================
+# EXAMPLE 5: Maximum Throughput (Speed-optimized)
+# ==============================================================================
+max_throughput:
+  colossalai:
+    enabled: true
+    parallel_strategy: zero1
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: -1
+
+    # Minimal memory optimization for speed
+    use_zero: true
+    zero_stage: 1  # Only optimizer state sharding
+    use_cpu_offload: false
+    use_activation_checkpointing: false
+
+    # Mixed precision
+    mixed_precision: bf16
+
+    # All performance optimizations
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: true
+    enable_xformers: false
+
+    # Maximum communication efficiency
+    use_gradient_compression: false  # May slow down with good interconnect
+    use_async_communication: true
+    overlap_communication: true
+
+  optimizer:
+    type: hybrid_adam
+    lr: 3e-4
+    weight_decay: 0.01
+
+
+# ==============================================================================
+# EXAMPLE 6: HuggingFace Model with Shardformer
+# ==============================================================================
+huggingface_with_shardformer:
+  colossalai:
+    enabled: true
+    parallel_strategy: hybrid
+    tensor_parallel_size: 2
+    pipeline_parallel_size: 1
+    data_parallel_size: -1
+
+    use_zero: true
+    zero_stage: 2
+    mixed_precision: bf16
+
+    enable_flash_attention: true
+    enable_fused_normalization: true
+
+  shardformer:
+    enabled: true
+    tensor_parallel_size: 2
+    enable_tensor_parallelism: true
+    enable_all_optimization: true
+    enable_flash_attention: true
+    enable_jit_fused: true
+    enable_sequence_parallelism: false
+    enable_sequence_overlap: false
+
+  optimizer:
+    type: hybrid_adam
+    lr: 2e-4
+    weight_decay: 0.01
+
+
+# ==============================================================================
+# EXAMPLE 7: Research/Experimentation (Balanced)
+# ==============================================================================
+research_balanced:
+  colossalai:
+    enabled: true
+    parallel_strategy: auto
+
+    # Let auto-configuration decide
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: -1
+
+    use_zero: true
+    zero_stage: 2
+    mixed_precision: bf16
+
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: true
+
+    use_gradient_compression: true
+    gradient_compression_ratio: 0.1
+
+  optimizer:
+    type: auto  # Will auto-select based on model size
+    lr: 1e-4
+    weight_decay: 0.01
+
+  monitoring:
+    enabled: true
+    log_interval: 10
+    profile_interval: 100
+
+
+# ==============================================================================
+# EXAMPLE 8: Production Deployment (Stable + Fast)
+# ==============================================================================
+production:
+  colossalai:
+    enabled: true
+    parallel_strategy: hybrid
+    tensor_parallel_size: 2
+    pipeline_parallel_size: 2
+    data_parallel_size: -1
+
+    use_zero: true
+    zero_stage: 2
+    use_cpu_offload: false
+    use_activation_checkpointing: true
+
+    mixed_precision: bf16
+
+    enable_flash_attention: true
+    enable_fused_normalization: true
+    enable_jit_fused: true
+
+    use_gradient_compression: true
+    gradient_compression_ratio: 0.1
+    use_async_communication: true
+    overlap_communication: true
+
+    # Compatibility flags
+    compatibility_mode: false
+    use_legacy_optimizer: false
+
+  optimizer:
+    type: distributed_lamb
+    lr: 2e-4
+    weight_decay: 0.01
+    bias_correction: true
+
+  monitoring:
+    enabled: true
+    log_interval: 10
+
+  checkpointing:
+    save_interval: 500
+    keep_last_n: 3
+
+
+# ==============================================================================
+# EXAMPLE 9: Extreme Memory Efficiency (Gemini Plugin)
+# ==============================================================================
+extreme_memory:
+  colossalai:
+    enabled: true
+    parallel_strategy: data
+    use_gemini: true  # Gemini heterogeneous memory manager
+
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: -1
+
+    use_zero: true
+    zero_stage: 3
+    use_cpu_offload: true
+    use_activation_checkpointing: true
+
+    mixed_precision: bf16
+
+    enable_flash_attention: true
+
+  optimizer:
+    type: galore_adafactor
+    lr: 1e-4
+    use_galore: true
+    galore_rank: 64  # Very aggressive compression
+    weight_decay: 0.01
+
+
+# ==============================================================================
+# EXAMPLE 10: Debug/Development Configuration
+# ==============================================================================
+debug:
+  colossalai:
+    enabled: true
+    parallel_strategy: data
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    data_parallel_size: 1
+
+    use_zero: false
+    mixed_precision: fp32  # No mixed precision for debugging
+
+    enable_flash_attention: false
+    enable_fused_normalization: false
+    enable_jit_fused: false
+
+    use_gradient_compression: false
+
+  optimizer:
+    type: hybrid_adam
+    lr: 1e-4
+    weight_decay: 0.01
+
+  monitoring:
+    enabled: true
+    log_interval: 1  # Log every step
+    profile_interval: 10
+
+
+# ==============================================================================
+# USAGE INSTRUCTIONS
+# ==============================================================================
+#
+# To use these configurations:
+#
+# 1. Copy the desired configuration section
+# 2. Save it to a new YAML file (e.g., my_config.yaml)
+# 3. Run training with:
+#    python code/scripts/5_training/train.py --config my_config.yaml
+#
+# Or merge with existing config:
+#    python code/scripts/5_training/train.py \
+#      --config configs/gpu/medium.yaml \
+#      --colossalai-config configs/colossalai_examples.yaml#medium_model_multi_gpu
+#
+# Auto-configuration:
+#    python code/scripts/5_training/train.py --auto-colossalai
+#
+# ==============================================================================
