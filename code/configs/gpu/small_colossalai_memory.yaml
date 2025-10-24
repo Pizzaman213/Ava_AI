@@ -1,0 +1,363 @@
+# Colossal-AI Memory-Optimized Configuration
+# Uses ZeRO-2 + Activation Checkpointing for best memory/speed balance
+# Expected: ~60% memory reduction, ~15% speed reduction
+
+model:
+  hidden_size: 512
+  num_layers: 12
+  num_attention_heads: 8
+  intermediate_size: 1536
+  vocab_size: 65536
+  max_position_embeddings: 256
+  num_experts: 4
+  num_experts_per_token: 2
+  expert_capacity_factor: 1.25
+  router_type: deepseek
+  router_aux_loss_coef: 0.005
+  router_jitter_noise: 0.005
+  use_cache: false
+  rope_theta: 10000.0
+  attention_dropout: 0.1
+  hidden_dropout: 0.1
+  use_flash_attention: true
+  layer_norm_eps: 1e-5
+  initializer_range: 0.02
+  hidden_act: swish
+  deepspeed_activation_checkpointing: false  # Using Colossal-AI checkpointing instead
+  deepspeed_partition_activations: false
+  deepspeed_moe_param_groups: false  # Colossal-AI handles this
+  tie_word_embeddings: true
+  dropout: 0.1
+
+training:
+  batch_size: 32  # Reduced from 48 for memory
+  gradient_accumulation_steps: 2  # Effective batch = 64
+  max_gradient_norm: 0.5
+  num_epochs: 1
+  max_steps: null
+  warmup_steps: 500
+  warmup_schedule: cosine
+  learning_rate: 0.0006
+  lr_scheduler_type: cosine
+  lr_end: 6e-05
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-7
+  mixed_precision: bf16
+  dataloader_num_workers: 10
+  prefetch_factor: 6
+  persistent_workers: true
+  gradient_checkpointing: false  # Colossal-AI handles this
+  eval_strategy: steps
+  eval_steps: 1000
+  eval_steps_type: training_steps
+  save_strategy: steps
+  save_steps: 2000
+  save_total_limit: 2
+  logging_steps: 50
+  generate_during_eval: true
+  num_generation_samples: 3
+  generation_max_length: 100
+  early_stopping_patience: 5
+  early_stopping_threshold: 0.005
+
+  # Progressive training
+  progressive:
+    enable_progressive_training: true
+    enable_sequence_scaling: true
+    initial_seq_length: 64
+    final_seq_length: 256
+    length_schedule: exponential
+    length_growth_epochs: 1
+    enable_curriculum: false
+    enable_dynamic_batch: true
+    default_min_batch_size: 16
+    default_max_batch_size: 48
+    default_target_gpu_utilization: 0.80
+
+  # Dynamic batching
+  dynamic_batching:
+    enabled: true
+    min_batch_size: 16
+    max_batch_size: 48
+    target_memory_utilization: 0.80
+    adjustment_frequency: 100
+    adjustment_factor: 1.0
+    warmup_steps: 500
+    smooth_transitions: true
+
+  gradient_health:
+    enabled: true
+    initial_clip_value: 0.5
+    final_clip_value: 0.5
+    warmup_steps: 500
+    explosion_threshold: 3.0
+    explosion_window: 3
+    auto_reduce_lr: true
+    lr_reduction_factor: 0.7
+
+data:
+  data_dir: /project/code/data/processed
+  max_length: 256
+  tokenizer_name: /project/code/models/tokenizer/enhanced-65536
+  padding_side: right
+  truncation: true
+  max_train_examples: null
+  max_eval_examples: 2000
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  default_tokenizer_name: Qwen/Qwen2.5-0.5B
+
+  streaming: true
+  buffer_size: 4000
+  max_samples: null
+  val_max_samples: 2000
+  val_split_ratio: 0.1
+  multi_column: false
+  use_multi_column: false
+  distributed: false
+  num_workers: 12
+  samples_per_file: 8
+  enable_bucketing: false
+  drop_last_batch: true
+  prefetch_factor: 8
+  persistent_workers: true
+  format_detection_samples: 10
+  reshuffle_each_epoch: false
+
+  fallback_data_paths:
+    - /project/code/data/processed
+    - /project/code/data/combined
+    - /project/code/data
+    - ./data/processed
+    - ./data/combined
+    - ./data
+
+# DeepSpeed DISABLED - using Colossal-AI instead
+deepspeed:
+  use_deepspeed: false
+
+enhanced_features:
+  architecture:
+    use_moh: false
+    use_moa: false
+    use_cross_attention: false
+    use_alibi: false
+    expert_routing_type: deepseek
+
+  rag:
+    enabled: false
+    knowledge_base_path: null
+    max_retrieved_docs: 5
+    rag_fusion_type: concatenate
+
+  losses:
+    use_multi_token_prediction: false
+    num_future_tokens: 1
+    mtp_weight: 0.01
+    initial_temperature: 1.0
+    adaptive_temperature: false
+    label_smoothing: 0.05
+    use_moe_balancing: false
+    gradient_balance_weight: 0.0
+    focal_loss: false
+    contrastive_loss: false
+    diversity_loss: false
+    auxiliary_loss: false
+    adaptive_loss_scaling: false
+
+  adaptive_mtp:
+    use_adaptive_mtp: false
+
+  gradient:
+    gradient_surgery: false
+    adaptive_gradient_surgery: false
+    gradient_surgery_method: pcgrad
+
+  memory:
+    use_episodic_memory: false
+    silent_mode: true
+
+  quantization:
+    quantization_aware: false
+    use_nvfp4: false
+    use_torchao_nvfp4: false
+
+performance:
+  ultra_fast_mode: false  # Balanced mode
+  fast_progress: false
+  minimal_progress: true
+  express_mode: false
+  no_sync: false
+
+  # Torch compilation
+  torch_compile:
+    enabled: true
+    mode: reduce-overhead  # Good balance
+    fullgraph: false
+    dynamic: false
+    backend: inductor
+
+  float32_matmul_precision: high
+
+memory:
+  enable_memory_pool: false
+  pool_size_gb: 20.0
+  gradient_checkpointing: false  # Colossal-AI handles this
+  memory_threshold_gb: 22.0
+  enable_cpu_offload: false  # Colossal-AI Gemini handles this
+  clear_cache_frequency: 75
+  silent_mode: true
+  target_utilization: 0.80
+  warning_threshold: 0.87
+  critical_threshold: 0.92
+  emergency_threshold: 0.95
+
+evaluation:
+  eval_during_training: true
+  eval_metrics: perplexity
+  comprehensive_eval: false
+  generate_samples: true
+  generation_prompts:
+    - "The future of artificial intelligence is"
+    - "Once upon a time"
+    - "In a world where technology"
+  recent_losses_window_size: 50
+  max_validation_batches: 50
+  cache_clear_frequency: 75
+  moe_metrics:
+    track_expert_utilization: false
+    track_routing_entropy: false
+    track_load_balance: false
+    track_expert_specialization: false
+
+output:
+  output_dir: outputs/small_colossalai_memory
+  save_total_limit: 2
+  save_on_each_node: false
+
+run_management:
+  experiment_name: ava-small-colossalai-memory-optimized
+  run_id: null
+  resume_from_checkpoint: null
+
+device: auto
+fp16: false
+bf16: true
+
+wandb:
+  enabled: true
+  project: Ava
+  entity: null
+  name: null
+  group: ava-colossalai-memory
+  job_type: train
+  tags:
+    - gpu
+    - colossalai
+    - zero2
+    - memory-optimized
+    - activation-checkpointing
+  offline: false
+
+stability:
+  loss_smoothing: true
+  loss_smoothing_alpha: 0.9
+  lr_warmup_ratio: 0.0333
+  lr_decay_ratio: 0.1
+  sync_gradients_each_step: false
+  use_kahan_summation: true
+  use_stable_embedding: true
+  stop_on_nan: false
+  max_grad_norm_before_stop: 100.0
+  max_loss_before_stop: 20.0
+
+# ============================================================
+# COLOSSAL-AI MEMORY-OPTIMIZED CONFIGURATION
+# ============================================================
+colossalai:
+  enabled: true
+
+  # ===== MEMORY OPTIMIZATION STRATEGY =====
+  # Using ZeRO-2: Optimizer + Gradient sharding
+  # Expected: 60% memory reduction, 15% speed reduction
+  parallel_strategy: zero2  # CHANGED from zero1 for memory
+
+  # Parallelism dimensions
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  data_parallel_size: -1
+  sequence_parallel_size: 1
+
+  # ===== ZERO CONFIGURATION =====
+  use_zero: true
+  zero_stage: 2  # CHANGED from 1 - shard optimizer + gradients
+  use_cpu_offload: false  # Keep false for reasonable speed
+  use_nvme_offload: false
+  use_gemini: false  # Can enable for even more memory (see variant below)
+  use_patrickstar: false
+
+  # ===== MIXED PRECISION =====
+  mixed_precision: bf16
+  initial_scale: 32768.0
+  min_scale: 1.0
+  growth_factor: 2.0
+  backoff_factor: 0.5
+  growth_interval: 5000
+
+  # ===== COMMUNICATION OPTIMIZATION =====
+  use_gradient_compression: false  # Keep false for single GPU
+  gradient_compression_ratio: 1.0
+  use_hierarchical_allreduce: false
+  use_async_communication: true
+
+  # ===== ACTIVATION CHECKPOINTING - KEY MEMORY SAVER =====
+  use_activation_checkpointing: true  # ENABLED for memory
+  checkpoint_num_layers: 6  # Checkpoint half the layers (12 total)
+  # This saves 40-50% activation memory with ~20% speed cost
+
+  # ===== PERFORMANCE OPTIMIZATIONS =====
+  enable_jit_fused: true
+  enable_fused_normalization: true
+  enable_flash_attention: true  # Memory-efficient attention
+  enable_xformers: true  # Alternative memory-efficient attention
+
+  # Additional optimizations
+  enable_cuda_graph: false  # Disable for memory flexibility
+  enable_tensor_core: true
+  enable_tf32: true
+  bucket_size_mb: 25
+
+  # Auto-tuning
+  enable_auto_tune: true
+  auto_tune_warmup_steps: 50
+
+  # Auto-Parallelism
+  use_auto_parallel: false
+  search_space: default
+
+  # Compatibility
+  use_legacy_optimizer: false
+  compatibility_mode: false
+
+  # Memory thresholds
+  auto_config:
+    small_gpu_threshold_gb: 16
+    medium_gpu_threshold_gb: 32
+    enable_cpu_offload_threshold_gb: 12
+    enable_activation_checkpoint_threshold_gb: 24
+
+generation:
+  repetition_penalty: 1.2
+  eos_penalty: 0.5
+  min_length: 20
+  temperature: 0.8
+  top_k: 50
+  top_p: 0.9
+  use_ngram_blocking: true
+  ngram_size: 3
+  no_repeat_ngram_size: 4
+  do_sample: true
+  num_beams: 1
+  eval_generation_interval: 1000
