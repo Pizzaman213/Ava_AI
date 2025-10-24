@@ -5,14 +5,18 @@ This module contains the core model architectures including:
 - EnhancedMoEModel: Base Mixture of Experts model
 - AdaptiveMTPModel: Adaptive Multi-Token Prediction wrapper
 - ConfidenceGate: Confidence scoring network
-- PredictionHeads: Multi-token prediction heads
+- MultiTokenPredictionHeads: Multi-token prediction heads
 """
 
-from .adaptive_mtp_model import AdaptiveMTPModel, AdaptiveMTPConfig
-from .confidence_gate import ConfidenceGate
-from .prediction_heads import MultiTokenPredictionHeads
+# Import MTP components from consolidated module
+from .mtp import (
+    AdaptiveMTPModel,
+    AdaptiveMTPConfig,
+    ConfidenceGate,
+    MultiTokenPredictionHeads,
+)
 
-# EnhancedMoEModel will be imported separately as it may exist elsewhere
+# Import MoE model
 try:
     from .moe_model import EnhancedMoEModel, EnhancedMoEConfig
 except ImportError:
@@ -20,11 +24,20 @@ except ImportError:
     EnhancedMoEModel = None
     EnhancedMoEConfig = None
 
+# Import Colossal-AI extension (optional)
+try:
+    from .colossalai_moe_model import ColossalAIMoEModel
+except ImportError:
+    ColossalAIMoEModel = None
+
 __all__ = [
+    # MTP System
     'AdaptiveMTPModel',
     'AdaptiveMTPConfig',
     'ConfidenceGate',
     'MultiTokenPredictionHeads',
+    # MoE Models
     'EnhancedMoEModel',
     'EnhancedMoEConfig',
+    'ColossalAIMoEModel',
 ]

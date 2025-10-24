@@ -22,11 +22,10 @@ except ImportError:
     EnhancedMoEModel = None
     EnhancedMoEConfig = None
 
-# Adaptive Multi-Token Prediction
+# Adaptive Multi-Token Prediction (consolidated module)
 try:
-    from .models.adaptive_mtp_model import AdaptiveMTPModel, AdaptiveMTPConfig
-    from .models.confidence_gate import ConfidenceGate
-    from .models.prediction_heads import MultiTokenPredictionHeads
+    from .models.mtp import AdaptiveMTPModel, AdaptiveMTPConfig
+    from .models.mtp import ConfidenceGate, MultiTokenPredictionHeads
 except ImportError:
     AdaptiveMTPModel = AdaptiveMTPConfig = None
     ConfidenceGate = MultiTokenPredictionHeads = None
