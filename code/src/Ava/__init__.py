@@ -114,14 +114,16 @@ try:
     from .losses import (
         ContrastiveLoss, FocalLoss, LabelSmoothingLoss,
         DiversityLoss, AuxiliaryLoss, ConsistencyLoss,
-        PerplexityLoss, AdaptiveLossScaling, CompositeLoss
+        PerplexityLoss, AdaptiveLossScaling, CompositeLoss,
+        AdaptiveMTPLoss, NGramRepetitionPenalty, SequenceRepetitionDetector,
+        DeepSeekLoss, MultiTokenPredictionLoss, TemperatureScaledCrossEntropy
     )
-    from .losses.adaptive_mtp_loss import AdaptiveMTPLoss
 except ImportError:
     ContrastiveLoss = FocalLoss = LabelSmoothingLoss = None
     DiversityLoss = AuxiliaryLoss = ConsistencyLoss = None
     PerplexityLoss = AdaptiveLossScaling = CompositeLoss = None
-    AdaptiveMTPLoss = None
+    AdaptiveMTPLoss = NGramRepetitionPenalty = SequenceRepetitionDetector = None
+    DeepSeekLoss = MultiTokenPredictionLoss = TemperatureScaledCrossEntropy = None
 
 # Evaluation
 try:

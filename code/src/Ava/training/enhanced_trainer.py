@@ -38,9 +38,10 @@ from ..config.training_config import EnhancedTrainingConfig
 from ..evaluation.comprehensive_eval import ComprehensiveEvaluator
 
 # Import existing components
-from ..losses.advanced_losses import AdaptiveLossScaling, CompositeLoss
-from ..losses.deepseek_loss import DeepSeekLoss
-from ..losses.repetition_penalty_loss import NGramRepetitionPenalty, SequenceRepetitionDetector
+from ..losses import (
+    AdaptiveLossScaling, CompositeLoss, DeepSeekLoss,
+    NGramRepetitionPenalty, SequenceRepetitionDetector
+)
 from ..memory.episodic_memory import (
     AdaptiveMemoryManager,
     EpisodicMemoryBank,
