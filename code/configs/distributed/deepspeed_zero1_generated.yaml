@@ -1,0 +1,166 @@
+# DeepSpeed ZeRO Template Configuration
+# This template is used to generate ZeRO-1, ZeRO-2, and ZeRO-3 configs
+# Parameters to replace: 1, 768, 20, etc.
+
+model:
+  # Model Architecture (size depends on zero_stage)
+  hidden_size: 768
+  num_layers: 20
+  num_attention_heads: 12
+  intermediate_size: 3072
+  vocab_size: 50257
+  max_position_embeddings: 2048
+
+  # MoE Configuration
+  num_experts: 16
+  num_experts_per_token: 2
+  expert_capacity_factor: 1.25
+  router_type: "switch"
+
+  # Enhanced Features
+  use_moh: true
+  use_moa: false
+  use_rag: false
+  use_cross_attention: true
+  num_cross_attention_layers: 2
+  use_episodic_memory: true
+  memory_size: 1000
+
+  # DeepSpeed compatibility
+  deepspeed_activation_checkpointing: true
+  deepspeed_partition_activations: false
+  deepspeed_moe_param_groups: true
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  max_gradient_norm: 1.0
+  num_epochs: 10
+  warmup_steps: 1000
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+
+# DeepSpeed Configuration
+deepspeed:
+  enabled: true
+  zero_stage: 1
+  cpu_offload: false
+  nvme_offload: false
+  precision: "bf16"
+  gradient_accumulation_steps: 8
+  train_batch_size: 32
+  micro_batch_size: 4
+  activation_checkpointing: true
+  partition_activations: false
+  gradient_clipping: 1.0
+
+  # ZeRO specific settings
+  zero_allow_untested_optimizer: true
+  zero_reduce_scatter: true
+  zero_overlap_comm: true
+  zero_contiguous_gradients: true
+  zero_force_ds_cpu_optimizer: false
+
+
+
+# Enhanced Features
+enhanced_features:
+  architecture:
+    use_moh: true
+    use_moa: false
+    use_cross_attention: true
+    use_alibi: false
+    expert_routing_type: "switch"
+
+  rag:
+    enabled: false
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: 5
+    rag_fusion_type: "concatenate"
+
+  losses:
+    focal_loss: true
+    contrastive_loss: false
+    diversity_loss: true
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+
+  gradient:
+    gradient_surgery: true
+    adaptive_gradient_surgery: false
+    gradient_surgery_method: "pcgrad"
+
+  memory:
+    use_episodic_memory: true
+    memory_capacity: 1000
+    memory_selection_strategy: "importance"
+    memory_replay_ratio: 0.0
+
+
+  quantization:
+    quantization_aware: true
+    use_nvfp4: false
+    bit_width: 8
+
+
+# Data Loading
+data:
+  data_dir: "/project/code/data/processed"
+  max_length: 2048
+  tokenizer_name: "gpt2"
+  train_batch_size: 4
+  eval_batch_size: 8
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 5000
+  distributed: true
+  multi_column: false
+
+# Performance & Memory
+performance:
+  ultra_fast_mode: false
+  fast_progress: false
+  minimal_progress: true
+  express_mode: true
+
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 16.0
+  gradient_checkpointing: true
+  memory_threshold_gb: 16.0
+  enable_cpu_offload: false
+  clear_cache_frequency: 100
+
+# Output & Evaluation
+output:
+  output_dir: "outputs/deepspeed_zero1"
+  save_total_limit: 3
+  save_on_each_node: false
+
+evaluation:
+  eval_during_training: true
+  eval_metrics: "perplexity"
+  comprehensive_eval: false
+
+# Run Management
+run_management:
+  experiment_name: "ava-medium-zero1"
+  resume_from_checkpoint: null
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-deepspeed-zero1"
+  tags: ["deepspeed", "zero1", "medium", "distributed", "multi-gpu"]
+  notes: "DeepSpeed ZeRO-1 configuration with optimizer state sharding"
+  group: "deepspeed-zero1"
+
+
+# Hardware Requirements
+# GPUs: 2-8 GPUs with 16GB+ VRAM each
+# Total VRAM: 32-128GB
+# Network: High-bandwidth interconnect (NVLink, InfiniBand)
+# Use case: Medium-large models with optimizer memory concerns
