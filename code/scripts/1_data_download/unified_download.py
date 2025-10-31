@@ -7,15 +7,17 @@ This script combines functionality from:
 - download_stories.py: Story filtering with "once upon a time" detection
 - download_datasets.py: Comprehensive 80+ dataset configurations
 - download_hello_world_datasets.py: Greeting and conversational datasets
+- download_all_greeting_datasets.py: Comprehensive greeting detection and conversational datasets
 
 Features:
-- 80+ pre-configured datasets with verified parameters
+- 90+ pre-configured datasets with verified parameters (added 10 new greeting datasets)
 - Smart retry strategies with fallback options
 - Memory-efficient streaming and batching
 - Story filtering (e.g., "once upon a time")
 - Greeting/conversational filtering with custom examples
+- Enhanced conversation extraction (dialog, utterances, prompt-response formats)
 - Quality-based dataset selection
-- JSONL output format
+- JSONL output format with greeting metadata
 - Default ~10B token high-quality download preset
 """
 
@@ -232,8 +234,68 @@ DATASETS_CONFIG = {
     "google/Synthetic-Persona-Chat": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "synthetic", "persona"], "tokens": "high",
-        "max_samples": 20000,
+        "max_samples": 50000,
         "description": "Synthetic persona-based conversations"
+    },
+    "microsoft/wizard_of_wikipedia": {
+        "splits": ["train", "test", "validation"], "subset": None, "streaming_safe": True,
+        "categories": ["conversation", "greeting", "knowledge"], "tokens": "high",
+        "max_samples": 20000,
+        "description": "Knowledge-grounded conversations from Wizard of Wikipedia"
+    },
+    "Salesforce/dialogstudio": {
+        "splits": ["train"], "subset": "TradeDial", "streaming_safe": True,
+        "categories": ["conversation", "greeting", "dialog"], "tokens": "medium",
+        "max_samples": 5000,
+        "description": "Multi-domain dialogue dataset from Salesforce"
+    },
+    "AllenAI/prosocial-dialog": {
+        "splits": ["train", "validation", "test"], "subset": None, "streaming_safe": True,
+        "categories": ["conversation", "greeting", "prosocial"], "tokens": "high",
+        "max_samples": 20000,
+        "description": "Prosocial dialogue dataset from AllenAI"
+    },
+    "PygmalionAI/PIPPA": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["conversation", "greeting", "roleplay"], "tokens": "high",
+        "max_samples": 30000,
+        "description": "Personal Interaction Pairs between People and AI"
+    },
+    "HuggingFaceH4/self-instruct": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["instruction", "synthetic"], "tokens": "medium",
+        "max_samples": 10000,
+        "description": "Self-Instruct synthetic instruction dataset"
+    },
+    "garage-bAInd/Open-Platypus": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["instruction", "qa"], "tokens": "high",
+        "max_samples": 25000,
+        "description": "Open-Platypus curated instruction dataset"
+    },
+    "WizardLM/WizardLM_evol_instruct_V2_196k": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["instruction", "qa"], "tokens": "very_high",
+        "max_samples": 50000,
+        "description": "WizardLM evolved instruction dataset V2"
+    },
+    "fnlp/moss-002-sft-data": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["conversation", "greeting", "multilingual"], "tokens": "high",
+        "max_samples": 20000,
+        "description": "MOSS conversational SFT dataset"
+    },
+    "timdettmers/openassistant-guanaco": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["conversation", "qa", "greeting"], "tokens": "medium",
+        "max_samples": 10000,
+        "description": "OpenAssistant Guanaco conversational dataset"
+    },
+    "QingyiSi/Alpaca-CoT": {
+        "splits": ["train"], "subset": None, "streaming_safe": True,
+        "categories": ["instruction", "cot", "qa"], "tokens": "high",
+        "max_samples": 30000,
+        "description": "Alpaca with Chain-of-Thought annotations"
     },
     "roneneldan/TinyStories": {
         "splits": ["train", "validation"], "subset": None, "streaming_safe": True,
@@ -449,6 +511,64 @@ class UnifiedDownloader:
                     texts.append(f"{role.capitalize()}: {content}")
                 return '\n'.join(texts)
 
+        # Dialog/dialogue format (daily_dialog, empathetic_dialogues, etc.)
+        if 'dialog' in sample or 'dialogue' in sample:
+            dialog = sample.get('dialog', sample.get('dialogue', []))
+            if isinstance(dialog, list):
+                texts = []
+                for i, turn in enumerate(dialog):
+                    speaker = "User" if i % 2 == 0 else "Assistant"
+                    if isinstance(turn, dict):
+                        text = turn.get('text', turn.get('utterance', ''))
+                        speaker = turn.get('speaker', speaker)
+                    else:
+                        text = str(turn)
+                    if text:
+                        texts.append(f"{speaker}: {text}")
+                if texts:
+                    return '\n'.join(texts)
+
+        # Utterances format (used in some dialogue datasets)
+        if 'utterances' in sample:
+            utts = sample['utterances']
+            if isinstance(utts, list):
+                texts = []
+                for utt in utts:
+                    if isinstance(utt, dict):
+                        speaker = utt.get('speaker', utt.get('actor_type', 'Speaker'))
+                        text = utt.get('text', utt.get('utterance', ''))
+                        if text:
+                            texts.append(f"{speaker}: {text}")
+                    else:
+                        texts.append(str(utt))
+                if texts:
+                    return '\n'.join(texts)
+
+        # Prompt-response format
+        if 'prompt' in sample and 'response' in sample:
+            prompt = sample.get('prompt')
+            response = sample.get('response')
+            if prompt and response and isinstance(prompt, str) and isinstance(response, str):
+                return f"User: {prompt}\nAssistant: {response}"
+
+        # Question-answer format
+        if 'question' in sample and 'answer' in sample:
+            question = sample.get('question')
+            answer = sample.get('answer')
+            if question and answer and isinstance(question, str) and isinstance(answer, str):
+                return f"User: {question}\nAssistant: {answer}"
+
+        # Instruction-response format (with optional context/input)
+        if 'instruction' in sample:
+            instruction = sample.get('instruction')
+            response = sample.get('response', sample.get('output', ''))
+            context = sample.get('context', sample.get('input', ''))
+            if instruction and isinstance(instruction, str):
+                if context and isinstance(context, str):
+                    return f"User: {instruction}\nContext: {context}\nAssistant: {response}"
+                elif response and isinstance(response, str):
+                    return f"User: {instruction}\nAssistant: {response}"
+
         # ========== GENERIC FALLBACK ==========
         for field in ['text', 'content', 'chosen', 'response', 'output', 'story', 'narrative', 'body']:
             if field in sample and isinstance(sample[field], str) and sample[field]:
@@ -461,7 +581,13 @@ class UnifiedDownloader:
             if query and answer and isinstance(query, str) and isinstance(answer, str):
                 return f"Query: {query}\nAnswer: {answer}"
 
-        return None
+        # Last resort: combine text fields
+        text_parts = []
+        for key, value in sample.items():
+            if isinstance(value, str) and len(value) > 10 and key not in ['id', 'source', 'dataset']:
+                text_parts.append(f"{key.capitalize()}: {value}")
+
+        return '\n'.join(text_parts) if text_parts else None
 
     def starts_with_once_upon(self, text):
         """Check if text starts with variations of 'once upon a time'"""
@@ -490,16 +616,20 @@ class UnifiedDownloader:
         return False
 
     def has_greeting_words(self, text: str) -> bool:
-        """Check if text contains greeting words."""
+        """Check if text contains greeting words - matches download_all_greeting_datasets.py logic."""
+        if not text:
+            return False
+
         text_lower = text.lower()
 
-        # Common greetings
+        # Common greetings - comprehensive list from download_all_greeting_datasets.py
         greetings = [
-            'hello', 'hi ', 'hi,', 'hi!', 'hey', 'greetings', 'good morning',
-            'good afternoon', 'good evening', 'howdy', "what's up", 'whats up',
-            'how are you', 'how do you do', 'nice to meet', 'pleased to meet',
-            'welcome', 'salutations', 'hiya', 'hola', 'bonjour', 'ciao',
-            'aloha', 'namaste', 'sup ', 'yo ', 'heya'
+            'hello', 'hi ', 'hi,', 'hi!', 'hi.', 'hey', 'greetings',
+            'good morning', 'good afternoon', 'good evening', 'howdy',
+            "what's up", 'whats up', 'how are you', 'how do you do',
+            'nice to meet', 'pleased to meet', 'welcome', 'hiya',
+            'hola', 'bonjour', 'ciao', 'aloha', 'namaste',
+            'salutations', 'sup ', 'yo ', 'heya'
         ]
 
         return any(greeting in text_lower for greeting in greetings)

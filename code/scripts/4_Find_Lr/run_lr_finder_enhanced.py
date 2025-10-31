@@ -62,7 +62,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
 from Ava.training.lr_finder import LRFinder, LRFinderConfig
-from Ava.data_streaming import create_streaming_dataloaders
+from Ava.data.dataloader import create_streaming_dataloaders
 from Ava.models.moe_model import EnhancedMoEModel
 from Ava.config.training_config import ModelConfig
 

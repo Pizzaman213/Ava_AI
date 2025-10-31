@@ -43,7 +43,9 @@
       "Bash(then)",
       "Bash(fi)",
       "Bash(awk:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(rm:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
