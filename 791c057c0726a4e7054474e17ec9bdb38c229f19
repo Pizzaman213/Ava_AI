@@ -1,0 +1,1 @@
+{"schema":"v1","records":[{"type":"ENVIRONMENT","operation":"DELETED","data":[{"data":"Removed packages through pip package manager: colossalai","mime":"text/plain"}],"important":null}]}
