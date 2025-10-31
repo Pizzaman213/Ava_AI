@@ -40,15 +40,7 @@ This gives you:
 - Changed from 64 → 44
 - This is the maximum safe batch size with headroom
 
-### 2. **Colossal-AI Memory Settings**
-```yaml
-colossalai:
-  zero_stage: 2  # Better memory efficiency
-  use_activation_checkpointing: true
-  checkpoint_num_layers: 7  # Half the layers
-```
-
-### 3. **Memory Pool Settings**
+### 2. **Memory Pool Settings**
 ```yaml
 memory:
   clear_cache_frequency: 10  # Aggressive cleanup
@@ -64,15 +56,7 @@ training:
   gradient_accumulation_steps: 2  # Maintain effective batch 64
 ```
 
-### Option 2: Enable More Memory Optimizations
-```yaml
-colossalai:
-  zero_stage: 3  # Maximum memory savings
-  use_cpu_offload: true  # Offload to CPU
-  checkpoint_num_layers: 14  # All layers
-```
-
-### Option 3: Reduce Model Size Temporarily
+### Option 2: Reduce Model Size Temporarily
 ```yaml
 model:
   num_experts: 4  # Reduce from 8
@@ -201,8 +185,7 @@ while True:
 
 Key settings:
 - **Batch size: 44** (optimal for your GPU)
-- **ZeRO-2** enabled for memory efficiency
-- **Activation checkpointing** for 7 layers
+- **Gradient checkpointing** enabled for memory efficiency
 - **BF16 mixed precision** for 2x memory savings
 
 The configuration is now optimized for:

@@ -1,0 +1,83 @@
+# SPIKE FIX - Apply these changes to code/configs/gpu/small.yaml
+# Priority: HIGH - These changes should eliminate or significantly reduce loss spikes
+
+# ============================================================================
+# 1. ENABLE MOE MONITORING (IMMEDIATE - Required to diagnose)
+# ============================================================================
+evaluation:
+  moe_metrics:
+    track_expert_utilization: true   # CHANGED from false
+    track_routing_entropy: true      # CHANGED from false
+    track_load_balance: true         # CHANGED from false
+    track_expert_specialization: true # CHANGED from false
+    log_frequency: 100               # CHANGED from 50000 (log every 100 steps)
+
+# ============================================================================
+# 2. STRENGTHEN MOE LOAD BALANCING (HIGH PRIORITY)
+# ============================================================================
+model:
+  router_aux_loss_coef: 0.05        # CHANGED from 0.01 (5x stronger)
+  router_jitter_noise: 0.05         # CHANGED from 0.01 (more exploration)
+
+  # ADD these new fields for robustness
+  expert_dropout: 0.1               # NEW - randomly disable experts during training
+  routing_jitter: 0.05              # NEW - add noise to routing logits
+
+# ============================================================================
+# 3. IMPROVE DATA PIPELINE (MEDIUM PRIORITY)
+# ============================================================================
+data:
+  buffer_size: 20000                # CHANGED from 10000 (better mixing)
+  samples_per_file: 2               # CHANGED from 1 (reduce file boundary effects)
+
+  # ADD validation settings
+  max_sequence_repetition_rate: 0.5 # NEW - skip sequences with >50% repeated tokens
+  skip_short_sequences: true        # NEW - skip sequences < 10 tokens
+
+# ============================================================================
+# 4. ENHANCED AUXILIARY LOSS WEIGHTS (MEDIUM PRIORITY)
+# ============================================================================
+training:
+  enhanced_features:
+    losses:
+      gradient_balance_weight: 0.05  # CHANGED from 0.02 (stronger balancing)
+      diversity_loss_weight: 0.2     # CHANGED from 0.1 (encourage specialization)
+      auxiliary_loss: true           # Keep enabled
+
+# ============================================================================
+# 5. TIGHTER GRADIENT SAFETY (OPTIONAL - Already conservative)
+# ============================================================================
+# Only apply if spikes persist after above changes
+training:
+  max_gradient_norm: 1.0            # OPTIONAL: Reduce from 1.2
+  gradient_health:
+    explosion_threshold: 1.5        # OPTIONAL: Reduce from 2.0
+    explosion_window: 2             # OPTIONAL: Reduce from 3 (faster response)
+
+# ============================================================================
+# TESTING PROTOCOL
+# ============================================================================
+# 1. Apply changes 1-3 (MoE monitoring + balancing + data pipeline)
+# 2. Start training run
+# 3. Monitor WandB for:
+#    - moe/expert_{0,1,2,3}_load (should be balanced, never 0)
+#    - moe/routing_entropy (should stay > 0.5)
+#    - train/loss (should not spike above 1.0 after step 1000)
+# 4. If spikes still occur:
+#    - Check expert_utilization at spike steps
+#    - If experts balanced → data pipeline issue (run profiling)
+#    - If experts imbalanced → apply tighter gradient safety (step 5)
+
+# ============================================================================
+# EXPECTED RESULTS
+# ============================================================================
+# IF MoE was the issue:
+#   - Spikes eliminated immediately
+#   - Expert utilization balanced (20-30% per expert)
+#   - Smoother loss descent
+
+# IF data pipeline is the issue:
+#   - Spike frequency reduced (every 1000+ steps instead of 700)
+#   - Spike magnitude reduced (<1.0 instead of ~2.0)
+#   - MoE metrics will show balanced experts even during spikes
+#   - Need to identify and remove problematic data files

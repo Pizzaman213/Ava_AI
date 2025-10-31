@@ -85,7 +85,7 @@ from src.Ava.config.feature_compatibility import (
     print_compatibility_report,
     validate_training_config,
 )
-from src.Ava.data_streaming import create_streaming_dataloaders
+from src.Ava.data.dataloader import create_streaming_dataloaders
 from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel
 from src.Ava.multi_column_data import create_multi_column_dataloader
 # Observability modules are not yet implemented:
@@ -326,7 +326,7 @@ def create_finetune_dataloaders(
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    from src.Ava.data_streaming import create_streaming_dataloaders
+    from src.Ava.data.dataloader import create_streaming_dataloaders
 
     # Create a temporary directory with symlinks/copies for streaming loader
     # Or use the first file's directory as base

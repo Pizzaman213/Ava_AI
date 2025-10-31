@@ -196,6 +196,18 @@ class MemoryMonitor:
                     'gpu_available_gb': 0,
                     'gpu_device': -1
                 })
+        else:
+            # CUDA not available - provide fallback stats
+            stats.update({
+                'gpu_allocated_gb': 0,
+                'gpu_cached_gb': 0,
+                'gpu_total_gb': 0,
+                'gpu_utilization': 0,
+                'gpu_memory_utilization': 0,
+                'gpu_cached_utilization': 0,
+                'gpu_available_gb': 0,
+                'gpu_device': -1
+            })
 
         # CPU memory stats
         try:
