@@ -1,5 +1,15 @@
 """
 Training utilities and advanced training techniques.
+
+This module has been reorganized into subdirectories for better organization:
+- core/: Core training infrastructure (EnhancedTrainer, RunManager, OptimizationIntegration)
+- learning_rate/: Learning rate management and scheduling
+- distributed/: Distributed training management
+- gradients/: Gradient management and optimization
+- strategies/: Training strategies (progressive training, performance modes)
+- monitoring/: Training monitoring and metrics
+
+For backward compatibility, all public APIs are re-exported from this module.
 """
 
 # Note: The following files have been moved to _archived/training/:
@@ -10,31 +20,60 @@ Training utilities and advanced training techniques.
 # - distributed_optimizations.py
 # These are optional training strategies/tools not used in the default pipeline
 
-from .gradient_surgery import (
-    GradientSurgeon,
-    AdaptiveGradientSurgeon,
-    GradientConflictAnalyzer
+# Core training infrastructure
+from .core.enhanced_trainer import EnhancedModularTrainer
+from .core.run_manager import RunManager
+from .core.optimization_integration import OptimizedTrainingSetup as OptimizationIntegration
+
+# Learning rate management
+from .learning_rate import (
+    AdaptiveLearningRateManager,
+    AdaptiveLRConfig,
+    IntelligentLRManager,
+    LRConfig,
+    LRFinder,
+    LRFinderConfig
 )
 
-from .advanced_schedulers import (
+# Distributed training
+from .distributed.distributed_manager import (
+    DistributedManager,
+    DistributedConfig,
+    get_distributed_manager,
+    get_rank,
+    get_world_size
+)
+from .distributed.unified_distributed_manager import UnifiedDistributedManager
+from .distributed.distributed_health_checker import (
+    DistributedHealthChecker,
+    get_health_checker,
+    record_training_metrics
+)
+from .distributed.rank_aware_error_handler import (
+    RankAwareErrorHandler,
+    ErrorSeverity,
+    ErrorType,
+    get_error_handler
+)
+
+# Gradient management
+from .gradients.gradient_surgery import (
+    GradientSurgeon,
+    AdaptiveGradientSurgeon,
+    GradientConflictAnalyzer,
+)
+from .gradients.gradient_health import GradientHealthMonitor, LossHealthMonitor
+
+# Monitoring
+from .monitoring.unified_optimizations import UnifiedOptimizer as UnifiedOptimizations
+
+from .learning_rate import (
     CosineAnnealingWarmRestarts,
     OneCycleLR,
     PolynomialDecayLR,
     AdaptiveLRScheduler,
     NoisyStudentScheduler,
-    SchedulerFactory
-)
-
-from .progressive_training import (
-    ProgressiveTrainingConfig,
-    CurriculumLearning,
-    GrowLengthScheduler,
-    DynamicBatchSizer,
-    ProgressiveModelScaler,
-    ProgressiveTrainer
-)
-
-from .advanced_warmup import (
+    SchedulerFactory,
     AdvancedWarmupScheduler,
     WarmupConfig,
     WarmupSchedule,
@@ -44,8 +83,18 @@ from .advanced_warmup import (
     create_adaptive_warmup_config
 )
 
+from .strategies.progressive_training import (
+    ProgressiveTrainingConfig,
+    CurriculumLearning,
+    GrowLengthScheduler,
+    DynamicBatchSizer,
+    ProgressiveModelScaler,
+    ProgressiveTrainer,
+    ProgressiveTrainingManager
+)
 
-from .performance_modes import (
+
+from .strategies.performance_modes import (
     PerformanceModeManager,
     PerformanceModeConfig,
     PerformanceMode,
@@ -59,7 +108,7 @@ from .performance_modes import (
     create_config_from_args
 )
 
-from .metrics import (
+from .monitoring.metrics import (
     TrainingMetricsCollector,
     MetricConfig,
     TrainingStep,
@@ -71,28 +120,24 @@ from .metrics import (
 )
 
 __all__ = [
-    # Gradient Surgery
-    "GradientSurgeon",
-    "AdaptiveGradientSurgeon",
-    "GradientConflictAnalyzer",
+    # Core
+    "EnhancedModularTrainer",
+    "RunManager",
+    "OptimizationIntegration",
 
-    # Advanced Schedulers
+    # Learning Rate
+    "AdaptiveLearningRateManager",
+    "AdaptiveLRConfig",
+    "IntelligentLRManager",
+    "LRConfig",
+    "LRFinder",
+    "LRFinderConfig",
     "CosineAnnealingWarmRestarts",
     "OneCycleLR",
     "PolynomialDecayLR",
     "AdaptiveLRScheduler",
     "NoisyStudentScheduler",
     "SchedulerFactory",
-
-    # Progressive Training
-    "ProgressiveTrainingConfig",
-    "CurriculumLearning",
-    "GrowLengthScheduler",
-    "DynamicBatchSizer",
-    "ProgressiveModelScaler",
-    "ProgressiveTrainer",
-
-    # Advanced Warmup
     "AdvancedWarmupScheduler",
     "WarmupConfig",
     "WarmupSchedule",
@@ -101,6 +146,36 @@ __all__ = [
     "create_polynomial_warmup_config",
     "create_adaptive_warmup_config",
 
+    # Distributed
+    "DistributedManager",
+    "DistributedConfig",
+    "get_distributed_manager",
+    "get_rank",
+    "get_world_size",
+    "UnifiedDistributedManager",
+    "DistributedHealthChecker",
+    "get_health_checker",
+    "record_training_metrics",
+    "RankAwareErrorHandler",
+    "ErrorSeverity",
+    "ErrorType",
+    "get_error_handler",
+
+    # Gradient Surgery & Health
+    "GradientSurgeon",
+    "AdaptiveGradientSurgeon",
+    "GradientConflictAnalyzer",
+    "GradientHealthMonitor",
+    "LossHealthMonitor",
+
+    # Progressive Training & Strategies
+    "ProgressiveTrainingConfig",
+    "CurriculumLearning",
+    "GrowLengthScheduler",
+    "DynamicBatchSizer",
+    "ProgressiveModelScaler",
+    "ProgressiveTrainer",
+    "ProgressiveTrainingManager",
 
     # Performance Modes
     "PerformanceModeManager",
@@ -115,7 +190,7 @@ __all__ = [
     "detect_performance_mode_from_args",
     "create_config_from_args",
 
-    # Training Metrics
+    # Training Metrics & Monitoring
     "TrainingMetricsCollector",
     "MetricConfig",
     "TrainingStep",
@@ -123,5 +198,6 @@ __all__ = [
     "TimingContext",
     "create_comprehensive_metrics_config",
     "create_fast_metrics_config",
-    "create_minimal_metrics_config"
+    "create_minimal_metrics_config",
+    "UnifiedOptimizations",
 ]

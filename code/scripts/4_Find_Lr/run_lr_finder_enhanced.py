@@ -61,7 +61,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
-from Ava.training.lr_finder import LRFinder, LRFinderConfig
+from Ava.training.learning_rate.lr_finder import LRFinder, LRFinderConfig
 from Ava.data.dataloader import create_streaming_dataloaders
 from Ava.models.moe_model import EnhancedMoEModel
 from Ava.config.training_config import ModelConfig

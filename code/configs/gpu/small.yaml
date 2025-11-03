@@ -16,11 +16,11 @@ model:
   rope_theta: 10000
   attention_dropout: 0.12
   hidden_dropout: 0.12
-  use_flash_attention: false
+  use_flash_attention: true
   layer_norm_eps: 0.00001
   initializer_range: 0.01
   hidden_act: gelu
-  deepspeed_activation_checkpointing: false
+  deepspeed_activation_checkpointing: true
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
   tie_word_embeddings: false
@@ -201,7 +201,7 @@ training:
     train_batch_size: 48  # UPDATED: Matches batch_size * gradient_accumulation_steps (12*4)
     micro_batch_size: 12  # UPDATED: Matches training.batch_size
     gradient_accumulation_steps: 4  # Matches training.gradient_accumulation_steps
-    activation_checkpointing: false
+    activation_checkpointing: true
   
   performance:
     ultra_fast_mode: true
@@ -229,10 +229,10 @@ training:
     enable_cpu_offload: false
     clear_cache_frequency: 50
     silent_mode: true
-    target_utilization: 0.75
-    warning_threshold: 0.8
-    critical_threshold: 0.85
-    emergency_threshold: 0.9
+    target_utilization: 0.90
+    warning_threshold: 0.92
+    critical_threshold: 0.95
+    emergency_threshold: 0.97
   
   lr_finder:
     enabled: false
@@ -289,7 +289,7 @@ data:
   mixing_temperature: 1
   shuffle_seed: 42
   reshuffle_each_epoch: true
-  prefetch_factor: 4
+  prefetch_factor: 2
   persistent_workers: true
   
   format_detection_samples: 10

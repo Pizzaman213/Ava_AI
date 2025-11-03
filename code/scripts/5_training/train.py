@@ -354,13 +354,13 @@ from src.Ava.multi_column_data import create_multi_column_dataloader
 # from src.Ava.observability.health_dashboard import HealthDashboard
 # from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
 # from src.Ava.observability.training_validator import TrainingValidator
-from src.Ava.training.adaptive_lr import AdaptiveLearningRateManager, AdaptiveLRConfig
-from src.Ava.training.enhanced_trainer import EnhancedModularTrainer
-from src.Ava.training.progressive_training import (
+from src.Ava.training.learning_rate import AdaptiveLearningRateManager, AdaptiveLRConfig
+from src.Ava.training.core.enhanced_trainer import EnhancedModularTrainer
+from src.Ava.training.strategies.progressive_training import (
     ProgressiveTrainingConfig,
     ProgressiveTrainingManager,
 )
-from src.Ava.training.run_manager import RunManager
+from src.Ava.training.core.run_manager import RunManager
 from src.Ava.utils import register_cleanup_handlers
 from src.Ava.evaluation import quick_coherence_test
 
@@ -1196,7 +1196,7 @@ def train_epoch(
     }
 
     # Create progress bar if not in ultra-fast mode
-    from src.Ava.training.performance_modes import PerformanceMode
+    from src.Ava.training.strategies.performance_modes import PerformanceMode
 
     show_progress = (
         trainer.performance_manager.config.mode != PerformanceMode.ULTRA_FAST
@@ -2616,7 +2616,7 @@ def main():
         logger.info("📊 LEARNING RATE FINDER - Finding Optimal Learning Rate")
         logger.info("=" * 80)
 
-        from src.Ava.training.lr_finder import LRFinder, LRFinderConfig as LRFConfig
+        from src.Ava.training.learning_rate.lr_finder import LRFinder, LRFinderConfig as LRFConfig
 
         # Setup LR Finder configuration
         lr_finder_config = LRFConfig(

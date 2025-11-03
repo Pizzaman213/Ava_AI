@@ -46,7 +46,7 @@ training:
   eos_penalty_weight: 5.0             # Penalty for early EOS tokens
   mixed_precision: fp16
   dataloader_num_workers: 8
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   eval_strategy: steps
   eval_steps: 500
   save_strategy: steps
@@ -75,7 +75,7 @@ data:
   eval_batch_size: 16
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 4
+  dataloader_prefetch_factor: 2
   dataloader_persistent_workers: true
 
   # Data loading configuration
@@ -87,7 +87,7 @@ data:
   shuffle_seed: 42
   reshuffle_each_epoch: true
   drop_last_batch: true
-  prefetch_factor: 4
+  prefetch_factor: 2
   persistent_workers: true
   multi_column: false
   use_multi_column: false
@@ -142,13 +142,13 @@ stability:
 memory:
   enable_memory_pool: false
   pool_size_gb: 16.0
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   memory_threshold_gb: 16.0
   enable_cpu_offload: false
   clear_cache_frequency: 1000
   silent_mode: true
-  target_utilization: 0.85
-  warning_threshold: 0.90
+  target_utilization: 0.90
+  warning_threshold: 0.92
   critical_threshold: 0.95
   emergency_threshold: 0.98
 evaluation:
@@ -251,7 +251,7 @@ deepspeed:
   train_batch_size: 32
   micro_batch_size: 8
   gradient_accumulation_steps: 4
-  activation_checkpointing: false
+  activation_checkpointing: true
 
 
 # RLHF Fine-tuning Configuration

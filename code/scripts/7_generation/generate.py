@@ -88,7 +88,7 @@ except ImportError:
 sys.path.append('/project/code')
 
 from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
-from src.Ava.generation.generator import TextGenerator
+from src.generation.generator import TextGenerator
 from transformers import AutoTokenizer  # type: ignore[import-not-found]
 from datetime import datetime
 

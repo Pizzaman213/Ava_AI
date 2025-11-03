@@ -16,7 +16,7 @@ else:
         # Import from the actual Ava package structure
         from src.Ava import EnhancedMoEModel as MoEModel  # type: ignore[attr-defined]
         from src.Ava import EnhancedMoEConfig  # type: ignore[attr-defined]
-        from src.Ava.generation.generator import Generator as TextGenerator  # type: ignore[attr-defined]
+        from src.generation.generator import TextGenerator  # type: ignore[attr-defined]
         __all__ = ["MoEModel", "EnhancedMoEConfig", "TextGenerator"]
     except ImportError:
         # Handle cases where modules are not available
