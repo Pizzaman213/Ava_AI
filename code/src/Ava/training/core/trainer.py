@@ -118,7 +118,7 @@ def create_lightweight_observability(*args, **kwargs):
     return ObservabilityIntegration()
 def create_observability_integration(*args, **kwargs):
     return ObservabilityIntegration()
-from ...optimization.quantization import ModelQuantizer, QuantizationConfig
+from ...optimization.precision.quantization import ModelQuantizer
 # from ...retrieval.rag_system import KnowledgeBase, RAGSystem  # DISABLED (module removed)
 # Stub classes to prevent errors
 class KnowledgeBase:
@@ -126,28 +126,26 @@ class KnowledgeBase:
 class RAGSystem:
     def __init__(self, *args, **kwargs):
         pass
-from ...utils.async_logging import AsyncLogger, AsyncLoggingConfig
+from ...logging.async_logging import AsyncLogger, AsyncLoggingConfig
 
 # Import all the new modular components
 from ...utils.gpu_memory import GPUMemoryManager
-from ..learning_rate import AdvancedWarmupScheduler, WarmupConfig
-from ..distributed.distributed_health_checker import (
+from ...optimization.learning_rate import AdvancedWarmupScheduler, WarmupConfig, IntelligentLRManager, LRConfig
+from ...distributed.distributed_health_checker import (
     DistributedHealthChecker,
     get_health_checker,
     record_training_metrics,
 )
-from ..distributed.distributed_manager import (
+from ...distributed.distributed_manager import (
     DistributedConfig,
     DistributedManager,
     get_distributed_manager,
 )
-from ..gradients.gradient_health import GradientHealthMonitor, LossHealthMonitor
-from ..gradients.gradient_surgery import AdaptiveGradientSurgeon, GradientSurgeon
-from ..learning_rate import IntelligentLRManager, LRConfig
-from ...memory_management import MemoryMonitor
+from ...optimization.gradients import GradientHealthMonitor, LossHealthMonitor, AdaptiveGradientSurgeon, GradientSurgeon
+from ...distributed.memory_monitor import MemoryMonitor
 from ..monitoring.metrics import MetricConfig, TrainingMetricsCollector
-from ..strategies.performance_modes import PerformanceModeConfig, PerformanceModeManager
-from ..distributed.rank_aware_error_handler import (
+from ..monitoring.performance_modes import PerformanceModeConfig, PerformanceModeManager
+from ...distributed.rank_aware_error_handler import (
     ErrorSeverity,
     ErrorType,
     RankAwareErrorHandler,
@@ -365,7 +363,7 @@ class EnhancedModularTrainer:
 
                 if enabled:
                     try:
-                        from ..strategies.dynamic_batch_sampler import DynamicBatchSizer  # type: ignore[import-not-found]
+                        from ..strategies.progressive_training import DynamicBatchSizer  # type: ignore[import-not-found]
                     except ImportError:
                         print("⚠️  dynamic_batch_sampler module not found, skipping dynamic batching")
                         DynamicBatchSizer = None  # type: ignore
@@ -413,7 +411,7 @@ class EnhancedModularTrainer:
     def _init_performance_manager(self):
         """Initialize performance mode manager."""
         # Convert PerformanceConfig to PerformanceModeConfig
-        from ..strategies.performance_modes import PerformanceMode, PerformanceModeConfig
+        from ..monitoring.performance_modes import PerformanceMode, PerformanceModeConfig
 
         # Determine mode from boolean flags
         if self.config.performance.ultra_fast_mode:
@@ -446,7 +444,7 @@ class EnhancedModularTrainer:
 
     def _init_distributed_manager(self):
         """Initialize distributed training manager."""
-        from ..distributed.distributed_manager import (
+        from ...distributed.distributed_manager import (
             DistributedConfig,
             get_distributed_manager,
             is_distributed,
@@ -499,7 +497,7 @@ class EnhancedModularTrainer:
 
     def _init_error_handler(self):
         """Initialize rank-aware error handler."""
-        from ..distributed.distributed_manager import is_distributed
+        from ...distributed.distributed_manager import is_distributed
 
         if not is_distributed():
             print("Single-node training: error handler disabled")
@@ -556,7 +554,7 @@ class EnhancedModularTrainer:
 
     def _init_health_checker(self):
         """Initialize distributed health checker."""
-        from ..distributed.distributed_manager import is_distributed
+        from ...distributed.distributed_manager import is_distributed
 
         if not is_distributed():
             print("Single-node training: health checker disabled")
@@ -1917,7 +1915,7 @@ class EnhancedModularTrainer:
                                 hasattr(self, "train_dataloader")
                                 and self.train_dataloader  # type: ignore[attr-defined]
                             ):
-                                from ..multi_column_data import (
+                                from ...data.multi_column_data import (
                                     coordinate_data_resharding,
                                 )
 
@@ -1948,7 +1946,7 @@ class EnhancedModularTrainer:
                 and hasattr(self, "train_dataloader")
                 and self.train_dataloader  # type: ignore[attr-defined]
             ):
-                from ..multi_column_data import get_data_distribution_stats
+                from ...data.multi_column_data import get_data_distribution_stats
 
                 data_stats = get_data_distribution_stats(self.train_dataloader)  # type: ignore[attr-defined]
 

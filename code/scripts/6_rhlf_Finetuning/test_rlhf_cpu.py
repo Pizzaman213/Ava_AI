@@ -59,7 +59,7 @@ def test_reward_model():
     """Test the reward model."""
     logger.info("\n=== Testing Reward Model ===")
 
-    from rlhf.reward_model import ModelToModelReward
+    from src.rlhf.reward_model import ModelToModelReward
     from transformers import AutoTokenizer, GPT2Tokenizer
 
     # Create test model and tokenizer with matching vocab
@@ -92,8 +92,8 @@ def test_ppo_trainer():
     """Test the PPO trainer."""
     logger.info("\n=== Testing PPO Trainer ===")
 
-    from rlhf.ppo_trainer import PPOTrainer, PPOConfig
-    from rlhf.reward_model import ModelToModelReward
+    from src.rlhf.ppo_trainer import PPOTrainer, PPOConfig
+    from src.rlhf.reward_model import ModelToModelReward
     from transformers import GPT2Tokenizer
 
     # Create models
@@ -153,8 +153,8 @@ def test_rlhf_trainer():
     """Test the full RLHF trainer."""
     logger.info("\n=== Testing RLHF Trainer ===")
 
-    from rlhf.rlhf_trainer import RLHFTrainer, RLHFConfig
-    from rlhf.ppo_trainer import PPOConfig
+    from src.rlhf.rlhf_trainer import RLHFTrainer, RLHFConfig
+    from src.rlhf.ppo_trainer import PPOConfig
     from transformers import GPT2Tokenizer
 
     # Create test prompts file

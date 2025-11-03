@@ -61,10 +61,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
-from Ava.training.learning_rate.lr_finder import LRFinder, LRFinderConfig
-from Ava.data.dataloader import create_streaming_dataloaders
-from Ava.models.moe_model import EnhancedMoEModel
-from Ava.config.training_config import ModelConfig
+from src.Ava.optimization import LRFinder, LRFinderConfig
+from src.Ava.data.dataloader import create_streaming_dataloaders
+from src.Ava.models.moe_model import EnhancedMoEModel
+from src.Ava.config.training_config import ModelConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -208,7 +208,7 @@ def run_enhanced_lr_finder(
             full_config[field] = float(full_config[field])
 
     # Import the proper config class - ModelConfig for model-specific parameters
-    from Ava.config.training_config import ModelConfig
+    from src.Ava.config.training_config import ModelConfig
     model_config = ModelConfig(**full_config)
     model = EnhancedMoEModel(model_config).to(device)  # type: ignore[arg-type]
     logger.info(f"Model created with {sum(p.numel() for p in model.parameters())/1e6:.1f}M parameters")

@@ -16,8 +16,11 @@ This module provides:
 
 from .async_logging import (
     AsyncLogger,
-    AsyncLoggingHandler,
-    setup_async_logging,
+    AsyncLoggingConfig,
+    AsyncLoggingContext,
+    create_fast_logging_config,
+    create_comprehensive_logging_config,
+    create_minimal_logging_config,
 )
 
 from .logging import (
@@ -28,8 +31,11 @@ from .logging import (
 __all__ = [
     # Async logging
     "AsyncLogger",
-    "AsyncLoggingHandler",
-    "setup_async_logging",
+    "AsyncLoggingConfig",
+    "AsyncLoggingContext",
+    "create_fast_logging_config",
+    "create_comprehensive_logging_config",
+    "create_minimal_logging_config",
 
     # Basic logging
     "setup_logging",

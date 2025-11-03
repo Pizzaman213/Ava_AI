@@ -1195,34 +1195,75 @@ python code/scripts/5_training/train.py \
 
 ## Documentation
 
-### Comprehensive Guides
+### 📚 Complete Documentation Hub
 
-Located in [`claude_docs/`](claude_docs/):
+**[→ Full Documentation Index](code/docs/README.md)** - All documentation organized by topic
 
-1. **[CODEBASE_OVERVIEW.md](claude_docs/CODEBASE_OVERVIEW.md)**
-   - System architecture deep dive
-   - Component descriptions
-   - Code organization
+### 🚀 Quick Start Documentation
 
-2. **[LOGGING_FIX_SUMMARY.md](claude_docs/LOGGING_FIX_SUMMARY.md)**
-   - Logging system details
-   - Log file locations
-   - Debugging with logs
+1. **[QUICK_REFERENCE.md](code/docs/QUICK_REFERENCE.md)** ⭐ **START HERE!**
+   - Fast decision trees for all common tasks
+   - Command cheat sheets
+   - Optimizer/loss/config selection guides
+   - Troubleshooting quick fixes
 
-3. **[OOM_FIX_GUIDE.md](claude_docs/OOM_FIX_GUIDE.md)**
+2. **[01_ARCHITECTURE.md](code/docs/01_ARCHITECTURE.md)**
+   - Complete system architecture with diagrams
+   - MoE model structure and components
+   - Layer-by-layer breakdown
+
+3. **[02_TRAINING_GUIDE.md](code/docs/02_TRAINING_GUIDE.md)**
+   - End-to-end training walkthrough
+   - Configuration and setup
+   - Monitoring and debugging
+
+### 📖 Comprehensive Guides with Flowcharts
+
+4. **[04_LOSS_FUNCTIONS.md](code/docs/04_LOSS_FUNCTIONS.md)**
+   - UnifiedLoss system architecture
+   - Loss composition flowcharts
+   - Configuration examples for all scenarios
+
+5. **[05_OPTIMIZATION_GUIDE.md](code/docs/05_OPTIMIZATION_GUIDE.md)**
+   - Optimizer comparison (Lion, Sophia, AdaFactor)
+   - Learning rate management pipelines
+   - Gradient operations and monitoring
+
+6. **[06_EVALUATION_GENERATION.md](code/docs/06_EVALUATION_GENERATION.md)**
+   - Evaluation metrics and workflows
+   - Text generation strategies
+   - RLHF training pipeline
+
+7. **[07_CONFIGURATION_SYSTEM.md](code/docs/07_CONFIGURATION_SYSTEM.md)**
+   - Configuration hierarchy and override system
+   - Hardware-specific configs (A100, H100)
+   - Distributed training setup (DeepSpeed ZeRO)
+
+### 🔧 Specialized Guides
+
+8. **[03_MEMORY_OPTIMIZATION.md](code/docs/03_MEMORY_OPTIMIZATION.md)**
    - Out-of-memory solutions
    - Memory optimization strategies
    - Emergency recovery procedures
 
-4. **[SPIKE_ANALYSIS.md](claude_docs/SPIKE_ANALYSIS.md)**
-   - Loss spike investigation
-   - Gradient health analysis
-   - Stability improvements
+9. **[FLOWCHARTS_VISUAL.md](code/docs/FLOWCHARTS_VISUAL.md)**
+   - Visual flowcharts with emoji annotations
+   - Training pipeline visualization
+   - Component interaction diagrams
 
-5. **[TECHNICAL_ANALYSIS.md](claude_docs/TECHNICAL_ANALYSIS.md)**
-   - Algorithm details
-   - Mathematical formulations
-   - Performance benchmarks
+10. **[LOSSES_README.md](code/docs/LOSSES_README.md)** & **[LOSSES_USAGE_GUIDE.md](code/docs/LOSSES_USAGE_GUIDE.md)**
+    - Detailed loss function reference
+    - Usage examples and patterns
+
+### 📂 Legacy Documentation
+
+Located in [`claude_docs/`](claude_docs/):
+
+- **[CODEBASE_OVERVIEW.md](claude_docs/CODEBASE_OVERVIEW.md)** - System architecture overview
+- **[LOGGING_FIX_SUMMARY.md](claude_docs/LOGGING_FIX_SUMMARY.md)** - Logging system details
+- **[OOM_FIX_GUIDE.md](claude_docs/OOM_FIX_GUIDE.md)** - Memory troubleshooting (see new guide above)
+- **[SPIKE_ANALYSIS.md](claude_docs/SPIKE_ANALYSIS.md)** - Loss spike investigation
+- **[TECHNICAL_ANALYSIS.md](claude_docs/TECHNICAL_ANALYSIS.md)** - Technical analysis
 
 ### API Documentation
 

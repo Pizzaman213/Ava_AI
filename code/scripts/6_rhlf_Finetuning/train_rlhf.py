@@ -24,9 +24,9 @@ import logging
 from transformers import AutoTokenizer
 import yaml
 
-from rlhf import RLHFTrainer
-from rlhf.ppo_trainer import PPOConfig
-from rlhf.rlhf_trainer import RLHFConfig
+from src.rlhf import RLHFTrainer
+from src.rlhf.ppo_trainer import PPOConfig
+from src.rlhf.rlhf_trainer import RLHFConfig
 from Ava.config.training_config import TrainingConfigManager
 
 # Setup logging
