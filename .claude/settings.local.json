@@ -46,7 +46,22 @@
       "Bash(pip install:*)",
       "Bash(rm:*)",
       "Bash(find:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(for file in tiny.yaml large.yaml)",
+      "Bash(do echo \"=== Processing $file ===\")",
+      "Bash(for file in /project/code/configs/hardware/*.yaml)",
+      "Bash(do echo '=== $(basename $file) ===')",
+      "Bash(xargs basename:*)",
+      "Bash(git mv:*)",
+      "Bash(timeout 180 python:*)",
+      "Bash(tree:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(test:*)",
+      "Bash(timeout 30 python3:*)",
+      "Bash(for dir in distributed gradients learning_rate monitoring strategies)",
+      "Bash(do if [ -d \"$dir\" ])",
+      "Bash(then echo \"$dir exists\")",
+      "Bash(else echo \"$dir not found\")"
     ],
     "deny": [],
     "ask": []

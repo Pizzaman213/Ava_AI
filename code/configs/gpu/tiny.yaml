@@ -28,7 +28,7 @@ model:
   use_rag: false
   use_cross_attention: false
   use_episodic_memory: false
-  deepspeed_activation_checkpointing: false
+  deepspeed_activation_checkpointing: true
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
   use_flash_attention: true
@@ -56,7 +56,7 @@ training:
   warmup_ratio: 0.01
   mixed_precision: bf16
   dataloader_num_workers: 12
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   use_adaptive_lr: false
   lr_patience: 1000000
   lr_reduction_factor: 1.0
@@ -115,7 +115,7 @@ data:
   shuffle_seed: 42
   reshuffle_each_epoch: true
   drop_last_batch: true
-  prefetch_factor: 4
+  prefetch_factor: 2
   persistent_workers: true
   multi_column: false
   use_multi_column: false
@@ -131,7 +131,7 @@ deepspeed:
   train_batch_size: 16
   micro_batch_size: 16
   gradient_accumulation_steps: 1
-  activation_checkpointing: false
+  activation_checkpointing: true
 enhanced_features:
   architecture:
     use_moh: false
@@ -176,7 +176,7 @@ enhanced_features:
 memory:
   enable_memory_pool: true
   pool_size_gb: 8.0
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   memory_threshold_gb: 8.0
   enable_cpu_offload: false
   clear_cache_frequency: 200
@@ -338,5 +338,5 @@ rlhf:
     clip_reward: 10.0  # Clip rewards to [-clip_reward, clip_reward]
 
     # Memory optimization
-    gradient_checkpointing: false  # Tiny model doesn't need checkpointing
+    gradient_checkpointing: true  # Tiny model doesn't need checkpointing
     mixed_precision: bf16  # 'no', 'fp16', or 'bf16'

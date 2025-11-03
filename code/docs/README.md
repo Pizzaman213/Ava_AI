@@ -31,6 +31,8 @@ Welcome to the Ava MoE++ (Mixture of Experts Plus Plus) documentation. This adva
 - [Performance Optimization](advanced/optimization.md) - Speed and memory optimization
 - [Distributed Training](advanced/distributed.md) - Multi-GPU and distributed setups
 - [Fine-tuning](advanced/fine_tuning.md) - Adapting to specific tasks
+- [Loss Functions](LOSSES_README.md) - Overview of unified loss system
+- [Loss Usage Guide](LOSSES_USAGE_GUIDE.md) - Detailed loss function usage
 
 ### Troubleshooting
 - [Common Issues](troubleshooting.md) - Solutions to common problems

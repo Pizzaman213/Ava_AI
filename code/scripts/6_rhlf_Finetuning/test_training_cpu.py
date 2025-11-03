@@ -54,8 +54,8 @@ def main():
 
     try:
         # Import RLHF components
-        from Ava.rlhf.rlhf_trainer import RLHFTrainer, RLHFConfig
-        from Ava.rlhf.ppo_trainer import PPOConfig
+        from rlhf.rlhf_trainer import RLHFTrainer, RLHFConfig
+        from rlhf.ppo_trainer import PPOConfig
         from transformers import PreTrainedTokenizerFast
 
         # Load custom tokenizer
