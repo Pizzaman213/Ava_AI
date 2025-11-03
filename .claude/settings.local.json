@@ -45,7 +45,8 @@
       "Bash(awk:*)",
       "Bash(pip install:*)",
       "Bash(rm:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []
