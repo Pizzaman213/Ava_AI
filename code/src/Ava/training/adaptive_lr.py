@@ -74,10 +74,11 @@ class AdaptiveLearningRateManager:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = config.warmup_start_lr
 
-        # Loss tracking
+        # Loss tracking - SEPARATED for training and validation
         self.batch_losses = deque(maxlen=config.batch_loss_window)
-        self.best_loss = float('inf')
-        self.recent_best_loss = float('inf')
+        self.best_training_loss = float('inf')  # Best training loss
+        self.best_validation_loss = float('inf')  # Best validation loss
+        self.recent_best_loss = float('inf')  # For spike detection
 
         # Counters and tracking
         self.step_count = 0
@@ -140,7 +141,8 @@ class AdaptiveLearningRateManager:
             'current_lr': current_lr,
             'current_loss': loss,
             'avg_recent_loss': avg_recent_loss,
-            'best_loss': self.best_loss,
+            'best_training_loss': self.best_training_loss,
+            'best_validation_loss': self.best_validation_loss,
             'lr_adjusted': False,
             'adjustment_type': None,
             'adjustment_reason': None,
@@ -164,10 +166,10 @@ class AdaptiveLearningRateManager:
             self.lr_stats['warmup_steps_completed'] = self.step_count
             return lr_info
 
-        # Regular interval checks
+        # Regular interval checks - USING TRAINING LOSS
         if self.step_count % self.config.lr_check_interval == 0:
-            # Check for improvement
-            if avg_recent_loss < self.best_loss - self.config.min_improvement:
+            # Check for improvement in training loss
+            if avg_recent_loss < self.best_training_loss - self.config.min_improvement:
                 adjustment = self._handle_improvement(avg_recent_loss)
                 lr_info.update(adjustment)
             else:
@@ -207,9 +209,9 @@ class AdaptiveLearningRateManager:
             current_loss > self.recent_best_loss * self.config.spike_threshold):
             return True
 
-        # Check against overall best
-        if (self.best_loss != float('inf') and
-            current_loss > self.best_loss * self.config.divergence_threshold and
+        # Check against overall best training loss
+        if (self.best_training_loss != float('inf') and
+            current_loss > self.best_training_loss * self.config.divergence_threshold and
             len(self.batch_losses) >= self.config.batch_loss_window // 2):
             return True
 
@@ -240,7 +242,7 @@ class AdaptiveLearningRateManager:
             return {
                 'lr_adjusted': True,
                 'adjustment_type': 'emergency_reduction',
-                'adjustment_reason': f'Loss spike detected: {current_loss:.4f} >> {self.best_loss:.4f}',
+                'adjustment_reason': f'Loss spike detected: {current_loss:.4f} >> {self.best_training_loss:.4f}',
                 'old_lr': current_lr,
                 'new_lr': new_lr
             }
@@ -248,22 +250,26 @@ class AdaptiveLearningRateManager:
         return {'lr_adjusted': False}
 
     def _handle_improvement(self, current_loss: float) -> Dict[str, Any]:
-        """Handle detected improvement in loss."""
+        """Handle detected improvement in training loss."""
         current_lr = self.optimizer.param_groups[0]['lr']
-        improvement_ratio = (self.best_loss - current_loss) / max(self.best_loss, 0.001)
+        improvement_ratio = (self.best_training_loss - current_loss) / max(self.best_training_loss, 0.001)
 
-        # Update best loss
-        self.best_loss = current_loss
+        # Update best training loss
+        self.best_training_loss = current_loss
         self.batches_since_improvement = 0
         self.lr_before_spike = None  # Reset spike tracking on improvement
 
         # Track consecutive improvements for stability
         self.stable_improvement_count += 1
 
+        # FIXED: Allow LR increases after sufficient time since last reduction
+        # This prevents permanent blocking after reductions
+        steps_since_reduction = self.step_count - self.last_lr_reduction_step
+
         # Consider increasing LR if training is very stable
         if (self.stable_improvement_count >= self.config.stability_threshold and
             improvement_ratio > 0.005 and  # At least 0.5% improvement
-            self.lr_reductions == 0 and  # Haven't reduced LR yet
+            steps_since_reduction > self.config.increase_min_gap and  # Sufficient gap since reduction
             current_lr < self.config.max_lr and
             self.step_count - self.last_lr_increase_step > self.config.increase_min_gap):
 
@@ -272,6 +278,8 @@ class AdaptiveLearningRateManager:
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = new_lr
 
+            # FIXED: Store count before resetting for accurate logging
+            improvement_count = self.stable_improvement_count
             self.stable_improvement_count = 0  # Reset counter
             self.last_lr_increase_step = self.step_count
 
@@ -281,7 +289,7 @@ class AdaptiveLearningRateManager:
             return {
                 'lr_adjusted': True,
                 'adjustment_type': 'stability_increase',
-                'adjustment_reason': f'{self.stable_improvement_count} consecutive improvements, {improvement_ratio*100:.2f}% better',
+                'adjustment_reason': f'{improvement_count} consecutive improvements, {improvement_ratio*100:.2f}% better',
                 'old_lr': current_lr,
                 'new_lr': new_lr
             }
@@ -302,6 +310,10 @@ class AdaptiveLearningRateManager:
         # Increment no-improvement counter
         self.batches_since_improvement += self.config.lr_check_interval
         self.stable_improvement_count = 0  # Reset improvement counter
+
+        # FIXED: Update recent_best_loss to prevent stale values
+        # This ensures spike detection uses current loss trajectory
+        self.recent_best_loss = min(self.recent_best_loss, current_loss)
 
         # Check for plateau
         if (self.batches_since_improvement >= self.config.plateau_patience and
@@ -341,17 +353,17 @@ class AdaptiveLearningRateManager:
 
     def update_validation_loss(self, val_loss: float) -> None:
         """
-        Update manager with validation loss for plateau detection.
+        Update manager with validation loss for tracking.
+
+        FIXED: Only updates validation loss tracking, does NOT affect training loss decisions.
+        This prevents validation loss from interfering with training loss plateau detection.
 
         Args:
             val_loss: Current validation loss
         """
-        # Update best loss if validation improves
-        if val_loss < self.best_loss:
-            improvement = self.best_loss - val_loss
-            self.best_loss = val_loss
-            self.recent_best_loss = val_loss
-            self.batches_since_improvement = 0
+        # Update best validation loss (separate from training loss)
+        if val_loss < self.best_validation_loss:
+            self.best_validation_loss = val_loss
 
             # Track validation improvements
             if 'validation_improvements' not in self.lr_stats:
@@ -372,7 +384,8 @@ class AdaptiveLearningRateManager:
 
         return {
             'current_lr': current_lr,
-            'best_loss': self.best_loss,
+            'best_training_loss': self.best_training_loss,
+            'best_validation_loss': self.best_validation_loss,
             'recent_best_loss': self.recent_best_loss,
             'batches_since_improvement': self.batches_since_improvement,
             'stable_improvement_count': self.stable_improvement_count,
@@ -406,7 +419,7 @@ class AdaptiveLearningRateManager:
     def reset_spike_tracking(self) -> None:
         """Reset spike tracking (useful after successful recovery)."""
         self.lr_before_spike = None
-        self.recent_best_loss = self.best_loss
+        self.recent_best_loss = self.best_training_loss
 
     def force_lr_reduction(self, factor: float = 0.5, reason: str = "manual") -> Dict[str, Any]:
         """Force learning rate reduction."""
@@ -435,7 +448,8 @@ class AdaptiveLearningRateManager:
         """Get manager state for checkpointing."""
         return {
             'batch_losses': list(self.batch_losses),
-            'best_loss': self.best_loss,
+            'best_training_loss': self.best_training_loss,
+            'best_validation_loss': self.best_validation_loss,
             'recent_best_loss': self.recent_best_loss,
             'step_count': self.step_count,
             'batches_since_improvement': self.batches_since_improvement,
@@ -449,9 +463,18 @@ class AdaptiveLearningRateManager:
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Load manager state from checkpoint."""
+        """Load manager state from checkpoint with backward compatibility."""
         self.batch_losses = deque(state_dict['batch_losses'], maxlen=self.config.batch_loss_window)
-        self.best_loss = state_dict['best_loss']
+
+        # FIXED: Backward compatibility - handle old checkpoints with 'best_loss'
+        if 'best_training_loss' in state_dict:
+            self.best_training_loss = state_dict['best_training_loss']
+            self.best_validation_loss = state_dict.get('best_validation_loss', float('inf'))
+        else:
+            # Old checkpoint format - use 'best_loss' for both
+            self.best_training_loss = state_dict.get('best_loss', float('inf'))
+            self.best_validation_loss = state_dict.get('best_loss', float('inf'))
+
         self.recent_best_loss = state_dict['recent_best_loss']
         self.step_count = state_dict['step_count']
         self.batches_since_improvement = state_dict['batches_since_improvement']
