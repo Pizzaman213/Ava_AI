@@ -61,7 +61,10 @@
       "Bash(for dir in distributed gradients learning_rate monitoring strategies)",
       "Bash(do if [ -d \"$dir\" ])",
       "Bash(then echo \"$dir exists\")",
-      "Bash(else echo \"$dir not found\")"
+      "Bash(else echo \"$dir not found\")",
+      "Bash(for dir in /project/code/src/Ava/*/)",
+      "Bash(xargs:*)",
+      "Bash(timeout 5 python:*)"
     ],
     "deny": [],
     "ask": []

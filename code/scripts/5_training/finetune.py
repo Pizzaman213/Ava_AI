@@ -87,18 +87,18 @@ from src.Ava.config.feature_compatibility import (
 )
 from src.Ava.data.dataloader import create_streaming_dataloaders
 from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel
-from src.Ava.multi_column_data import create_multi_column_dataloader
+from src.Ava.data.multi_column_data import create_multi_column_dataloader
 # Observability modules are not yet implemented:
 # from src.Ava.observability.health_dashboard import HealthDashboard
 # from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
 # from src.Ava.observability.training_validator import TrainingValidator
-from src.Ava.training.learning_rate import AdaptiveLearningRateManager, AdaptiveLRConfig
-from src.Ava.training.core.enhanced_trainer import EnhancedModularTrainer
+from src.Ava.optimization import AdaptiveLearningRateManager, AdaptiveLRConfig
+from src.Ava.training.core.trainer import EnhancedTrainer as EnhancedModularTrainer
 from src.Ava.training.strategies.progressive_training import (
     ProgressiveTrainingConfig,
     ProgressiveTrainingManager,
 )
-from src.Ava.training.core.run_manager import RunManager
+from src.Ava.training.orchestration.run_manager import RunManager
 from src.Ava.utils import register_cleanup_handlers
 
 # Import the main training function from train.py

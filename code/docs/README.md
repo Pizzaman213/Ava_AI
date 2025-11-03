@@ -4,39 +4,47 @@ Welcome to the Ava MoE++ (Mixture of Experts Plus Plus) documentation. This adva
 
 ##  Documentation Index
 
-### Getting Started
-- [Quick Start Guide](quick_start.md) - Get up and running in 5 minutes
-- [Installation](installation.md) - Setup and dependencies
-- [Training Guide](training_guide.md) - Complete training walkthrough
+### 🚀 Getting Started
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - ⭐ **START HERE!** Fast decision trees & cheat sheets
+- [01_ARCHITECTURE.md](01_ARCHITECTURE.md) - Complete system architecture with diagrams
+- [02_TRAINING_GUIDE.md](02_TRAINING_GUIDE.md) - Comprehensive training walkthrough
+- [FLOWCHARTS_VISUAL.md](FLOWCHARTS_VISUAL.md) - Visual flowcharts for all major workflows
 
-### Architecture
-- [Model Architecture](architecture.md) - Detailed architecture overview
-- [MoE++ Features](moe_features.md) - Enhanced Mixture of Experts capabilities
-- [Routing Mechanisms](routing.md) - Expert selection and load balancing
+### 📚 Core Guides (Comprehensive with Flowcharts)
+- **[04_LOSS_FUNCTIONS.md](04_LOSS_FUNCTIONS.md)** - Loss system with computation flowcharts
+- **[05_OPTIMIZATION_GUIDE.md](05_OPTIMIZATION_GUIDE.md)** - Optimizers, LR schedules, gradient ops
+- **[06_EVALUATION_GENERATION.md](06_EVALUATION_GENERATION.md)** - Evaluation, generation & RLHF
+- **[07_CONFIGURATION_SYSTEM.md](07_CONFIGURATION_SYSTEM.md)** - Config hierarchy & best practices
+- [03_MEMORY_OPTIMIZATION.md](03_MEMORY_OPTIMIZATION.md) - Memory management strategies
 
-### Usage Guides
-- [Configuration Guide](configuration.md) - Understanding YAML configs
-- [Data Preparation](data_preparation.md) - Preparing training data
-- [Generation Guide](generation.md) - Text generation with trained models
-- [Evaluation Guide](evaluation.md) - Model evaluation and metrics
+### 📖 Loss Functions (Detailed)
+- [LOSSES_README.md](LOSSES_README.md) - Loss functions quick overview
+- [LOSSES_USAGE_GUIDE.md](LOSSES_USAGE_GUIDE.md) - Detailed usage examples
 
-### API Reference
-- [Model API](api/models.md) - Model classes and methods
-- [Layers API](api/layers.md) - Layer implementations
-- [Data API](api/data.md) - Data loading utilities
-- [Utils API](api/utils.md) - Utility functions
+### 🎯 Quick Access by Task
 
-### Advanced Topics
-- [Custom Experts](advanced/custom_experts.md) - Creating custom expert modules
-- [Performance Optimization](advanced/optimization.md) - Speed and memory optimization
-- [Distributed Training](advanced/distributed.md) - Multi-GPU and distributed setups
-- [Fine-tuning](advanced/fine_tuning.md) - Adapting to specific tasks
-- [Loss Functions](LOSSES_README.md) - Overview of unified loss system
-- [Loss Usage Guide](LOSSES_USAGE_GUIDE.md) - Detailed loss function usage
+**I want to...**
+- **Train a model** → [QUICK_REFERENCE.md#training-setup](QUICK_REFERENCE.md#training-setup)
+- **Choose an optimizer** → [05_OPTIMIZATION_GUIDE.md#optimizer-selection](05_OPTIMIZATION_GUIDE.md#optimizer-selection)
+- **Configure training** → [07_CONFIGURATION_SYSTEM.md](07_CONFIGURATION_SYSTEM.md)
+- **Setup loss function** → [04_LOSS_FUNCTIONS.md#configuration-guide](04_LOSS_FUNCTIONS.md#configuration-guide)
+- **Generate text** → [06_EVALUATION_GENERATION.md#generation-pipeline](06_EVALUATION_GENERATION.md#generation-pipeline)
+- **Evaluate model** → [06_EVALUATION_GENERATION.md#evaluation-system](06_EVALUATION_GENERATION.md#evaluation-system)
+- **Troubleshoot issues** → [QUICK_REFERENCE.md#troubleshooting](QUICK_REFERENCE.md#troubleshooting)
 
-### Troubleshooting
-- [Common Issues](troubleshooting.md) - Solutions to common problems
-- [FAQ](faq.md) - Frequently asked questions
+### 📊 Documentation by Topic
+
+| Topic | Document | Description |
+|-------|----------|-------------|
+| **Architecture** | [01_ARCHITECTURE.md](01_ARCHITECTURE.md) | Model architecture, MoE, layers |
+| **Training** | [02_TRAINING_GUIDE.md](02_TRAINING_GUIDE.md) | Complete training pipeline |
+| **Memory** | [03_MEMORY_OPTIMIZATION.md](03_MEMORY_OPTIMIZATION.md) | OOM solutions, memory management |
+| **Loss Functions** | [04_LOSS_FUNCTIONS.md](04_LOSS_FUNCTIONS.md) | UnifiedLoss, components, flowcharts |
+| **Optimization** | [05_OPTIMIZATION_GUIDE.md](05_OPTIMIZATION_GUIDE.md) | Optimizers, LR, gradients |
+| **Evaluation** | [06_EVALUATION_GENERATION.md](06_EVALUATION_GENERATION.md) | Metrics, generation, RLHF |
+| **Configuration** | [07_CONFIGURATION_SYSTEM.md](07_CONFIGURATION_SYSTEM.md) | YAML configs, hierarchy |
+| **Quick Reference** | [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | Decision trees, commands |
+| **Visual Flows** | [FLOWCHARTS_VISUAL.md](FLOWCHARTS_VISUAL.md) | Emoji-annotated flowcharts |
 
 ##  Quick Example
 

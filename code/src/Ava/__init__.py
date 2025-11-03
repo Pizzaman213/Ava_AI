@@ -92,21 +92,33 @@ except ImportError:
     RAGSystem = AdaptiveRAG = DenseRetriever = None
     KnowledgeBase = RAGFusion = None
 
-# Training utilities
+# Training utilities - Gradient Management
 try:
-    from .training import (
+    from .optimization.gradients.surgery import (
         GradientSurgeon, AdaptiveGradientSurgeon,
-        GradientConflictAnalyzer,
-        CosineAnnealingWarmRestarts, OneCycleLR, PolynomialDecayLR, AdaptiveLRScheduler,
-        NoisyStudentScheduler, SchedulerFactory,
-        ProgressiveTrainingConfig, CurriculumLearning, GrowLengthScheduler,
-        DynamicBatchSizer, ProgressiveModelScaler, ProgressiveTrainer
+        GradientConflictAnalyzer
     )
 except ImportError:
     GradientSurgeon = AdaptiveGradientSurgeon = None
     GradientConflictAnalyzer = None
+
+# Training utilities - Learning Rate Schedulers
+try:
+    from .optimization.learning_rate import (
+        CosineAnnealingWarmRestarts, OneCycleLR, PolynomialDecayLR,
+        AdaptiveLRScheduler, NoisyStudentScheduler, SchedulerFactory
+    )
+except ImportError:
     CosineAnnealingWarmRestarts = OneCycleLR = PolynomialDecayLR = AdaptiveLRScheduler = None
     NoisyStudentScheduler = SchedulerFactory = None
+
+# Training utilities - Progressive Training
+try:
+    from .training.strategies.progressive_training import (
+        ProgressiveTrainingConfig, CurriculumLearning, GrowLengthScheduler,
+        DynamicBatchSizer, ProgressiveModelScaler, ProgressiveTrainer
+    )
+except ImportError:
     ProgressiveTrainingConfig = CurriculumLearning = GrowLengthScheduler = None
     DynamicBatchSizer = ProgressiveModelScaler = ProgressiveTrainer = None
 
@@ -117,7 +129,7 @@ try:
         DiversityLoss, AuxiliaryLoss, ConsistencyLoss,
         PerplexityLoss, AdaptiveLossScaling, CompositeLoss
     )
-    from .losses.adaptive_mtp_loss import AdaptiveMTPLoss
+    from .losses.losses import AdaptiveMTPLoss
 except ImportError:
     ContrastiveLoss = FocalLoss = LabelSmoothingLoss = None
     DiversityLoss = AuxiliaryLoss = ConsistencyLoss = None
@@ -140,21 +152,27 @@ except ImportError:
 try:
     from .optimization import (
         ModelQuantizer, LinearQuantized, DynamicQuantization,
-        INT4Quantization, QuantizationConfig, quantize_model_pipeline,
+        INT4Quantization, QuantizationObserver,
         LionOptimizer, SophiaOptimizer, AdaFactorOptimizer,
         OptimizerFactory,
-        FP8Format, FP8Config, FP8Handler, FP8Linear, FP8MultiHeadAttention,
+        FP8Handler, FP8Linear, FP8MultiHeadAttention,
         FP8LayerNorm, FP8TransformerLayer, FP8ModelWrapper,
-        create_fp8_model, benchmark_fp8_training
+        GradientHealthMonitor, LossHealthMonitor,
+        GradientSurgeon, AdaptiveGradientSurgeon,
+        LRFinder, LRFinderConfig,
+        AdaptiveLearningRateManager, IntelligentLRManager,
     )
 except ImportError:
     ModelQuantizer = LinearQuantized = DynamicQuantization = None
-    INT4Quantization = QuantizationConfig = quantize_model_pipeline = None
+    INT4Quantization = QuantizationObserver = None
     LionOptimizer = SophiaOptimizer = AdaFactorOptimizer = None
     OptimizerFactory = None
-    FP8Format = FP8Config = FP8Handler = FP8Linear = FP8MultiHeadAttention = None
+    FP8Handler = FP8Linear = FP8MultiHeadAttention = None
     FP8LayerNorm = FP8TransformerLayer = FP8ModelWrapper = None
-    create_fp8_model = benchmark_fp8_training = None
+    GradientHealthMonitor = LossHealthMonitor = None
+    GradientSurgeon = AdaptiveGradientSurgeon = None
+    LRFinder = LRFinderConfig = None
+    AdaptiveLearningRateManager = IntelligentLRManager = None
 
 # Memory and continual learning
 try:

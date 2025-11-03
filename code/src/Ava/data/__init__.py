@@ -1,4 +1,12 @@
-"""Ava data processing modules"""
+"""
+Data Loading and Processing Module
+
+Consolidated data functionality including:
+- Streaming dataset loaders
+- Multi-column dataset handling
+- Distributed sampling
+- Bucketing and batching strategies
+"""
 
 # Note: The following files have been moved to _archived/data/:
 # - data_profiler.py (moved from parent directory)
@@ -15,6 +23,12 @@ from .dataloader import (
     create_streaming_dataloaders,
 )
 
+from .multi_column_data import (
+    MultiColumnDataset,
+    StreamingMultiColumnDataset,
+    AdvancedDistributedSampler,
+)
+
 __all__ = [
     "StreamingDataset",
     "InfiniteStreamingDataset",
@@ -22,4 +36,7 @@ __all__ = [
     "LengthBasedBucketing",
     "FileReader",
     "create_streaming_dataloaders",
+    "MultiColumnDataset",
+    "StreamingMultiColumnDataset",
+    "AdvancedDistributedSampler",
 ]

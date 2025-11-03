@@ -14,7 +14,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 
-from ...config.training_config import EnhancedTrainingConfig
+from ..config.training_config import EnhancedTrainingConfig
 from .distributed_manager import DistributedManager
 
 logger = logging.getLogger(__name__)

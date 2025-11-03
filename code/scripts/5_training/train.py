@@ -349,18 +349,18 @@ from src.Ava.config.feature_compatibility import (
 )
 from src.Ava.data.dataloader import create_streaming_dataloaders
 from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel  # type: ignore[import-not-found]
-from src.Ava.multi_column_data import create_multi_column_dataloader
+from src.Ava.data.multi_column_data import create_multi_column_dataloader
 # Observability modules removed for simplicity
 # from src.Ava.observability.health_dashboard import HealthDashboard
 # from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
 # from src.Ava.observability.training_validator import TrainingValidator
-from src.Ava.training.learning_rate import AdaptiveLearningRateManager, AdaptiveLRConfig
-from src.Ava.training.core.enhanced_trainer import EnhancedModularTrainer
+from src.Ava.optimization import AdaptiveLearningRateManager, AdaptiveLRConfig
+from src.Ava.training import EnhancedTrainer as EnhancedModularTrainer
 from src.Ava.training.strategies.progressive_training import (
     ProgressiveTrainingConfig,
     ProgressiveTrainingManager,
 )
-from src.Ava.training.core.run_manager import RunManager
+from src.Ava.training.orchestration.run_manager import RunManager
 from src.Ava.utils import register_cleanup_handlers
 from src.Ava.evaluation import quick_coherence_test
 
@@ -665,7 +665,7 @@ def create_dataloaders(
 
         from typing import cast
 
-        from src.Ava.multi_column_data import DatasetConfig
+        from src.Ava.data.multi_column_data import DatasetConfig
 
         train_loader = create_multi_column_dataloader(
             config=cast(Union[DatasetConfig, Dict], dataset_config),
@@ -1196,7 +1196,7 @@ def train_epoch(
     }
 
     # Create progress bar if not in ultra-fast mode
-    from src.Ava.training.strategies.performance_modes import PerformanceMode
+    from src.Ava.training.monitoring.performance_modes import PerformanceMode
 
     show_progress = (
         trainer.performance_manager.config.mode != PerformanceMode.ULTRA_FAST
@@ -2616,7 +2616,7 @@ def main():
         logger.info("📊 LEARNING RATE FINDER - Finding Optimal Learning Rate")
         logger.info("=" * 80)
 
-        from src.Ava.training.learning_rate.lr_finder import LRFinder, LRFinderConfig as LRFConfig
+        from src.Ava.optimization import LRFinder, LRFinderConfig as LRFConfig
 
         # Setup LR Finder configuration
         lr_finder_config = LRFConfig(
