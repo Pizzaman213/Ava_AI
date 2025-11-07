@@ -105,6 +105,7 @@ DATASETS_CONFIG = {
         "categories": ["rag", "pretraining", "web"], "tokens": "very_high", "large": True,
         "estimated_tokens_millions": 200000, "max_samples": 10000000,
         "default_10b": True, "quality_score": 8.5, "priority": 1,
+        "trust_remote_code": True,
         "description": "1 trillion token dataset - clean-room LLaMa replication with 7 high-quality sources",
         "subsets": ["arxiv", "c4", "common_crawl", "github", "stackexchange", "wikipedia"]
     },
@@ -134,6 +135,7 @@ DATASETS_CONFIG = {
         "categories": ["rag", "pretraining"], "tokens": "very_high", "large": True,
         "max_samples": 500000,
         "default_10b": True,
+        "trust_remote_code": True,
         "description": "Open-source recreation of GPT-2's WebText training dataset"
     },
     "wikipedia": {
@@ -141,6 +143,7 @@ DATASETS_CONFIG = {
         "categories": ["rag", "knowledge"], "tokens": "very_high", "large": True,
         "max_samples": 100000,
         "default_10b": True,
+        "trust_remote_code": True,
         "description": "English Wikipedia articles for knowledge-intensive tasks"
     },
 
@@ -202,6 +205,7 @@ DATASETS_CONFIG = {
         "categories": ["conversation", "greeting", "dialog"], "tokens": "medium",
         "max_samples": 13000,
         "default_10b": True,
+        "trust_remote_code": True,
         "description": "Daily conversations covering greetings and small talk"
     },
     "empathetic_dialogues": {
@@ -209,6 +213,7 @@ DATASETS_CONFIG = {
         "categories": ["conversation", "greeting", "emotion"], "tokens": "high",
         "max_samples": 25000,
         "default_10b": True,
+        "trust_remote_code": True,
         "description": "Empathetic conversations with emotional context"
     },
     "AlekseyKorshuk/persona-chat": {
@@ -216,6 +221,7 @@ DATASETS_CONFIG = {
         "categories": ["conversation", "greeting", "persona"], "tokens": "medium",
         "max_samples": 10000,
         "default_10b": True,
+        "trust_remote_code": True,
         "description": "Persona-based chit-chat conversations"
     },
     "blended_skill_talk": {
@@ -229,6 +235,7 @@ DATASETS_CONFIG = {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting"], "tokens": "medium",
         "max_samples": 10000,
+        "trust_remote_code": True,
         "description": "Conversational AI dialogue dataset"
     },
     "google/Synthetic-Persona-Chat": {
@@ -237,18 +244,20 @@ DATASETS_CONFIG = {
         "max_samples": 50000,
         "description": "Synthetic persona-based conversations"
     },
-    "microsoft/wizard_of_wikipedia": {
+    "wizard_of_wikipedia": {
         "splits": ["train", "test", "validation"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "knowledge"], "tokens": "high",
         "max_samples": 20000,
+        "trust_remote_code": True,
         "description": "Knowledge-grounded conversations from Wizard of Wikipedia"
     },
-    "Salesforce/dialogstudio": {
-        "splits": ["train"], "subset": "TradeDial", "streaming_safe": True,
-        "categories": ["conversation", "greeting", "dialog"], "tokens": "medium",
-        "max_samples": 5000,
-        "description": "Multi-domain dialogue dataset from Salesforce"
-    },
+    # Salesforce/dialogstudio is gated - requires authentication, skipping
+    # "Salesforce/dialogstudio": {
+    #     "splits": ["train"], "subset": "TradeDial", "streaming_safe": True,
+    #     "categories": ["conversation", "greeting", "dialog"], "tokens": "medium",
+    #     "max_samples": 5000,
+    #     "description": "Multi-domain dialogue dataset from Salesforce (GATED - requires HF_TOKEN)"
+    # },
     "AllenAI/prosocial-dialog": {
         "splits": ["train", "validation", "test"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "prosocial"], "tokens": "high",
@@ -259,13 +268,15 @@ DATASETS_CONFIG = {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["conversation", "greeting", "roleplay"], "tokens": "high",
         "max_samples": 30000,
+        "trust_remote_code": True,
         "description": "Personal Interaction Pairs between People and AI"
     },
-    "HuggingFaceH4/self-instruct": {
+    # HuggingFaceH4/self-instruct doesn't exist - using alternative
+    "tatsu-lab/alpaca": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
         "categories": ["instruction", "synthetic"], "tokens": "medium",
         "max_samples": 10000,
-        "description": "Self-Instruct synthetic instruction dataset"
+        "description": "Stanford Alpaca instruction dataset (alternative to self-instruct)"
     },
     "garage-bAInd/Open-Platypus": {
         "splits": ["train"], "subset": None, "streaming_safe": True,
@@ -833,6 +844,10 @@ class UnifiedDownloader:
                 params["streaming"] = True
                 params["cache_dir"] = None
 
+                # Add trust_remote_code if specified in config
+                if config.get("trust_remote_code", False):
+                    params["trust_remote_code"] = True
+
                 # Handle different splits
                 for split in config.get("splits", ["train"]):
                     print(f"  Processing split: {split}")
@@ -845,12 +860,20 @@ class UnifiedDownloader:
                         try:
                             dataset = self.load_dataset(*dataset_args, split=split, **params)
                         except Exception as load_error:
-                            if "LocalEntryNotFoundError" in str(load_error) or "Couldn't find" in str(load_error):
+                            error_msg = str(load_error)
+                            if "LocalEntryNotFoundError" in error_msg or "Couldn't find" in error_msg:
                                 print(f"  Retrying with basic parameters...")
                                 try:
                                     dataset = self.load_dataset(*dataset_args, split=split, streaming=True)
                                 except:
                                     print(f"  ✗ Could not load dataset even with basic params")
+                                    continue
+                            elif "Dataset scripts are no longer supported" in error_msg or "trust_remote_code" in error_msg:
+                                print(f"  Dataset requires trust_remote_code=True, retrying...")
+                                try:
+                                    dataset = self.load_dataset(*dataset_args, split=split, streaming=True, trust_remote_code=True)
+                                except Exception as retry_error:
+                                    print(f"  ✗ Failed even with trust_remote_code: {str(retry_error)[:100]}")
                                     continue
 
                         if dataset is None:

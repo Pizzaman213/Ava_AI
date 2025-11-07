@@ -1,0 +1,50 @@
+# Small MoE Configuration (1B parameters, 8 experts)
+# Suitable for: Small-scale experiments, debugging, single GPU training
+
+model:
+  vocab_size: 32000
+  hidden_size: 2048
+  num_layers: 16
+  num_attention_heads: 16
+  intermediate_size: 7168  # 3.5x hidden_size
+  max_position_embeddings: 2048
+
+  # MoE settings
+  num_experts: 8
+  num_experts_per_token: 2
+  router_type: 'mixtral'
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: 'swiglu'
+
+  # Performance
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  gradient_checkpointing: false
+
+  # MoE losses
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.01
+
+  # Regularization
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+training:
+  batch_size: 32
+  gradient_accumulation_steps: 1
+  learning_rate: 3.0e-4
+  max_steps: 100000
+  warmup_steps: 2000
+  weight_decay: 0.1
+
+deepspeed:
+  enabled: true
+  zero_stage: 2
+  precision: "bf16"

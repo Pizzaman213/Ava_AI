@@ -1,0 +1,52 @@
+# DeepSeek-Style MoE Configuration
+# Features: Shared expert + routed experts for improved stability
+
+model:
+  vocab_size: 32000
+  hidden_size: 4096
+  num_layers: 32
+  num_attention_heads: 32
+  intermediate_size: 14336
+  max_position_embeddings: 4096
+
+  # DeepSeek-style MoE
+  num_experts: 16  # 1 shared + 15 routed
+  num_experts_per_token: 2
+  router_type: 'deepseek'  # Use DeepSeek router
+  use_shared_expert: true
+  shared_expert_weight: 0.5  # 50% shared, 50% routed
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: 'swiglu'
+
+  # Performance
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  gradient_checkpointing: true
+
+  # MoE losses (important for DeepSeek stability)
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.02  # Higher for stability
+  diversity_loss_coef: 0.002
+  expert_dropout_loss_coef: 0.001
+  router_jitter_noise: 0.01
+
+  # Regularization
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+training:
+  batch_size: 64
+  gradient_accumulation_steps: 4
+  learning_rate: 1.5e-4
+  max_steps: 500000
+  warmup_steps: 5000
+  weight_decay: 0.1
+
+deepspeed:
+  enabled: true
+  zero_stage: 2
+  precision: "bf16"

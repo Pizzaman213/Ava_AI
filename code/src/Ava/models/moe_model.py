@@ -648,3 +648,311 @@ class EnhancedMoEModel(nn.Module):
                 break
 
         return generated
+
+
+# ============================================================================
+# NEW: Optimized MoE Transformer with Production-Grade Performance
+# ============================================================================
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+try:
+    from .moe_layer import SparseMoELayer
+except ImportError:
+    SparseMoELayer = None
+
+
+@dataclass
+class OptimizedMoEConfig:
+    """
+    Configuration for OptimizedMoETransformer with all performance features.
+    """
+    # Model architecture
+    vocab_size: int = 32000
+    hidden_size: int = 4096
+    num_layers: int = 32
+    num_attention_heads: int = 32
+    intermediate_size: int = 14336  # 3.5x hidden_size (Mixtral-style)
+    max_position_embeddings: int = 4096
+
+    # MoE settings
+    num_experts: int = 32
+    num_experts_per_token: int = 2
+    router_type: str = 'mixtral'  # 'mixtral' or 'deepseek'
+    capacity_factor: float = 1.25
+    expert_dropout: float = 0.0
+    activation: str = 'swiglu'  # 'swiglu', 'geglu', 'gelu'
+
+    # MoE performance
+    use_grouped_gemm: bool = True
+    use_triton_kernels: bool = True
+    use_torch_compile: bool = True
+    gradient_checkpointing: bool = False
+
+    # MoE auxiliary losses
+    router_z_loss_coef: float = 0.001
+    load_balance_loss_coef: float = 0.01
+    diversity_loss_coef: float = 0.001
+    expert_dropout_loss_coef: float = 0.001
+    router_jitter_noise: float = 0.0
+
+    # DeepSeek-style shared expert
+    use_shared_expert: bool = False
+    shared_expert_weight: float = 0.5
+
+    # Attention settings
+    attention_dropout: float = 0.0
+    use_flash_attention: bool = False
+    rope_theta: float = 10000.0
+
+    # Regularization
+    dropout: float = 0.0
+    layer_norm_eps: float = 1e-5
+    initializer_range: float = 0.02
+
+    # Distributed training
+    expert_parallel_size: int = 1
+
+    # Type hints
+    dtype: Optional[torch.dtype] = None
+
+
+class OptimizedTransformerBlock(nn.Module):
+    """
+    Transformer block using OptimizedMoELayer for FFN.
+    """
+
+    def __init__(self, config: OptimizedMoEConfig, layer_idx: int):
+        super().__init__()
+        self.layer_idx = layer_idx
+
+        # Self-attention (reuse from existing implementation)
+        self.attention = MultiHeadAttention(
+            # Convert config to EnhancedMoEConfig format
+            type('Config', (), {
+                'hidden_size': config.hidden_size,
+                'num_attention_heads': config.num_attention_heads,
+                'attention_dropout': config.attention_dropout,
+                'max_position_embeddings': config.max_position_embeddings,
+                'rope_theta': config.rope_theta,
+                'use_alibi': False,
+            })()
+        )
+
+        # Sparse MoE layer (replaces standard FFN)
+        if SparseMoELayer is not None:
+            self.moe = SparseMoELayer(
+                hidden_size=config.hidden_size,
+                intermediate_size=config.intermediate_size,
+                num_experts=config.num_experts,
+                num_experts_per_token=config.num_experts_per_token,
+                router_type=config.router_type,
+                capacity_factor=config.capacity_factor,
+                expert_dropout=config.expert_dropout,
+                activation=config.activation,
+                use_grouped_gemm=config.use_grouped_gemm,
+                use_triton_kernels=config.use_triton_kernels,
+                use_torch_compile=config.use_torch_compile,
+                router_z_loss_coef=config.router_z_loss_coef,
+                load_balance_loss_coef=config.load_balance_loss_coef,
+                diversity_loss_coef=config.diversity_loss_coef,
+                expert_dropout_loss_coef=config.expert_dropout_loss_coef,
+                router_jitter_noise=config.router_jitter_noise,
+                use_shared_expert=config.use_shared_expert,
+                shared_expert_weight=config.shared_expert_weight,
+                gradient_checkpointing=config.gradient_checkpointing,
+                dtype=config.dtype,
+            )
+        else:
+            raise ImportError("SparseMoELayer not available. Cannot create OptimizedMoETransformer")
+
+        # Layer norms
+        self.ln1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.ln2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        training: bool = True,
+    ) -> Tuple[torch.Tensor, Dict]:
+        # Self-attention with residual
+        residual = hidden_states
+        hidden_states = self.ln1(hidden_states)
+        attn_output = self.attention(hidden_states, attention_mask)
+        hidden_states = residual + self.dropout(attn_output)
+
+        # MoE with residual
+        residual = hidden_states
+        moe_output, aux_loss, moe_metrics = self.moe(hidden_states, training=training)
+        hidden_states = residual + moe_output
+
+        return hidden_states, {'aux_loss': aux_loss, **moe_metrics}
+
+
+class OptimizedMoETransformer(nn.Module):
+    """
+    Production-grade MoE Transformer with all performance optimizations.
+
+    Features:
+    - Mixtral or DeepSeek routing
+    - Grouped GEMM for expert computation
+    - Triton kernels for routing
+    - torch.compile optimization
+    - Expert parallelism support
+    - 4 auxiliary losses for stability
+    - Gradient checkpointing
+
+    Args:
+        config: OptimizedMoEConfig instance
+
+    Example:
+        >>> config = OptimizedMoEConfig(
+        ...     hidden_size=4096,
+        ...     num_experts=32,
+        ...     num_experts_per_token=2,
+        ...     router_type='mixtral'
+        ... )
+        >>> model = OptimizedMoETransformer(config)
+        >>> x = torch.randint(0, 32000, (2, 128))
+        >>> output = model(x)
+    """
+
+    def __init__(self, config: OptimizedMoEConfig):
+        super().__init__()
+        self.config = config
+
+        # Embeddings
+        self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.dropout = nn.Dropout(config.dropout)
+
+        # Transformer blocks with MoE
+        self.layers = nn.ModuleList([
+            OptimizedTransformerBlock(config, layer_idx=i)
+            for i in range(config.num_layers)
+        ])
+
+        # Final layer norm
+        self.ln_f = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
+        # LM head
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        """Initialize weights with proper scaling."""
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.ones_(module.weight)
+            torch.nn.init.zeros_(module.bias)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        return_dict: bool = True,
+    ) -> Any:
+        """
+        Forward pass through the model.
+
+        Args:
+            input_ids: [batch_size, seq_len]
+            attention_mask: [batch_size, seq_len], optional
+            labels: [batch_size, seq_len], optional (for training)
+            return_dict: Whether to return dict or tuple
+
+        Returns:
+            Dict with 'loss', 'logits', 'hidden_states', 'aux_info' if return_dict=True
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+
+        # Validate inputs
+        if (input_ids < 0).any() or (input_ids >= self.config.vocab_size).any():
+            raise ValueError(f"Invalid token IDs. Must be in [0, {self.config.vocab_size})")
+
+        # Token embeddings
+        hidden_states = self.token_embedding(input_ids)
+        hidden_states = self.dropout(hidden_states)
+
+        # Create causal attention mask
+        causal_mask = torch.triu(
+            torch.full((seq_len, seq_len), float('-inf'), device=device),
+            diagonal=1
+        )[None, None, :, :]
+
+        if attention_mask is not None:
+            padding_mask = (1.0 - attention_mask[:, None, None, :]) * torch.finfo(hidden_states.dtype).min
+            attention_mask = causal_mask + padding_mask
+        else:
+            attention_mask = causal_mask
+
+        # Apply transformer blocks
+        all_aux_info = []
+        for layer in self.layers:
+            hidden_states, aux_info = layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                training=self.training,
+            )
+            all_aux_info.append(aux_info)
+
+        # Final layer norm
+        hidden_states = self.ln_f(hidden_states)
+
+        # LM head
+        logits = self.lm_head(hidden_states)
+
+        # Compute loss if labels provided
+        loss = None
+        if labels is not None:
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+
+            # Standard cross-entropy loss
+            loss = F.cross_entropy(
+                shift_logits.view(-1, self.config.vocab_size),
+                shift_labels.view(-1),
+                ignore_index=-100
+            )
+
+            # Add MoE auxiliary losses
+            if all_aux_info:
+                total_aux_loss = sum(info['aux_loss'] for info in all_aux_info) / len(all_aux_info)
+                loss = loss + total_aux_loss
+
+        if return_dict:
+            return {
+                'loss': loss,
+                'logits': logits,
+                'hidden_states': hidden_states,
+                'last_hidden_state': hidden_states,
+                'aux_info': all_aux_info,
+            }
+        else:
+            return (loss, logits, hidden_states) if loss is not None else (logits, hidden_states)
+
+    def get_expert_usage_stats(self) -> Dict[str, Any]:
+        """Get expert utilization statistics across all layers."""
+        all_stats = {}
+        for i, layer in enumerate(self.layers):
+            layer_stats = layer.moe.get_expert_usage_stats()
+            for key, value in layer_stats.items():
+                all_stats[f'layer_{i}_{key}'] = value
+        return all_stats
+
+    def reset_expert_counts(self):
+        """Reset expert utilization counters."""
+        for layer in self.layers:
+            layer.moe.reset_expert_counts()

@@ -3,7 +3,7 @@ model:
   num_layers: 14
   num_attention_heads: 8
   intermediate_size: 2048
-  vocab_size: 65536
+  vocab_size: 50680
   max_position_embeddings: 128
   num_experts: 8
   num_experts_per_token: 2
@@ -14,31 +14,38 @@ model:
   expert_dropout: 0.0
   use_cache: true
   rope_theta: 10000
-  attention_dropout: 0.12
-  hidden_dropout: 0.12
+  attention_dropout: 0.08
+  hidden_dropout: 0.08
   use_flash_attention: true
-  layer_norm_eps: 0.00001
+  layer_norm_eps: 1.0e-05
   initializer_range: 0.01
   hidden_act: gelu
   deepspeed_activation_checkpointing: true
   deepspeed_partition_activations: false
   deepspeed_moe_param_groups: true
   tie_word_embeddings: false
-  dropout: 0.12
-
+  dropout: 0.08
 training:
-  batch_size: 64  # REDUCED: Smaller batches = stronger gradient signal for plateau breaking
-  gradient_accumulation_steps: 2  # Effective batch = 48 (reduced from 64)
-  max_gradient_norm: 2.0
+  # NOTE: batch_size and gradient_accumulation_steps are the source of truth
+  # The config loader automatically syncs these to DeepSpeed sections:
+  #   - deepspeed.micro_batch_size = batch_size
+  #   - deepspeed.train_batch_size = batch_size × gradient_accumulation_steps
+  #   - deepspeed.gradient_accumulation_steps = gradient_accumulation_steps
+  #
+  # STABILITY-FIRST CONFIG (Post-Spike Recovery)
+  # Larger batch = smoother gradients, lower LR = smaller steps
+  batch_size: 128
+  gradient_accumulation_steps: 1
+  max_gradient_norm: 1.0
   num_epochs: 1
   max_steps: null
-  warmup_steps: 1000  # Extended warmup for stability
+  warmup_steps: 2000
   warmup_schedule: linear
-  learning_rate: 0.00008  # DECREASED: Lower LR for fine-tuning after plateau
-  lr_scheduler_type: cosine_with_restarts  # NEW: Restarts help escape plateaus
-  num_cycles: 2  # NEW: Two cosine cycles for learning rate restarts
-  lr_end: 0.00001  # DECREASED: Lower end LR for stable convergence
-  weight_decay: 0.08
+  learning_rate: 4.0e-05
+  lr_scheduler_type: cosine
+  num_cycles: 1
+  lr_end: 5.0e-06
+  weight_decay: 0.05
   beta1: 0.9
   beta2: 0.999
   eps: 1e-8
@@ -50,41 +57,39 @@ training:
   entropy_regularization: 0.1
   output_diversity_weight: 0.5
   mixed_precision: fp16
-  dataloader_num_workers: 6  # OPTIMIZED: Reduced for better CPU cache locality
+  dataloader_num_workers: 6
   eval_strategy: steps
-  eval_steps: 500  # REDUCED: More frequent evaluation to catch improvements
+  eval_steps: 250
   eval_steps_type: training_steps
   save_strategy: steps
   save_steps: 1000
   logging_steps: 10
-  early_stopping_patience: 5  # INCREASED: Give more time before stopping
-  early_stopping_threshold: 0.005  # REDUCED: More sensitive to improvements
+  early_stopping_patience: 8
+  early_stopping_threshold: 0.002
   adam_betas:
-    - 0.9
-    - 0.95
+  - 0.9
+  - 0.95
   no_decay_patterns:
-    - bias
-    - LayerNorm.weight
-    - layernorm.weight
-    - ln_f.weight
-    - ln_
-    - norm.weight
-  
+  - bias
+  - LayerNorm.weight
+  - layernorm.weight
+  - ln_f.weight
+  - ln_
+  - norm.weight
   adaptive_lr:
-    enabled: true  # ENABLED: Dynamically adjust LR on plateaus
-    min_lr: 0.00001  # Don't go below this (adjusted for lower base LR)
-    max_lr: 0.00012  # Can boost up to this (adjusted for lower base LR)
-    min_improvement: 0.005  # Require 0.005 improvement
-    plateau_patience: 1500  # Wait 1500 steps before adjusting
-    plateau_factor: 1.15  # Boost LR by 15% on plateau
+    enabled: false
+    min_lr: 1.0e-05
+    max_lr: 0.00012
+    min_improvement: 0.005
+    plateau_patience: 1500
+    plateau_factor: 1.15
     lr_check_interval: 100
     batch_loss_window: 100
     stability_threshold: 5
-    increase_factor: 1.15  # Increase by 15% when stuck
+    increase_factor: 1.15
     divergence_threshold: 5
     emergency_factor: 0.7
-    warmup_percentage: 0.05  # 5% warmup for adaptive changes
-  
+    warmup_percentage: 0.05
   progressive:
     enable_progressive_training: false
     enable_sequence_scaling: false
@@ -95,7 +100,6 @@ training:
     enable_curriculum: false
     curriculum_metric: loss
     enable_dynamic_batch: false
-  
   dynamic_batching:
     enabled: false
     min_batch_size: 8
@@ -105,17 +109,15 @@ training:
     adjustment_factor: 1
     warmup_steps: 500
     smooth_transitions: false
-  
   gradient_health:
     enabled: true
-    initial_clip_value: 2.0
-    final_clip_value: 2.0
-    warmup_steps: 1000
-    explosion_threshold: 3.0
+    initial_clip_value: 1.0
+    final_clip_value: 1.0
+    warmup_steps: 2000
+    explosion_threshold: 2.0
     explosion_window: 5
     auto_reduce_lr: true
     lr_reduction_factor: 0.5
-  
   enhanced_features:
     architecture:
       use_moh: false
@@ -123,13 +125,11 @@ training:
       use_cross_attention: true
       use_alibi: false
       expert_routing_type: deepseek
-    
     rag:
       enabled: false
       knowledge_base_path: null
       max_retrieved_docs: 5
       rag_fusion_type: concatenate
-    
     losses:
       use_multi_token_prediction: false
       num_future_tokens: 1
@@ -146,7 +146,6 @@ training:
       adaptive_loss_scaling: false
       contrastive_loss_weight: 0.02
       diversity_loss_weight: 0.1
-    
     adaptive_mtp:
       use_adaptive_mtp: false
       num_prediction_heads: 3
@@ -167,21 +166,18 @@ training:
       additional_loss_base_weight: 0.1
       enable_dynamic_prediction: true
       min_confidence_for_computation: 0.3
-    
     gradient:
       gradient_surgery: false
       adaptive_gradient_surgery: false
       gradient_surgery_method: pcgrad
       gradient_norm_tracking: false
       gradient_anomaly_detection: false
-    
     memory:
       use_episodic_memory: false
       memory_capacity: 500
       memory_selection_strategy: importance
       memory_importance_threshold: 0.7
       memory_adaptation_rate: 0.01
-    
     quantization:
       quantization_aware: false
       use_nvfp4: true
@@ -191,37 +187,32 @@ training:
       nvfp4_block_size: 16
       stochastic_rounding: false
       use_hadamard_transform: false
-  
   deepspeed:
     use_deepspeed: true
     zero_stage: 1
     cpu_offload: false
     nvme_offload: false
     precision_type: fp16
-    train_batch_size: 48  # UPDATED: Matches batch_size * gradient_accumulation_steps (12*4)
-    micro_batch_size: 12  # UPDATED: Matches training.batch_size
-    gradient_accumulation_steps: 4  # Matches training.gradient_accumulation_steps
+    train_batch_size: 128
+    micro_batch_size: 128
+    gradient_accumulation_steps: 1
     activation_checkpointing: true
-  
   performance:
     ultra_fast_mode: true
     fast_progress: false
     minimal_progress: false
     express_mode: false
     no_sync: false
-    
     torch_compile:
       enabled: true
       mode: max-autotune
       fullgraph: false
       dynamic: false
       backend: inductor
-    
     torchinductor_max_autotune: '0'
     cudagraph_skip_dynamic_shapes: true
     cudagraph_dynamic_shape_warn_limit: null
     float32_matmul_precision: high
-  
   memory:
     enable_memory_pool: true
     pool_size_gb: 24
@@ -229,11 +220,10 @@ training:
     enable_cpu_offload: false
     clear_cache_frequency: 50
     silent_mode: true
-    target_utilization: 0.90
+    target_utilization: 0.9
     warning_threshold: 0.92
     critical_threshold: 0.95
     emergency_threshold: 0.97
-  
   lr_finder:
     enabled: false
     start_lr: 1e-8
@@ -247,22 +237,19 @@ training:
     momentum_cycling: false
     track_validation: false
     num_runs: 1
-  
   device: auto
   fp16: true
   bf16: false
-
 data:
   data_dir: /project/code/data/processed
   max_length: 128
-  tokenizer_name: /project/code/models/tokenizer/enhanced-65536
+  tokenizer_name: /project/code/models/tokenizer/enhanced-50680
   padding_side: right
   truncation: true
   max_train_examples: null
   max_eval_examples: 5000
   dataloader_drop_last: true
   dataloader_pin_memory: false
-  
   streaming: false
   buffer_size: 1000
   max_samples: null
@@ -270,40 +257,34 @@ data:
   val_split_ratio: 0.15
   use_multi_column: false
   distributed: false
-  num_workers: 6  # OPTIMIZED: Matches dataloader_num_workers for consistency
-  samples_per_file: 100  # OPTIMIZED: Reduced file open/close overhead (was 1)
-  
+  num_workers: 6
+  samples_per_file: 100
   min_sequence_length: 10
   max_sequence_repetition_rate: 0.6
   max_consecutive_repeats: 10
   skip_malformed_sequences: true
-  
-  enable_bucketing: true  # OPTIMIZED: ENABLED for 30-50% memory savings + 1.5-2x speedup
+  enable_bucketing: true
   bucket_boundaries:
-    - 64
-    - 128
-  max_bucket_size: 32  # OPTIMIZED: Matches batch_size for optimal bucket flushing
-  
+  - 64
+  - 128
+  max_bucket_size: 32
   use_weighted_mixing: false
   mixing_temperature: 1
   shuffle_seed: 42
   reshuffle_each_epoch: true
-  prefetch_factor: 4  # OPTIMIZED: Increased from 2 to eliminate GPU starvation
+  prefetch_factor: 4
   persistent_workers: true
-  
   format_detection_samples: 10
-  
   fallback_data_paths:
-    - /project/code/data/processed
-    - /project/code/data/combined
-    - /project/code/data
-    - ./data/processed
-    - ./data/combined
-    - ./data
-    - ../data/processed
-    - ../data
-    - ../../data
-
+  - /project/code/data/processed
+  - /project/code/data/combined
+  - /project/code/data
+  - ./data/processed
+  - ./data/combined
+  - ./data
+  - ../data/processed
+  - ../data
+  - ../../data
 evaluation:
   eval_during_training: true
   eval_metrics: perplexity
@@ -320,25 +301,21 @@ evaluation:
   max_invalid_batch_logs: 5
   num_test_batches: 3
   batch_size_variance_threshold: 2
-  
   moe_metrics:
     track_expert_utilization: true
     track_routing_entropy: true
     track_load_balance: true
     track_expert_specialization: true
     log_frequency: 50
-
 output:
   output_dir: outputs/small_enhanced
   save_total_limit: 3
   save_on_each_node: false
   gradient_checkpointing: true
-
 run_management:
   experiment_name: ava-small-enhanced-v5-plateau-fix
   run_id: null
   resume_from_checkpoint: null
-
 wandb:
   enabled: true
   project: Ava
@@ -347,78 +324,50 @@ wandb:
   group: ava-enhanced-v5-plateau-fix
   job_type: train
   tags:
-    - gpu
-    - rtx-3090-ti
-    - 100M
-    - enhanced
-    - moe
-    - custom-tokenizer
-    - enhanced-65k
-    - 65k-vocab
-    - plateau-fix
-    - adaptive-lr
-    - v5
+  - gpu
+  - rtx-3090-ti
+  - 100M
+  - enhanced
+  - moe
+  - custom-tokenizer
+  - enhanced-65k
+  - 65k-vocab
+  - plateau-fix
+  - adaptive-lr
+  - v5
   resume_policy: allow
   save_code: true
-  notes: |
-    [PLATEAU FIX 2025-11-02] Addressing Training Plateau at Loss ~2.5:
-    
-    🎯 NEW OPTIMIZATIONS FOR PLATEAU BREAKING:
-    
-    1. LEARNING RATE IMPROVEMENTS:
-       - learning_rate: 0.0001→0.00015 (50% higher for stronger updates)
-       - lr_scheduler_type: cosine→cosine_with_restarts (2 cycles for LR restarts)
-       - lr_end: 0.00001→0.00003 (slower decay, 20% vs 10% of initial)
-       - eval_steps: 1000→500 (more frequent eval to catch improvements)
-    
-    2. ADAPTIVE LR ENABLED:
-       - enabled: false→true (dynamic LR adjustment on plateaus)
-       - plateau_patience: 1500 steps before adjustment
-       - plateau_factor: 1.15 (boost LR by 15% when stuck)
-       - max_lr: 0.0002 (can boost to 2x base LR)
-       - min_improvement: 0.005 (require meaningful progress)
-    
-    3. BATCH SIZE OPTIMIZATION:
-       - batch_size: 16→12 (stronger gradient signal)
-       - gradient_accumulation_steps: 4 (same)
-       - Effective batch: 64→48 (better for escaping local optima)
-       - deepspeed configs updated to match (12*4=48)
-    
-    4. EARLY STOPPING ADJUSTMENTS:
-       - patience: 3→5 (allow more time for improvement)
-       - threshold: 0.01→0.005 (more sensitive to small gains)
-    
-    5. MONITORING IMPROVEMENTS:
-       - eval_steps: 1000→500 (catch improvements faster)
-       - moe_metrics.log_frequency: 50 (unchanged, still frequent)
-    
-    Expected Results:
-    - Break through loss=2.5 plateau
-    - Continue descent to loss=1.5-2.0
-    - LR restarts at ~15k and ~30k steps
-    - Adaptive LR kicks in if plateau persists
-    - Smaller effective batch allows escape from local minima
-    
-    ✅ STABILITY FIXES PRESERVED (from v4):
-    - Batch size consistency maintained (12 across all configs)
-    - Data pipeline simplified (streaming=false, bucketing=false)
-    - MoE stability (8 experts, capacity=3.0, aux_loss=0.12)
-    - Precision optimized (FP16 for small models)
-    - Regularization balanced (dropout=0.12, weight_decay=0.08)
-    
-    Previous runs analysis:
-    - v4: Stable training, eliminated spikes ✅
-    - v4: Plateau at loss ~2.5 from 10k-30k steps ⚠️
-    - v5: Addressing plateau with LR schedule + adaptive LR
-    
-    Target metrics:
-    - Final loss: 1.5-2.0 (from current 2.5)
-    - Perplexity: <7.4 (currently ~12.2)
-    - Smooth continued descent without plateau
+  notes: "[PLATEAU FIX 2025-11-02] Addressing Training Plateau at Loss ~2.5:\n\n\U0001F3AF\
+    \ NEW OPTIMIZATIONS FOR PLATEAU BREAKING:\n\n1. LEARNING RATE IMPROVEMENTS:\n\
+    \   - learning_rate: 0.0001\u21920.00015 (50% higher for stronger updates)\n \
+    \  - lr_scheduler_type: cosine\u2192cosine_with_restarts (2 cycles for LR restarts)\n\
+    \   - lr_end: 0.00001\u21920.00003 (slower decay, 20% vs 10% of initial)\n   -\
+    \ eval_steps: 1000\u2192500 (more frequent eval to catch improvements)\n\n2. ADAPTIVE\
+    \ LR ENABLED:\n   - enabled: false\u2192true (dynamic LR adjustment on plateaus)\n\
+    \   - plateau_patience: 1500 steps before adjustment\n   - plateau_factor: 1.15\
+    \ (boost LR by 15% when stuck)\n   - max_lr: 0.0002 (can boost to 2x base LR)\n\
+    \   - min_improvement: 0.005 (require meaningful progress)\n\n3. BATCH SIZE OPTIMIZATION:\n\
+    \   - batch_size: 16\u219212 (stronger gradient signal)\n   - gradient_accumulation_steps:\
+    \ 4 (same)\n   - Effective batch: 64\u219248 (better for escaping local optima)\n\
+    \   - deepspeed configs updated to match (12*4=48)\n\n4. EARLY STOPPING ADJUSTMENTS:\n\
+    \   - patience: 3\u21925 (allow more time for improvement)\n   - threshold: 0.01\u2192\
+    0.005 (more sensitive to small gains)\n\n5. MONITORING IMPROVEMENTS:\n   - eval_steps:\
+    \ 1000\u2192500 (catch improvements faster)\n   - moe_metrics.log_frequency: 50\
+    \ (unchanged, still frequent)\n\nExpected Results:\n- Break through loss=2.5 plateau\n\
+    - Continue descent to loss=1.5-2.0\n- LR restarts at ~15k and ~30k steps\n- Adaptive\
+    \ LR kicks in if plateau persists\n- Smaller effective batch allows escape from\
+    \ local minima\n\n\u2705 STABILITY FIXES PRESERVED (from v4):\n- Batch size consistency\
+    \ maintained (12 across all configs)\n- Data pipeline simplified (streaming=false,\
+    \ bucketing=false)\n- MoE stability (8 experts, capacity=3.0, aux_loss=0.12)\n\
+    - Precision optimized (FP16 for small models)\n- Regularization balanced (dropout=0.12,\
+    \ weight_decay=0.08)\n\nPrevious runs analysis:\n- v4: Stable training, eliminated\
+    \ spikes \u2705\n- v4: Plateau at loss ~2.5 from 10k-30k steps \u26A0\uFE0F\n\
+    - v5: Addressing plateau with LR schedule + adaptive LR\n\nTarget metrics:\n-\
+    \ Final loss: 1.5-2.0 (from current 2.5)\n- Perplexity: <7.4 (currently ~12.2)\n\
+    - Smooth continued descent without plateau\n"
   offline: false
   cache_size: 10000
   cache_flush_interval: 500
-
 stability:
   loss_smoothing: true
   loss_smoothing_alpha: 0.95
@@ -430,7 +379,6 @@ stability:
   stop_on_nan: false
   max_grad_norm_before_stop: 100
   max_loss_before_stop: 20
-
 generation:
   repetition_penalty: 3
   eos_penalty: 0.5
@@ -455,7 +403,6 @@ generation:
   distinct_2_threshold: 0.7
   repetition_threshold: 0.3
   entropy_threshold: 4
-
 rlhf:
   policy_model_path: /project/code/outputs/runs/latest/model
   judge_model_path: /project/code/outputs/runs/latest/model
@@ -477,7 +424,6 @@ rlhf:
   use_wandb: true
   wandb_project: ava-rlhf
   wandb_name: rlhf-small-v1
-  
   ppo:
     learning_rate: 5e-7
     batch_size: 32

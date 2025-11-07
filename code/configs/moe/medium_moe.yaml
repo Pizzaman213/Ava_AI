@@ -1,0 +1,56 @@
+# Medium MoE Configuration (7B parameters, 16 experts)
+# Suitable for: Mid-scale experiments, multi-GPU training (4-8 GPUs)
+
+model:
+  vocab_size: 32000
+  hidden_size: 4096
+  num_layers: 32
+  num_attention_heads: 32
+  intermediate_size: 14336  # 3.5x hidden_size (Mixtral-style)
+  max_position_embeddings: 4096
+
+  # MoE settings
+  num_experts: 16
+  num_experts_per_token: 2
+  router_type: 'mixtral'
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: 'swiglu'
+
+  # Performance
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  gradient_checkpointing: true  # Memory saving for larger model
+
+  # MoE losses
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.001
+  router_jitter_noise: 0.01
+
+  # Regularization
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+  # Distributed
+  expert_parallel_size: 1  # Set to 2/4 for expert parallelism
+
+training:
+  batch_size: 64
+  gradient_accumulation_steps: 4
+  learning_rate: 1.5e-4
+  max_steps: 500000
+  warmup_steps: 5000
+  weight_decay: 0.1
+
+deepspeed:
+  enabled: true
+  zero_stage: 2
+  precision: "bf16"
+  gradient_accumulation_steps: 4
+  train_batch_size: 256  # batch_size * gradient_accumulation_steps
+  micro_batch_size: 64

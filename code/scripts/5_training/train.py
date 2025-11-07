@@ -348,7 +348,12 @@ from src.Ava.config.feature_compatibility import (
     validate_training_config,
 )
 from src.Ava.data.dataloader import create_streaming_dataloaders
-from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel  # type: ignore[import-not-found]
+from src.Ava.models.moe_model import (  # type: ignore[import-not-found]
+    EnhancedMoEConfig,
+    EnhancedMoEModel,
+    OptimizedMoEConfig,
+    OptimizedMoETransformer,
+)
 from src.Ava.data.multi_column_data import create_multi_column_dataloader
 # Observability modules removed for simplicity
 # from src.Ava.observability.health_dashboard import HealthDashboard
@@ -531,10 +536,19 @@ def create_model_and_tokenizer(
         if k not in filtered_config:
             filtered_config[k] = default_v
 
-    model_config = EnhancedMoEConfig(**filtered_config)
+    # Check if config specifies optimized MoE
+    use_optimized_moe = model_config_dict.get('use_optimized_moe', False)
 
-    # Initialize model
-    model = EnhancedMoEModel(model_config)
+    if use_optimized_moe:
+        # Use new high-performance MoE
+        logger.info("Using OptimizedMoETransformer (high-performance MoE)")
+        model_config = OptimizedMoEConfig(**filtered_config)
+        model = OptimizedMoETransformer(model_config)
+    else:
+        # Use existing MoE (backward compatible)
+        logger.info("Using EnhancedMoEModel (standard MoE)")
+        model_config = EnhancedMoEConfig(**filtered_config)
+        model = EnhancedMoEModel(model_config)
 
     # Initialize tokenizer
     # Try multiple config locations for tokenizer name (with configurable default)

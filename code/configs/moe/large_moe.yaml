@@ -1,0 +1,64 @@
+# Large MoE Configuration (13B+ parameters, 32 experts)
+# Suitable for: Large-scale production training, multi-node (8+ GPUs)
+
+model:
+  vocab_size: 32000
+  hidden_size: 5120
+  num_layers: 40
+  num_attention_heads: 40
+  intermediate_size: 17920  # 3.5x hidden_size
+  max_position_embeddings: 8192
+
+  # MoE settings
+  num_experts: 32
+  num_experts_per_token: 2
+  router_type: 'mixtral'
+  capacity_factor: 1.5  # Higher for large scale
+  expert_dropout: 0.1  # Some regularization
+  activation: 'swiglu'
+
+  # Performance
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  gradient_checkpointing: true
+
+  # MoE losses
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.001
+  router_jitter_noise: 0.01
+
+  # Regularization
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+  # Distributed
+  expert_parallel_size: 4  # Shard experts across 4 GPUs
+
+training:
+  batch_size: 128
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-4
+  max_steps: 1000000
+  warmup_steps: 10000
+  weight_decay: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+
+deepspeed:
+  enabled: true
+  zero_stage: 3  # Full ZeRO for large model
+  cpu_offload: false
+  precision: "bf16"
+  gradient_accumulation_steps: 8
+  train_batch_size: 1024  # 128 * 8
+  micro_batch_size: 128
+  activation_checkpointing: true
+  partition_activations: true
+  zero_overlap_comm: true
+  zero_contiguous_gradients: true

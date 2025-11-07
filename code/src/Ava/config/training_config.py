@@ -562,6 +562,52 @@ class TrainingConfigManager:
                           f"{config_dict['lr_finder'].get('gradient_accumulation_steps', 'not set')} → {master_grad_accum}")
                     config_dict['lr_finder']['gradient_accumulation_steps'] = master_grad_accum
 
+        # AUTO-SYNC: Ensure batch sizes are consistent between training and DeepSpeed sections
+        # DeepSpeed requires: train_batch_size = micro_batch_size * gradient_accumulation_steps
+        if 'training' in config_dict and 'batch_size' in config_dict['training']:
+            master_batch_size = config_dict['training']['batch_size']
+            master_grad_accum = config_dict['training'].get('gradient_accumulation_steps', 1)
+
+            # Calculate DeepSpeed batch sizes
+            expected_micro_batch = master_batch_size
+            expected_train_batch = master_batch_size * master_grad_accum
+
+            # Sync top-level deepspeed section (used in distributed configs)
+            if 'deepspeed' in config_dict:
+                # Sync micro_batch_size
+                current_micro = config_dict['deepspeed'].get('micro_batch_size')
+                if current_micro != expected_micro_batch:
+                    print(f"⚙️  Auto-syncing deepspeed.micro_batch_size: "
+                          f"{current_micro or 'not set'} → {expected_micro_batch}")
+                    config_dict['deepspeed']['micro_batch_size'] = expected_micro_batch
+
+                # Sync train_batch_size
+                current_train = config_dict['deepspeed'].get('train_batch_size')
+                if current_train != expected_train_batch:
+                    print(f"⚙️  Auto-syncing deepspeed.train_batch_size: "
+                          f"{current_train or 'not set'} → {expected_train_batch} "
+                          f"({master_batch_size} × {master_grad_accum})")
+                    config_dict['deepspeed']['train_batch_size'] = expected_train_batch
+
+            # Sync nested training.deepspeed section (used in GPU configs)
+            if 'training' in config_dict and 'deepspeed' in config_dict['training']:
+                ds_config = config_dict['training']['deepspeed']
+
+                # Sync micro_batch_size
+                current_micro = ds_config.get('micro_batch_size')
+                if current_micro != expected_micro_batch:
+                    print(f"⚙️  Auto-syncing training.deepspeed.micro_batch_size: "
+                          f"{current_micro or 'not set'} → {expected_micro_batch}")
+                    ds_config['micro_batch_size'] = expected_micro_batch
+
+                # Sync train_batch_size
+                current_train = ds_config.get('train_batch_size')
+                if current_train != expected_train_batch:
+                    print(f"⚙️  Auto-syncing training.deepspeed.train_batch_size: "
+                          f"{current_train or 'not set'} → {expected_train_batch} "
+                          f"({master_batch_size} × {master_grad_accum})")
+                    ds_config['train_batch_size'] = expected_train_batch
+
         return DynamicConfig(config_dict)
 
     def create_argument_parser(self) -> argparse.ArgumentParser:
