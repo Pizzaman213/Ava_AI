@@ -64,7 +64,22 @@
       "Bash(else echo \"$dir not found\")",
       "Bash(for dir in /project/code/src/Ava/*/)",
       "Bash(xargs:*)",
-      "Bash(timeout 5 python:*)"
+      "Bash(timeout 5 python:*)",
+      "Bash(timeout 90 python:*)",
+      "Bash(apt-cache policy:*)",
+      "Bash(sudo apt-get update:*)",
+      "Bash(sudo apt-get install:*)",
+      "Bash(timeout 240 python train.py:*)",
+      "Bash(lsof:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(timeout 240 python:*)",
+      "Bash(1)",
+      "Bash(tee:*)",
+      "Bash(timeout 30 python:*)",
+      "Bash(WANDB_MODE=offline timeout 60 python:*)",
+      "Bash(export WANDB_MODE=disabled)"
     ],
     "deny": [],
     "ask": []

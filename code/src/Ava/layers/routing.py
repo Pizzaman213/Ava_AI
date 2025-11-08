@@ -468,17 +468,18 @@ class DeepSeekRouter(UnifiedMoERouter):
 
 # Compile routers for performance
 # Provides ~20-30% speedup by optimizing computation graph
-try:
-    MixtralRouter.forward = torch.compile(
-        MixtralRouter.forward,
-        mode='reduce-overhead',  # Optimize for repeated calls
-        fullgraph=False
-    )
-    DeepSeekRouter.forward = torch.compile(
-        DeepSeekRouter.forward,
-        mode='reduce-overhead',
-        fullgraph=False
-    )
-except Exception:
-    # torch.compile not available
-    pass
+# Disabled by default to avoid C++ compiler requirements in testing
+# try:
+#     MixtralRouter.forward = torch.compile(
+#         MixtralRouter.forward,
+#         mode='reduce-overhead',  # Optimize for repeated calls
+#         fullgraph=False
+#     )
+#     DeepSeekRouter.forward = torch.compile(
+#         DeepSeekRouter.forward,
+#         mode='reduce-overhead',
+#         fullgraph=False
+#     )
+# except Exception:
+#     # torch.compile not available
+#     pass

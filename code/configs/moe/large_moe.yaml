@@ -1,64 +1,116 @@
 # Large MoE Configuration (13B+ parameters, 32 experts)
 # Suitable for: Large-scale production training, multi-node (8+ GPUs)
+# Model Size: ~15.8B parameters (total), ~3.2B active per token
+# Memory: ~60GB (bf16), ~80GB+ with activations and gradients
 
 model:
-  vocab_size: 32000
+  vocab_size: 50680
   hidden_size: 5120
   num_layers: 40
   num_attention_heads: 40
-  intermediate_size: 17920  # 3.5x hidden_size
+  intermediate_size: 17920
   max_position_embeddings: 8192
-
-  # MoE settings
   num_experts: 32
   num_experts_per_token: 2
-  router_type: 'mixtral'
-  capacity_factor: 1.5  # Higher for large scale
-  expert_dropout: 0.1  # Some regularization
-  activation: 'swiglu'
-
-  # Performance
+  router_type: mixtral
+  capacity_factor: 1.5
+  expert_dropout: 0.1
+  activation: swiglu
   use_grouped_gemm: true
   use_triton_kernels: true
   use_torch_compile: true
   gradient_checkpointing: true
-
-  # MoE losses
+  use_optimized_moe: true
   router_z_loss_coef: 0.001
   load_balance_loss_coef: 0.01
   diversity_loss_coef: 0.001
   expert_dropout_loss_coef: 0.001
   router_jitter_noise: 0.01
-
-  # Regularization
+  use_lora_experts: false
+  lora_rank: 8
+  lora_alpha: 16
+  freeze_lora_base: false
   attention_dropout: 0.0
   dropout: 0.0
-  layer_norm_eps: 1.0e-5
+  layer_norm_eps: 1.0e-05
   initializer_range: 0.02
 
-  # Distributed
-  expert_parallel_size: 4  # Shard experts across 4 GPUs
+moe_memory_optimization:
+  use_lora_experts: false
+  lora_rank: 8
+  lora_alpha: 16
+  freeze_lora_base: false
+  use_expert_offloading: false
+  max_active_experts_gpu: 4
+  offload_prefetch_lookahead: 2
+  offload_eviction_policy: lru
+  offload_pin_memory: true
+  offload_async_transfers: true
+  use_hierarchical_experts: false
+  use_expert_quantization: false
 
 training:
   batch_size: 128
   gradient_accumulation_steps: 8
-  learning_rate: 1.0e-4
+  learning_rate: 0.0001
   max_steps: 1000000
   warmup_steps: 10000
   weight_decay: 0.1
-  adam_beta1: 0.9
-  adam_beta2: 0.95
-  adam_epsilon: 1.0e-8
+  save_steps: 20000
+  eval_steps: 5000
+  logging_steps: 100
+  run_validation: true
+  validation_batch_size: 128
+  max_validation_batches: 2000
+  compute_val_train_ratio: true
+  generate_every_n_steps: 5000
+  num_generations_per_step: 3
+  generation_during_eval: true
+  test_generation_quality: true
+
+data:
+  dataset_name: OpenAssistant_oasst2_processed.jsonl
+  data_dir: /project/code/data/processed
+  max_length: 2048
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: /project/code/models/tokenizer/enhanced-50680
+  padding_side: right
+  truncation: true
+  num_workers: 16
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+
+output:
+  output_dir: /project/code/outputs/runs/large_moe
+  save_every: 20000
+  fresh_start: false
+
+run_management:
+  run_name: large_moe
+  run_description: Large MoE config for multi-node training
+  run_tags: moe,large,multi-node
+
+performance:
+  enable_tf32: true
+  float32_matmul_precision: high
+  enable_cudnn_benchmark: true
+
+hardware:
+  device: cuda
+  mixed_precision: bf16
+  compile: true
+
+wandb:
+  use_wandb: false
 
 deepspeed:
-  enabled: true
-  zero_stage: 3  # Full ZeRO for large model
-  cpu_offload: false
-  precision: "bf16"
+  use_deepspeed: true
+  zero_stage: 3
+  precision: bf16
   gradient_accumulation_steps: 8
-  train_batch_size: 1024  # 128 * 8
+  train_batch_size: 1024
   micro_batch_size: 128
-  activation_checkpointing: true
-  partition_activations: true
-  zero_overlap_comm: true
-  zero_contiguous_gradients: true

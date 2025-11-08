@@ -1,0 +1,205 @@
+# Tiny MoE Configuration for Testing GPU OOM Fix
+# This is a minimal config designed to fit easily in 24GB VRAM
+# Model Size: ~400M parameters (total), ~100M active per token
+
+model:
+  vocab_size: 50680  # custom tokenizer vocab size
+  hidden_size: 256   # Halved from 512 for minimal memory usage
+  num_layers: 4      # Reduced from 8
+  num_attention_heads: 4  # Halved from 8 to match hidden_size
+  intermediate_size: 1024  # 4x hidden_size
+  max_position_embeddings: 512  # Reduced from 1024
+
+  # MoE settings
+  num_experts: 4    # Reduced from 8
+  num_experts_per_token: 2
+  router_type: 'mixtral'
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: 'swiglu'
+
+  # Performance
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: false  # Disable for testing
+  gradient_checkpointing: false  # DISABLED: Conflicts with DeepSpeed ZeRO + sparse MoE gradients
+
+  # Flag for optimized MoE
+  use_optimized_moe: true
+
+  # MoE losses
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.01
+
+  # Regularization
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+training:
+  batch_size: 2
+  gradient_accumulation_steps: 16
+  learning_rate: 3.0e-4
+  max_steps: 10000
+  warmup_steps: 500
+  weight_decay: 0.1
+  save_steps: 1000
+  eval_steps: 500
+  logging_steps: 100
+  num_epochs: 1  # Just 1 epoch for testing
+
+  # Validation during training
+  run_validation: true
+  validation_batch_size: 2
+  max_validation_batches: 50  # Reduced for testing
+  compute_val_train_ratio: true
+
+  # Generation during training
+  generate_every_n_steps: 500
+  num_generations_per_step: 3
+  generation_during_eval: true
+  num_eval_generations: 3
+
+  # Generation quality testing
+  test_generation_quality: true
+  generation_test_interval: 500
+  num_quality_samples: 5  # Reduced for testing
+  compute_perplexity_on_generated: true
+
+  # Quality metrics to compute
+  compute_repetition_metrics: true
+  compute_coherence_score: true
+  compute_distinct_ngrams: true
+  compute_entropy: true
+  log_generation_samples: true
+
+data:
+  # Dataset configuration
+  dataset_name: "OpenAssistant_oasst2_processed.jsonl"
+  data_dir: "/project/code/data/processed"
+  max_length: 128  # Reduced from 256
+  train_split: "train"
+  eval_split: "validation"
+
+  # Auto-split configuration
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  test_split_ratio: 0.05
+  split_strategy: "random"
+  split_seed: 42
+  preserve_original_splits: false
+
+  # Split behavior options
+  min_train_samples: 100
+  min_val_samples: 50
+  balance_splits: false
+
+  # Data filtering
+  filter_empty_samples: true
+  min_sample_length: 10
+  max_sample_length: 1024  # Reduced from 2048
+
+  # Tokenizer configuration
+  tokenizer_name: "/project/code/models/tokenizer/enhanced-50680"
+  padding_side: "right"
+  truncation: true
+
+  # Batch sizes
+  train_batch_size: 2
+  eval_batch_size: 2
+
+  # DataLoader performance settings
+  num_workers: 0  # Set to 0 to avoid multiprocessing issues
+  dataloader_drop_last: true
+  dataloader_pin_memory: false  # Disabled for safety
+  dataloader_prefetch_factor: 2
+  dataloader_persistent_workers: false  # Disabled with num_workers=0
+
+  # Data loading configuration
+  use_weighted_mixing: false
+  mixing_temperature: 1.0
+  streaming: true
+  buffer_size: 10000
+  shuffle_seed: 42
+  reshuffle_each_epoch: true
+  drop_last_batch: true
+
+  # Advanced features
+  multi_column: false
+  use_multi_column: false
+  enable_bucketing: false
+
+evaluation:
+  eval_during_training: true
+  eval_at_checkpoints: true
+  compute_perplexity: true
+  compute_loss_metrics: true
+  compute_generation_metrics: true
+  perplexity_stride: 512
+  max_perplexity_samples: 1000
+  report_recent_train_loss: true
+  recent_loss_window: 100
+  log_val_train_ratio: true
+  num_eval_samples_to_log: 3
+  log_full_generations: false
+
+generation:
+  do_sample: true
+  temperature: 0.8
+  top_k: 50
+  top_p: 0.9
+  num_beams: 1
+  max_new_tokens: 128  # Reduced from 256
+  min_length: 10
+  max_length: 512  # Reduced from 768
+  repetition_penalty: 1.2
+  no_repeat_ngram_size: 3
+  use_ngram_blocking: false
+  ngram_size: 3
+  eos_penalty: 0.5
+  pad_token_id: 0
+  eos_token_id: 2
+  bos_token_id: 1
+
+  test_prompts:
+    - "Once upon a time"
+    - "The future of AI is"
+    - "In a world where"
+
+  save_generations: true
+  log_generations: true
+  generation_output_file: "generations.txt"
+
+  target_coherence_score: 75
+  max_repetition_rate: 0.15
+  min_distinct_2: 0.7
+  min_entropy: 4.0
+  warn_on_quality_degradation: true
+  track_generation_metrics: true
+  log_metrics_to_tensorboard: true
+  save_metrics_history: true
+
+hardware:
+  device: "cuda"
+  mixed_precision: "bf16"
+  compile: false  # Disabled for testing
+
+paths:
+  output_dir: "/project/code/outputs/tiny_moe_test"
+  log_dir: "/project/code/outputs/tiny_moe_test/logs"
+
+deepspeed:
+  enabled: false  # DISABLED: DeepSpeed ZeRO incompatible with sparse MoE (unused experts don't get gradients)
+  zero_stage: 1  # ZeRO-1 is more stable for MoE models with sparse gradients
+  precision: "bf16"
+  cpu_offload: false  # DISABLED: CPU offload incompatible with MoE sparse gradients
+  cpu_offload_params: false  # Keep params on GPU for speed
+
+  # Batch size configuration
+  train_batch_size: 32  # 2 × 16 × 1 = 32
+  micro_batch_size: 2
+  gradient_accumulation_steps: 16

@@ -475,33 +475,77 @@ def load_config(config_path: str) -> dict:
     return config_dict
 
 
+def materialize_meta_model(model, device="cuda", dtype=torch.bfloat16):
+    """
+    Materialize meta device model directly on target device in specified dtype.
+    This avoids creating the model in CPU RAM, preventing OOM for large models.
+    """
+    import torch.nn as nn
+
+    def init_fn(module):
+        # Process parameters
+        for name, param in list(module.named_parameters(recurse=False)):
+            if param.device.type == "meta":
+                # Create parameter directly on device in target dtype
+                new_param = nn.Parameter(
+                    torch.empty(param.shape, device=device, dtype=dtype)
+                )
+                # Initialize with appropriate method
+                if isinstance(module, nn.Linear):
+                    nn.init.normal_(new_param, mean=0.0, std=0.02)
+                elif isinstance(module, nn.Embedding):
+                    nn.init.normal_(new_param, mean=0.0, std=0.02)
+                else:
+                    nn.init.normal_(new_param, mean=0.0, std=0.02)
+
+                # Replace meta parameter
+                delattr(module, name)
+                setattr(module, name, new_param)
+
+        # Process buffers
+        for name, buffer in list(module.named_buffers(recurse=False)):
+            if buffer is not None and buffer.device.type == "meta":
+                new_buffer = torch.empty(buffer.shape, device=device, dtype=dtype)
+                delattr(module, name)
+                module.register_buffer(name, new_buffer)
+
+    model.apply(init_fn)
+    return model
+
+
 def create_model_and_tokenizer(
     config_dict: dict, training_config: EnhancedTrainingConfig
 ) -> tuple:
     """Create model and tokenizer from configuration."""
     model_config_dict = config_dict.get("model", {})
 
+    # Check if config specifies optimized MoE BEFORE creating config
+    use_optimized_moe = model_config_dict.get('use_optimized_moe', False)
+
     # Create enhanced model config with feature flags
-    # Override YAML config with training_config values
+    # Override YAML config with training_config values (only for standard MoE)
     enhanced_model_config = model_config_dict.copy()
-    enhanced_model_config.update(
-        {
-            "use_moh": training_config.architecture.use_moh,
-            "use_moa": training_config.architecture.use_moa,
-            "use_cross_attention": training_config.architecture.use_cross_attention,
-            "use_alibi": training_config.architecture.use_alibi,
-            "router_type": training_config.architecture.expert_routing_type,
-        }
-    )
+    if not use_optimized_moe:
+        # Only apply these overrides for standard MoE (not for OptimizedMoETransformer)
+        enhanced_model_config.update(
+            {
+                "use_moh": training_config.architecture.use_moh,
+                "use_moa": training_config.architecture.use_moa,
+                "use_cross_attention": training_config.architecture.use_cross_attention,
+                "use_alibi": training_config.architecture.use_alibi,
+                "router_type": training_config.architecture.expert_routing_type,
+            }
+        )
 
     # Filter out None values and ensure proper defaults
-    # Get valid fields from EnhancedMoEConfig dataclass
+    # Get valid fields from the appropriate config dataclass
     from dataclasses import fields
-    valid_fields = {f.name: f.type for f in fields(EnhancedMoEConfig)}
+    config_class = OptimizedMoEConfig if use_optimized_moe else EnhancedMoEConfig
+    valid_fields = {f.name: f.type for f in fields(config_class)}
 
     filtered_config = {}
     for k, v in enhanced_model_config.items():
-        # Only include fields that EnhancedMoEConfig actually has
+        # Only include fields that the target config class actually has
         if k in valid_fields and v is not None:
             # Convert to proper type
             field_type = valid_fields[k]
@@ -536,14 +580,32 @@ def create_model_and_tokenizer(
         if k not in filtered_config:
             filtered_config[k] = default_v
 
-    # Check if config specifies optimized MoE
-    use_optimized_moe = model_config_dict.get('use_optimized_moe', False)
-
+    # use_optimized_moe was already checked above for filtering
     if use_optimized_moe:
-        # Use new high-performance MoE
+        # Use new high-performance MoE with meta device initialization
         logger.info("Using OptimizedMoETransformer (high-performance MoE)")
         model_config = OptimizedMoEConfig(**filtered_config)
-        model = OptimizedMoETransformer(model_config)
+
+        # Check if expert offloading is enabled - it's incompatible with meta device
+        use_offloading = filtered_config.get('use_expert_offloading', False)
+
+        if use_offloading:
+            # Expert offloading doesn't support meta device, create directly on GPU
+            logger.info("Expert offloading enabled - creating model directly on GPU...")
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = OptimizedMoETransformer(model_config).to(device=device, dtype=torch.bfloat16)
+            logger.info(f"Model created on {device} in bf16 dtype")
+        else:
+            # Use meta device for memory-efficient initialization
+            logger.info("Initializing model on meta device (low RAM usage)...")
+            with torch.device("meta"):
+                model = OptimizedMoETransformer(model_config)
+
+            # Materialize weights directly on GPU in bf16
+            logger.info("Materializing model weights on GPU in bf16...")
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = materialize_meta_model(model, device=device, dtype=torch.bfloat16)
+            logger.info(f"Model materialized on {device} in bf16 dtype")
     else:
         # Use existing MoE (backward compatible)
         logger.info("Using EnhancedMoEModel (standard MoE)")
@@ -918,6 +980,161 @@ def create_dataloaders(
         )
 
     return train_loader, val_loader
+
+
+def initialize_deepspeed(
+    model: torch.nn.Module,
+    config_dict: dict,
+    training_config: EnhancedTrainingConfig,
+) -> Tuple[torch.nn.Module, torch.optim.Optimizer, bool]:
+    """Initialize DeepSpeed if enabled in config.
+
+    Returns:
+        Tuple of (model_engine, optimizer, is_deepspeed_enabled)
+    """
+    if not training_config.deepspeed.use_deepspeed:
+        return model, None, False
+
+    import deepspeed
+    from deepspeed import DeepSpeedConfig
+
+    logger.info("🚀 Initializing DeepSpeed with ZeRO optimization...")
+
+    # Get training config
+    training_cfg = config_dict.get("training", {})
+    batch_size = training_cfg.get("batch_size", training_config.training.batch_size)
+    gradient_accumulation_steps = training_cfg.get(
+        "gradient_accumulation_steps",
+        training_config.training.gradient_accumulation
+    )
+
+    # Build DeepSpeed config
+    # Optimized for small-to-medium models (100M-1B parameters)
+    # Bucket sizes scaled to model size to avoid excessive memory allocation
+    ds_config = {
+        "train_batch_size": batch_size * gradient_accumulation_steps,
+        "train_micro_batch_size_per_gpu": batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "optimizer": {
+            "type": "AdamW",
+            "params": {
+                "lr": training_cfg.get("learning_rate", 3e-4),
+                "betas": [0.9, 0.95],
+                "eps": 1e-8,
+                "weight_decay": training_cfg.get("weight_decay", 0.1),
+            }
+        },
+        "scheduler": {
+            "type": "WarmupDecayLR",
+            "params": {
+                "total_num_steps": training_cfg.get("max_steps", 100000),
+                "warmup_min_lr": 0,
+                "warmup_max_lr": training_cfg.get("learning_rate", 3e-4),
+                "warmup_num_steps": training_cfg.get("warmup_steps", 2000),
+            }
+        },
+        "fp16": {
+            "enabled": False,
+        },
+        "bf16": {
+            "enabled": True if training_config.deepspeed.precision_type == "bf16" else False,
+        },
+        "zero_optimization": {
+            "stage": training_config.deepspeed.zero_stage,
+            "offload_optimizer": {
+                "device": "cpu" if training_config.deepspeed.cpu_offload else "none",
+                "pin_memory": True,
+                "fast_init": False  # Don't allocate on GPU first for better memory efficiency
+            },
+            "offload_param": {
+                "device": "cpu" if getattr(training_config.deepspeed, 'cpu_offload_params', False) else "none",
+                "pin_memory": True
+            },
+            "overlap_comm": True,
+            "contiguous_gradients": True,
+
+            # CRITICAL FIX: Reduced bucket sizes from 500MB to 50MB
+            # This prevents massive over-allocation for small models
+            # 50MB is appropriate for models up to ~1B parameters
+            "reduce_bucket_size": 5e7,  # 50MB (was 5e8 = 500MB)
+            "allgather_bucket_size": 5e7,  # 50MB (was missing, defaulted to 500MB!)
+
+            # ZeRO-3 specific optimizations
+            "stage3_prefetch_bucket_size": 5e7,  # 50MB (was 5e8 = 500MB)
+            "stage3_param_persistence_threshold": 1e5,  # Keep small params on GPU (was 1e6)
+            "stage3_max_live_parameters": 1e9,  # Allow all params in memory
+            "stage3_max_reuse_distance": 1e9,  # Reuse all parameters
+            "stage3_gather_16bit_weights_on_model_save": True,
+
+            # Additional memory optimizations
+            "reduce_scatter": True,  # Enable for ZeRO-3
+            "allgather_partitions": True,  # Enable for ZeRO-3
+            "round_robin_gradients": True,  # Balance memory across GPUs
+            "sub_group_size": 1e9,  # Don't partition further for small models
+        },
+
+        # Activation checkpointing configuration
+        "activation_checkpointing": {
+            "partition_activations": True,  # Shard activations across GPUs
+            "cpu_checkpointing": False,  # Keep on GPU for speed
+            "contiguous_memory_optimization": True,
+            "synchronize_checkpoint_boundary": False,
+        },
+
+        "gradient_clipping": 1.0,
+        "steps_per_print": 100,
+        "wall_clock_breakdown": False,
+    }
+
+    logger.info(f"  ZeRO Stage: {training_config.deepspeed.zero_stage}")
+    logger.info(f"  CPU Offload: {training_config.deepspeed.cpu_offload}")
+    logger.info(f"  Precision: {training_config.deepspeed.precision_type}")
+    logger.info(f"  Batch size: {batch_size}")
+    logger.info(f"  Gradient accumulation: {gradient_accumulation_steps}")
+    logger.info(f"  Reduce bucket size: {ds_config['zero_optimization']['reduce_bucket_size']/1e6:.0f}MB")
+    logger.info(f"  Allgather bucket size: {ds_config['zero_optimization']['allgather_bucket_size']/1e6:.0f}MB")
+
+    # Initialize distributed backend manually to avoid MPI dependency
+    # This is needed for single-GPU training without MPI installed
+    if not torch.distributed.is_initialized():
+        import os
+        import socket
+
+        # Find an available port
+        def find_free_port():
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', 0))
+                s.listen(1)
+                port = s.getsockname()[1]
+                return str(port)
+
+        # Set environment variables to use NCCL and avoid MPI
+        os.environ['RANK'] = '0'
+        os.environ['WORLD_SIZE'] = '1'
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = find_free_port()
+        os.environ['LOCAL_RANK'] = '0'
+
+        logger.info(f"  Using MASTER_PORT: {os.environ['MASTER_PORT']}")
+
+        # Initialize distributed with NCCL backend (or gloo for CPU)
+        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        torch.distributed.init_process_group(
+            backend=backend,
+            init_method='env://',
+            world_size=1,
+            rank=0
+        )
+        logger.info(f"  Initialized distributed backend: {backend}")
+
+    # Initialize DeepSpeed
+    model_engine, optimizer, _, _ = deepspeed.initialize(
+        model=model,
+        config=ds_config,
+    )
+
+    logger.info("✅ DeepSpeed initialization complete")
+    return model_engine, optimizer, True
 
 
 def setup_optimizer_and_lr_management(
@@ -2064,20 +2281,40 @@ def main():
             except Exception as e:
                 logger.debug(f"Could not apply CUDAGraph optimizations: {e}")
 
-        # Enable TF32 for faster matmul on Ampere GPUs (configurable)
+        # TF32 and hardware optimizations (configurable via performance config)
         if torch.cuda.is_available():
             try:
+                # Get performance config with defaults
+                enable_tf32 = True
+                enable_cudnn_benchmark = True
+                matmul_precision = 'high'
+
                 if hasattr(training_config, 'performance'):
+                    enable_tf32 = getattr(training_config.performance, 'enable_tf32', True)
+                    enable_cudnn_benchmark = getattr(training_config.performance, 'enable_cudnn_benchmark', True)
                     matmul_precision = getattr(training_config.performance, 'float32_matmul_precision', 'high')
+
+                # Apply TF32 optimizations (8x faster matmul on Ampere+ GPUs)
+                if enable_tf32:
                     torch.set_float32_matmul_precision(matmul_precision)
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+                    logger.info(f"✅ TF32 optimizations ENABLED (precision: {matmul_precision})")
                 else:
-                    torch.set_float32_matmul_precision('high')
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-                logger.info("TF32 and CuDNN benchmark optimizations applied")
+                    torch.backends.cuda.matmul.allow_tf32 = False
+                    torch.backends.cudnn.allow_tf32 = False
+                    logger.info("⚠️  TF32 optimizations DISABLED (may be slower)")
+
+                # Apply CuDNN benchmark (auto-tune kernels)
+                if enable_cudnn_benchmark:
+                    torch.backends.cudnn.benchmark = True
+                    logger.info("✅ CuDNN benchmark auto-tuning ENABLED")
+                else:
+                    torch.backends.cudnn.benchmark = False
+                    logger.info("⚠️  CuDNN benchmark DISABLED")
+
             except Exception as e:
-                logger.debug(f"Could not apply TF32 optimizations: {e}")
+                logger.debug(f"Could not apply hardware optimizations: {e}")
 
         # Register GPU cleanup handlers
         register_cleanup_handlers()
@@ -2129,14 +2366,14 @@ def main():
         from src.Ava.config.training_config import DeepSpeedConfig
         ds_yaml = config_dict["deepspeed"]
         training_config.deepspeed = DeepSpeedConfig(
-            use_deepspeed=ds_yaml.get("use_deepspeed", False),
+            use_deepspeed=ds_yaml.get("enabled", ds_yaml.get("use_deepspeed", False)),
             zero_stage=ds_yaml.get("zero_stage", 2),
             cpu_offload=ds_yaml.get("cpu_offload", False),
             nvme_offload=ds_yaml.get("nvme_offload", False),
             gradient_accumulation_steps=ds_yaml.get("gradient_accumulation_steps", 1),
             train_batch_size=ds_yaml.get("train_batch_size"),
             micro_batch_size=ds_yaml.get("micro_batch_size"),
-            precision_type=ds_yaml.get("precision_type", "bf16"),
+            precision_type=ds_yaml.get("precision", ds_yaml.get("precision_type", "bf16")),
         )
         logger.info(f"DeepSpeed config loaded: enabled={training_config.deepspeed.use_deepspeed}, zero_stage={training_config.deepspeed.zero_stage}")
 
@@ -2321,6 +2558,15 @@ def main():
         logger.info(f"Run directory: {run_manager.run_dir}")
 
     # 4. Create model and tokenizer
+    # Clear GPU cache before model initialization to prevent OOM
+    if torch.cuda.is_available():
+        logger.info("Clearing GPU cache before model initialization...")
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        allocated = torch.cuda.memory_allocated(0) / 1e9
+        cached = torch.cuda.memory_reserved(0) / 1e9
+        logger.info(f"GPU Memory before init: {allocated:.2f}GB allocated, {cached:.2f}GB cached")
+
     logger.info("Initializing model and tokenizer...")
     model, tokenizer = create_model_and_tokenizer(config_dict, training_config)
 
@@ -2341,7 +2587,12 @@ def main():
 
     logger.info(f"Vocab size validated: {model_vocab_size} tokens")
 
-    model.to(device)
+    # Move model to device if not already there (OptimizedMoE is already on device in bf16)
+    if next(model.parameters()).device.type != device.type:
+        logger.info(f"Moving model to {device}...")
+        model.to(device)
+    else:
+        logger.info(f"Model already on {device} in {next(model.parameters()).dtype}")
 
     param_count = sum(p.numel() for p in model.parameters()) / 1e6
     logger.info(f"Model: {param_count:.1f}M parameters")
@@ -2507,6 +2758,18 @@ def main():
             f"Dataloader validation failed with unexpected error: {e}"
         ) from e
 
+    # 5.5. Initialize DeepSpeed if enabled
+    deepspeed_enabled = False
+    ds_optimizer = None
+    if training_config.deepspeed.use_deepspeed:
+        logger.info("DeepSpeed enabled - initializing ZeRO optimization...")
+        model, ds_optimizer, deepspeed_enabled = initialize_deepspeed(
+            model, config_dict, training_config
+        )
+        logger.info(f"✅ DeepSpeed initialized: enabled={deepspeed_enabled}")
+    else:
+        logger.info("DeepSpeed disabled - using standard PyTorch training")
+
     # 6. Initialize enhanced modular trainer
     logger.info("Initializing Enhanced Modular Trainer...")
     trainer = EnhancedModularTrainer(
@@ -2516,6 +2779,12 @@ def main():
         config=training_config,
         run_manager=run_manager,
     )
+
+    # Set DeepSpeed optimizer if initialized
+    if deepspeed_enabled and ds_optimizer is not None:
+        trainer.optimizer = ds_optimizer
+        trainer.deepspeed_enabled = True
+        logger.info("  Trainer configured with DeepSpeed optimizer")
 
     # 6.5. Setup dataset-aware learning rate configuration with progressive training (Phase 5)
     logger.info("Configuring dataset-aware learning rate and progressive training...")

@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 import torch  # type: ignore[import]
 import torch.nn as nn  # type: ignore[import]
 import torch.nn.functional as F  # type: ignore[import]
+import torch.distributed as dist  # type: ignore[import]
 from torch.amp import GradScaler, autocast  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
@@ -240,9 +241,14 @@ class EnhancedModularTrainer:
             print("✓ Gradient checkpointing enabled for memory optimization")
 
         # Mixed precision gradient scaler with health monitoring
-        self.scaler = (
-            GradScaler('cuda') if torch.cuda.is_available() else None
+        # Note: GradScaler only works with FP16, not BF16
+        # BF16 has better numerical stability and doesn't need gradient scaling
+        precision_type = getattr(config.deepspeed, 'precision_type', 'fp32')
+        use_scaler = (
+            torch.cuda.is_available()
+            and precision_type == "fp16"
         )
+        self.scaler = GradScaler('cuda') if use_scaler else None
         self.scaler_reset_interval = (
             1000  # Reset scaler every N steps to prevent error accumulation
         )
@@ -402,6 +408,16 @@ class EnhancedModularTrainer:
         if self.deepspeed_engine is not None:
             return self.deepspeed_engine.module
         return self.model
+
+    def _clear_moe_expert_cache(self):
+        """Clear MoE expert caches after backward pass to prevent device mismatch."""
+        base_model = self._get_base_model
+
+        # Walk through all modules to find CPUOffloadedExpertGroup instances
+        for module in base_model.modules():
+            # Check if this is a CPUOffloadedExpertGroup with a clear_cache method
+            if hasattr(module, 'clear_cache') and hasattr(module, '_training_cache'):
+                module.clear_cache()
 
     def _init_gpu_memory_manager(self):
         """Initialize GPU memory manager."""
@@ -621,6 +637,9 @@ class EnhancedModularTrainer:
         # Load or generate DeepSpeed configuration
         self.deepspeed_config = self._create_deepspeed_config()
 
+        # Validate DeepSpeed configuration
+        self._validate_deepspeed_config(self.deepspeed_config)
+
         print(f"✓ DeepSpeed configuration prepared (ZeRO Stage {self.config.deepspeed.zero_stage})")
 
     def _create_deepspeed_config(self) -> Dict[str, Any]:
@@ -629,11 +648,34 @@ class EnhancedModularTrainer:
 
         # FIXED: Gradient accumulation should come from training config, not deepspeed config
         # DeepSpeed will handle gradient accumulation internally when enabled
-        gradient_accum_steps = getattr(self.config.training, "gradient_accumulation_steps", 1)
+        # Try both field names for compatibility (gradient_accumulation_steps in YAML, gradient_accumulation in old code)
+        gradient_accum_steps = getattr(self.config.training, "gradient_accumulation_steps",
+                                        getattr(self.config.training, "gradient_accumulation", 1))
+
+        # Get world size for proper batch size calculation
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+
+        # Calculate micro_batch_size and train_batch_size correctly
+        micro_batch_size = ds_config.micro_batch_size or self.config.training.batch_size
+
+        # DeepSpeed formula: train_batch_size = micro_batch_size × gradient_accumulation × world_size
+        train_batch_size = micro_batch_size * gradient_accum_steps * world_size
+
+        # If train_batch_size is explicitly set in config, use it (but validate it matches formula)
+        if ds_config.train_batch_size:
+            expected = micro_batch_size * gradient_accum_steps * world_size
+            if ds_config.train_batch_size != expected:
+                logger.warning(
+                    f"DeepSpeed train_batch_size mismatch: config has {ds_config.train_batch_size}, "
+                    f"but formula gives {expected} (micro_batch={micro_batch_size} × "
+                    f"grad_accum={gradient_accum_steps} × world_size={world_size}). "
+                    f"Using calculated value: {expected}"
+                )
+            train_batch_size = expected
 
         config = {
-            "train_batch_size": ds_config.train_batch_size or self.config.training.batch_size,
-            "train_micro_batch_size_per_gpu": ds_config.micro_batch_size or self.config.training.batch_size,
+            "train_batch_size": train_batch_size,
+            "train_micro_batch_size_per_gpu": micro_batch_size,
             "gradient_accumulation_steps": gradient_accum_steps,
             "optimizer": {
                 "type": "AdamW",
@@ -739,6 +781,55 @@ class EnhancedModularTrainer:
             }
 
         return config
+
+    def _validate_deepspeed_config(self, config: Dict[str, Any]) -> None:
+        """Validate DeepSpeed configuration to catch common issues early.
+
+        Args:
+            config: DeepSpeed configuration dictionary
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        train_batch_size = config.get("train_batch_size")
+        micro_batch_size = config.get("train_micro_batch_size_per_gpu")
+        grad_accum = config.get("gradient_accumulation_steps")
+
+        if not all([train_batch_size, micro_batch_size, grad_accum]):
+            logger.warning(
+                "DeepSpeed config missing batch size parameters. "
+                f"train_batch_size={train_batch_size}, "
+                f"micro_batch_size={micro_batch_size}, "
+                f"gradient_accumulation={grad_accum}"
+            )
+            return
+
+        # Get world size
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+
+        # Validate the DeepSpeed formula
+        expected = micro_batch_size * grad_accum * world_size
+
+        if train_batch_size != expected:
+            error_msg = (
+                f"\n{'='*80}\n"
+                f"❌ DeepSpeed Configuration Error\n"
+                f"{'='*80}\n"
+                f"train_batch_size does not match the required formula!\n\n"
+                f"  Formula: train_batch_size = micro_batch_size × gradient_accumulation × world_size\n\n"
+                f"  Expected: {expected} = {micro_batch_size} × {grad_accum} × {world_size}\n"
+                f"  Got:      {train_batch_size}\n\n"
+                f"Fix: Update your config with:\n"
+                f"  deepspeed:\n"
+                f"    train_batch_size: {expected}\n"
+                f"    micro_batch_size: {micro_batch_size}\n"
+                f"{'='*80}\n"
+            )
+            # Log as warning but don't raise - the auto-calculation should have fixed it
+            logger.warning(error_msg)
+            print(f"⚠️  DeepSpeed batch size mismatch detected and auto-corrected to {expected}")
+        else:
+            print(f"✓ DeepSpeed batch size validated: {train_batch_size} = {micro_batch_size} × {grad_accum} × {world_size}")
 
     def _init_async_logger(self):
         """Initialize async logging system."""
@@ -1466,6 +1557,11 @@ class EnhancedModularTrainer:
         except Exception as e:
             print(f" DeepSpeed initialization failed: {e}")
             print("   Falling back to standard training")
+            print("   ⚠️  WARNING: DDP mode requires more GPU memory than DeepSpeed ZeRO")
+            print("   ⚠️  If you encounter OOM errors, consider:")
+            print("   ⚠️    1. Fix DeepSpeed config (check train_batch_size formula)")
+            print("   ⚠️    2. Reduce batch_size to 1")
+            print("   ⚠️    3. Enable gradient checkpointing")
 
             # Cleanup any partial initialization
             if hasattr(self, "deepspeed_engine"):
@@ -1477,6 +1573,12 @@ class EnhancedModularTrainer:
         self, optimizer: torch.optim.Optimizer
     ) -> Dict[str, Any]:
         """Set up standard (non-DeepSpeed) training with intelligent LR management."""
+        # Enable gradient checkpointing if configured (critical for memory savings in DDP mode)
+        if getattr(self.config.model, "gradient_checkpointing", False):
+            print("🔄 Enabling gradient checkpointing for memory optimization...")
+            self._enable_gradient_checkpointing()
+            print("✅ Gradient checkpointing enabled")
+
         # CRITICAL FIX: Wrap model in DDP for non-DeepSpeed distributed training
         if self.distributed_manager and self.distributed_manager.is_initialized():
             if not isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
@@ -2450,12 +2552,19 @@ class EnhancedModularTrainer:
                     task_losses = {"main": scaled_loss}  # Could have multiple tasks
                     self._apply_gradient_surgery(task_losses, optimizer)
                 else:
-                    # Standard backward pass with mixed precision
-                    if self.scaler is not None:
+                    # Standard backward pass with mixed precision or DeepSpeed
+                    if hasattr(self, 'deepspeed_enabled') and self.deepspeed_enabled and isinstance(self.model, object) and hasattr(self.model, 'backward'):
+                        # DeepSpeed backward (handles mixed precision internally)
+                        self.model.backward(scaled_loss)
+                    elif self.scaler is not None:
                         # Scale loss and backward for mixed precision
                         self.scaler.scale(scaled_loss).backward()
                     else:
                         scaled_loss.backward()
+
+            # Clear MoE expert cache after backward pass to free GPU memory
+            # This prevents device mismatch errors when experts are offloaded to CPU
+            self._clear_moe_expert_cache()
 
             # Only unscale gradients and check health on the last accumulation step (before optimizer.step())
             # With gradient accumulation, we accumulate multiple backward() calls, then step once
@@ -2630,12 +2739,14 @@ class EnhancedModularTrainer:
                             f"    Scaler state: scale={scaler_scale:.1f}, "
                             f"growth_factor={scaler_state['growth_factor']}"
                         )
+                elif hasattr(self, 'deepspeed_enabled') and self.deepspeed_enabled and hasattr(self.model, 'step'):
+                    # DeepSpeed step (handles optimizer.step() and zero_grad() internally)
+                    self.model.step()
                 else:
                     optimizer.step()
-
-                # CRITICAL FIX: Zero gradients AFTER optimizer step
-                # This ensures gradients from accumulation cycle are used before clearing
-                optimizer.zero_grad(set_to_none=True)
+                    # CRITICAL FIX: Zero gradients AFTER optimizer step
+                    # This ensures gradients from accumulation cycle are used before clearing
+                    optimizer.zero_grad(set_to_none=True)
             else:
                 # Accumulating gradients, skip optimizer step
                 grad_norm = 0.0

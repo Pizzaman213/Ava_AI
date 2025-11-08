@@ -1,77 +1,72 @@
-# Medium MoE Configuration (7B parameters, 16 experts)
-# Suitable for: Mid-scale experiments, multi-GPU training (4-8 GPUs)
-# Model Size: ~7.2B parameters (total), ~1.8B active per token
-# Memory: ~28GB (bf16), ~40GB with activations and gradients
-
 model:
   vocab_size: 50680
-  hidden_size: 4096
-  num_layers: 32
-  num_attention_heads: 32
-  intermediate_size: 14336
-  max_position_embeddings: 4096
-  num_experts: 16
+  hidden_size: 256
+  num_layers: 4
+  num_attention_heads: 4
+  intermediate_size: 1024
+  max_position_embeddings: 512
+  num_experts: 8
   num_experts_per_token: 2
   router_type: mixtral
   capacity_factor: 1.25
   expert_dropout: 0.0
   activation: swiglu
   use_grouped_gemm: true
-  use_triton_kernels: true
-  use_torch_compile: true
+  use_triton_kernels: false
+  use_torch_compile: false
   gradient_checkpointing: true
   use_optimized_moe: true
   router_z_loss_coef: 0.001
   load_balance_loss_coef: 0.01
   diversity_loss_coef: 0.001
-  expert_dropout_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.0
   router_jitter_noise: 0.01
-  use_lora_experts: false
-  lora_rank: 8
-  lora_alpha: 16
+  use_lora_experts: true
+  lora_rank: 4
+  lora_alpha: 8
   freeze_lora_base: false
+  use_expert_offloading: true
+  max_active_experts_gpu: 2
+  offload_eviction_policy: lru
   attention_dropout: 0.0
   dropout: 0.0
   layer_norm_eps: 1.0e-05
   initializer_range: 0.02
-
 moe_memory_optimization:
-  use_lora_experts: false
-  lora_rank: 8
-  lora_alpha: 16
+  use_lora_experts: true
+  lora_rank: 4
+  lora_alpha: 8
   freeze_lora_base: false
-  use_expert_offloading: false
-  max_active_experts_gpu: 4
-  offload_prefetch_lookahead: 2
+  use_expert_offloading: true
+  max_active_experts_gpu: 2
+  offload_prefetch_lookahead: 1
   offload_eviction_policy: lru
   offload_pin_memory: true
   offload_async_transfers: true
   use_hierarchical_experts: false
   use_expert_quantization: false
-
 training:
   batch_size: 64
   gradient_accumulation_steps: 4
-  learning_rate: 0.00015
-  max_steps: 500000
-  warmup_steps: 5000
+  learning_rate: 0.0003
+  max_steps: 10
+  warmup_steps: 2000
   weight_decay: 0.1
-  save_steps: 10000
-  eval_steps: 2000
+  save_steps: 5000
+  eval_steps: 1000
   logging_steps: 100
   run_validation: true
-  validation_batch_size: 64
-  max_validation_batches: 1000
+  validation_batch_size: 1
+  max_validation_batches: 100
   compute_val_train_ratio: true
-  generate_every_n_steps: 2000
-  num_generations_per_step: 3
-  generation_during_eval: true
-  test_generation_quality: true
-
+  generate_every_n_steps: 5000
+  num_generations_per_step: 1
+  generation_during_eval: false
+  test_generation_quality: false
 data:
   dataset_name: OpenAssistant_oasst2_processed.jsonl
   data_dir: /project/code/data/processed
-  max_length: 1024
+  max_length: 128
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
@@ -79,38 +74,27 @@ data:
   tokenizer_name: /project/code/models/tokenizer/enhanced-50680
   padding_side: right
   truncation: true
-  num_workers: 8
+  num_workers: 0
   dataloader_drop_last: true
-  dataloader_pin_memory: true
+  dataloader_pin_memory: false
   dataloader_prefetch_factor: 2
-
 output:
-  output_dir: /project/code/outputs/runs/medium_moe
-  save_every: 10000
+  output_dir: /project/code/outputs/runs/tiny_moe_ultra_low_mem
+  save_every: 5000
   fresh_start: false
-
 run_management:
-  run_name: medium_moe
-  run_description: Medium MoE config for multi-GPU training
-  run_tags: moe,medium,multi-gpu
-
+  run_name: tiny_moe_ultra_low_mem
+  run_description: Ultra low memory config with LoRA r=4 + CPU offloading
+  run_tags: moe,lora,offloading,ultra-low-memory
 performance:
-  enable_tf32: true
+  enable_tf32: false
   float32_matmul_precision: high
   enable_cudnn_benchmark: true
-
 hardware:
   device: cuda
   mixed_precision: bf16
-  compile: true
-
+  compile: false
 wandb:
   use_wandb: false
-
 deepspeed:
-  use_deepspeed: true
-  zero_stage: 2
-  precision: bf16
-  gradient_accumulation_steps: 4
-  train_batch_size: 256
-  micro_batch_size: 64
+  use_deepspeed: false

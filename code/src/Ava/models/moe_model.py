@@ -152,6 +152,9 @@ class MultiHeadAttention(nn.Module):
     ) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.shape
 
+        # Store the input dtype for consistency
+        input_dtype = hidden_states.dtype
+
         # Project to Q, K, V
         q = self.q_proj(hidden_states)
         k = self.k_proj(hidden_states)
@@ -165,8 +168,9 @@ class MultiHeadAttention(nn.Module):
         # Apply RoPE if configured
         if self.rope is not None:
             cos, sin = self.rope(seq_len, hidden_states.device)
-            cos = cos[None, None, :, :]  # [1, 1, seq_len, head_dim]
-            sin = sin[None, None, :, :]
+            # Ensure RoPE embeddings match input dtype
+            cos = cos.to(dtype=input_dtype)[None, None, :, :]  # [1, 1, seq_len, head_dim]
+            sin = sin.to(dtype=input_dtype)[None, None, :, :]
             q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # Scaled dot-product attention
@@ -178,6 +182,9 @@ class MultiHeadAttention(nn.Module):
 
         attn_weights = F.softmax(attn_weights, dim=-1)
         attn_weights = self.attn_dropout(attn_weights)
+
+        # Ensure dtype consistency before matmul - critical for BF16 mixed precision
+        attn_weights = attn_weights.to(dtype=input_dtype)
 
         # Compute attention output
         attn_output = torch.matmul(attn_weights, v)
@@ -701,6 +708,20 @@ class OptimizedMoEConfig:
     use_shared_expert: bool = False
     shared_expert_weight: float = 0.5
 
+    # Memory optimization (All phases)
+    # Phase 1: LoRA
+    use_lora_experts: bool = False
+    lora_rank: int = 8
+    lora_alpha: int = 16
+    freeze_lora_base: bool = False
+    # Phase 2: CPU Offloading
+    use_expert_offloading: bool = False
+    max_active_experts_gpu: int = 4
+    offload_eviction_policy: str = 'lru'
+    # Phase 4: Quantization
+    use_expert_quantization: bool = False
+    expert_quantization_bits: int = 8
+
     # Attention settings
     attention_dropout: float = 0.0
     use_flash_attention: bool = False
@@ -763,6 +784,16 @@ class OptimizedTransformerBlock(nn.Module):
                 shared_expert_weight=config.shared_expert_weight,
                 gradient_checkpointing=config.gradient_checkpointing,
                 dtype=config.dtype,
+                # Memory optimization parameters (All phases)
+                use_lora_experts=config.use_lora_experts,
+                lora_rank=config.lora_rank,
+                lora_alpha=config.lora_alpha,
+                freeze_lora_base=config.freeze_lora_base,
+                use_expert_offloading=config.use_expert_offloading,
+                max_active_experts_gpu=config.max_active_experts_gpu,
+                offload_eviction_policy=config.offload_eviction_policy,
+                use_expert_quantization=config.use_expert_quantization,
+                expert_quantization_bits=config.expert_quantization_bits,
             )
         else:
             raise ImportError("SparseMoELayer not available. Cannot create OptimizedMoETransformer")
@@ -956,3 +987,95 @@ class OptimizedMoETransformer(nn.Module):
         """Reset expert utilization counters."""
         for layer in self.layers:
             layer.moe.reset_expert_counts()
+
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        max_length: int = 100,
+        temperature: float = 1.0,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+        pad_token_id: Optional[int] = None,
+        eos_token_id: Optional[int] = None,
+        **kwargs
+    ) -> torch.Tensor:
+        """Simple greedy/sampling generation.
+
+        Args:
+            input_ids: Input token IDs [batch_size, seq_len]
+            attention_mask: Attention mask [batch_size, seq_len]
+            max_length: Maximum total length (including prompt)
+            temperature: Sampling temperature (higher = more random)
+            top_p: Nucleus sampling threshold
+            do_sample: Whether to sample (True) or greedy (False)
+            pad_token_id: Padding token ID
+            eos_token_id: End-of-sequence token ID
+
+        Returns:
+            Generated token IDs [batch_size, generated_length]
+        """
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+
+        # Start with input_ids
+        generated = input_ids.clone()
+
+        # Generate tokens one at a time
+        for _ in range(max_length - input_ids.shape[1]):
+            # Forward pass
+            outputs = self.forward(
+                input_ids=generated,
+                attention_mask=attention_mask,
+                return_dict=True
+            )
+            logits = outputs['logits']
+
+            # Get logits for last position
+            next_token_logits = logits[:, -1, :]  # [batch_size, vocab_size]
+
+            # Apply temperature
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
+
+            if do_sample:
+                # Nucleus (top-p) sampling
+                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+
+                # Remove tokens with cumulative probability above threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+
+                # Mask out removed tokens
+                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                next_token_logits[indices_to_remove] = float('-inf')
+
+                # Sample
+                probs = torch.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                # Greedy decoding
+                next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+            # Append to generated sequence
+            generated = torch.cat([generated, next_token], dim=-1)
+
+            # Update attention mask if provided
+            if attention_mask is not None:
+                attention_mask = torch.cat([
+                    attention_mask,
+                    torch.ones((batch_size, 1), device=device, dtype=attention_mask.dtype)
+                ], dim=-1)
+
+            # Check for EOS
+            if eos_token_id is not None and (next_token == eos_token_id).all():
+                break
+
+            # Check if we've reached max length
+            if generated.shape[1] >= max_length:
+                break
+
+        return generated

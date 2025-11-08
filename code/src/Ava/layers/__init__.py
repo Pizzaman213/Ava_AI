@@ -1,5 +1,5 @@
 """
-Neural network layers for Qwen MoE++ architecture.
+Neural network layers for high-performance Sparse MoE architecture.
 """
 
 # Note: The following files have been moved to _archived/layers/:
@@ -10,12 +10,14 @@ Neural network layers for Qwen MoE++ architecture.
 # - cross_attention.py
 # These are experimental features not used in the default training pipeline
 
-from .experts import ExpertBalancer, SparseExpert
-from .routing import ExpertSelector, MoEPlusPlusLayer
+from .experts import HighPerformanceExpert, ExpertParallelGroup, SharedExpertLayer
+from .routing import UnifiedMoERouter, MixtralRouter, DeepSeekRouter
 
 __all__ = [
-    "ExpertBalancer",
-    "SparseExpert",
-    "ExpertSelector",
-    "MoEPlusPlusLayer",
+    "HighPerformanceExpert",
+    "ExpertParallelGroup",
+    "SharedExpertLayer",
+    "UnifiedMoERouter",
+    "MixtralRouter",
+    "DeepSeekRouter",
 ]

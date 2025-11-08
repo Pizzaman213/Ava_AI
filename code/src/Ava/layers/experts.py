@@ -397,12 +397,13 @@ class SharedExpertLayer(nn.Module):
 
 # Compile the expert modules for maximum performance
 # This provides ~20-30% speedup by optimizing the computation graph
-try:
-    HighPerformanceExpert.forward = torch.compile(
-        HighPerformanceExpert.forward,
-        mode='max-autotune',
-        fullgraph=False
-    )
-except Exception:
-    # torch.compile not available in this environment
-    pass
+# Disabled by default to avoid C++ compiler requirements in testing
+# try:
+#     HighPerformanceExpert.forward = torch.compile(
+#         HighPerformanceExpert.forward,
+#         mode='max-autotune',
+#         fullgraph=False
+#     )
+# except Exception:
+#     # torch.compile not available in this environment
+#     pass
