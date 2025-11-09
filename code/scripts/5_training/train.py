@@ -681,9 +681,18 @@ def create_model_and_tokenizer(
         # Check if expert offloading is enabled - it's incompatible with meta device
         use_offloading = filtered_config.get('use_expert_offloading', False)
 
-        if use_offloading:
-            # Expert offloading doesn't support meta device, create directly on GPU
-            get_logger().info("Expert offloading enabled - creating model directly on GPU...")
+        # Check if torch.compile will be enabled - it's also incompatible with meta device
+        enable_compile = config_dict.get("performance", {}).get("enable_torch_compile", True)
+
+        if use_offloading or enable_compile:
+            # Expert offloading OR torch.compile doesn't support meta device, create directly on GPU
+            reasons = []
+            if use_offloading:
+                reasons.append("expert offloading")
+            if enable_compile:
+                reasons.append("torch.compile")
+            reason_str = " and ".join(reasons)
+            get_logger().info(f"{reason_str.capitalize()} enabled - creating model directly on GPU...")
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model = OptimizedMoETransformer(model_config).to(device=device, dtype=torch.bfloat16)
             get_logger().info(f"Model created on {device} in bf16 dtype")
@@ -2737,9 +2746,46 @@ def main():
     if active_phases:
         get_logger().info(f"Active Enhancement Phases: {', '.join(active_phases)}")
 
-    # 2. Set up device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    get_logger().info(f"Device: {device}")
+    # 2. Auto-detect GPUs and setup multi-GPU training if available
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    get_logger().info(f"🔍 Detected {num_gpus} GPU(s) available")
+
+    # Check if we're already in a distributed environment (launched with torchrun/mpirun)
+    is_distributed_launch = 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
+
+    if num_gpus > 1 and not is_distributed_launch:
+        get_logger().info(f"🚀 Multi-GPU training enabled: Using all {num_gpus} GPUs")
+        get_logger().info("   Initializing automatic multi-GPU training with DataParallel...")
+
+        # Set up environment for single-node multi-GPU training
+        # We'll use DataParallel for simplicity, or user can still launch with torchrun for DDP
+        use_data_parallel = True
+        get_logger().info(f"   Strategy: DataParallel (nn.DataParallel) for {num_gpus} GPUs")
+
+        # Log GPU information
+        for i in range(num_gpus):
+            props = torch.cuda.get_device_properties(i)
+            memory_gb = props.total_memory / 1e9
+            get_logger().info(f"   GPU {i}: {props.name} ({memory_gb:.1f}GB)")
+    elif num_gpus == 1:
+        get_logger().info("✓ Single GPU training mode")
+    elif is_distributed_launch:
+        rank = int(os.environ.get('RANK', 0))
+        world_size = int(os.environ.get('WORLD_SIZE', 1))
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+        get_logger().info(f"✓ Distributed training detected: Rank {rank}/{world_size}, Local GPU {local_rank}")
+        num_gpus = world_size  # Use world_size for distributed
+    else:
+        get_logger().info("⚠️  No GPU detected, using CPU")
+
+    # Set up device (for single GPU or CPU, multi-GPU will be handled later)
+    if is_distributed_launch:
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+        device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    get_logger().info(f"Primary device: {device}")
 
     # 3. Initialize run manager (optional)
     run_manager = None
@@ -2827,11 +2873,31 @@ def main():
     else:
         get_logger().info("✓ torch.compile DISABLED - using eager mode for maximum speed with dynamic shapes")
 
+    # 4b. Wrap model with DataParallel for multi-GPU training (if not using distributed launch)
+    if num_gpus > 1 and not is_distributed_launch:
+        get_logger().info(f"🔄 Wrapping model with DataParallel for {num_gpus} GPUs...")
+        model = torch.nn.DataParallel(model)
+        get_logger().info(f"   ✓ Model replicated across {num_gpus} GPUs")
+        get_logger().info(f"   ✓ Batch will be split across GPUs automatically")
+        get_logger().info(f"   Primary GPU: cuda:0, Replica GPUs: {list(range(1, num_gpus))}")
+
     # 5. Create dataloaders
     get_logger().info("Setting up data loaders...")
     batch_size = training_config.training.batch_size or config_dict.get(
         "training", {}
     ).get("batch_size", 8)
+
+    # Log effective batch size with multi-GPU
+    if num_gpus > 1 and not is_distributed_launch:
+        effective_batch_per_gpu = batch_size // num_gpus
+        get_logger().info(f"📊 Multi-GPU batch splitting:")
+        get_logger().info(f"   Total batch size: {batch_size}")
+        get_logger().info(f"   Per-GPU batch size: {effective_batch_per_gpu}")
+        get_logger().info(f"   Number of GPUs: {num_gpus}")
+        if batch_size % num_gpus != 0:
+            get_logger().warning(f"   ⚠️  Batch size {batch_size} not evenly divisible by {num_gpus} GPUs")
+            get_logger().warning(f"   Consider using batch size that's a multiple of {num_gpus}")
+
     train_loader, val_loader = create_dataloaders(
         training_config, tokenizer, config_dict, batch_size
     )
@@ -3012,8 +3078,11 @@ def main():
     except Exception as e:
         get_logger().info(f"   Could not estimate total steps: {e}")
 
+    # For DataParallel models, access the underlying model for optimizer setup
+    model_for_optimizer = model.module if isinstance(model, torch.nn.DataParallel) else model
+
     optimizer, adaptive_lr_manager = setup_optimizer_and_lr_management(
-        model, config_dict, training_config, estimated_total_steps
+        model_for_optimizer, config_dict, training_config, estimated_total_steps
     )
 
     # CRITICAL: Set up training FIRST, then replace lr_manager if using adaptive

@@ -102,7 +102,7 @@ execution:
           icon_url: ""
     resources:
         gpu:
-            requested: 1
+            requested: 2
         sharedMemoryMB: 20480
     secrets:
         - variable: AWS_ACCESS_KEY_ID
