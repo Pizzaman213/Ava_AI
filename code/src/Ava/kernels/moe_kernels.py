@@ -11,7 +11,7 @@ Note: Falls back to PyTorch implementations if Triton is not available.
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple, Optional
+from typing import Tuple, Optional, TYPE_CHECKING
 
 # Check if Triton is available
 try:
@@ -20,12 +20,16 @@ try:
     TRITON_AVAILABLE = True
 except ImportError:
     TRITON_AVAILABLE = False
-    triton = None
-    tl = None
+    triton = None  # type: ignore[assignment]
+    tl = None  # type: ignore[assignment]
 
+if TYPE_CHECKING:
+    # For type checking, assume triton is available
+    import triton
+    import triton.language as tl
 
 if TRITON_AVAILABLE:
-    @triton.jit
+    @triton.jit  # type: ignore[misc]
     def _fused_gating_topk_kernel(
         # Pointers
         logits_ptr,

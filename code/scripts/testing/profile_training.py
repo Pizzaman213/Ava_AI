@@ -57,8 +57,8 @@ def profile_training_step(config_path: str, num_steps: int = 3, output_dir: str 
     config = config_manager.load_yaml_config(config_path)
 
     # Import training components (after config is loaded)
-    from src.Ava.data.data_loader import create_dataloaders
-    from src.Ava.models.moe_model import SparseTransformerMoE
+    from src.Ava.data.dataloader import create_dataloaders
+    from src.Ava.models.moe_model import OptimizedMoETransformer
     from src.Ava.training.core.trainer import EnhancedModularTrainer
 
     print("📦 Initializing components...")

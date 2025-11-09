@@ -249,6 +249,10 @@ class LoRAExpertGroup(nn.Module):
             down_weights: [num_selected, intermediate_size, hidden_size]
         """
         # Select LoRA matrices for chosen experts
+        # Initialize variables to satisfy type checker
+        gate_up_weights: Optional[torch.Tensor] = None
+        up_weights: Optional[torch.Tensor] = None
+
         if self.activation_type in ['swiglu', 'geglu']:
             # Gate-up LoRA delta: A @ B where A is [hidden, rank] and B is [rank, intermediate*2]
             lora_A = self.lora_A_gate_up[expert_ids]  # [num_selected, hidden_size, rank]
@@ -280,8 +284,10 @@ class LoRAExpertGroup(nn.Module):
         )  # [num_selected, intermediate_size, hidden_size]
 
         if self.activation_type in ['swiglu', 'geglu']:
+            assert gate_up_weights is not None
             return gate_up_weights, down_weights
         else:
+            assert up_weights is not None
             return up_weights, down_weights
 
     def forward(
@@ -314,6 +320,7 @@ class LoRAExpertGroup(nn.Module):
         # Get unique experts to avoid redundant computation
         unique_experts, inverse_indices = torch.unique(flat_indices, return_inverse=True)
 
+        # Compute and apply based on activation type
         if self.activation_type in ['swiglu', 'geglu']:
             unique_gate_up_weights, unique_down_weights = self._compute_expert_weights(unique_experts)
             # [num_unique, hidden, intermediate*2], [num_unique, intermediate, hidden]
@@ -321,13 +328,8 @@ class LoRAExpertGroup(nn.Module):
             # Map back to original flat_indices using inverse_indices
             gate_up_weights = unique_gate_up_weights[inverse_indices]  # [num_tokens*k, hidden, intermediate*2]
             down_weights = unique_down_weights[inverse_indices]  # [num_tokens*k, intermediate, hidden]
-        else:
-            unique_up_weights, unique_down_weights = self._compute_expert_weights(unique_experts)
-            up_weights = unique_up_weights[inverse_indices]
-            down_weights = unique_down_weights[inverse_indices]
 
-        # Batched matmul for up/gate_up projection
-        if self.activation_type in ['swiglu', 'geglu']:
+            # Batched matmul for gate_up projection
             gate_up = torch.bmm(
                 flat_hidden.unsqueeze(1),  # [num_tokens*k, 1, hidden]
                 gate_up_weights  # [num_tokens*k, hidden, intermediate*2]
@@ -340,6 +342,11 @@ class LoRAExpertGroup(nn.Module):
             gate, up = gate_up.chunk(2, dim=-1)
             hidden = self.activation(gate) * up  # [num_tokens*k, intermediate]
         else:
+            unique_up_weights, unique_down_weights = self._compute_expert_weights(unique_experts)
+            up_weights = unique_up_weights[inverse_indices]
+            down_weights = unique_down_weights[inverse_indices]
+
+            # Batched matmul for up projection
             hidden = torch.bmm(
                 flat_hidden.unsqueeze(1),
                 up_weights

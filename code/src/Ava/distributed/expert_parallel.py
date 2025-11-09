@@ -15,7 +15,7 @@ Features:
 
 import torch
 import torch.distributed as dist
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 import math
 
 
@@ -102,7 +102,7 @@ class ExpertParallelManager:
         self,
         hidden_states: torch.Tensor,
         expert_indices: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
         """
         Route tokens to GPUs using all-to-all communication.
 
@@ -151,7 +151,8 @@ class ExpertParallelManager:
         # In production, you'd use torch.distributed.all_to_all for efficiency
 
         # Create output buffers
-        total_local_tokens = sum(counts[self.rank] for counts in all_tokens_per_gpu)
+        total_local_tokens_tensor = sum(counts[self.rank] for counts in all_tokens_per_gpu)
+        total_local_tokens = int(total_local_tokens_tensor.item()) if isinstance(total_local_tokens_tensor, torch.Tensor) else int(total_local_tokens_tensor)
         local_hidden_states = torch.zeros(
             total_local_tokens, hidden_size,
             dtype=hidden_states.dtype,

@@ -368,7 +368,7 @@ class QuantizedExpertGroup(nn.Module):
         for token_idx in range(num_tokens):
             token_outputs = []
             for expert_slot in range(k):
-                expert_id = expert_indices[token_idx, expert_slot].item()
+                expert_id = int(expert_indices[token_idx, expert_slot].item())
                 expert_out = self._compute_expert_output(
                     hidden_states[token_idx:token_idx+1],
                     expert_id

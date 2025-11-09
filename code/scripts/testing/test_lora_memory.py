@@ -82,6 +82,7 @@ def test_expert_memory():
 
         # Test different LoRA ranks
         print("\nLoRA expert groups:")
+        lora_experts = None  # Initialize to satisfy type checker
         for rank in lora_ranks:
             lora_experts = LoRAExpertGroup(
                 num_experts=config['num_experts'],
@@ -107,7 +108,8 @@ def test_expert_memory():
 
         # Clean up
         del standard_experts
-        del lora_experts
+        if lora_experts is not None:
+            del lora_experts
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 
@@ -201,21 +203,25 @@ def test_gradient_flow():
 
     # LoRA A matrices
     lora_A_grad = lora_experts.lora_A_gate_up.grad
+    assert lora_A_grad is not None, "LoRA A gradients are None!"
     print(f"  LoRA A (gate_up) grad: mean={lora_A_grad.mean().item():.6f}, "
           f"std={lora_A_grad.std().item():.6f}")
 
     # LoRA B matrices
     lora_B_grad = lora_experts.lora_B_gate_up.grad
+    assert lora_B_grad is not None, "LoRA B gradients are None!"
     print(f"  LoRA B (gate_up) grad: mean={lora_B_grad.mean().item():.6f}, "
           f"std={lora_B_grad.std().item():.6f}")
 
     # Base parameters (should have grad if not frozen)
     base_grad = lora_experts.base_gate_up.grad
+    assert base_grad is not None, "Base gradients are None!"
     print(f"  Base (gate_up) grad: mean={base_grad.mean().item():.6f}, "
           f"std={base_grad.std().item():.6f}")
 
     # Input gradients
     input_grad = hidden_states.grad
+    assert input_grad is not None, "Input gradients are None!"
     print(f"  Input grad: mean={input_grad.mean().item():.6f}, "
           f"std={input_grad.std().item():.6f}")
 

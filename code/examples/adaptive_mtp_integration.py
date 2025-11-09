@@ -7,11 +7,11 @@ with the existing train.py training pipeline.
 
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
 # Import Adaptive MTP components
-from .adaptive_mtp_model import AdaptiveMTPModel, AdaptiveMTPConfig
-from ..losses import AdaptiveMTPLoss
+from src.Ava.models.adaptive_mtp_model import AdaptiveMTPModel, AdaptiveMTPConfig
+from src.Ava.losses import AdaptiveMTPLoss
 
 
 def parse_gate_hidden_dims(dims_str: str) -> tuple:
@@ -61,7 +61,7 @@ def wrap_model_with_adaptive_mtp(
     training_config: Any,
     vocab_size: int,
     hidden_size: int,
-) -> nn.Module:
+) -> Union[nn.Module, AdaptiveMTPModel]:
     """
     Wrap a base model with Adaptive MTP if enabled in config.
 
@@ -258,7 +258,8 @@ def example_training_loop_with_mtp():
     for epoch in range(num_epochs):
         # Set current epoch for warmup tracking
         if isinstance(model, AdaptiveMTPModel):
-            model.set_epoch(epoch)
+            adaptive_model: AdaptiveMTPModel = model  # Type assertion for Pylance
+            adaptive_model.set_epoch(epoch)
 
         for step, batch in enumerate(train_loader):
             # Forward pass
@@ -301,6 +302,7 @@ def example_training_loop_with_mtp():
 
         # Reset statistics at end of epoch
         if isinstance(model, AdaptiveMTPModel):
-            model.reset_statistics()
+            adaptive_model_end: AdaptiveMTPModel = model  # Type assertion for Pylance
+            adaptive_model_end.reset_statistics()
             if mtp_loss_fn is not None:
                 mtp_loss_fn.reset_statistics()

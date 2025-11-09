@@ -2711,16 +2711,18 @@ class UnifiedLoss(nn.Module):
 
         # Adaptive MTP statistics
         if self.primary_loss_type == "adaptive_mtp":
-            stats['adaptive_mtp'] = self.main_loss.get_statistics()
+            if hasattr(self.main_loss, 'get_statistics'):
+                stats['adaptive_mtp'] = self.main_loss.get_statistics()  # type: ignore[attr-defined]
         elif self.use_mtp and self.mtp_type == "adaptive":
-            stats['adaptive_mtp'] = self.mtp_loss.get_statistics()
+            if hasattr(self, 'mtp_loss') and hasattr(self.mtp_loss, 'get_statistics'):
+                stats['adaptive_mtp'] = self.mtp_loss.get_statistics()  # type: ignore[attr-defined]
 
         # MoE balancing statistics
-        if self.use_moe_balancing:
+        if self.use_moe_balancing and hasattr(self, 'moe_balancer'):
             stats['moe_balancing'] = {
-                'expert_counts': self.moe_balancer.expert_counts.tolist(),
-                'expert_scores': self.moe_balancer.expert_scores.tolist(),
-                'total_tokens': self.moe_balancer.total_tokens.item()
+                'expert_counts': self.moe_balancer.expert_counts.tolist(),  # type: ignore[attr-defined]
+                'expert_scores': self.moe_balancer.expert_scores.tolist(),  # type: ignore[attr-defined]
+                'total_tokens': self.moe_balancer.total_tokens.item()  # type: ignore[attr-defined]
             }
 
         return stats
@@ -2728,9 +2730,11 @@ class UnifiedLoss(nn.Module):
     def reset_statistics(self):
         """Reset statistics in all loss components."""
         if self.primary_loss_type == "adaptive_mtp":
-            self.main_loss.reset_statistics()
+            if hasattr(self.main_loss, 'reset_statistics'):
+                self.main_loss.reset_statistics()  # type: ignore[attr-defined]
         elif self.use_mtp and self.mtp_type == "adaptive":
-            self.mtp_loss.reset_statistics()
+            if hasattr(self, 'mtp_loss') and hasattr(self.mtp_loss, 'reset_statistics'):
+                self.mtp_loss.reset_statistics()  # type: ignore[attr-defined]
 
 
 # Convenience function for creating unified loss

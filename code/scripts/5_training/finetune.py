@@ -93,7 +93,6 @@ from src.Ava.data.multi_column_data import create_multi_column_dataloader
 # from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
 # from src.Ava.observability.training_validator import TrainingValidator
 from src.Ava.optimization import AdaptiveLearningRateManager, AdaptiveLRConfig
-from src.Ava.training.core.trainer import EnhancedTrainer as EnhancedModularTrainer
 from src.Ava.training.strategies.progressive_training import (
     ProgressiveTrainingConfig,
     ProgressiveTrainingManager,

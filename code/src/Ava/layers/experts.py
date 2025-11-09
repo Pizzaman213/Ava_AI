@@ -272,28 +272,15 @@ class ExpertParallelGroup(nn.Module):
         expanded_hidden = hidden_states.unsqueeze(1).expand(-1, k, -1)  # [num_tokens, k, hidden_size]
         flat_hidden = expanded_hidden.reshape(-1, self.hidden_size)  # [num_tokens * k, hidden_size]
 
-        # Gather expert weights for selected experts
-        if self.activation_type in ['swiglu', 'geglu']:
-            selected_gate_up_weights = self.gate_up_weights[flat_indices]  # [num_tokens * k, hidden_size, intermediate_size * 2]
-            if self.gate_up_bias is not None:
-                selected_gate_up_bias = self.gate_up_bias[flat_indices]  # [num_tokens * k, intermediate_size * 2]
-            else:
-                selected_gate_up_bias = None
-        else:
-            selected_up_weights = self.up_weights[flat_indices]
-            if self.up_bias is not None:
-                selected_up_bias = self.up_bias[flat_indices]
-            else:
-                selected_up_bias = None
-
+        # Gather expert weights and compute based on activation type
         selected_down_weights = self.down_weights[flat_indices]  # [num_tokens * k, intermediate_size, hidden_size]
-        if self.down_bias is not None:
-            selected_down_bias = self.down_bias[flat_indices]  # [num_tokens * k, hidden_size]
-        else:
-            selected_down_bias = None
+        selected_down_bias = self.down_bias[flat_indices] if self.down_bias is not None else None
 
         # Batched matmul for up projection
         if self.activation_type in ['swiglu', 'geglu']:
+            selected_gate_up_weights = self.gate_up_weights[flat_indices]  # [num_tokens * k, hidden_size, intermediate_size * 2]
+            selected_gate_up_bias = self.gate_up_bias[flat_indices] if self.gate_up_bias is not None else None
+
             # Compute gate and up in one matmul
             gate_up = torch.bmm(
                 flat_hidden.unsqueeze(1),  # [num_tokens * k, 1, hidden_size]
@@ -307,6 +294,9 @@ class ExpertParallelGroup(nn.Module):
             gate, up = gate_up.chunk(2, dim=-1)
             hidden = self.activation(gate) * up
         else:
+            selected_up_weights = self.up_weights[flat_indices]
+            selected_up_bias = self.up_bias[flat_indices] if self.up_bias is not None else None
+
             hidden = torch.bmm(
                 flat_hidden.unsqueeze(1),
                 selected_up_weights

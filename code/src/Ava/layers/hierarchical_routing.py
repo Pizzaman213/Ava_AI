@@ -108,15 +108,15 @@ class HierarchicalRouter(nn.Module):
     def _init_weights(self):
         """Initialize routing weights with small random values."""
         # Cluster gate
-        nn.init.normal_(self.cluster_gate.weight, mean=0.0, std=0.01)
+        nn.init.normal_(self.cluster_gate.weight, mean=0.0, std=0.01)  # type: ignore[arg-type]
         if self.cluster_gate.bias is not None:
-            nn.init.zeros_(self.cluster_gate.bias)
+            nn.init.zeros_(self.cluster_gate.bias)  # type: ignore[arg-type]
 
         # Expert gates
         for gate in self.expert_gates:
-            nn.init.normal_(gate.weight, mean=0.0, std=0.01)
+            nn.init.normal_(gate.weight, mean=0.0, std=0.01)  # type: ignore[arg-type]
             if gate.bias is not None:
-                nn.init.zeros_(gate.bias)
+                nn.init.zeros_(gate.bias)  # type: ignore[arg-type]
 
     def _compute_load_balance_loss(
         self,
@@ -235,7 +235,7 @@ class HierarchicalRouter(nn.Module):
             # We need to handle dynamic cluster selection efficiently
             expert_logits_list = []
             for token_idx in range(num_tokens):
-                cid = cluster_id[token_idx].item()
+                cid = int(cluster_id[token_idx].item())
                 expert_logits = self.expert_gates[cid](hidden_states[token_idx:token_idx+1])
                 expert_logits_list.append(expert_logits)
 

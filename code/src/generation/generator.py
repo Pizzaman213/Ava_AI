@@ -55,10 +55,10 @@ class TextGenerator:
         prompt: Union[str, List[int]],
         max_length: int = 100,
         min_length: int = 1,
-        temperature: float = 1.0,
+        temperature: float = 1.2,  # COHERENCE FIX: Increased from 1.0 for more diversity
         top_k: int = 50,
-        top_p: float = 0.9,
-        repetition_penalty: float = 1.2,
+        top_p: float = 0.95,  # COHERENCE FIX: Increased from 0.9 for better sampling
+        repetition_penalty: float = 1.1,  # COHERENCE FIX: Reduced from 1.2 to avoid forced diversity
         eos_penalty: float = 1.0,
         length_penalty: float = 1.0,
         num_beams: int = 1,

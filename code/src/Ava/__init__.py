@@ -33,20 +33,18 @@ except ImportError:
 
 # Layer components
 try:
-    from .layers.experts import ExpertBalancer, SparseExpert
+    from .layers.experts import HighPerformanceExpert, ExpertParallelGroup, SharedExpertLayer
 except ImportError:
-    ExpertBalancer = SparseExpert = None
+    HighPerformanceExpert = ExpertParallelGroup = SharedExpertLayer = None
 
 try:
     from .layers.routing import (
-        ExpertSelector, MoEPlusPlusLayer,
-        SwitchTransformerRouting, GSERouting,
-        HashingExpertRouting, StochasticExpertRouting
+        RoutingCache, UnifiedMoERouter,
+        MixtralRouter, DeepSeekRouter
     )
 except ImportError:
-    ExpertSelector = MoEPlusPlusLayer = None
-    SwitchTransformerRouting = GSERouting = None
-    HashingExpertRouting = StochasticExpertRouting = None
+    RoutingCache = UnifiedMoERouter = None
+    MixtralRouter = DeepSeekRouter = None
 
 try:
     from .layers.attention import (  # type: ignore[import-not-found]
@@ -176,7 +174,7 @@ except ImportError:
 
 # Memory and continual learning
 try:
-    from .memory import (
+    from .memory import (  # type: ignore[import-not-found]
         EpisodicMemoryBank, MemoryEntry, MemoryRetriever,
         AdaptiveMemoryManager, ExperienceReplay
     )
@@ -308,7 +306,6 @@ __all__ = [
     "DynamicQuantization",
     "INT4Quantization",
     "QuantizationConfig",
-    "quantize_model_pipeline",
 
     # Advanced Optimizers
     "LionOptimizer",
@@ -316,17 +313,13 @@ __all__ = [
     "AdaFactorOptimizer",
     "OptimizerFactory",
 
-    # FP8 Training
-    "FP8Format",
-    "FP8Config",
+    # FP8 Training (if available)
     "FP8Handler",
     "FP8Linear",
     "FP8MultiHeadAttention",
     "FP8LayerNorm",
     "FP8TransformerLayer",
     "FP8ModelWrapper",
-    "create_fp8_model",
-    "benchmark_fp8_training",
 
     # Memory
     "EpisodicMemoryBank",

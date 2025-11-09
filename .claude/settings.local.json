@@ -79,7 +79,13 @@
       "Bash(tee:*)",
       "Bash(timeout 30 python:*)",
       "Bash(WANDB_MODE=offline timeout 60 python:*)",
-      "Bash(export WANDB_MODE=disabled)"
+      "Bash(export WANDB_MODE=disabled)",
+      "Bash(timeout 300 python:*)",
+      "Bash(sudo swapoff:*)",
+      "Bash(sudo swapon:*)",
+      "Bash(dmesg:*)",
+      "Bash(ps:*)",
+      "Bash(kill:*)"
     ],
     "deny": [],
     "ask": []

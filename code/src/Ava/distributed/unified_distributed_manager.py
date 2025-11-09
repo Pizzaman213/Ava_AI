@@ -78,6 +78,7 @@ class UnifiedDistributedManager:
         """
         if self._initialized:
             logger.warning("Manager already initialized, returning existing model")
+            assert self._model is not None and self._optimizer is not None, "Model and optimizer should be set if initialized"
             return self._model, self._optimizer, criterion, dataloader
 
         # Use native DDP
@@ -144,8 +145,20 @@ class UnifiedDistributedManager:
         Returns:
             Reduced tensor
         """
+        # Convert string op to ReduceOp enum
+        op_map = {
+            "sum": dist.ReduceOp.SUM,
+            "max": dist.ReduceOp.MAX,
+            "min": dist.ReduceOp.MIN,
+        }
+
         if self.native_manager:
-            return self.native_manager.all_reduce(tensor, op)
+            reduce_op = op_map.get(op, dist.ReduceOp.SUM)
+            result = self.native_manager.all_reduce(tensor, reduce_op)  # type: ignore[arg-type]
+            # Handle mean operation
+            if op == "mean" and isinstance(result, torch.Tensor):
+                result = result / dist.get_world_size()
+            return result if isinstance(result, torch.Tensor) else tensor
         elif dist.is_initialized():
             # Direct PyTorch distributed call
             if op == "sum":
@@ -171,7 +184,8 @@ class UnifiedDistributedManager:
             Broadcasted tensor
         """
         if self.native_manager:
-            return self.native_manager.broadcast(tensor, src)
+            result = self.native_manager.broadcast(tensor, src)
+            return result if isinstance(result, torch.Tensor) else tensor
         elif dist.is_initialized():
             dist.broadcast(tensor, src)
         return tensor
