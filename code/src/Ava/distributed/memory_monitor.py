@@ -11,6 +11,7 @@ out-of-memory errors during training:
 """
 
 import torch  # type: ignore[import]
+import torch.distributed as dist  # PHASE 2: For multi-GPU coordination
 import psutil
 import gc
 import time
@@ -136,6 +137,12 @@ class MemoryMonitor:
             logger.info(f"CPU: {self.total_cpu_memory:.1f}GB total")
         else:
             logger.debug(f"CPU: {self.total_cpu_memory:.1f}GB total")
+
+        # PHASE 2 OPTIMIZATION: Multi-GPU coordination state
+        self.enable_multi_gpu_coordination = dist.is_initialized() if dist.is_available() else False
+        self.world_size = dist.get_world_size() if self.enable_multi_gpu_coordination else 1
+        self.rank = dist.get_rank() if self.enable_multi_gpu_coordination else 0
+        self.multi_gpu_memory_stats = {}  # Cache for all-GPU memory stats
 
     def get_memory_stats(self, device: Optional[int] = None, skip_sync: bool = False) -> Dict[str, float]:
         """
@@ -511,9 +518,105 @@ class MemoryMonitor:
 
         return optimal_batch_size
 
+    def gather_multi_gpu_memory_stats(self) -> Dict[int, Dict[str, float]]:
+        """
+        PHASE 2 OPTIMIZATION: Gather memory statistics from all GPUs in distributed training.
+
+        This enables coordinated memory management across all GPUs to prevent
+        single-GPU OOMs while other GPUs have capacity.
+
+        Returns:
+            Dictionary mapping GPU rank to memory stats
+        """
+        if not self.enable_multi_gpu_coordination or not torch.cuda.is_available():
+            # Single GPU or non-distributed: return only local stats
+            return {0: self.get_memory_stats()}
+
+        # Get local GPU stats
+        local_stats = self.get_memory_stats()
+
+        # Create tensor for communication (pack key metrics)
+        # Format: [allocated_gb, reserved_gb, utilization, free_gb]
+        local_tensor = torch.tensor([
+            local_stats['gpu_allocated'],
+            local_stats['gpu_reserved'],
+            local_stats['gpu_utilization'],
+            local_stats.get('gpu_free', 0.0)
+        ], dtype=torch.float32, device=torch.cuda.current_device())
+
+        # Gather from all GPUs
+        gathered_tensors = [torch.zeros_like(local_tensor) for _ in range(self.world_size)]
+        dist.all_gather(gathered_tensors, local_tensor)
+
+        # Unpack results
+        multi_gpu_stats = {}
+        for rank, tensor in enumerate(gathered_tensors):
+            multi_gpu_stats[rank] = {
+                'gpu_allocated': tensor[0].item(),
+                'gpu_reserved': tensor[1].item(),
+                'gpu_utilization': tensor[2].item(),
+                'gpu_free': tensor[3].item(),
+            }
+
+        # Cache for future use
+        self.multi_gpu_memory_stats = multi_gpu_stats
+        return multi_gpu_stats
+
+    def coordinate_oom_prevention(self) -> Dict[str, Any]:
+        """
+        PHASE 2 OPTIMIZATION: Coordinate OOM prevention across all GPUs.
+
+        Identifies which GPU is closest to OOM and coordinates cleanup/rebalancing.
+
+        Returns:
+            Dictionary with coordination recommendations
+        """
+        if not self.enable_multi_gpu_coordination:
+            return {'needs_coordination': False}
+
+        # Gather stats from all GPUs
+        all_stats = self.gather_multi_gpu_memory_stats()
+
+        # Find GPU with highest memory pressure
+        max_util = -1.0
+        max_util_rank = -1
+        min_util = 2.0
+        min_util_rank = -1
+
+        for rank, stats in all_stats.items():
+            util = stats['gpu_utilization']
+            if util > max_util:
+                max_util = util
+                max_util_rank = rank
+            if util < min_util:
+                min_util = util
+                min_util_rank = rank
+
+        # Check if coordination is needed
+        util_imbalance = max_util - min_util
+        needs_coordination = (
+            max_util > self.critical_threshold and
+            util_imbalance > 0.15  # 15% difference warrants coordination
+        )
+
+        return {
+            'needs_coordination': needs_coordination,
+            'max_util_rank': max_util_rank,
+            'max_utilization': max_util,
+            'min_util_rank': min_util_rank,
+            'min_utilization': min_util,
+            'utilization_imbalance': util_imbalance,
+            'all_stats': all_stats,
+            'recommendation': (
+                'rebalance_load' if needs_coordination else 'no_action'
+            )
+        }
+
     def should_emergency_stop(self) -> bool:
         """
         Check if training should be emergency stopped due to memory issues.
+
+        PHASE 2 OPTIMIZATION: Now considers all GPUs in multi-GPU training.
 
         Returns:
             True if emergency stop is recommended
@@ -532,6 +635,14 @@ class MemoryMonitor:
         # Emergency stop if memory leak detected and at high utilization
         if self._detect_memory_leak() and current_stats['gpu_utilization'] > self.critical_threshold:
             return True
+
+        # PHASE 2 OPTIMIZATION: Check if ANY GPU in multi-GPU setup is at emergency levels
+        if self.enable_multi_gpu_coordination and len(self.multi_gpu_memory_stats) > 0:
+            for rank, stats in self.multi_gpu_memory_stats.items():
+                if stats['gpu_utilization'] >= self.emergency_threshold:
+                    if not self.silent_mode:
+                        logger.warning(f"GPU {rank} at emergency memory level: {stats['gpu_utilization']:.1%}")
+                    return True
 
         return False
 

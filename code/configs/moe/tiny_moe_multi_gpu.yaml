@@ -1,0 +1,180 @@
+# Multi-GPU MoE Configuration with GPU Load Balancing
+# This config demonstrates how to use GPU load balancing for multi-GPU training
+
+model:
+  vocab_size: 50680
+  hidden_size: 1024
+  num_layers: 8
+  num_attention_heads: 8
+  intermediate_size: 2560
+  max_position_embeddings: 512
+  num_experts: 12
+  num_experts_per_token: 2
+  router_type: mixtral
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: swiglu
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  use_flash_attention: true
+  gradient_checkpointing: true
+  use_optimized_moe: true
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.05
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.01
+  use_expert_offloading: true
+  max_active_experts_gpu: 4  # Keep 4 experts per GPU
+  offload_eviction_policy: lru
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-05
+  initializer_range: 0.02
+
+moe_memory_optimization:
+  use_lora_experts: false
+  lora_rank: 8
+  lora_alpha: 16
+  freeze_lora_base: false
+  use_expert_offloading: true
+  max_active_experts_gpu: 4
+  offload_prefetch_lookahead: 2
+  offload_eviction_policy: lru
+  offload_pin_memory: true
+  offload_async_transfers: true
+  use_hierarchical_experts: false
+  use_expert_quantization: true
+  expert_quantization_bits: 8
+  expert_quantization_method: per_channel
+  quantize_inactive_experts: true
+
+training:
+  batch_size: 64  # Already optimized for multi-GPU
+  gradient_accumulation_steps: 6  # PHASE 1 OPTIMIZATION: Reduced from 8 for better GPU utilization (effective=384)
+  learning_rate: 0.0002
+  lr_scheduler_type: cosine  # PHASE 1 OPTIMIZATION: Added cosine decay for better convergence
+  max_steps: 50000
+  warmup_steps: 5000
+  weight_decay: 0.1
+  save_steps: 5000
+  eval_steps: 1000
+  logging_steps: 100
+  run_validation: true
+  validation_batch_size: 1
+  max_validation_batches: 100
+  compute_val_train_ratio: true
+  generate_every_n_steps: 5000
+  num_generations_per_step: 3
+  generation_during_eval: true
+  test_generation_quality: true
+  max_grad_norm: 1.0
+  compute_coherence_metrics: true
+
+data:
+  dataset_name: OpenAssistant_oasst2_processed.jsonl
+  data_dir: /project/code/data/processed
+  max_length: 128
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: /project/code/models/tokenizer/enhanced-50680
+  padding_side: right
+  truncation: true
+  num_workers: 4  # MEMORY OPTIMIZATION: Reduced from 6 to save ~1.5GB RAM (27% reduction in worker overhead)
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 2
+  validation_buffer_size: 1000  # PHASE 1 OPTIMIZATION: Increased validation buffer to prevent frequent flushes
+  # MEMORY OPTIMIZATION: Streaming tokenization (reduces buffer from 15k to 1k samples)
+  use_streaming_tokenization: false  # Set to true to save 500MB-1GB RAM (slight throughput tradeoff)
+  streaming_buffer_size: 1000  # Buffer size when streaming mode is enabled (10-15x smaller)
+
+output:
+  output_dir: /project/code/outputs/runs/tiny_moe_multi_gpu
+  save_every: 5000
+  fresh_start: false
+
+run_management:
+  run_name: tiny_moe_multi_gpu
+  run_description: "Multi-GPU MoE training with GPU load balancing - 12 experts across multiple GPUs"
+  run_tags: moe,multi-gpu,load-balancing,lora,offloading,quantization
+
+performance:
+  enable_tf32: true
+  float32_matmul_precision: high
+  enable_cudnn_benchmark: true
+  enable_gpu_memory_cleanup: false
+  gradient_check_frequency: 10
+  torchinductor_max_autotune: 0
+  enable_torch_compile: false
+  torch_compile_mode: reduce-overhead
+  torch_compile_fullgraph: false
+  torch_compile_dynamic: true
+
+gradient_health:
+  enabled: true
+  conditional_monitoring: true  # PHASE 1 OPTIMIZATION: Only monitor first 10% of training (5-8% speedup after warmup)
+  warmup_fraction: 0.1  # PHASE 1 OPTIMIZATION: Disable monitoring after 10% of max_steps
+
+optimizations:
+  gradient_health_monitoring: true
+  torchinductor_autotune: 1
+  memory_headroom_gb: 2.0  # MEMORY OPTIMIZATION: Reserve 2GB for safety (increased from 1GB)
+  memory_cleanup_thresholds:
+    warning: 0.990
+    critical: 0.995
+    emergency: 0.999
+  expert_prefetch:
+    enabled: true
+    lookahead: 2
+    use_multiple_streams: true
+  expert_cache:
+    auto_limit: true
+    use_lru_eviction: true
+    clear_after_optimizer_step: true  # PHASE 1 OPTIMIZATION: Clear cache after optimizer step (not every micro-step, 10-15% fewer transfers)
+  checkpoint:
+    async_saving: true
+  memory_cleanup:
+    fast_mode: true
+    remove_sleep: true
+  dataloader:
+    adaptive_file_reading: true
+    adaptive_multipliers:
+      large_files: 4
+      medium_files: 2
+      small_files: 1
+  gradient_checkpointing:
+    selective: true
+    checkpoint_attention: false
+  router:
+    cache_hash_on_gpu: true
+    compile_routers: true
+    compile_mode: "default"
+    compile_dynamic: true
+
+hardware:
+  device: cuda
+  mixed_precision: bf16
+  compile: true
+
+  # Multi-GPU Configuration
+  num_gpus: 4  # Set to number of GPUs available (e.g., 2, 4, 8)
+
+  # GPU Load Balancing Settings (ENABLED for multi-GPU)
+  use_gpu_load_balancing: true    # Enable GPU load balancing
+  balancing_strategy: adaptive     # Options: round_robin, memory_aware, compute_aware, adaptive (recommended)
+  rebalance_interval: 1000         # Check for rebalancing every 1000 steps
+  adaptive_rebalance_interval: true  # PHASE 2 OPTIMIZATION: Adaptive interval (500-2000) based on load stability
+  enable_expert_migration: true    # Allow experts to migrate between GPUs
+  migration_threshold: 0.2         # Trigger migration at 20% load imbalance
+  log_gpu_metrics: true            # Log detailed per-GPU metrics
+
+wandb:
+  use_wandb: true  # Enable for multi-GPU metrics tracking
+
+deepspeed:
+  use_deepspeed: false  # Can be enabled for multi-GPU training with DeepSpeed
+

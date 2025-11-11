@@ -1,7 +1,7 @@
-# Small MoE Configuration (~200M parameters, 4 experts)
-# Suitable for: Single 24GB GPU training with minimal offloading
-# Model Size: ~200M parameters (total), ~100M active per token (2 of 4 experts)
-# Memory: Optimized with LoRA (rank=4) and reduced experts for stable 24GB GPU training
+# Small MoE Configuration (~400M expert parameters, 4 experts)
+# Suitable for: Single 24GB GPU training with expert offloading
+# Model Size: 4 experts × 100M params each = 400M expert parameters, ~200M active per token (2 of 4 experts)
+# Memory: Requires expert offloading or LoRA for 24GB GPU training
 #
 # MEMORY OPTIMIZATION GUIDE:
 # ========================
@@ -40,10 +40,10 @@
 
 model:
   vocab_size: 50680
-  hidden_size: 320
+  hidden_size: 2048  # Scaled up for 100M params per expert
   num_layers: 6
-  num_attention_heads: 8
-  intermediate_size: 1280  # FIXED: Was 49152 (causing OOM), now 4x hidden_size (standard ratio)
+  num_attention_heads: 16  # Adjusted to be divisible by hidden_size (2048/16=128 per head)
+  intermediate_size: 24576  # Sized to achieve ~100M params per expert: 2048 * 24576 * 2 = 100,663,296 params/expert
   max_position_embeddings: 512
   num_experts: 4
   num_experts_per_token: 2
@@ -86,8 +86,10 @@ moe_memory_optimization:
   offload_pin_memory: true
   offload_async_transfers: true
   use_hierarchical_experts: false
-  use_expert_quantization: false  # Set to true for 75% memory savings (INT8) with 10-15% slowdown
-  quantization_bits: 8  # Options: 4 (87% memory, 20-30% slower), 8 (75% memory, 10-15% slower)
+  use_expert_quantization: true  # MEMORY OPTIMIZATION: Enabled for 2GB savings + 4x faster transfers
+  expert_quantization_bits: 8  # INT8: 75% memory savings, 10-15% slowdown, 4x faster CPU↔GPU transfers
+  expert_quantization_method: per_channel  # Better accuracy than per_tensor
+  quantize_inactive_experts: true  # Quantize experts when on CPU
 
 training:
   batch_size: 16  # OPTIMIZED: Increased from 1 to 16 for much better GPU utilization (16x speedup)
@@ -126,6 +128,9 @@ data:
   dataloader_drop_last: true
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 0 # MEMORY: Auto-adjusts based on max_length (2->4 for short seqs, 2->1 for long seqs)
+  # MEMORY OPTIMIZATION: Streaming tokenization (reduces buffer from 15k to 1k samples)
+  use_streaming_tokenization: false  # Set to true to save 500MB-1GB RAM (slight throughput tradeoff)
+  streaming_buffer_size: 1000  # Buffer size when streaming mode is enabled (10-15x smaller)
 
 output:
   output_dir: /project/code/outputs/runs/small_moe
@@ -156,6 +161,7 @@ optimizations:
   torchinductor_autotune: 1  # 0=off, 1=basic, 2=aggressive (10-15% speedup)
 
   # Memory Management
+  memory_headroom_gb: 2.0  # MEMORY OPTIMIZATION: Reserve 2GB for safety (increased from 1GB)
   memory_cleanup_thresholds:
     warning: 0.990   # Trigger warning at 99.0% GPU memory (was 98.5%)
     critical: 0.995  # Trigger critical cleanup at 99.5% (was 99.2%)

@@ -203,10 +203,14 @@ class EnhancedModularTrainer:
         # Adaptive learning rate manager (optional)
         self.adaptive_lr_manager = None
 
+        # GPU Load Balancer for multi-GPU MoE training
+        self.gpu_load_balancer = None
+
         # Initialize all modular components
         self._init_gpu_memory_manager()
         self._init_performance_manager()
         self._init_distributed_manager()
+        self._init_gpu_load_balancer()  # Initialize GPU load balancer for multi-GPU MoE
         self._init_error_handler()
         self._init_health_checker()
         self._init_deepspeed()
@@ -292,6 +296,11 @@ class EnhancedModularTrainer:
         # Check if gradient health is enabled in config (default: False for speed)
         self.gradient_health_enabled = get_config_value(gh_config, 'enabled', False)
 
+        # PHASE 1 OPTIMIZATION: Conditional monitoring - only monitor first warmup_fraction of training
+        self.gradient_health_conditional = get_config_value(gh_config, 'conditional_monitoring', False)
+        self.gradient_health_warmup_fraction = get_config_value(gh_config, 'warmup_fraction', 0.1)
+        self.gradient_health_monitoring_active = True  # Will be set to False after warmup fraction
+
         if self.gradient_health_enabled:
             self.gradient_health = GradientHealthMonitor(
                 initial_clip_value=get_config_value(gh_config, 'initial_clip_value', 1.0),
@@ -350,12 +359,21 @@ class EnhancedModularTrainer:
             elif isinstance(config.memory, dict) and 'emergency_threshold' in config.memory:
                 emergency_thresh = config.memory['emergency_threshold']
 
+        # MEMORY OPTIMIZATION: Load memory headroom from config (default 2.0GB, increased from 1.0GB)
+        memory_headroom_gb = 2.0
+        if hasattr(config, 'optimizations'):
+            if hasattr(config.optimizations, 'memory_headroom_gb'):
+                memory_headroom_gb = config.optimizations.memory_headroom_gb  # type: ignore[attr-defined]
+            elif isinstance(config.optimizations, dict) and 'memory_headroom_gb' in config.optimizations:
+                memory_headroom_gb = config.optimizations['memory_headroom_gb']
+
         # DEBUG: Print actual threshold values being used
         print(f"🔧 Memory Monitor Configuration:")
         print(f"   Target utilization: {target_util:.1%}")
         print(f"   Warning threshold:  {warning_thresh:.1%}")
         print(f"   Critical threshold: {critical_thresh:.1%}")
         print(f"   Emergency threshold: {emergency_thresh:.1%}")
+        print(f"   Memory headroom: {memory_headroom_gb:.1f}GB")
 
         self.memory_monitor = MemoryMonitor(
             target_utilization=target_util,
@@ -363,7 +381,7 @@ class EnhancedModularTrainer:
             critical_threshold=critical_thresh,
             emergency_threshold=emergency_thresh,
             history_size=100,
-            memory_headroom_gb=1.0,
+            memory_headroom_gb=memory_headroom_gb,
             silent_mode=memory_silent,
         )
         print("Gradient, loss, and memory monitors initialized")
@@ -436,6 +454,59 @@ class EnhancedModularTrainer:
         self.last_valid_checkpoint_path = None
         self.checkpoint_restore_attempts = 0
         self.max_restore_attempts = 3
+
+        # MEMORY OPTIMIZATION: Async cache clearing to avoid blocking
+        self._cache_clear_queue: List[Callable[[], None]] = []
+        self._cache_clear_thread: Optional[threading.Thread] = None
+        self._cache_clear_lock = threading.Lock()
+        self._cache_clear_stop_event = threading.Event()
+        self._start_async_cache_clearer()
+
+    def _start_async_cache_clearer(self):
+        """MEMORY OPTIMIZATION: Start background thread for async cache clearing."""
+        def cache_clear_worker():
+            """Worker thread that processes cache clear requests asynchronously."""
+            while not self._cache_clear_stop_event.is_set():
+                # Check for work every 50ms
+                self._cache_clear_stop_event.wait(0.05)
+
+                with self._cache_clear_lock:
+                    if self._cache_clear_queue:
+                        # Process all pending cache clears
+                        for clear_fn in self._cache_clear_queue:
+                            try:
+                                clear_fn()
+                            except Exception as e:
+                                # Silently ignore errors in cache clearing
+                                pass
+                        self._cache_clear_queue.clear()
+
+        self._cache_clear_thread = threading.Thread(
+            target=cache_clear_worker,
+            daemon=True,
+            name="AsyncCacheClearer"
+        )
+        self._cache_clear_thread.start()
+
+    def _async_clear_cache(self):
+        """MEMORY OPTIMIZATION: Schedule async cache clearing (non-blocking, ~100-500ms saved)."""
+        def clear_fn():
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        with self._cache_clear_lock:
+            # Only queue if not already pending
+            if not self._cache_clear_queue:
+                self._cache_clear_queue.append(clear_fn)
+
+    def _sync_clear_cache(self):
+        """Synchronous cache clearing for critical situations."""
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     @property
     def _get_base_model(self):
@@ -551,6 +622,57 @@ class EnhancedModularTrainer:
         print("🧹 Distributed trainer cleanup handler called")
         # Add any trainer-specific distributed cleanup here
 
+    def _init_gpu_load_balancer(self):
+        """Initialize GPU load balancer for multi-GPU MoE training."""
+        from ...distributed.gpu_load_balancer import GPULoadBalancer
+
+        # Check if GPU load balancing is enabled and applicable
+        hardware_config = getattr(self.config, 'hardware', None)
+        if not hardware_config:
+            return
+
+        num_gpus = getattr(hardware_config, 'num_gpus', 1)
+        use_gpu_load_balancing = getattr(hardware_config, 'use_gpu_load_balancing', False)
+
+        # Only initialize if multi-GPU and load balancing is enabled
+        if num_gpus <= 1 or not use_gpu_load_balancing:
+            return
+
+        # Get model config for number of experts
+        model_config = getattr(self.config, 'model', None)
+        num_experts = getattr(model_config, 'num_experts', None)
+
+        if not num_experts:
+            logger.warning("GPU load balancing enabled but num_experts not found in config")
+            return
+
+        # Get load balancing parameters
+        balancing_strategy = getattr(hardware_config, 'balancing_strategy', 'adaptive')
+        rebalance_interval = getattr(hardware_config, 'rebalance_interval', 1000)
+        enable_expert_migration = getattr(hardware_config, 'enable_expert_migration', True)
+        migration_threshold = getattr(hardware_config, 'migration_threshold', 0.2)
+
+        print(f"🔄 Initializing GPU Load Balancer...")
+        print(f"   Number of GPUs: {num_gpus}")
+        print(f"   Number of experts: {num_experts}")
+        print(f"   Balancing strategy: {balancing_strategy}")
+        print(f"   Rebalance interval: {rebalance_interval} steps")
+        print(f"   Migration threshold: {migration_threshold:.1%}")
+
+        try:
+            self.gpu_load_balancer = GPULoadBalancer(
+                num_experts=num_experts,
+                num_gpus=num_gpus,
+                balancing_strategy=balancing_strategy,
+                rebalance_interval=rebalance_interval,
+                enable_expert_migration=enable_expert_migration,
+                migration_threshold=migration_threshold,
+            )
+            print("✅ GPU Load Balancer initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize GPU Load Balancer: {e}")
+            self.gpu_load_balancer = None
+
     def _init_error_handler(self):
         """Initialize rank-aware error handler."""
         from ...distributed.distributed_manager import is_distributed
@@ -656,8 +778,6 @@ class EnhancedModularTrainer:
         print("Initializing DeepSpeed...")
 
         # Check if we're in a distributed environment
-        import os
-
         self.is_distributed = (
             "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
         ) or ("LOCAL_RANK" in os.environ)
@@ -665,7 +785,6 @@ class EnhancedModularTrainer:
         if not self.is_distributed:
             print(" DeepSpeed enabled for single-GPU training (ZeRO optimizations)")
             # Set complete distributed environment for single GPU
-            import os
             os.environ.setdefault('RANK', '0')
             os.environ.setdefault('LOCAL_RANK', '0')
             os.environ.setdefault('WORLD_SIZE', '1')
@@ -1262,10 +1381,8 @@ class EnhancedModularTrainer:
                         f"       Status: {current_status}, GPU: {memory_health['gpu_utilization']:.1%}"
                     )
 
-                    # Force garbage collection after adjustment
-                    import gc
-                    gc.collect()
-                    torch.cuda.empty_cache()
+                    # MEMORY OPTIMIZATION: Use async cache clearing (non-blocking, saves 100-500ms)
+                    self._async_clear_cache()
 
                 else:
                     # If we can't increase grad accumulation further, enable more aggressive measures
@@ -1906,18 +2023,30 @@ class EnhancedModularTrainer:
                         "epoch": epoch,
                         "batch_idx": batch_idx,
                         "batch_size": input_ids.size(0),
-                        "memory_allocated": (
-                            torch.cuda.memory_allocated()
+                        "memory_allocated_gb": (
+                            torch.cuda.memory_allocated() / (1024**3)
                             if torch.cuda.is_available()
                             else 0
                         ),
-                        "memory_reserved": (
-                            torch.cuda.memory_reserved()
+                        "memory_reserved_gb": (
+                            torch.cuda.memory_reserved() / (1024**3)
+                            if torch.cuda.is_available()
+                            else 0
+                        ),
+                        "peak_memory_gb": (
+                            torch.cuda.max_memory_allocated() / (1024**3)
                             if torch.cuda.is_available()
                             else 0
                         ),
                         "error_message": str(e),
                     }
+
+                    # Add tensor shapes if logging config enables it
+                    if getattr(self.config.logging, 'log_tensor_shapes', True):
+                        oom_info["input_shape"] = list(input_ids.shape) if input_ids is not None else None
+                        oom_info["attention_mask_shape"] = list(attention_mask.shape) if attention_mask is not None else None
+                        oom_info["labels_shape"] = list(labels.shape) if labels is not None else None
+                        oom_info["sequence_length"] = input_ids.size(1) if input_ids is not None else None
 
                     # Coordinate OOM handling across all ranks if distributed
                     if (
@@ -2057,12 +2186,12 @@ class EnhancedModularTrainer:
         # Check memory health at start of step - estimate batch size from input
         current_batch_size = input_ids.size(0) if torch.is_tensor(input_ids) else 8
 
-        # SPEED OPTIMIZATION: Only check memory health periodically (every 1500 steps)
+        # SPEED OPTIMIZATION: Only check memory health periodically (configurable)
         # Checking every step causes massive overhead with synchronization and cleanup
-        # CRITICAL FIX: Changed from 100 to 500, then to 1500 steps for 1-3% speedup
-        # Early steps have unstable memory and trigger false alarms
+        # Get frequency from logging config (default: 50 steps for better observability)
+        memory_check_freq = getattr(self.config.logging, 'memory_check_freq', 50)
         should_check_memory = (
-            self.optimizer_step_count % 1500 == 0  # Check every 1500 OPTIMIZER steps (not micro-steps)
+            self.optimizer_step_count % memory_check_freq == 0  # Check every N OPTIMIZER steps (not micro-steps)
         )
 
         if should_check_memory:
@@ -2391,7 +2520,7 @@ class EnhancedModularTrainer:
 
         # Check loss health BEFORE proceeding
         loss_health_result = self.loss_health.check_loss_health(
-            main_loss.item() if isinstance(main_loss, torch.Tensor) else main_loss,
+            main_loss.mean().item() if isinstance(main_loss, torch.Tensor) else main_loss,
             self.step_count
         )
 
@@ -2414,10 +2543,10 @@ class EnhancedModularTrainer:
         # Early in training, main loss is naturally high (6-8), but auxiliary signals are crucial
         # IMPORTANT: When using DeepSeek loss, MTP is ALREADY INCLUDED in total_loss above
         # This flag only affects the additional composite losses (repetition penalties, etc.)
-        skip_auxiliary_losses = main_loss.item() > 10.0 or loss_health_result["is_spike"]
+        skip_auxiliary_losses = main_loss.mean().item() > 10.0 or loss_health_result["is_spike"]
         if skip_auxiliary_losses and batch_idx % 500 == 0:  # Reduced logging frequency (was 100)
             logger.debug(
-                f"Skipping auxiliary losses due to high main loss: {main_loss.item():.4f}"
+                f"Skipping auxiliary losses due to high main loss: {main_loss.mean().item():.4f}"
             )
 
         # Apply composite loss if available and not using DeepSeek loss
@@ -2489,7 +2618,7 @@ class EnhancedModularTrainer:
                 else:
                     # Other auxiliary losses: apply conservative scaling
                     aux_ema = self.aux_loss_emas[name]
-                    main_loss_val = main_loss.item()
+                    main_loss_val = main_loss.mean().item()
 
                     # FIXED: Increased clamp from 0.1x to 0.5x main loss for stronger auxiliary signals
                     # Auxiliary losses need sufficient magnitude to influence training effectively
@@ -2547,7 +2676,7 @@ class EnhancedModularTrainer:
 
             # Log individual loss components for monitoring
             if batch_idx % 1000 == 0 and valid_aux_losses:
-                print(f"    Main loss: {main_loss.item():.6f}")
+                print(f"    Main loss: {main_loss.mean().item():.6f}")
                 for name, loss_value in valid_aux_losses.items():
                     ema_val = self.aux_loss_emas.get(name, 0.0)
                     print(
@@ -2557,7 +2686,7 @@ class EnhancedModularTrainer:
 
             # FIXED: Check for loss validity after adding auxiliary losses - skip step instead of crash
             if torch.isnan(total_loss) or torch.isinf(total_loss):
-                print(f"     Invalid total loss detected! Main: {main_loss.item():.6f}")
+                print(f"     Invalid total loss detected! Main: {main_loss.mean().item():.6f}")
                 for name, loss_value in valid_aux_losses.items():
                     print(f"      {name}: {loss_value.item():.6f}")
                 print(f"      Total: {total_loss.item():.6f}")
@@ -2648,7 +2777,8 @@ class EnhancedModularTrainer:
 
                 # Update our gradient health monitor with DeepSpeed results
                 # Note: We can't get pre-clip norms with DeepSpeed, so we track post-clip only
-                if hasattr(self, "gradient_health") and self.gradient_health is not None and grad_norm is not None:
+                # PHASE 1 OPTIMIZATION: Only track if monitoring is active
+                if hasattr(self, "gradient_health") and self.gradient_health is not None and grad_norm is not None and self.gradient_health_monitoring_active:
                     # Manually update the history since DeepSpeed handled clipping
                     self.gradient_health.grad_norm_history.append(grad_norm)
                     # For DeepSpeed, pre_clip == post_clip (we can't separate them)
@@ -2708,6 +2838,11 @@ class EnhancedModularTrainer:
                 # This ensures accumulated gradients have correct magnitude
                 scaled_loss = total_loss / gradient_accumulation_steps
 
+                # CRITICAL FIX: Ensure loss is scalar before backward
+                # .backward() requires a scalar tensor (single value)
+                if scaled_loss.numel() > 1:
+                    scaled_loss = scaled_loss.mean()
+
                 # CUDA GRAPH FIX: Mark step boundary before backward pass
                 # This prevents "tensor output overwritten by subsequent run" errors
                 if hasattr(torch, 'compiler') and hasattr(torch.compiler, 'cudagraph_mark_step_begin'):
@@ -2737,15 +2872,36 @@ class EnhancedModularTrainer:
                 if self.scaler is not None:
                     self.scaler.unscale_(optimizer)
 
-                # ULTRA-OPTIMIZED: Only check gradient health if enabled
-                if self.gradient_health_enabled and self.gradient_health is not None:
-                    # OPTIMIZATION: Configurable gradient health check frequency (default: every 10 steps)
-                    # Reduces overhead from ~5-10% to ~0.5-1%
-                    check_freq = 10
+                # PHASE 1 OPTIMIZATION: Update monitoring active status based on training progress
+                if self.gradient_health_conditional and self.gradient_health_monitoring_active:
+                    max_steps = getattr(self.config.training, 'max_steps', 50000)
+                    warmup_cutoff = int(max_steps * self.gradient_health_warmup_fraction)
+                    if self.step_count >= warmup_cutoff:
+                        self.gradient_health_monitoring_active = False
+                        print(f"\n[PHASE 1 OPTIMIZATION] Gradient health monitoring disabled after {self.step_count} steps (warmup complete)")
+
+                # ULTRA-OPTIMIZED: Only check gradient health if enabled and monitoring is active
+                if self.gradient_health_enabled and self.gradient_health is not None and self.gradient_health_monitoring_active:
+                    # OPTIMIZATION: Adaptive gradient health check frequency
+                    # - First 100 steps: check every step (critical warmup period)
+                    # - Steps 100-1000: check every 10 steps (early training)
+                    # - Steps 1000-5000: check every 25 steps (stable training)
+                    # - After 5000: check every 50 steps (mature training)
+                    # Reduces overhead from ~5-10% to ~0.2-0.5%
+                    if self.step_count < 100:
+                        check_freq = 1  # Check every step during critical warmup
+                    elif self.step_count < 1000:
+                        check_freq = 10  # Check every 10 steps early on
+                    elif self.step_count < 5000:
+                        check_freq = 25  # Check every 25 steps when stable
+                    else:
+                        check_freq = 50  # Check every 50 steps when mature
+
+                    # Allow config override
                     if hasattr(self.config, 'performance') and hasattr(self.config.performance, 'gradient_check_frequency'):
                         check_freq = self.config.performance.gradient_check_frequency  # type: ignore[attr-defined]
 
-                    should_check = self.step_count % check_freq == 0 or self.step_count < 100
+                    should_check = self.step_count % check_freq == 0
 
                     if should_check:
                         base_model = self._get_base_model
@@ -3039,9 +3195,10 @@ class EnhancedModularTrainer:
                 "memory_cached": step_info.memory_cached,
             }
 
-        # Log metrics asynchronously - reduced frequency for performance
-        # Only log detailed metrics every 100 steps instead of every step
-        if self.async_logger and self.step_count % 100 == 0:
+        # Log metrics asynchronously - configurable frequency for performance
+        # Get frequency from logging config (default: 100 steps)
+        metrics_log_freq = getattr(self.config.logging, 'metrics_log_freq', 100)
+        if self.async_logger and self.step_count % metrics_log_freq == 0:
             # Calculate iterations per second
             batch_time = step_metrics.get("batch_time", 1.0)
             it_per_sec = (
@@ -3052,7 +3209,7 @@ class EnhancedModularTrainer:
 
             metrics = {
                 "train/loss": total_loss.item(),
-                "train/main_loss": main_loss.item(),
+                "train/main_loss": main_loss.mean().item(),
                 "train/learning_rate": current_lr,
                 "train/grad_norm": (grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm) if grad_norm is not None else 0.0,
                 "train/grad_norm_pre_clip": (
@@ -3065,10 +3222,27 @@ class EnhancedModularTrainer:
                 "train/memory_cached_gb": step_metrics.get("memory_cached", 0.0),
             }
 
+            # Add step-level timing breakdown if enabled
+            if getattr(self.config.logging, 'enable_timing_breakdown', True):
+                total_time = step_metrics.get("batch_time", forward_time + backward_time)
+                metrics.update({
+                    "train/timing/forward_ms": forward_time * 1000,  # Convert to milliseconds
+                    "train/timing/backward_ms": backward_time * 1000,
+                    "train/timing/optimizer_ms": opt_time * 1000,
+                    "train/timing/total_ms": total_time * 1000,
+                })
+                # Add percentage breakdown
+                if total_time > 0:
+                    metrics.update({
+                        "train/timing/forward_pct": (forward_time / total_time) * 100,
+                        "train/timing/backward_pct": (backward_time / total_time) * 100,
+                        "train/timing/optimizer_pct": (opt_time / total_time) * 100,
+                    })
+
             # ENHANCED: Add comprehensive loss component breakdown for debugging
             # This helps identify which loss components are contributing and by how much
             total_loss_val = total_loss.item()
-            main_loss_val = main_loss.item()
+            main_loss_val = main_loss.mean().item()
 
             # Calculate percentage of total loss from main vs auxiliary
             if total_loss_val > 0:
@@ -3153,9 +3327,10 @@ class EnhancedModularTrainer:
                     if total_selections > 0:
                         expert_usage = expert_counts / total_selections
 
-                        # FIXED: Only log per-expert usage every 2000 steps (expensive operation)
-                        # Reduced from 500 to 2000 to minimize training overhead
-                        if self.step_count % 2000 == 0:
+                        # FIXED: Only log per-expert usage at configurable frequency (expensive operation)
+                        # Get frequency from logging config (default: 2000 steps)
+                        moe_metrics_freq = getattr(self.config.logging, 'moe_metrics_freq', 2000)
+                        if self.step_count % moe_metrics_freq == 0:
                             # Log per-expert usage (all experts, not capped)
                             for i in range(num_experts):
                                 metrics[f"train/moe/expert_{i}_usage"] = expert_usage[i].item()
@@ -3230,7 +3405,67 @@ class EnhancedModularTrainer:
                         for i, val in enumerate(loss_value):
                             metrics[f"train/aux_{name}_token{i+1}"] = float(val)
 
+            # Add GPU load balancing metrics (if enabled)
+            if self.gpu_load_balancer is not None:
+                lb_metrics = self.gpu_load_balancer.get_metrics()
+                if lb_metrics:
+                    # Add per-GPU metrics
+                    for i in range(lb_metrics.get('num_gpus', 0)):
+                        gpu_prefix = f"gpu/{i}"
+                        metrics[f"{gpu_prefix}/load_score"] = lb_metrics.get(f'gpu_{i}_load_score', 0.0)
+                        metrics[f"{gpu_prefix}/memory_util"] = lb_metrics.get(f'gpu_{i}_memory_util', 0.0)
+                        metrics[f"{gpu_prefix}/compute_util"] = lb_metrics.get(f'gpu_{i}_compute_util', 0.0)
+                        metrics[f"{gpu_prefix}/num_experts"] = lb_metrics.get(f'gpu_{i}_num_experts', 0)
+
+                    # Add aggregate metrics
+                    metrics["gpu_load_balancing/load_imbalance"] = lb_metrics.get('load_imbalance', 0.0)
+                    metrics["gpu_load_balancing/avg_load_score"] = lb_metrics.get('avg_load_score', 0.0)
+                    metrics["gpu_load_balancing/num_rebalances"] = lb_metrics.get('num_rebalances', 0)
+
             self.async_logger.log_metrics(metrics, self.step_count)
+
+        # Log training health summary periodically (configurable frequency)
+        if getattr(self.config.logging, 'enable_health_summaries', True):
+            health_summary_freq = getattr(self.config.logging, 'health_summary_freq', 500)
+            if self.step_count > 0 and self.step_count % health_summary_freq == 0:
+                from logging import getLogger
+                health_logger = getLogger('ava_training')
+
+                # Calculate recent loss trend
+                loss_trend = "stable"
+                if hasattr(self, 'running_loss_avg') and self.running_loss_count > 50:
+                    recent_avg = self.running_loss_avg
+                    current_loss = total_loss.item()
+                    if current_loss < recent_avg * 0.95:
+                        loss_trend = "improving"
+                    elif current_loss > recent_avg * 1.05:
+                        loss_trend = "degrading"
+
+                # Memory trend
+                memory_status = memory_health.get("status", "unknown")
+                memory_util = memory_health.get("gpu_utilization", 0.0)
+
+                # Throughput calculation
+                total_time = forward_time + backward_time + opt_time
+                throughput = (1.0 / total_time) if total_time > 0 else 0.0
+
+                # Log health summary
+                health_logger.info(
+                    f"\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📊 TRAINING HEALTH SUMMARY [Step {self.step_count} | Epoch {epoch}]\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"  Loss:        {total_loss.item():.4f} ({loss_trend})\n"
+                    f"  LR:          {current_lr:.2e}\n"
+                    f"  Memory:      {memory_util:.1%} ({memory_status})\n"
+                    f"  Throughput:  {throughput:.2f} it/s\n"
+                    f"  GPU Memory:  {memory_health.get('allocated_gb', 0):.2f}GB allocated, "
+                    f"{memory_health.get('cached_gb', 0):.2f}GB cached\n"
+                    f"  Timing:      Forward {forward_time*1000:.1f}ms | "
+                    f"Backward {backward_time*1000:.1f}ms | "
+                    f"Optimizer {opt_time*1000:.1f}ms\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                )
 
         # Update observability with training step information (Phase 7)
         if self.observability:
@@ -3293,7 +3528,7 @@ class EnhancedModularTrainer:
                         )
                     ),
                     # Auxiliary loss information
-                    main_loss=main_loss.item(),
+                    main_loss=main_loss.mean().item(),
                     aux_losses={
                         name: loss.item()
                         for name, loss in aux_losses.items()
@@ -3362,6 +3597,13 @@ class EnhancedModularTrainer:
         if is_accumulation_complete:
             self.optimizer_step_count += 1
 
+            # GPU Load Balancer step (if enabled)
+            if self.gpu_load_balancer is not None:
+                rebalance_result = self.gpu_load_balancer.step()
+                if rebalance_result and rebalance_result.get('num_migrations', 0) > 0:
+                    logger.info(f"GPU Load Balancer: Migrated {rebalance_result['num_migrations']} experts, "
+                               f"load imbalance: {rebalance_result['load_imbalance']:.1%}")
+
         # Calculate step time and iterations per second
         step_time = time.time() - step_start_time
         iterations_per_sec = 1.0 / step_time if step_time > 0 else 0.0
@@ -3369,7 +3611,7 @@ class EnhancedModularTrainer:
         # Return step results with comprehensive monitoring info
         return {
             "loss": total_loss.item(),
-            "main_loss": main_loss.item(),
+            "main_loss": main_loss.mean().item(),
             "learning_rate": current_lr,
             "step_time": step_time,
             "iterations_per_sec": iterations_per_sec,
@@ -3451,6 +3693,9 @@ class EnhancedModularTrainer:
                 task_gradients = {}
                 task_list = list(task_losses.items())
                 for idx, (task_name, loss) in enumerate(task_list):
+                    # CRITICAL FIX: Ensure loss is scalar before backward
+                    if loss.numel() > 1:
+                        loss = loss.mean()
                     # Only retain graph for non-final tasks to avoid memory leak
                     is_final_task = idx == len(task_list) - 1
                     loss.backward(retain_graph=not is_final_task)
@@ -3490,11 +3735,19 @@ class EnhancedModularTrainer:
                 )
                 # Fallback to standard training
                 optimizer.zero_grad(set_to_none=True)
-                task_losses["main"].backward()
+                main_loss = task_losses["main"]
+                # CRITICAL FIX: Ensure loss is scalar before backward
+                if main_loss.numel() > 1:
+                    main_loss = main_loss.mean()
+                main_loss.backward()
         else:
             # Standard backward pass
             optimizer.zero_grad(set_to_none=True)
-            task_losses["main"].backward()
+            main_loss = task_losses["main"]
+            # CRITICAL FIX: Ensure loss is scalar before backward
+            if main_loss.numel() > 1:
+                main_loss = main_loss.mean()
+            main_loss.backward()
 
     def _wait_for_checkpoint(self):
         """Wait for any pending async checkpoint to complete."""

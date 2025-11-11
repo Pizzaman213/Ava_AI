@@ -350,6 +350,122 @@ def get_logger() -> logging.Logger:
     return logger
 
 
+class StructuredLogger:
+    """
+    Enhanced logger with structured context fields for better observability.
+
+    Provides utility methods for logging with consistent contextual information
+    like step numbers, epochs, batch indices, etc.
+    """
+
+    def __init__(self, base_logger: logging.Logger):
+        self.logger = base_logger
+        self.default_context: Dict[str, Any] = {}
+
+    def set_context(self, **kwargs: Any) -> None:
+        """Set default context that will be included in all logs."""
+        self.default_context.update(kwargs)
+
+    def clear_context(self) -> None:
+        """Clear default context."""
+        self.default_context.clear()
+
+    def _format_message(self, message: str, context: Optional[Dict[str, Any]] = None) -> str:
+        """Format message with context fields."""
+        ctx = {**self.default_context}
+        if context:
+            ctx.update(context)
+
+        if not ctx:
+            return message
+
+        # Format context as key=value pairs
+        ctx_str = " | ".join(f"{k}={v}" for k, v in ctx.items())
+        return f"{message} [{ctx_str}]"
+
+    def debug(self, message: str, context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
+        """Log debug message with context."""
+        if kwargs:
+            context = {**(context or {}), **kwargs}
+        self.logger.debug(self._format_message(message, context))
+
+    def info(self, message: str, context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
+        """Log info message with context."""
+        if kwargs:
+            context = {**(context or {}), **kwargs}
+        self.logger.info(self._format_message(message, context))
+
+    def warning(self, message: str, context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
+        """Log warning message with context."""
+        if kwargs:
+            context = {**(context or {}), **kwargs}
+        self.logger.warning(self._format_message(message, context))
+
+    def error(self, message: str, context: Optional[Dict[str, Any]] = None, exc_info: bool = False, **kwargs: Any) -> None:
+        """Log error message with context and optional exception info."""
+        if kwargs:
+            context = {**(context or {}), **kwargs}
+        self.logger.error(self._format_message(message, context), exc_info=exc_info)
+
+    def critical(self, message: str, context: Optional[Dict[str, Any]] = None, exc_info: bool = False, **kwargs: Any) -> None:
+        """Log critical message with context and optional exception info."""
+        if kwargs:
+            context = {**(context or {}), **kwargs}
+        self.logger.critical(self._format_message(message, context), exc_info=exc_info)
+
+
+class TrainingTimer:
+    """
+    Utility for tracking and logging step-level timing breakdowns.
+
+    Tracks time spent in different phases of training (data loading, forward pass,
+    backward pass, optimizer step, etc.) and provides statistics.
+    """
+
+    def __init__(self):
+        self.timers: Dict[str, List[float]] = {}
+        self.start_times: Dict[str, float] = {}
+
+    def start(self, name: str) -> None:
+        """Start timing a phase."""
+        self.start_times[name] = time.time()
+
+    def stop(self, name: str) -> float:
+        """Stop timing a phase and record the duration."""
+        if name not in self.start_times:
+            return 0.0
+
+        duration = time.time() - self.start_times[name]
+        if name not in self.timers:
+            self.timers[name] = []
+        self.timers[name].append(duration)
+        del self.start_times[name]
+        return duration
+
+    def get_stats(self, name: str) -> Dict[str, float]:
+        """Get timing statistics for a phase."""
+        if name not in self.timers or not self.timers[name]:
+            return {'mean': 0.0, 'min': 0.0, 'max': 0.0, 'total': 0.0, 'count': 0}
+
+        times = self.timers[name]
+        return {
+            'mean': sum(times) / len(times),
+            'min': min(times),
+            'max': max(times),
+            'total': sum(times),
+            'count': len(times)
+        }
+
+    def get_all_stats(self) -> Dict[str, Dict[str, float]]:
+        """Get timing statistics for all phases."""
+        return {name: self.get_stats(name) for name in self.timers.keys()}
+
+    def reset(self) -> None:
+        """Reset all timers."""
+        self.timers.clear()
+        self.start_times.clear()
+
+
 from transformers import AutoTokenizer  # type: ignore[import-not-found]
 
 # Import new modular components
@@ -590,16 +706,15 @@ def materialize_meta_model(model, device: Union[str, torch.device] = "cuda", dty
                 else:
                     nn.init.normal_(new_param, mean=0.0, std=0.02)
 
-                # Replace meta parameter
-                delattr(module, name)
-                setattr(module, name, new_param)
+                # Replace meta parameter - directly update _parameters to ensure proper registration
+                module._parameters[name] = new_param
 
         # Process buffers
         for name, buffer in list(module.named_buffers(recurse=False)):
             if buffer is not None and buffer.device.type == "meta":
                 new_buffer = torch.empty(buffer.shape, device=device, dtype=dtype)
-                delattr(module, name)
-                module.register_buffer(name, new_buffer)
+                # Directly update _buffers dict for proper registration
+                module._buffers[name] = new_buffer
 
     model.apply(init_fn)
     return model
@@ -728,6 +843,24 @@ def create_model_and_tokenizer(
     get_logger().info(f"Tokenizer loaded: vocab_size={len(tokenizer)}")
 
     return model, tokenizer
+
+
+def _set_model_gpu_load_balancer(model: torch.nn.Module, gpu_load_balancer):
+    """
+    Recursively set GPU load balancer on all MoE layers in the model.
+
+    Args:
+        model: PyTorch model to update
+        gpu_load_balancer: GPULoadBalancer instance to pass to MoE layers
+    """
+    from src.Ava.layers.offloaded_experts import CPUOffloadedExpertGroup
+
+    # Recursively search for MoE layers with expert groups
+    for name, module in model.named_modules():
+        # Check if this module is a CPUOffloadedExpertGroup
+        if isinstance(module, CPUOffloadedExpertGroup):
+            get_logger().info(f"    Setting GPU load balancer on MoE layer: {name}")
+            module.set_gpu_load_balancer(gpu_load_balancer)
 
 
 # OPTIMIZATION: Cache for format detection to avoid 2-5s overhead on every run
@@ -1224,7 +1357,6 @@ def initialize_deepspeed(
     # Initialize distributed backend manually to avoid MPI dependency
     # This is needed for single-GPU training without MPI installed
     if not torch.distributed.is_initialized():
-        import os
         import socket
 
         # Find an available port
@@ -1362,8 +1494,59 @@ def setup_optimizer_and_lr_management(
         optimizer = torch.optim.Adam(
             optimizer_grouped_parameters, lr=lr
         )
+    elif optimizer_type == "lion":
+        # Import Lion optimizer from advanced optimizers
+        from src.Ava.optimization.optimizers.advanced import LionOptimizer
+
+        # Get Lion betas from config with fallback (Lion defaults)
+        lion_betas = training_cfg.get('lion_betas', (0.9, 0.99))
+        lion_betas = tuple(lion_betas) if isinstance(lion_betas, list) else lion_betas
+
+        optimizer = LionOptimizer(
+            optimizer_grouped_parameters,
+            lr=lr,
+            betas=lion_betas,
+            weight_decay=weight_decay  # Lion applies weight decay directly
+        )
+        get_logger().info("✓ Using Lion optimizer (50% memory reduction vs AdamW)")
+        get_logger().info(f"  Lion hyperparams: lr={lr:.2e}, betas={lion_betas}, weight_decay={weight_decay}")
+        get_logger().info("  Note: Lion uses sign-based updates for better efficiency")
+    elif optimizer_type == "sophia":
+        # Import Sophia optimizer from advanced optimizers
+        from src.Ava.optimization.optimizers.advanced import SophiaOptimizer
+
+        # Get Sophia hyperparams from config
+        sophia_betas = training_cfg.get('sophia_betas', (0.965, 0.99))
+        sophia_rho = training_cfg.get('sophia_rho', 0.04)
+
+        optimizer = SophiaOptimizer(
+            optimizer_grouped_parameters,
+            lr=lr,
+            betas=tuple(sophia_betas) if isinstance(sophia_betas, list) else sophia_betas,
+            rho=sophia_rho,
+            weight_decay=weight_decay
+        )
+        get_logger().info("✓ Using Sophia optimizer (2x speedup with second-order optimization)")
+        get_logger().info(f"  Sophia hyperparams: lr={lr:.2e}, betas={sophia_betas}, rho={sophia_rho}")
+    elif optimizer_type == "adafactor":
+        # Import AdaFactor optimizer from advanced optimizers
+        from src.Ava.optimization.optimizers.advanced import AdaFactorOptimizer
+
+        # AdaFactor uses adaptive learning rate by default
+        use_adaptive_lr = training_cfg.get('adafactor_adaptive_lr', True)
+
+        optimizer = AdaFactorOptimizer(
+            optimizer_grouped_parameters,
+            lr=None if use_adaptive_lr else lr,
+            weight_decay=weight_decay,
+            scale_parameter=True,
+            relative_step=use_adaptive_lr,
+            warmup_init=training_cfg.get('adafactor_warmup_init', False)
+        )
+        get_logger().info("✓ Using AdaFactor optimizer (80% memory reduction vs AdamW)")
+        get_logger().info(f"  AdaFactor: adaptive_lr={use_adaptive_lr}, weight_decay={weight_decay}")
     else:
-        raise ValueError(f"Unsupported optimizer: {optimizer_type}")
+        raise ValueError(f"Unsupported optimizer: {optimizer_type}. Supported: adamw, adam, lion, sophia, adafactor")
 
     # CRITICAL FIX: Validate all parameters are accounted for
     num_decay_params = sum(p.numel() for p in decay_params)
@@ -1573,6 +1756,7 @@ def train_epoch(
     device=None,  # NEW: Added device parameter
     tokenizer=None,  # NEW: Added tokenizer for generation tests
     async_saver: Optional[AsyncCheckpointSaver] = None,  # OPTIMIZATION: Async checkpoint saving
+    wandb_run=None,  # NEW: Added wandb_run for logging coherence metrics
 ) -> dict:
     """Train for one epoch with Phase 3-5 enhancements."""
     trainer.model.train()
@@ -1709,6 +1893,7 @@ def train_epoch(
             if save_steps is not None and save_steps > 0:
                 # OPTIMIZATION: Skip checkpoint at step 0 to save time
                 if current_optimizer_step > 0 and current_optimizer_step % save_steps == 0:
+                    checkpoint_start_time = time.time()
                     get_logger().info(f"\n💾 Saving periodic checkpoint at optimizer step {current_optimizer_step}...")
                     try:
                         periodic_data = {
@@ -1762,9 +1947,16 @@ def train_epoch(
                                 is_best=False,
                                 additional_data=periodic_data,
                             )
-                            get_logger().info(f"Checkpoint saved at optimizer step {current_optimizer_step}")
+                            checkpoint_duration = time.time() - checkpoint_start_time
+                            get_logger().info(
+                                f"✅ Checkpoint saved at optimizer step {current_optimizer_step} "
+                                f"(took {checkpoint_duration:.1f}s)"
+                            )
                     except Exception as e:
-                        get_logger().warning(f"Failed to save checkpoint: {e}")
+                        get_logger().error(
+                            f"❌ Failed to save checkpoint at step {current_optimizer_step}: {e}",
+                            exc_info=True
+                        )
 
         # IN-EPOCH VALIDATION: Check if we should run validation based on eval_steps
         # This allows validation to happen during long epochs, not just at the end
@@ -1889,6 +2081,27 @@ def train_epoch(
                                         if len(sample) > 100:
                                             sample = sample[:100] + "..."
                                         get_logger().info(f'  Sample: "{sample}"')
+
+                                    # Log coherence metrics to WandB (if enabled)
+                                    if wandb_run and gen_results.get('coherence'):
+                                        try:
+                                            import wandb
+                                            coh = gen_results['coherence']
+                                            current_step = trainer.step_count if hasattr(trainer, 'step_count') else 0
+                                            wandb.log({  # type: ignore[attr-defined]
+                                                "coherence/overall_score": coh.get('coherence_score', 0),
+                                                "coherence/distinct_1": coh.get('distinct_1', 0),
+                                                "coherence/distinct_2": coh.get('distinct_2', 0),
+                                                "coherence/distinct_4": coh.get('distinct_4', 0),
+                                                "coherence/repetition": coh.get('repetition', 0),
+                                                "coherence/entropy": coh.get('entropy', 0),
+                                                "coherence/burstiness": coh.get('burstiness', 0),
+                                                "coherence/zipf": coh.get('zipf', 0),
+                                                "generation/avg_length": gen_results.get('avg_length', 0),
+                                                "generation/avg_repetition": avg_rep,
+                                            }, step=current_step)
+                                        except Exception as e:
+                                            get_logger().debug(f"WandB coherence logging failed: {e}")
                             except Exception as e:
                                 get_logger().error(f"  ⚠️  Generation test failed: {e}")
 
@@ -2187,9 +2400,9 @@ def evaluate_model(
                         torch.cuda.empty_cache()
 
                 # Validate loss is scalar and finite
-                if not loss.dim() == 0:
-                    get_logger().warning(f"WARNING: Loss is not scalar, has shape {loss.shape}")
-                    loss = loss.mean()
+                # DataParallel returns [num_gpus] shaped tensor - reduce to scalar
+                if loss.dim() > 0:
+                    loss = loss.mean()  # Reduce across GPUs without excessive logging
 
                 # Handle non-finite losses properly - don't skip, but track separately
                 # Get logging limits from config
@@ -2412,7 +2625,6 @@ def resume_smoke_test(
         # ALWAYS clean up test checkpoint, even if test failed or crashed
         if checkpoint_path is not None:
             try:
-                import os
                 import shutil
 
                 if os.path.exists(checkpoint_path):
@@ -2843,11 +3055,22 @@ def main():
     param_count = sum(p.numel() for p in model.parameters()) / 1e6
     get_logger().info(f"Model: {param_count:.1f}M parameters")
 
+    # 4b. Wrap model with DataParallel for multi-GPU training (if not using distributed launch)
+    # NOTE: DataParallel must be applied BEFORE torch.compile to ensure proper attribute access
+    if num_gpus > 1 and not is_distributed_launch:
+        get_logger().info(f"🔄 Wrapping model with DataParallel for {num_gpus} GPUs...")
+        model = torch.nn.DataParallel(model)
+        get_logger().info(f"   ✓ Model replicated across {num_gpus} GPUs")
+        get_logger().info(f"   ✓ Batch will be split across GPUs automatically")
+        get_logger().info(f"   Primary GPU: cuda:0, Replica GPUs: {list(range(1, num_gpus))}")
+
     # OPTIMIZATION: torch.compile for fused kernels and speed (ENABLED BY DEFAULT for 30-50% speedup)
+    # NOTE: torch.compile is applied AFTER DataParallel to compile the final model structure
     enable_compile = config_dict.get("performance", {}).get("enable_torch_compile", True)
     if enable_compile:
         compile_mode = config_dict.get("performance", {}).get("torch_compile_mode", "reduce-overhead")
         fullgraph = config_dict.get("performance", {}).get("torch_compile_fullgraph", False)
+        dynamic = config_dict.get("performance", {}).get("torch_compile_dynamic", None)
         disable_cudagraphs = config_dict.get("performance", {}).get("torch_compile_disable_cudagraphs", False)
 
         try:
@@ -2866,20 +3089,19 @@ def main():
                 os.environ['TORCH_CUDAGRAPH_ENABLE_COMPILE'] = '0'
                 get_logger().info("   ✓ CUDAGraphs disabled for stability")
 
-            model = torch.compile(model, mode=compile_mode, fullgraph=fullgraph)
+            # Configure dynamic shapes handling for multi-GPU
+            compile_kwargs = {"mode": compile_mode, "fullgraph": fullgraph}
+            if dynamic is not None:
+                compile_kwargs["dynamic"] = dynamic
+                if dynamic:
+                    get_logger().info("   ✓ Dynamic shapes enabled: will handle variable sequence lengths without recompilation")
+
+            model = torch.compile(model, **compile_kwargs)
             get_logger().info(f"   ✓ Model compiled successfully")
         except Exception as e:
             get_logger().warning(f"torch.compile failed: {e}, using eager mode")
     else:
         get_logger().info("✓ torch.compile DISABLED - using eager mode for maximum speed with dynamic shapes")
-
-    # 4b. Wrap model with DataParallel for multi-GPU training (if not using distributed launch)
-    if num_gpus > 1 and not is_distributed_launch:
-        get_logger().info(f"🔄 Wrapping model with DataParallel for {num_gpus} GPUs...")
-        model = torch.nn.DataParallel(model)
-        get_logger().info(f"   ✓ Model replicated across {num_gpus} GPUs")
-        get_logger().info(f"   ✓ Batch will be split across GPUs automatically")
-        get_logger().info(f"   Primary GPU: cuda:0, Replica GPUs: {list(range(1, num_gpus))}")
 
     # 5. Create dataloaders
     get_logger().info("Setting up data loaders...")
@@ -3052,6 +3274,11 @@ def main():
         trainer.deepspeed_enabled = True
         get_logger().info("  Trainer configured with DeepSpeed optimizer")
 
+    # Pass GPU load balancer to model's MoE layers (if initialized)
+    if trainer.gpu_load_balancer is not None:
+        get_logger().info("  Passing GPU Load Balancer to model's MoE layers...")
+        _set_model_gpu_load_balancer(model, trainer.gpu_load_balancer)
+
     # 6.5. Setup dataset-aware learning rate configuration with progressive training (Phase 5)
     get_logger().info("Configuring dataset-aware learning rate and progressive training...")
     trainer.setup_dataset_aware_lr(train_loader)
@@ -3078,8 +3305,14 @@ def main():
     except Exception as e:
         get_logger().info(f"   Could not estimate total steps: {e}")
 
-    # For DataParallel models, access the underlying model for optimizer setup
-    model_for_optimizer = model.module if isinstance(model, torch.nn.DataParallel) else model
+    # For wrapped models, access the underlying model for optimizer setup
+    # Unwrap both DataParallel and torch.compile wrappers
+    model_for_optimizer = model
+    if isinstance(model_for_optimizer, torch.nn.DataParallel):
+        model_for_optimizer = model_for_optimizer.module
+    if hasattr(model_for_optimizer, '_orig_mod'):
+        # torch.compile wraps model with _orig_mod attribute
+        model_for_optimizer = model_for_optimizer._orig_mod
 
     optimizer, adaptive_lr_manager = setup_optimizer_and_lr_management(
         model_for_optimizer, config_dict, training_config, estimated_total_steps
@@ -3288,6 +3521,7 @@ def main():
                 device=device,  # NEW: Pass device
                 tokenizer=tokenizer,  # NEW: Pass tokenizer for generation tests
                 async_saver=async_saver,  # OPTIMIZATION: Async checkpoint saving
+                wandb_run=wandb_run,  # NEW: Pass wandb_run for coherence logging
             )
 
             # Enhanced training progress reporting
@@ -3541,7 +3775,9 @@ def main():
                         "training_complete": False,
                     }
 
-                    run_manager.save_checkpoint(
+                    # PHASE 1 OPTIMIZATION: Use async checkpoint saving
+                    async_saver.save_async(
+                        run_manager,
                         model_state=model.state_dict(),  # type: ignore[attr-defined]
                         optimizer_state=optimizer.state_dict(),
                         epoch=epoch,
@@ -3550,7 +3786,7 @@ def main():
                         is_best=True,
                         additional_data=additional_data,
                     )
-                    get_logger().info(f"  Best model saved: {val_loss:.4f}")
+                    get_logger().info(f"  Best model saved (async): {val_loss:.4f}")
 
             # Periodic checkpoint saving based on save_steps
             save_steps = config_dict.get("training", {}).get("save_steps", None)
@@ -3573,7 +3809,9 @@ def main():
                         }
                     }
 
-                    run_manager.save_checkpoint(
+                    # PHASE 1 OPTIMIZATION: Use async checkpoint saving
+                    async_saver.save_async(
+                        run_manager,
                         model_state=model.state_dict(),  # type: ignore[attr-defined]
                         optimizer_state=optimizer.state_dict(),
                         epoch=epoch,
@@ -3582,7 +3820,7 @@ def main():
                         is_best=False,
                         additional_data=periodic_data,
                     )
-                    get_logger().info(f"  Periodic checkpoint saved at step {current_step}")
+                    get_logger().info(f"  Periodic checkpoint saved (async) at step {current_step}")
 
             # Early stopping logic (only for valid validation losses)
             if (
@@ -3814,7 +4052,10 @@ def main():
         # Only save if we have a valid loss
         final_loss = best_val_loss if best_val_loss != float("inf") else 0.0
 
-        run_manager.save_checkpoint(
+        # PHASE 1 OPTIMIZATION: Final checkpoint - wait for completion before finishing run
+        # Queue the final checkpoint asynchronously
+        async_saver.save_async(
+            run_manager,
             model_state=model.state_dict(),  # type: ignore[attr-defined]
             optimizer_state=optimizer.state_dict(),
             epoch=num_epochs,
@@ -3822,6 +4063,11 @@ def main():
             loss=final_loss,
             additional_data=additional_data,
         )
+
+        # Wait for all pending checkpoints to complete before finishing
+        get_logger().info("Waiting for all async checkpoints to complete...")
+        async_saver.wait_until_done()
+        get_logger().info("All checkpoints saved successfully")
 
         run_manager.finish_run(
             "completed",

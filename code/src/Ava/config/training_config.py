@@ -97,6 +97,15 @@ class HardwareConfig:
     device: str = 'cuda'                      # Device: 'cuda', 'cpu', or 'mps'
     mixed_precision: str = 'fp32'             # Mixed precision: 'fp32', 'fp16', 'bf16'
     compile: bool = False                     # Enable torch.compile
+    num_gpus: int = 1                         # Number of GPUs to use for training
+
+    # GPU Load Balancing Settings
+    use_gpu_load_balancing: bool = False      # Enable GPU load balancing for multi-GPU MoE
+    balancing_strategy: str = 'adaptive'      # Load balancing strategy: 'round_robin', 'memory_aware', 'compute_aware', 'adaptive'
+    rebalance_interval: int = 1000            # Steps between load rebalancing checks
+    enable_expert_migration: bool = True      # Allow expert migration between GPUs
+    migration_threshold: float = 0.2          # Load imbalance threshold for migration (0.2 = 20%)
+    log_gpu_metrics: bool = True              # Log per-GPU metrics (memory, compute, etc.)
 
 
 @dataclass
@@ -523,6 +532,37 @@ class PerformanceConfig:
 
 
 @dataclass
+class LoggingConfig:
+    """Configuration for logging and observability."""
+    # Verbosity settings
+    verbosity: str = 'info'                   # Log level: 'debug', 'info', 'warning', 'error'
+    console_level: str = 'info'               # Console log level (can be different from file)
+    file_level: str = 'debug'                 # File log level (more detailed)
+
+    # Monitoring frequencies (in steps)
+    metrics_log_freq: int = 100               # How often to log training metrics
+    memory_check_freq: int = 50               # How often to check GPU memory
+    health_summary_freq: int = 500            # How often to log training health summary
+    moe_metrics_freq: int = 2000              # How often to log per-expert MoE metrics
+
+    # Feature flags
+    enable_timing_breakdown: bool = True      # Log step-level timing (data, forward, backward, optimizer)
+    enable_memory_profiling: bool = True      # Enable detailed memory profiling
+    enable_health_summaries: bool = True      # Enable periodic health summary logs
+    log_tensor_shapes: bool = True            # Log tensor shapes on errors (OOM, NaN)
+    log_checkpoint_validation: bool = True    # Validate checkpoints after save
+    save_sample_generations: bool = True      # Save validation generation samples to file
+
+    # Structured logging
+    use_structured_logging: bool = True       # Use structured logs with contextual fields
+    log_format: str = 'default'               # Log format: 'default', 'json', 'structured'
+
+    # WandB/external logging
+    log_gradients_to_wandb: bool = False      # Log gradient histograms to WandB (expensive)
+    log_model_topology: bool = False          # Log model graph to WandB (one-time)
+
+
+@dataclass
 class ModelConfig:
     """Configuration for model architecture parameters."""
     vocab_size: int = 32000                   # Vocabulary size
@@ -554,6 +594,7 @@ class EnhancedTrainingConfig:
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     adaptive_mtp: AdaptiveMTPConfig = field(default_factory=AdaptiveMTPConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     # Enhanced features (supports both losses and enhanced_features.losses paths)
     enhanced_features: Optional[Dict[str, Any]] = None  # type: ignore[assignment]

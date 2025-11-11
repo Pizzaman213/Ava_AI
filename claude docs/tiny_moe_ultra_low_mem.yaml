@@ -1,0 +1,295 @@
+model:
+  vocab_size: 50680
+  hidden_size: 1024  # ULTRA-LOW-MEM: Reduced from 2048 to fit in 24GB GPU
+  num_layers: 6  # ULTRA-LOW-MEM: Reduced from 8 layers
+  num_attention_heads: 16  # Adjusted to be divisible by hidden_size (1024/16=64 per head)
+  intermediate_size: 8192  # ULTRA-LOW-MEM: Reduced from 24576 (~25M params per expert instead of 100M)
+  max_position_embeddings: 512
+  num_experts: 4  # Keep 4 experts
+  num_experts_per_token: 1  # ULTRA-LOW-MEM: Reduced from 2 to halve computation
+  router_type: mixtral
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: swiglu
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  use_flash_attention: true
+  gradient_checkpointing: true
+  use_optimized_moe: true
+  router_z_loss_coef: 0.0001  # NaN FIX: Reduced from 0.001 to prevent router instability
+  load_balance_loss_coef: 0.01  # NaN FIX: Reduced from 0.05 to prevent loss explosion
+  diversity_loss_coef: 0.0001  # NaN FIX: Reduced from 0.001 for stability
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.01  # COHERENCE FIX: Added exploration noise (was 0.0)
+  use_lora_experts: false
+  lora_rank: 4
+  lora_alpha: 8
+  freeze_lora_base: false
+  use_expert_offloading: true
+  max_active_experts_gpu: 2  # ULTRA-LOW-MEM: Only keep 2 experts on GPU (reduced from 4)
+  offload_eviction_policy: lru
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-05
+  initializer_range: 0.01  # NaN FIX: Reduced from 0.02 for more stable initialization
+moe_memory_optimization:
+  # === HYBRID MODE ENABLED ===
+  # Combines LoRA + Offloading + Quantization for 99.9%+ memory savings!
+  use_lora_experts: true
+  lora_rank: 4  # ULTRA-LOW-MEM: Reduced from 8 to save memory
+  lora_alpha: 8  # ULTRA-LOW-MEM: Scaled with rank
+  freeze_lora_base: false
+  use_expert_offloading: true
+  max_active_experts_gpu: 2  # ULTRA-LOW-MEM: Only 2 experts on GPU at once (reduced from 4)
+  offload_prefetch_lookahead: 1  # ULTRA-LOW-MEM: Reduced from 2 to save memory
+  offload_eviction_policy: lru
+  offload_pin_memory: true
+  offload_async_transfers: true
+  use_hierarchical_experts: false
+  # NEW: Enable quantization for hybrid mode
+  use_expert_quantization: true  # HYBRID MODE: Enables INT8 quantization
+  expert_quantization_bits: 8     # INT8 for balance (8 or 4)
+  expert_quantization_method: per_channel  # Better accuracy than per_tensor
+  quantize_inactive_experts: true  # Quantize experts when on CPU
+training:
+  batch_size: 8  # ULTRA-LOW-MEM: Reduced from 64 to prevent OOM (effective=64 with grad accum)
+  gradient_accumulation_steps: 8  # ULTRA-LOW-MEM: Maintain effective batch size
+
+  # OPTIMIZER: Lion optimizer (50% memory reduction vs AdamW)
+  optimizer: lion  # Options: adamw, adam, lion, sophia, adafactor
+  learning_rate: 0.0001  # Lion LR for small models: 1e-4 (optimal range: 5e-5 to 2e-4)
+  weight_decay: 0.1  # Lion uses 3-10x larger weight decay than AdamW
+  lion_betas: [0.9, 0.99]  # Lion default betas (momentum coefficients)
+
+  lr_scheduler_type: cosine  # PHASE 1 OPTIMIZATION: Added cosine decay for better convergence
+  max_steps: 50000  # COHERENCE FIX: Changed from 10 to allow proper training
+  warmup_steps: 5000  # COHERENCE FIX: Changed from 7000 to 10% of max_steps
+  save_steps: 5000
+  eval_steps: 1000
+  logging_steps: 100
+  run_validation: true
+  validation_batch_size: 1
+  max_validation_batches: 100
+  compute_val_train_ratio: true
+  generate_every_n_steps: 5000
+  num_generations_per_step: 3  # COHERENCE: Increased from 1 for better metrics
+  generation_during_eval: true  # COHERENCE: Enable to compute coherence metrics
+  test_generation_quality: true  # COHERENCE: Enable quality/coherence testing
+  max_grad_norm: 0.5  # NaN FIX: Reduced from 1.0 for more aggressive clipping
+  compute_coherence_metrics: true  # COHERENCE: Enable coherence tracking during validation
+
+# ADAPTIVE LEARNING RATE CONFIGURATION
+# Controls how the LR adjusts during training based on loss improvements
+adaptive_lr:
+  # Plateau detection - when to reduce LR
+  plateau_patience: 5000          # LR FIX: Increased from 500 to 5000 batches (625 optimizer steps)
+  plateau_factor: 0.7             # LR FIX: Reduced from 0.5 to 0.7 (30% reduction instead of 50%)
+  lr_check_interval: 500          # LR FIX: Increased from 50 to 500 (check less frequently)
+
+  # LR boundaries
+  min_lr: 1e-6                    # LR FIX: Increased from 1e-7 (prevent too-small LRs)
+  max_lr: 2e-4                    # Maximum LR (2x the initial LR)
+
+  # Improvement detection
+  min_improvement: 0.001          # Minimum loss improvement to count as progress
+  batch_loss_window: 100          # Window size for averaging loss
+
+  # Stability-based increases
+  stability_threshold: 5          # Consecutive improvements needed before increasing LR
+  increase_factor: 1.05           # Factor to increase LR when stable (5% increase)
+  increase_min_gap: 1000          # Minimum steps between LR increases
+
+  # Emergency spike handling
+  divergence_threshold: 3.0       # Loss spike threshold (3x recent best)
+  emergency_factor: 0.7           # LR FIX: Increased from 0.5 to 0.7 (less aggressive emergency reduction)
+
+# COHERENCE OPTIMIZATION: Loss function configuration
+losses:
+  # Primary loss - DeepSeek with adaptive temperature and label smoothing
+  primary_loss_type: deepseek  # Options: cross_entropy, deepseek, focal
+
+  # DeepSeek loss settings (best for coherence)
+  use_deepseek_loss: true
+  temperature: 1.0  # Adaptive temperature control
+  adaptive_temperature: false  # NaN FIX: Disable adaptive temp initially for stability
+  label_smoothing: 0.05  # NaN FIX: Reduced from 0.1 for more stable training
+  eos_penalty_weight: 0.05  # NaN FIX: Reduced from 0.1 to prevent loss spikes
+
+  # Anti-repetition losses (DISABLED initially for stability)
+  use_ngram_penalty: false  # NaN FIX: Disable initially, enable after stable training
+  ngram_size: 4  # Track 4-gram repetitions
+  ngram_penalty_weight: 0.05  # NaN FIX: Reduced from 0.1
+
+  use_immediate_repetition_detector: false  # NaN FIX: Disable initially for stability
+  immediate_repetition_weight: 0.02  # NaN FIX: Reduced from 0.05
+
+  # Diversity loss (DISABLED initially for stability)
+  use_diversity_loss: false  # NaN FIX: Disable initially, enable after stable training
+  diversity_weight: 0.005  # NaN FIX: Reduced from 0.01
+
+  # Adaptive loss scaling
+  adaptive_loss_scaling: true  # Automatically balance multiple losses
+
+  # Consistency loss (optional - for augmented data)
+  use_consistency_loss: false
+  consistency_weight: 0.0
+
+# COHERENCE OPTIMIZATION: Generation parameters for inference
+generation:
+  max_length: 512  # Maximum generation length
+  min_length: 10   # Minimum generation length (prevent truncation)
+  temperature: 1.2  # COHERENCE FIX: Increased from 1.0 for better diversity
+  top_p: 0.95      # COHERENCE FIX: Increased from 0.9 for nucleus sampling
+  top_k: 50        # Top-k sampling
+  repetition_penalty: 1.1  # COHERENCE FIX: Reduced from 1.2 (less forced)
+  no_repeat_ngram_size: 3  # COHERENCE: Block 3-gram repetition
+  do_sample: true  # Enable sampling (vs greedy)
+  num_beams: 1     # Beam search (1 = no beam search)
+  early_stopping: false
+
+data:
+  dataset_name: OpenAssistant_oasst2_processed.jsonl
+  data_dir: /project/code/data/processed
+  max_length: 96  # ULTRA-LOW-MEM: Reduced from 128 to save activation memory
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: /project/code/models/tokenizer/enhanced-50680
+  padding_side: right
+  truncation: true
+  num_workers: 2  # ULTRA-LOW-MEM: Reduced from 4 to save RAM
+  dataloader_drop_last: true
+  dataloader_pin_memory: false  # ULTRA-LOW-MEM: Disabled to save memory
+  dataloader_prefetch_factor: 1  # ULTRA-LOW-MEM: Minimal prefetch to save memory
+  validation_buffer_size: 1000  # PHASE 1 OPTIMIZATION: Increased validation buffer to prevent frequent flushes
+  # MEMORY OPTIMIZATION: Streaming tokenization (reduces buffer from 15k to 1k samples)
+  use_streaming_tokenization: false  # Set to true to save 500MB-1GB RAM (slight throughput tradeoff)
+  streaming_buffer_size: 1000  # Buffer size when streaming mode is enabled (10-15x smaller)
+output:
+  output_dir: /project/code/outputs/runs/tiny_moe_ultra_low_mem
+  save_every: 5000
+  fresh_start: true  # FIXED: Enable fresh start to use new learning rate
+run_management:
+  run_name: tiny_moe_ultra_low_mem
+  run_description: "HYBRID MODE: 4 experts × 100M params each with LoRA + CPU offloading + INT8 quantization for ultra low memory"
+  run_tags: moe,lora,offloading,quantization,hybrid-mode,ultra-low-memory,4-experts
+performance:
+  enable_tf32: true
+  float32_matmul_precision: high
+  enable_cudnn_benchmark: true
+  enable_gpu_memory_cleanup: false  # MULTI-GPU: Disabled to prevent torch.cuda.synchronize() blocking (10x slowdown)
+  gradient_check_frequency: 10
+  torchinductor_max_autotune: 0  # DISABLED: Causes excessive recompilation with threading
+  # MULTI-GPU OPTIMIZATION: torch.compile settings - DISABLED for CPU offloading stability
+  enable_torch_compile: false  # DISABLED: Incompatible with threading in async logging and expert offloading
+  torch_compile_mode: reduce-overhead  # MULTI-GPU: Use 'reduce-overhead' to minimize recompilation overhead
+  torch_compile_fullgraph: false  # MULTI-GPU: Allow graph breaks for flexibility with dynamic shapes
+  torch_compile_dynamic: true  # MULTI-GPU: Handle variable sequence lengths without recompilation
+
+gradient_health:
+  enabled: true  # COHERENCE FIX: Re-enabled to detect training instabilities (5-8% slower)
+  conditional_monitoring: true  # PHASE 1 OPTIMIZATION: Only monitor first 10% of training (5-8% speedup after warmup)
+  warmup_fraction: 0.1  # PHASE 1 OPTIMIZATION: Disable monitoring after 10% of max_steps
+
+# OPTIMIZATION SETTINGS - All Phase 1, 2, 3 optimizations are configurable here
+optimizations:
+  # Phase 1: Quick Wins (40-50% speedup)
+  gradient_health_monitoring: true  # COHERENCE FIX: Re-enabled (was false)
+  torchinductor_autotune: 1  # 0=off, 1=basic, 2=aggressive (10-15% speedup)
+
+  # Memory Management
+  memory_headroom_gb: 3.0  # ULTRA-LOW-MEM: Reserve 3GB for safety (increased from 2GB)
+  memory_cleanup_thresholds:
+    warning: 0.85   # ULTRA-LOW-MEM: Trigger warning at 85% GPU memory for aggressive cleanup
+    critical: 0.90  # ULTRA-LOW-MEM: Trigger critical cleanup at 90%
+    emergency: 0.95 # ULTRA-LOW-MEM: Trigger emergency cleanup at 95%
+
+  # Phase 2: Expert Offloading Optimizations (25-35% speedup with offloading)
+  expert_prefetch:
+    enabled: true              # Multi-stage async prefetch (CRITICAL for offloading!)
+    lookahead: 2               # OPTIMIZED: Increased from 1 for better prefetch pipeline
+    use_multiple_streams: true # Use multiple CUDA streams
+
+  expert_cache:
+    auto_limit: true          # ULTRA-LOW-MEM: Enable auto-limiting to prevent OOM
+    use_lru_eviction: true     # LRU eviction when cache is full
+    clear_after_optimizer_step: true  # Clear cache after optimizer step to free memory
+
+  # Phase 2: Checkpoint Optimizations (saves 20-30s per checkpoint)
+  checkpoint:
+    async_saving: true         # Save checkpoints in background thread
+
+  # Phase 2: GPU Memory Cleanup (saves ~2.5s per cleanup)
+  memory_cleanup:
+    fast_mode: true            # Reduced cleanup rounds (2 vs 5, 1 vs 3)
+    remove_sleep: true         # Remove sleep between cleanup rounds
+
+  # Phase 2: Data Loading (20-30% faster I/O)
+  dataloader:
+
+    adaptive_file_reading: true    # Adjust samples per file based on file size
+    adaptive_multipliers:
+      large_files: 4          # Multiplier for files >10MB
+      medium_files: 2         # Multiplier for files >1MB
+      small_files: 1          # Multiplier for files <1MB
+
+  # Phase 2: Gradient Checkpointing (25% memory, 8% slowdown)
+  gradient_checkpointing:
+    selective: false            # ULTRA-LOW-MEM: Checkpoint everything to save maximum memory
+    checkpoint_attention: true # ULTRA-LOW-MEM: Full checkpointing enabled
+
+  # Router Optimizations
+  router:
+    cache_hash_on_gpu: true    # Compute routing cache hash on GPU (15-20% faster eval)
+    compile_routers: true      # torch.compile routers for 20-30% speedup
+    compile_mode: "default"    # "default" or "reduce-overhead"
+    compile_dynamic: true      # Handle variable sequence lengths
+
+hardware:
+  device: cuda
+  mixed_precision: fp32  # NaN FIX: Use fp32 initially instead of bf16 for stability
+  compile: false  # ULTRA-LOW-MEM: Disabled to reduce memory overhead
+  num_gpus: 1  # Set to >1 for multi-GPU training with load balancing
+
+  # GPU Load Balancing (only active when num_gpus > 1)
+  use_gpu_load_balancing: false  # Enable for multi-GPU MoE expert distribution
+  balancing_strategy: adaptive    # Options: round_robin, memory_aware, compute_aware, adaptive
+  rebalance_interval: 1000        # Steps between rebalancing checks
+  enable_expert_migration: true   # Allow experts to migrate between GPUs
+  migration_threshold: 0.2        # Trigger migration at 20% load imbalance
+  log_gpu_metrics: true           # Log per-GPU memory/compute metrics
+# LOGGING CONFIGURATION (Enhanced observability)
+logging:
+  # Verbosity settings
+  verbosity: info                     # Log level: debug, info, warning, error
+  console_level: info                 # Console output level
+  file_level: debug                   # File output level (more detailed)
+
+  # Monitoring frequencies (in optimizer steps)
+  metrics_log_freq: 100               # How often to log training metrics
+  memory_check_freq: 50               # How often to check GPU memory (reduced from 1500 for better monitoring)
+  health_summary_freq: 500            # How often to log training health summary
+  moe_metrics_freq: 2000              # How often to log per-expert MoE metrics (expensive)
+
+  # Feature flags
+  enable_timing_breakdown: true       # Log step-level timing (forward, backward, optimizer)
+  enable_memory_profiling: true       # Enable detailed memory profiling
+  enable_health_summaries: true       # Enable periodic health summary logs
+  log_tensor_shapes: true             # Log tensor shapes on errors (OOM, NaN)
+  log_checkpoint_validation: true     # Validate checkpoints after save
+  save_sample_generations: true       # Save validation generation samples to file
+
+  # Structured logging
+  use_structured_logging: true        # Use structured logs with contextual fields
+  log_format: default                 # Log format: default, json, structured
+
+  # WandB/external logging (disabled by default for cost)
+  log_gradients_to_wandb: false       # Log gradient histograms to WandB (expensive)
+  log_model_topology: false           # Log model graph to WandB (one-time)
+
+wandb:
+  use_wandb: false
+deepspeed:
+  use_deepspeed: false

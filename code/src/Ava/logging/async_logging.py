@@ -14,6 +14,14 @@ from typing import Dict, Any, Optional, List, Callable
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 
+# Import circuit breaker for resilience
+try:
+    from ..resilience.circuit_breaker import CircuitBreaker
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    CIRCUIT_BREAKER_AVAILABLE = False
+    CircuitBreaker = None  # type: ignore
+
 
 @dataclass
 class AsyncLoggingConfig:
@@ -89,6 +97,19 @@ class AsyncLogger:
 
         # Performance tracking
         self.profiling_data = {} if config.enable_profiling else None
+
+        # Circuit breaker for WandB resilience
+        if CIRCUIT_BREAKER_AVAILABLE and CircuitBreaker:
+            self.wandb_circuit_breaker = CircuitBreaker(
+                name="wandb",
+                failure_threshold=5,  # Open after 5 failures
+                success_threshold=2,  # Close after 2 successes
+                timeout_seconds=60.0,  # Wait 60s before retry
+                half_open_timeout=10.0,  # Max 10s in half-open state
+            )
+            print("✓ WandB circuit breaker enabled for graceful degradation")
+        else:
+            self.wandb_circuit_breaker = None
 
     def set_wandb_run(self, wandb_run) -> None:
         """Set WandB run instance."""
@@ -317,11 +338,12 @@ class AsyncLogger:
             self._flush_wandb_cache()
 
     def _log_metrics_to_wandb(self, metrics: Dict[str, Any], step: int) -> None:
-        """Log metrics directly to WandB."""
+        """Log metrics directly to WandB with circuit breaker protection."""
         if self.disable_wandb or not self.wandb_available:
             return
 
-        try:
+        def _do_wandb_log():
+            """Inner function for WandB logging (protected by circuit breaker)."""
             import wandb
 
             # If we're in offline mode, ensure WandB knows about it
@@ -329,6 +351,19 @@ class AsyncLogger:
                 os.environ['WANDB_MODE'] = 'offline'  # type: ignore[misc]
 
             wandb.log(metrics, step=step)
+
+        try:
+            # Use circuit breaker if available
+            if self.wandb_circuit_breaker:
+                result = self.wandb_circuit_breaker.call(_do_wandb_log)
+                if result is None and self.wandb_circuit_breaker.is_open():
+                    # Circuit is open, cache metrics
+                    self._cache_metrics(metrics, step)
+                    self.logging_stats['wandb_circuit_open'] = self.logging_stats.get('wandb_circuit_open', 0) + 1
+                return
+            else:
+                # No circuit breaker, call directly
+                _do_wandb_log()
         except ImportError:
             # WandB not available, silently skip
             self.wandb_available = False
@@ -344,7 +379,6 @@ class AsyncLogger:
                     print("  → Switching to offline mode (metrics will sync when network is available)")
                     self.wandb_offline = True
                     try:
-                        import os
                         os.environ['WANDB_MODE'] = 'offline'
                         import wandb
                         # Verify offline mode engaged

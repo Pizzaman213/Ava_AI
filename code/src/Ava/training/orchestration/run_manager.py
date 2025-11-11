@@ -13,6 +13,7 @@ import os
 import json
 import logging
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -298,9 +299,6 @@ class RunManager:
             is_best: Whether this is the best checkpoint so far
             additional_data: Additional data to save with checkpoint
         """
-        import shutil
-        import os
-
         checkpoint_data = {
             'run_id': self.run_id,
             'epoch': epoch,
@@ -326,6 +324,9 @@ class RunManager:
             self.log('error', f"Insufficient disk space: {free_space_gb:.2f}GB free, need at least 2GB")
             raise RuntimeError(f"Insufficient disk space for checkpoint: {free_space_gb:.2f}GB available")
 
+        # Track checkpoint save timing
+        save_start_time = time.time()
+
         # Save latest checkpoint atomically
         latest_path = self.run_dir / 'checkpoints/latest_model.pt'
         self._atomic_save(checkpoint_data, latest_path)
@@ -336,16 +337,24 @@ class RunManager:
         step_path = step_dir / 'model.pt'
         self._atomic_save(checkpoint_data, step_path)
 
+        # Calculate checkpoint size and save duration
+        save_duration = time.time() - save_start_time
+        checkpoint_size_mb = os.path.getsize(latest_path) / (1024**2)
+
         # Save best checkpoint if applicable
         if is_best:
             best_path = self.run_dir / 'checkpoints/best_model.pt'
             self._atomic_save(checkpoint_data, best_path)
-            self.log('training', f"Saved new best checkpoint with loss {loss:.6f}")
+            self.log('training',
+                    f"Saved new best checkpoint with loss {loss:.6f} "
+                    f"({checkpoint_size_mb:.1f}MB, {save_duration:.1f}s)")
 
             # Update run metadata
             self._update_best_loss(loss)
-
-        self.log('training', f"Saved checkpoint at step {step} (epoch {epoch})")
+        else:
+            self.log('training',
+                    f"Saved checkpoint at step {step} (epoch {epoch}) "
+                    f"({checkpoint_size_mb:.1f}MB, {save_duration:.1f}s)")
 
         # Return the path to the latest checkpoint
         return str(latest_path)
