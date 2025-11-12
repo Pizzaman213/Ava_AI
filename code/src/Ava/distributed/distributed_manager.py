@@ -6,8 +6,6 @@ barrier synchronization, error handling, and cleanup procedures.
 """
 
 import torch  # type: ignore[import]
-import torch.distributed as dist  # type: ignore[import]
-import torch.multiprocessing as mp  # type: ignore[import]
 import os
 import signal
 import time
@@ -19,6 +17,23 @@ from contextlib import contextmanager
 from enum import Enum
 import json
 from datetime import timedelta
+
+# CRITICAL FIX: Check if distributed training is available before importing
+try:
+    import torch.distributed as dist  # type: ignore[import]
+    import torch.multiprocessing as mp  # type: ignore[import]
+    DISTRIBUTED_AVAILABLE = True
+except (ImportError, AttributeError) as e:
+    DISTRIBUTED_AVAILABLE = False
+    # Create mock objects to prevent import errors
+    class MockDist:
+        @staticmethod
+        def is_available(): return False
+        @staticmethod
+        def is_initialized(): return False
+    dist = MockDist()  # type: ignore
+    mp = None  # type: ignore
+    logging.warning(f"torch.distributed not available: {e}")
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +136,13 @@ class DistributedManager:
         Returns:
             True if initialization successful, False otherwise
         """
+        # CRITICAL FIX: Check if distributed training is available
+        if not DISTRIBUTED_AVAILABLE:
+            logger.error("❌ torch.distributed is not available on this system")
+            logger.error("   This build of PyTorch does not support distributed training")
+            logger.error("   Please install a PyTorch build with distributed support")
+            return False
+
         if self.state != DistributedState.NOT_INITIALIZED:
             logger.warning(f"Distributed manager already in state: {self.state}")
             return self.state == DistributedState.HEALTHY

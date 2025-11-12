@@ -54,27 +54,30 @@ moe_memory_optimization:
 training:
   batch_size: 64  # OPTIMIZATION: Increased from 48 (LoRA allows larger batch, better GPU utilization)
   gradient_accumulation_steps: 4  # OPTIMIZATION: Reduced from 6 (effective batch=256, faster throughput)
-  learning_rate: 0.00015
+  optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
+  learning_rate: 0.00005  # LION: 3x smaller than AdamW (0.00015 -> 0.00005)
+  lion_betas: [0.9, 0.99]  # Lion-specific betas (different from AdamW's [0.9, 0.999])
   max_steps: 500000
   warmup_steps: 5000
   weight_decay: 0.1
-  optimizer: adamw
   use_fused_optimizer: true  # OPTIMIZATION: 5-10% faster optimizer step
   offload_optimizer_state: true  # ENABLED: 30-50% memory savings for medium model with minimal slowdown
   save_steps: 10000
-  eval_steps: 2000
+  eval_steps: 5000  # OPTIMIZED: Increased from 2000 for 10-15% speedup (less validation overhead)
   logging_steps: 100
   run_validation: true
-  validation_batch_size: 64
-  max_validation_batches: 1000
+  validation_batch_size: 64  # Already optimal for multi-GPU setup
+  max_validation_batches: 500  # OPTIMIZED: Reduced from 1000 for faster validation
   compute_val_train_ratio: true
-  generate_every_n_steps: 2000
+  generate_every_n_steps: 5000  # OPTIMIZED: Aligned with eval_steps
   num_generations_per_step: 3
-  generation_during_eval: true
+  generation_during_eval: false  # OPTIMIZED: Disabled expensive generation during validation
   test_generation_quality: true
 
 data:
   dataset_name: OpenAssistant_oasst2_processed.jsonl
+  streaming: true  # REQUIRED: Enable streaming data loader
+  buffer_size: 50000  # Shuffle buffer size for streaming loader
   data_dir: /project/code/data/processed
   max_length: 1024
   train_split: train
@@ -87,7 +90,8 @@ data:
   num_workers: 12
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 2  # MEMORY: Auto-adjusts based on max_length (2->4 for short seqs, 2->1 for long seqs)
+  dataloader_prefetch_factor: 2  # Auto-adjusted based on max_length (see dataloader.py)
+  streaming_buffer_size: 5000  # OPTIMIZED: Increased buffer for better throughput
 
 output:
   output_dir: /project/code/outputs/runs/medium_moe

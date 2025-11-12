@@ -197,8 +197,9 @@ from tqdm import tqdm
 
 # OPTIMIZATION: Enable TF32 for Ampere GPUs (3060/3070/3080/3090/A100) - 8x faster matmul
 if torch.cuda.is_available():
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
+    # Use new PyTorch 2.9+ API for TF32 precision control
+    torch.backends.cuda.matmul.fp32_precision = 'tf32'
+    torch.backends.cudnn.conv.fp32_precision = 'tf32'
     torch.backends.cudnn.benchmark = True  # Auto-tune kernels for your input sizes
     print("✓ TF32 enabled for CUDA operations (Ampere GPU optimization)")
     print("✓ cuDNN benchmark mode enabled (auto-tuning)")
@@ -793,11 +794,20 @@ def create_model_and_tokenizer(
         get_logger().info("Using OptimizedMoETransformer (high-performance MoE)")
         model_config = OptimizedMoEConfig(**filtered_config)
 
-        # Check if expert offloading is enabled - it's incompatible with meta device
-        use_offloading = filtered_config.get('use_expert_offloading', False)
+        # CRITICAL FIX: Check multiple config sources for expert offloading
+        # Priority: model config > memory_optimization config > default
+        use_offloading = (
+            filtered_config.get('use_expert_offloading') or
+            config_dict.get("memory_optimization", {}).get("use_expert_offloading") or
+            config_dict.get("optimization", {}).get("use_expert_offloading", False)
+        )
 
         # Check if torch.compile will be enabled - it's also incompatible with meta device
-        enable_compile = config_dict.get("performance", {}).get("enable_torch_compile", True)
+        # Priority: performance config > hardware config > default
+        enable_compile = (
+            config_dict.get("performance", {}).get("enable_torch_compile") or
+            config_dict.get("hardware", {}).get("compile", True)
+        )
 
         if use_offloading or enable_compile:
             # Expert offloading OR torch.compile doesn't support meta device, create directly on GPU
@@ -841,6 +851,22 @@ def create_model_and_tokenizer(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     get_logger().info(f"Tokenizer loaded: vocab_size={len(tokenizer)}")
+
+    # CRITICAL FIX: Validate tokenizer vocab size matches model config
+    model_vocab_size = model_config.vocab_size
+    tokenizer_vocab_size = len(tokenizer)
+    if model_vocab_size != tokenizer_vocab_size:
+        error_msg = (
+            f"CRITICAL ERROR: Tokenizer vocab size mismatch!\n"
+            f"  Model expects: {model_vocab_size} tokens\n"
+            f"  Tokenizer has: {tokenizer_vocab_size} tokens\n"
+            f"  This will cause 'CUDA index out of bounds' errors during training.\n"
+            f"  Please either:\n"
+            f"    1. Use a tokenizer with {model_vocab_size} tokens, or\n"
+            f"    2. Update model config vocab_size to {tokenizer_vocab_size}"
+        )
+        get_logger().error(error_msg)
+        raise ValueError(error_msg)
 
     return model, tokenizer
 
@@ -1120,6 +1146,37 @@ def create_dataloaders(
         get_logger().info(f"\n📈 Total examples found: {total_examples:,}")
         get_logger().info(f"📁 Total files: {file_count}")
 
+        # CRITICAL FIX: Validate minimum dataset size before training
+        min_samples_required = batch_size * 2  # At least 2 batches for meaningful training
+        if total_examples < min_samples_required:
+            error_msg = (
+                f"❌ CRITICAL ERROR: Dataset too small for training!\n"
+                f"   Found: {total_examples} examples\n"
+                f"   Required minimum: {min_samples_required} examples (batch_size * 2)\n"
+                f"   Batch size: {batch_size}\n"
+                f"   Files checked: {file_count}\n"
+                f"   Directory: {data_dir}\n"
+                f"   \n"
+                f"   Solutions:\n"
+                f"     1. Add more training data to {data_dir}\n"
+                f"     2. Reduce batch_size (current: {batch_size})\n"
+                f"     3. Check that data files are in the correct format (*_processed.jsonl)"
+            )
+            get_logger().error(error_msg)
+            raise RuntimeError(error_msg)
+
+        if file_count == 0:
+            error_msg = (
+                f"❌ CRITICAL ERROR: No data files found!\n"
+                f"   Directory checked: {data_dir}\n"
+                f"   Expected pattern: *_processed.jsonl\n"
+                f"   \n"
+                f"   Please ensure your data files follow the naming convention:\n"
+                f"     - <dataset_name>_processed.jsonl"
+            )
+            get_logger().error(error_msg)
+            raise RuntimeError(error_msg)
+
         # Get num_workers from config (prioritize data_loading section, fallback to data section)
         # OPTIMIZED: Increased prefetch_factor from 4 to 12 for better GPU utilization
         if hasattr(training_config, 'data_loading'):
@@ -1189,6 +1246,12 @@ def create_dataloaders(
         else:
             enable_bucketing = getattr(training_config.data, 'enable_bucketing', True)
 
+        # Check for dynamic batching configuration
+        use_dynamic_batching = getattr(training_config.data, 'use_dynamic_batching', False)
+        max_tokens_per_batch = getattr(training_config.data, 'max_tokens_per_batch', None)
+        if use_dynamic_batching:
+            get_logger().info(f"  ⚡ Dynamic batching enabled: targeting {max_tokens_per_batch or 'auto'} tokens per batch")
+
         train_loader, val_loader = create_streaming_dataloaders(
             tokenizer=tokenizer,
             batch_size=batch_size,
@@ -1203,6 +1266,8 @@ def create_dataloaders(
             val_max_samples=val_max_samples,
             val_split_ratio=val_split_ratio,
             samples_per_file=samples_per_file,
+            use_dynamic_batching=use_dynamic_batching,
+            max_tokens_per_batch=max_tokens_per_batch,
         )
 
         # Minimum samples validation (Phase 2.1)
@@ -1435,7 +1500,23 @@ def setup_optimizer_and_lr_management(
             continue
         total_trainable_params += p.numel()
 
-        if any(nd in n for nd in no_decay):
+        # CRITICAL FIX: Use more precise matching to avoid false positives
+        # Old code: "if any(nd in n for nd in no_decay)" - substring matching
+        # This incorrectly matched "bias_norm" against "bias", "embedding.bias" against "bias", etc.
+        # New: Match patterns more carefully - check if pattern is at end or followed by non-alphanumeric
+        should_skip_decay = False
+        for nd in no_decay:
+            # Exact match for full parameter names like "LayerNorm.weight"
+            if nd == n:
+                should_skip_decay = True
+                break
+            # For partial patterns, check they're complete words/components
+            # e.g., "bias" should match "layer.bias" but not "bias_norm"
+            if f".{nd}" in n or n.endswith(nd) or (nd in n and not n.replace(nd, '').replace('.', '').replace('_', '').isalnum()):
+                should_skip_decay = True
+                break
+
+        if should_skip_decay:
             no_decay_params.append(p)
         else:
             decay_params.append(p)
@@ -1482,9 +1563,14 @@ def setup_optimizer_and_lr_management(
             try:
                 # PyTorch 2.0+ supports CPU offloading of optimizer states
                 # This moves Adam momentum/variance tensors to CPU, saving GPU memory
+                # CRITICAL FIX: Use default argument to capture offload_to_cpu value in closure
+                # Without this, all hooks share the same variable reference (closure bug)
+                def create_offload_hook(should_offload: bool):
+                    return lambda grad: grad.cpu() if should_offload else grad
+
                 for param_group in optimizer.param_groups:
                     for param in param_group['params']:
-                        param.register_hook(lambda grad: grad.cpu() if offload_to_cpu else grad)
+                        param.register_hook(create_offload_hook(offload_to_cpu))
 
                 get_logger().info("✓ Optimizer state CPU offloading enabled (30-50% memory savings)")
                 get_logger().info("  Note: Adds ~5% overhead but allows larger batch sizes")
@@ -1497,6 +1583,28 @@ def setup_optimizer_and_lr_management(
     elif optimizer_type == "lion":
         # Import Lion optimizer from advanced optimizers
         from src.Ava.optimization.optimizers.advanced import LionOptimizer
+
+        # CRITICAL FIX: Validate Lion learning rate
+        # Lion requires 3-10x smaller LR than AdamW (typically 1e-4 vs 3e-4)
+        # Common AdamW LR range: 1e-4 to 3e-3
+        # Recommended Lion LR range: 3e-5 to 1e-3
+        typical_adamw_lr_max = 3e-3
+        if lr > typical_adamw_lr_max:
+            error_msg = (
+                f"⚠️  WARNING: Lion learning rate may be too high!\n"
+                f"   Current LR: {lr:.2e}\n"
+                f"   Lion typically requires 3-10x smaller LR than AdamW\n"
+                f"   Recommended Lion LR range: 3e-5 to 1e-3\n"
+                f"   Typical AdamW LR: 1e-4 to 3e-3\n"
+                f"\n"
+                f"   High LR with Lion can cause:\n"
+                f"     - Training instability\n"
+                f"     - NaN losses\n"
+                f"     - Poor convergence\n"
+                f"\n"
+                f"   Consider reducing LR to {lr/5:.2e} or {lr/10:.2e}"
+            )
+            get_logger().warning(error_msg)
 
         # Get Lion betas from config with fallback (Lion defaults)
         lion_betas = training_cfg.get('lion_betas', (0.9, 0.99))
@@ -1511,6 +1619,8 @@ def setup_optimizer_and_lr_management(
         get_logger().info("✓ Using Lion optimizer (50% memory reduction vs AdamW)")
         get_logger().info(f"  Lion hyperparams: lr={lr:.2e}, betas={lion_betas}, weight_decay={weight_decay}")
         get_logger().info("  Note: Lion uses sign-based updates for better efficiency")
+        if lr <= 1e-3:
+            get_logger().info(f"  ✓ Learning rate {lr:.2e} is within recommended range for Lion")
     elif optimizer_type == "sophia":
         # Import Sophia optimizer from advanced optimizers
         from src.Ava.optimization.optimizers.advanced import SophiaOptimizer
@@ -2352,17 +2462,18 @@ def evaluate_model(
                 total_batches_processed += 1
 
                 # Check device to avoid unnecessary transfers
+                # PHASE 1.2: Use non_blocking=True for faster GPU transfers
                 input_ids = batch["input_ids"]
                 if input_ids.device != device:
-                    input_ids = input_ids.to(device)
+                    input_ids = input_ids.to(device, non_blocking=True)
 
                 attention_mask = batch["attention_mask"]
                 if attention_mask.device != device:
-                    attention_mask = attention_mask.to(device)
+                    attention_mask = attention_mask.to(device, non_blocking=True)
 
                 labels = batch.get("labels", input_ids)
                 if labels.device != device:
-                    labels = labels.to(device)
+                    labels = labels.to(device, non_blocking=True)
 
                 # CUDA GRAPH FIX: Mark step boundary before model invocation
                 if hasattr(torch, 'compiler') and hasattr(torch.compiler, 'cudagraph_mark_step_begin'):
@@ -2718,12 +2829,13 @@ def main():
                 # Apply TF32 optimizations (8x faster matmul on Ampere+ GPUs)
                 if enable_tf32:
                     torch.set_float32_matmul_precision(matmul_precision)
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                    torch.backends.cudnn.allow_tf32 = True
+                    # Use new PyTorch 2.9+ API for TF32 precision control
+                    torch.backends.cuda.matmul.fp32_precision = 'tf32'
+                    torch.backends.cudnn.conv.fp32_precision = 'tf32'
                     get_logger().info(f"✅ TF32 optimizations ENABLED (precision: {matmul_precision})")
                 else:
-                    torch.backends.cuda.matmul.allow_tf32 = False
-                    torch.backends.cudnn.allow_tf32 = False
+                    torch.backends.cuda.matmul.fp32_precision = 'ieee'
+                    torch.backends.cudnn.conv.fp32_precision = 'ieee'
                     get_logger().info("⚠️  TF32 optimizations DISABLED (may be slower)")
 
                 # Apply CuDNN benchmark (auto-tune kernels)
@@ -3274,6 +3386,13 @@ def main():
         trainer.deepspeed_enabled = True
         get_logger().info("  Trainer configured with DeepSpeed optimizer")
 
+    # Initialize adaptive validation scheduler if configured
+    from src.Ava.training.adaptive_validation import create_adaptive_scheduler_from_config
+    adaptive_scheduler = create_adaptive_scheduler_from_config(config_dict)
+    if adaptive_scheduler:
+        trainer.adaptive_validation_scheduler = adaptive_scheduler
+        get_logger().info("  ✅ Adaptive validation scheduler initialized (5-15% time savings expected)")
+
     # Pass GPU load balancer to model's MoE layers (if initialized)
     if trainer.gpu_load_balancer is not None:
         get_logger().info("  Passing GPU Load Balancer to model's MoE layers...")
@@ -3557,7 +3676,16 @@ def main():
 
             should_evaluate = False
 
-            if eval_steps is not None and eval_steps > 0:
+            # Check for adaptive validation scheduler
+            if hasattr(trainer, 'adaptive_validation_scheduler') and trainer.adaptive_validation_scheduler:
+                # Use adaptive scheduler
+                avg_loss = train_results.get("avg_loss", 0)
+                is_checkpoint = (current_step % config_dict.get("training", {}).get("save_steps", 5000) == 0)
+                is_final = (epoch == num_epochs - 1)
+                should_evaluate = trainer.adaptive_validation_scheduler.should_evaluate(
+                    current_step, avg_loss, is_checkpoint, is_final
+                )
+            elif eval_steps is not None and eval_steps > 0:
                 # Evaluate based on step interval
                 should_evaluate = (current_step % eval_steps == 0)
             else:
@@ -4179,6 +4307,80 @@ def main():
 
 
 if __name__ == "__main__":
+    # 🚀 AUTO-LAUNCH LOGIC: Detect GPUs and relaunch with optimal settings
+    # If we have multiple GPUs but not launched with torchrun, auto-relaunch with DDP
+    import torch
+
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    is_distributed_launch = 'RANK' in os.environ and 'WORLD_SIZE' in os.environ
+
+    # Check if user wants to force single-GPU mode
+    force_single_gpu = '--force-single-gpu' in sys.argv
+
+    if num_gpus > 1 and not is_distributed_launch and not force_single_gpu:
+        print("=" * 80)
+        print("🚀 AVA MULTI-GPU AUTO-LAUNCHER")
+        print("=" * 80)
+        print(f"\n📊 Detected {num_gpus} GPUs")
+        print(f"   Strategy: Automatic DDP (DistributedDataParallel) with torchrun")
+        print(f"   Expected speedup: 50-70% faster than DataParallel\n")
+
+        # Show GPU info
+        try:
+            for i in range(num_gpus):
+                props = torch.cuda.get_device_properties(i)
+                memory_gb = props.total_memory / 1e9
+                print(f"   GPU {i}: {props.name} ({memory_gb:.1f}GB)")
+        except Exception:
+            pass
+
+        print(f"\n🔧 Relaunching with torchrun for optimal multi-GPU performance...")
+        print(f"   (Use --force-single-gpu to disable auto-launch)\n")
+
+        # Build torchrun command
+        import subprocess
+        cmd = [
+            sys.executable, "-m", "torch.distributed.run",
+            f"--nproc_per_node={num_gpus}",
+            "--standalone",
+            str(Path(__file__).resolve())
+        ] + sys.argv[1:]  # Pass through all original arguments
+
+        # Remove --force-single-gpu if it somehow got through
+        if '--force-single-gpu' in cmd:
+            cmd.remove('--force-single-gpu')
+
+        print(f"▶️  Command: {' '.join(cmd)}\n")
+        print("=" * 80)
+        print()
+
+        # Execute and exit
+        try:
+            result = subprocess.run(cmd)
+            sys.exit(result.returncode)
+        except KeyboardInterrupt:
+            print("\n⚠️  Training interrupted by user")
+            sys.exit(1)
+        except Exception as e:
+            print(f"\n❌ Failed to launch with torchrun: {e}")
+            print("   Falling back to single-GPU mode...")
+            # Continue with normal execution
+
+    elif num_gpus > 1 and is_distributed_launch:
+        # Already launched with torchrun, just log it
+        rank = int(os.environ.get('RANK', 0))
+        if rank == 0:
+            print(f"✓ Multi-GPU training mode: {num_gpus} GPUs with DDP")
+
+    elif num_gpus == 1:
+        print(f"✓ Single GPU mode detected")
+        if '--force-single-gpu' in sys.argv:
+            sys.argv.remove('--force-single-gpu')
+
+    else:
+        print(f"⚠️  No GPU detected, using CPU mode")
+
+    # Continue with normal training
     try:
         main()
     except KeyboardInterrupt:

@@ -92,7 +92,8 @@
       "Bash(if [ -f /tmp/lion_test.log ])",
       "Bash(then grep -i \"lion\\|optimizer\" /tmp/lion_test.log)",
       "Bash(else echo \"Log file not found\")",
-      "Bash(pgrep:*)"
+      "Bash(pgrep:*)",
+      "Bash(sort:*)"
     ],
     "deny": [],
     "ask": []

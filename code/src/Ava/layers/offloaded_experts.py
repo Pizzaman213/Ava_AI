@@ -29,6 +29,9 @@ from typing import Optional, Dict, Tuple, List
 import time
 from collections import OrderedDict
 
+# Import centralized constants
+from ..config.constants import MOE_CONSTANTS
+
 from .experts import ExpertParallelGroup
 from .lora_experts import LoRAExpertGroup
 
@@ -264,12 +267,12 @@ class CPUOffloadedExpertGroup(nn.Module):
         # PHASE 2 OPTIMIZATION: Dynamic multi-stage prefetch pipeline with adaptive depth
         self.prefetch_lookahead = prefetch_lookahead
         self._adaptive_prefetch = True  # Enable dynamic depth adjustment
-        self._prefetch_depth_min = 1
-        self._prefetch_depth_max = min(prefetch_lookahead, 5)  # Increased max from 3 to 5
-        self._current_prefetch_depth = min(prefetch_lookahead, 3)  # Start with default
+        self._prefetch_depth_min = MOE_CONSTANTS.PREFETCH_DEPTH_MIN
+        self._prefetch_depth_max = min(prefetch_lookahead, MOE_CONSTANTS.PREFETCH_DEPTH_MAX)
+        self._current_prefetch_depth = min(prefetch_lookahead, MOE_CONSTANTS.PREFETCH_DEPTH_DEFAULT)
         self._prefetch_miss_count = 0
         self._prefetch_hit_count = 0
-        self._prefetch_adjustment_interval = 100  # Adjust every 100 accesses
+        self._prefetch_adjustment_interval = MOE_CONSTANTS.PREFETCH_ADJUSTMENT_INTERVAL
 
         # Only create CUDA streams if CUDA is available
         if torch.cuda.is_available():
@@ -282,7 +285,7 @@ class CPUOffloadedExpertGroup(nn.Module):
         # OPTIMIZATION: Predictive caching based on access patterns
         from collections import defaultdict, Counter
         self._access_patterns: Dict[int, List[int]] = defaultdict(list)  # Track which experts follow which
-        self._pattern_history_size = 1000  # Keep last 1000 transitions
+        self._pattern_history_size = MOE_CONSTANTS.PATTERN_HISTORY_SIZE
 
         # Create individual expert modules instead of parallel group
         # This allows us to move them individually
@@ -490,16 +493,15 @@ class CPUOffloadedExpertGroup(nn.Module):
             if self.use_gpu_load_balancing and self.gpu_load_balancer is not None:
                 target_gpu_id = self.gpu_load_balancer.get_expert_gpu(expert_id)
 
+            # HYBRID MODE FIX: Determine target device BEFORE checking current device
+            # This prevents device from changing mid-forward pass
+            if target_gpu_id is not None and device.type == 'cuda':
+                device = torch.device(f'cuda:{target_gpu_id}')
+
             # Check if expert is already on target device
             try:
                 current_device = next(expert.parameters()).device
                 already_on_device = current_device == device
-
-                # IMPROVED: Check if expert is on the right GPU (for multi-GPU)
-                if target_gpu_id is not None and device.type == 'cuda':
-                    target_device = torch.device(f'cuda:{target_gpu_id}')
-                    already_on_device = current_device == target_device
-                    device = target_device  # Update device to target GPU
             except StopIteration:
                 # Expert has no parameters, skip device management
                 already_on_device = True
@@ -546,13 +548,27 @@ class CPUOffloadedExpertGroup(nn.Module):
             # Get inputs for this expert
             expert_input = hidden_states[token_indices]  # [n_tokens_for_expert, hidden_size]
 
+            # HYBRID MODE FIX: Ensure input is on same device as expert
+            expert_input = expert_input.to(device)
+
             # Compute expert output
             expert_output = expert(expert_input)  # [n_tokens_for_expert, hidden_size]
+
+            # HYBRID MODE FIX: Ensure expert output dtype matches expected output dtype
+            # This handles quantized experts (INT8) mixing with FP16/BF16 routing weights
+            if expert_output.dtype != output.dtype:
+                expert_output = expert_output.to(dtype=output.dtype)
 
             # Apply routing weights if provided
             if expert_weights is not None:
                 weights = expert_weights[token_indices, k_indices].unsqueeze(-1)
+                # HYBRID MODE FIX: Ensure weights are on same device and dtype as expert output
+                weights = weights.to(device=expert_output.device, dtype=expert_output.dtype)
                 expert_output = expert_output * weights
+
+            # HYBRID MODE FIX: Move output back to expected device before placing
+            if expert_output.device != output.device:
+                expert_output = expert_output.to(device=output.device)
 
             # Place in output tensor
             output[token_indices, k_indices] = expert_output
@@ -736,9 +752,9 @@ class CPUOffloadedExpertGroup(nn.Module):
                             hit_rate = self._prefetch_hit_count / total_accesses
                             # If hit rate < 70%, increase depth (more misses = need deeper prefetch)
                             # If hit rate > 90%, decrease depth (high hits = can reduce overhead)
-                            if hit_rate < 0.7 and self._current_prefetch_depth < self._prefetch_depth_max:
+                            if hit_rate < MOE_CONSTANTS.ROUTING_HIT_RATE_INCREASE_THRESHOLD and self._current_prefetch_depth < self._prefetch_depth_max:
                                 self._current_prefetch_depth += 1
-                            elif hit_rate > 0.9 and self._current_prefetch_depth > self._prefetch_depth_min:
+                            elif hit_rate > MOE_CONSTANTS.ROUTING_HIT_RATE_DECREASE_THRESHOLD and self._current_prefetch_depth > self._prefetch_depth_min:
                                 self._current_prefetch_depth -= 1
 
                     if not already_on_device:

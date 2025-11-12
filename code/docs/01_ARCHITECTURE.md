@@ -824,11 +824,11 @@ model = torch.compile(
 ### CUDA Optimizations
 
 ```python
-# Set CUDA optimizations
-torch.backends.cuda.matmul.allow_tf32 = True  # Use TF32 for matmul
-torch.backends.cudnn.allow_tf32 = True        # Use TF32 for convolutions
-torch.backends.cudnn.benchmark = True         # Auto-tune kernels
-torch.backends.cudnn.deterministic = False    # Allow non-deterministic ops
+# Set CUDA optimizations (PyTorch 2.9+ API)
+torch.backends.cuda.matmul.fp32_precision = 'tf32'   # Use TF32 for matmul
+torch.backends.cudnn.conv.fp32_precision = 'tf32'    # Use TF32 for convolutions
+torch.backends.cudnn.benchmark = True                # Auto-tune kernels
+torch.backends.cudnn.deterministic = False           # Allow non-deterministic ops
 ```
 
 ### Memory Pool Management

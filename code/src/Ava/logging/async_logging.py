@@ -31,8 +31,8 @@ class AsyncLoggingConfig:
     queue_timeout: float = 1.0              # Queue get timeout
 
     # Batch processing
-    batch_size: int = 100                   # Items per batch
-    batch_timeout: float = 5.0              # Max time between batches
+    batch_size: int = 200                   # Items per batch (optimized: was 100)
+    batch_timeout: float = 10.0             # Max time between batches (optimized: was 5.0)
 
     # WandB settings
     wandb_cache_size: int = 2000            # Cache size for offline resilience

@@ -43,8 +43,19 @@ class DynamicConfig:
                     setattr(self, key, value)
 
     def __getattr__(self, name: str) -> Any:
-        """Allow accessing any attribute dynamically for type checkers."""
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+        """
+        Allow accessing any attribute dynamically with safe fallback.
+
+        Returns None for missing optional attributes instead of raising.
+        Private attributes (starting with _) still raise AttributeError.
+        """
+        # Private attributes should still raise
+        if name.startswith('_'):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        # Return None for missing optional attributes (safe fallback)
+        # This allows code like: if config.optional_feature: ...
+        return None
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Allow setting any attribute dynamically."""
@@ -71,20 +82,49 @@ class DynamicConfig:
         """
         return getattr(self, key, default)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, _visited: Optional[set] = None) -> Dict[str, Any]:
         """
-        Convert DynamicConfig back to a dictionary.
+        Convert DynamicConfig back to a dictionary with circular reference protection.
+
+        Args:
+            _visited: Internal set to track visited objects (prevents infinite recursion)
 
         Returns:
             Dictionary representation of configuration
         """
+        if _visited is None:
+            _visited = set()
+
+        # Check for circular reference
+        obj_id = id(self)
+        if obj_id in _visited:
+            return {"_circular_reference": True}
+
+        _visited.add(obj_id)
+
         result = {}
         for key, value in self.__dict__.items():
             if isinstance(value, DynamicConfig):
-                result[key] = value.to_dict()
+                result[key] = value.to_dict(_visited)
             else:
                 result[key] = value
+
+        _visited.remove(obj_id)
         return result
+
+    def validate(self) -> bool:
+        """
+        Validate the configuration for required fields and circular references.
+
+        Returns:
+            True if valid, raises ValueError if invalid
+        """
+        try:
+            # Check for circular references by attempting to convert to dict
+            self.to_dict()
+            return True
+        except RecursionError:
+            raise ValueError("Configuration contains circular references")
 
     def __repr__(self) -> str:
         """String representation of DynamicConfig"""
@@ -106,6 +146,73 @@ class HardwareConfig:
     enable_expert_migration: bool = True      # Allow expert migration between GPUs
     migration_threshold: float = 0.2          # Load imbalance threshold for migration (0.2 = 20%)
     log_gpu_metrics: bool = True              # Log per-GPU metrics (memory, compute, etc.)
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for model architecture and optimizations."""
+    # Architecture
+    vocab_size: int = 50680
+    hidden_size: int = 1024
+    num_layers: int = 6
+    num_attention_heads: int = 16
+    intermediate_size: int = 8192
+    max_position_embeddings: int = 512
+
+    # MoE settings
+    num_experts: int = 4
+    num_experts_per_token: int = 1
+    router_type: str = 'mixtral'              # 'mixtral' or 'deepseek'
+    capacity_factor: float = 1.25
+    expert_dropout: float = 0.0
+    activation: str = 'swiglu'                # 'swiglu', 'geglu', 'gelu', 'relu'
+
+    # Performance optimizations
+    use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
+    use_triton_kernels: bool = True           # Use Triton fused kernels
+    use_torch_compile: bool = False           # Enable torch.compile
+    use_flash_attention: bool = True          # Use flash attention
+    gradient_checkpointing: bool = True       # Enable gradient checkpointing
+    use_optimized_moe: bool = True            # Use optimized MoE implementation
+
+    # Auxiliary losses
+    router_z_loss_coef: float = 0.0001        # Router z-loss coefficient
+    load_balance_loss_coef: float = 0.01      # Load balance loss coefficient
+    diversity_loss_coef: float = 0.0001       # Diversity loss coefficient
+    expert_dropout_loss_coef: float = 0.0     # Expert dropout loss coefficient
+    router_jitter_noise: float = 0.01         # Router jitter noise for exploration
+
+    # LoRA settings
+    use_lora_experts: bool = False            # Use LoRA for experts
+    lora_rank: int = 4                        # LoRA rank
+    lora_alpha: int = 8                       # LoRA alpha
+    freeze_lora_base: bool = False            # Freeze LoRA base weights
+
+    # Expert offloading
+    use_expert_offloading: bool = False       # Enable CPU offloading
+    max_active_experts_gpu: int = 2           # Max experts on GPU
+    offload_eviction_policy: str = 'lru'      # 'lru' or 'random'
+
+    # Regularization
+    attention_dropout: float = 0.0
+    dropout: float = 0.0
+    layer_norm_eps: float = 1e-5
+    initializer_range: float = 0.01
+
+
+@dataclass
+class GenerationConfig:
+    """Configuration for text generation."""
+    max_length: int = 512                     # Maximum generation length
+    min_length: int = 10                      # Minimum generation length
+    temperature: float = 1.2                  # Sampling temperature
+    top_p: float = 0.95                       # Nucleus sampling threshold
+    top_k: Optional[int] = 50                 # Top-k sampling (None = disabled)
+    repetition_penalty: float = 1.1           # Repetition penalty (>1.0 discourages)
+    no_repeat_ngram_size: int = 3             # Block n-gram repetitions
+    do_sample: bool = True                    # Enable sampling (vs greedy)
+    num_beams: int = 1                        # Beam search width (1 = no beam search)
+    early_stopping: bool = False              # Stop when all beams finish
 
 
 @dataclass
@@ -529,6 +636,71 @@ class PerformanceConfig:
     cudagraph_skip_dynamic_shapes: bool = True   # Skip dynamic shapes in CUDAGraph
     cudagraph_dynamic_shape_warn_limit: Optional[int] = None  # Warning limit for dynamic shapes
     torchinductor_max_autotune: int = 0       # TorchInductor autotune level (0-4)
+
+
+@dataclass
+class OptimizationsConfig:
+    """Configuration for all training optimizations (Phase 1, 2, 3)."""
+
+    # Phase 1: Quick Wins
+    gradient_health_monitoring: bool = True    # Enable gradient health monitoring
+    torchinductor_autotune: int = 1            # 0=off, 1=basic, 2=aggressive (10-15% speedup)
+
+    # Memory Management
+    memory_headroom_gb: float = 3.0            # Reserve headroom for safety
+    memory_cleanup_thresholds: Dict[str, float] = field(default_factory=lambda: {
+        'warning': 0.85,   # Trigger warning cleanup
+        'critical': 0.90,  # Trigger critical cleanup
+        'emergency': 0.95  # Trigger emergency cleanup
+    })
+
+    # Phase 2: Expert Offloading Optimizations
+    expert_prefetch: Dict[str, Any] = field(default_factory=lambda: {
+        'enabled': True,                # Multi-stage async prefetch
+        'lookahead': 2,                 # Prefetch lookahead
+        'use_multiple_streams': True    # Use multiple CUDA streams
+    })
+
+    expert_cache: Dict[str, Any] = field(default_factory=lambda: {
+        'auto_limit': True,             # Auto-limit cache size
+        'use_lru_eviction': True,       # LRU eviction policy
+        'clear_after_optimizer_step': True  # Clear after optimizer step
+    })
+
+    # Phase 2: Checkpoint Optimizations
+    checkpoint: Dict[str, Any] = field(default_factory=lambda: {
+        'async_saving': True            # Save checkpoints in background thread
+    })
+
+    # Phase 2: GPU Memory Cleanup
+    memory_cleanup: Dict[str, Any] = field(default_factory=lambda: {
+        'fast_mode': True,              # Reduced cleanup rounds
+        'remove_sleep': True            # Remove sleep between cleanup
+    })
+
+    # Phase 2: Data Loading
+    dataloader: Dict[str, Any] = field(default_factory=lambda: {
+        'adaptive_file_reading': True,  # Adjust samples per file
+        'adaptive_multipliers': {
+            'large_files': 4,           # Multiplier for files >10MB
+            'medium_files': 2,          # Multiplier for files >1MB
+            'small_files': 1            # Multiplier for files <1MB
+        }
+    })
+
+    # Phase 2: Gradient Checkpointing
+    gradient_checkpointing: Dict[str, Any] = field(default_factory=lambda: {
+        'selective': False,             # Checkpoint everything for max memory savings
+        'checkpoint_attention': True    # Checkpoint attention layers
+    })
+
+    # Router Optimizations
+    router: Dict[str, Any] = field(default_factory=lambda: {
+        'cache_hash_on_gpu': True,      # Compute routing cache hash on GPU
+        'compile_routers': True,        # torch.compile routers
+        'compile_mode': 'default',      # 'default' or 'reduce-overhead'
+        'compile_dynamic': True         # Handle variable sequence lengths
+    })
 
 
 @dataclass

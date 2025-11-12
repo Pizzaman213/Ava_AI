@@ -331,13 +331,24 @@ training:
   # Total effective batch = batch_size × this value × num_gpus
   gradient_accumulation_steps: 4
 
+  # ----- Optimizer -----
+  # Optimizer type
+  # Options: lion, adamw, sophia, adafactor
+  # Lion: 50% memory reduction vs AdamW, use 3-10x smaller LR
+  optimizer: lion
+
   # ----- Learning Rate & Optimization -----
   # Peak learning rate
-  # Typical ranges by model size:
-  #   Small (<1B): 3e-4 to 1e-3
-  #   Medium (1-10B): 1e-4 to 3e-4
-  #   Large (10B+): 1e-5 to 1e-4
-  learning_rate: 3.0e-4
+  # LION ranges (3-10x smaller than AdamW):
+  #   Small (<1B): 1e-4 to 3e-4
+  #   Medium (1-10B): 3e-5 to 1e-4
+  #   Large (10B+): 3e-6 to 3e-5
+  learning_rate: 1.0e-4
+
+  # Lion-specific hyperparameters
+  # Beta1 and Beta2 for Lion optimizer
+  # Different from AdamW's [0.9, 0.999]
+  lion_betas: [0.9, 0.99]
 
   # Learning rate warmup steps
   # Gradual LR increase at start for stability
@@ -345,7 +356,7 @@ training:
   warmup_steps: 2000
 
   # Weight decay coefficient (L2 regularization)
-  # Typical: 0.01-0.1 for AdamW
+  # Typical: 0.01-0.1 for both Lion and AdamW
   weight_decay: 0.1
 
   # Maximum gradient norm for clipping

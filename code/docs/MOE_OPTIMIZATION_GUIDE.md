@@ -22,10 +22,10 @@ The training script **automatically enables** TF32 (TensorFloat-32) optimization
 
 **What it does:**
 ```python
-torch.set_float32_matmul_precision('high')     # Use TF32 for matmul
-torch.backends.cuda.matmul.allow_tf32 = True   # Enable TF32 matmul
-torch.backends.cudnn.allow_tf32 = True         # Enable TF32 in cuDNN
-torch.backends.cudnn.benchmark = True          # Auto-tune kernels
+torch.set_float32_matmul_precision('high')            # Use TF32 for matmul
+torch.backends.cuda.matmul.fp32_precision = 'tf32'   # Enable TF32 matmul (PyTorch 2.9+)
+torch.backends.cudnn.conv.fp32_precision = 'tf32'    # Enable TF32 in cuDNN (PyTorch 2.9+)
+torch.backends.cudnn.benchmark = True                 # Auto-tune kernels
 ```
 
 **Performance impact:**

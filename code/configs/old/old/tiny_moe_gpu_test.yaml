@@ -43,7 +43,9 @@ model:
 training:
   batch_size: 2
   gradient_accumulation_steps: 16
-  learning_rate: 3.0e-4
+  optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
+  learning_rate: 1.0e-4  # LION: 3x smaller than AdamW (3.0e-4 -> 1.0e-4)
+  lion_betas: [0.9, 0.99]  # Lion-specific betas (different from AdamW's [0.9, 0.999])
   max_steps: 10000
   warmup_steps: 500
   weight_decay: 0.1

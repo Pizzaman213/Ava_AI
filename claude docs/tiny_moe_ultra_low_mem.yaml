@@ -151,6 +151,8 @@ generation:
 data:
   dataset_name: OpenAssistant_oasst2_processed.jsonl
   data_dir: /project/code/data/processed
+  streaming: true  # REQUIRED: Enable streaming data loader
+  buffer_size: 50000  # Shuffle buffer size for streaming loader
   max_length: 96  # ULTRA-LOW-MEM: Reduced from 128 to save activation memory
   train_split: train
   eval_split: validation

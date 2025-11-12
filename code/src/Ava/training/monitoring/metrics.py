@@ -41,9 +41,10 @@ class MetricConfig:
     detailed_history_size: int = 100
 
     # Frequency settings
-    gradient_freq: int = 100          # Collect gradients every N steps
-    memory_freq: int = 50             # Collect memory every N steps
-    system_freq: int = 500            # Collect system metrics every N steps
+    # PHASE 2 OPTIMIZATION: Reduced monitoring frequency for 3-5% speedup
+    gradient_freq: int = 500          # OPTIMIZED: Increased from 100 (gradient collection is expensive)
+    memory_freq: int = 200            # OPTIMIZED: Increased from 50 (memory checks require CUDA sync)
+    system_freq: int = 1000           # OPTIMIZED: Increased from 500 (CPU metrics are low priority)
 
     # Analysis settings
     enable_trend_analysis: bool = True

@@ -10,11 +10,14 @@ A production-ready transformer with Mixture of Experts layers, supporting:
 """
 
 import math
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Any, List
+
+logger = logging.getLogger(__name__)
 
 # Import routing and expert layers
 try:
@@ -124,7 +127,7 @@ class MultiHeadAttention(nn.Module):
         self.num_heads = config.num_attention_heads
         self.head_dim = config.hidden_size // config.num_attention_heads
         self.dropout = config.attention_dropout
-        self.use_flash_attention = getattr(config, 'use_flash_attention', False)
+        self.use_flash_attention = getattr(config, 'use_flash_attention', True)
         self.quantize_kv_cache = getattr(config, 'quantize_kv_cache', False)
 
         assert self.hidden_size % self.num_heads == 0, "hidden_size must be divisible by num_attention_heads"
@@ -315,9 +318,12 @@ class MoEFeedForward(nn.Module):
 
         # Top-k routing
         top_k_probs, top_k_indices = torch.topk(router_probs, self.num_experts_per_token, dim=-1)
-        # CRITICAL FIX: Add epsilon to prevent division by zero
+        # CRITICAL FIX: Use appropriate epsilon for precision mode
+        # 1e-9 is too small for fp16 (min normal: 6e-5), can still cause NaN
+        # Use 1e-6 for fp16/bf16 compatibility
         top_k_sum = top_k_probs.sum(dim=-1, keepdim=True)
-        top_k_probs = top_k_probs / (top_k_sum + 1e-9)  # Safe renormalization
+        epsilon = 1e-6 if top_k_probs.dtype in (torch.float16, torch.bfloat16) else 1e-9
+        top_k_probs = top_k_probs / (top_k_sum + epsilon)  # Safe renormalization
 
         # Process through experts (more efficient batched version)
         output = torch.zeros_like(hidden_flat)
@@ -395,18 +401,25 @@ class EnhancedMoEModel(nn.Module):
         # Embeddings
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
 
-        # CRITICAL FIX: Use EITHER learned position embeddings OR RoPE, not both
-        # RoPE is superior for extrapolation, so we use it exclusively
+        # OPTIMIZATION: Clear position embedding precedence with single source of truth
+        # Priority: RoPE/ALiBi > Learned > None
+        use_rope = getattr(config, 'use_rope', True)  # RoPE is default
+        use_alibi = getattr(config, 'use_alibi', False)
         use_learned_pos = getattr(config, 'use_learned_position_embeddings', False)
-        if use_learned_pos and config.use_alibi:
-            # If both specified, prefer RoPE/ALiBi over learned
+
+        if use_rope or use_alibi:
+            # RoPE/ALiBi handle positions in attention, no separate embeddings needed
             self.position_embedding = None
+            if use_learned_pos:
+                logger.warning("Ignoring use_learned_position_embeddings=True because RoPE/ALiBi is enabled")
         elif use_learned_pos:
-            # Use learned position embeddings (legacy support)
+            # Fallback to learned position embeddings if RoPE/ALiBi disabled
             self.position_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+            logger.info("Using learned position embeddings (consider RoPE for better extrapolation)")
         else:
-            # Default: No learned position embeddings (RoPE handles it in attention)
+            # No position encoding specified
             self.position_embedding = None
+            logger.warning("No position encoding specified - model may not learn positions properly")
 
         self.dropout = nn.Dropout(config.dropout)
 
@@ -655,6 +668,9 @@ class EnhancedMoEModel(nn.Module):
         max_length: int = 100,
         temperature: float = 1.0,
         top_p: float = 0.9,
+        top_k: Optional[int] = None,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 0,
         do_sample: bool = True,
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
@@ -672,6 +688,9 @@ class EnhancedMoEModel(nn.Module):
             max_length: Maximum total length (including prompt)
             temperature: Sampling temperature (higher = more random)
             top_p: Nucleus sampling threshold
+            top_k: Top-k filtering (keep only top k tokens). If None, no filtering
+            repetition_penalty: Penalty for repeating tokens (>1.0 discourages repetition)
+            no_repeat_ngram_size: If > 0, prevents repetition of n-grams of this size
             do_sample: Whether to sample (True) or greedy (False)
             pad_token_id: Padding token ID
             eos_token_id: End-of-sequence token ID
@@ -698,9 +717,50 @@ class EnhancedMoEModel(nn.Module):
             # Get logits for last position
             next_token_logits = logits[:, -1, :]  # [batch_size, vocab_size]
 
+            # Apply repetition penalty
+            if repetition_penalty != 1.0:
+                # For each token in the generated sequence, apply penalty
+                for i in range(batch_size):
+                    for token_id in set(generated[i].tolist()):
+                        # If score < 0, multiply by penalty (make more negative)
+                        # If score > 0, divide by penalty (make less positive)
+                        # This discourages repetition regardless of original score
+                        if next_token_logits[i, token_id] < 0:
+                            next_token_logits[i, token_id] *= repetition_penalty
+                        else:
+                            next_token_logits[i, token_id] /= repetition_penalty
+
+            # Apply n-gram blocking
+            if no_repeat_ngram_size > 0 and generated.shape[1] >= no_repeat_ngram_size:
+                # For each sequence in batch
+                for i in range(batch_size):
+                    # Get the last (n-1) tokens
+                    ngram_prefix = generated[i, -(no_repeat_ngram_size - 1):].tolist()
+
+                    # Find all n-grams in the generated sequence that start with this prefix
+                    banned_tokens = set()
+                    for j in range(generated.shape[1] - no_repeat_ngram_size + 1):
+                        # Check if this position matches our prefix
+                        current_ngram_prefix = generated[i, j:j + no_repeat_ngram_size - 1].tolist()
+                        if current_ngram_prefix == ngram_prefix:
+                            # Ban the token that completes this n-gram
+                            banned_token = generated[i, j + no_repeat_ngram_size - 1].item()
+                            banned_tokens.add(banned_token)
+
+                    # Set banned tokens to -inf
+                    for token_id in banned_tokens:
+                        next_token_logits[i, token_id] = float('-inf')
+
             # Apply temperature
             if temperature != 1.0:
                 next_token_logits = next_token_logits / temperature
+
+            # Apply top-k filtering
+            if top_k is not None and top_k > 0:
+                # Remove all tokens with a probability less than the top k tokens
+                top_k_values, _ = torch.topk(next_token_logits, min(top_k, next_token_logits.size(-1)))
+                indices_to_remove = next_token_logits < top_k_values[:, -1, None]
+                next_token_logits[indices_to_remove] = float('-inf')
 
             if do_sample:
                 # Nucleus (top-p) sampling
@@ -1090,6 +1150,9 @@ class OptimizedMoETransformer(nn.Module):
         max_length: int = 100,
         temperature: float = 1.0,
         top_p: float = 0.9,
+        top_k: Optional[int] = None,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 0,
         do_sample: bool = True,
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
@@ -1107,6 +1170,9 @@ class OptimizedMoETransformer(nn.Module):
             max_length: Maximum total length (including prompt)
             temperature: Sampling temperature (higher = more random)
             top_p: Nucleus sampling threshold
+            top_k: Top-k filtering (keep only top k tokens). If None, no filtering
+            repetition_penalty: Penalty for repeating tokens (>1.0 discourages repetition)
+            no_repeat_ngram_size: If > 0, prevents repetition of n-grams of this size
             do_sample: Whether to sample (True) or greedy (False)
             pad_token_id: Padding token ID
             eos_token_id: End-of-sequence token ID
@@ -1146,9 +1212,50 @@ class OptimizedMoETransformer(nn.Module):
             # Get logits for last position
             next_token_logits = logits[:, -1, :]  # [batch_size, vocab_size]
 
+            # Apply repetition penalty
+            if repetition_penalty != 1.0:
+                # For each token in the generated sequence, apply penalty
+                for i in range(batch_size):
+                    for token_id in set(generated[i].tolist()):
+                        # If score < 0, multiply by penalty (make more negative)
+                        # If score > 0, divide by penalty (make less positive)
+                        # This discourages repetition regardless of original score
+                        if next_token_logits[i, token_id] < 0:
+                            next_token_logits[i, token_id] *= repetition_penalty
+                        else:
+                            next_token_logits[i, token_id] /= repetition_penalty
+
+            # Apply n-gram blocking
+            if no_repeat_ngram_size > 0 and generated.shape[1] >= no_repeat_ngram_size:
+                # For each sequence in batch
+                for i in range(batch_size):
+                    # Get the last (n-1) tokens
+                    ngram_prefix = generated[i, -(no_repeat_ngram_size - 1):].tolist()
+
+                    # Find all n-grams in the generated sequence that start with this prefix
+                    banned_tokens = set()
+                    for j in range(generated.shape[1] - no_repeat_ngram_size + 1):
+                        # Check if this position matches our prefix
+                        current_ngram_prefix = generated[i, j:j + no_repeat_ngram_size - 1].tolist()
+                        if current_ngram_prefix == ngram_prefix:
+                            # Ban the token that completes this n-gram
+                            banned_token = generated[i, j + no_repeat_ngram_size - 1].item()
+                            banned_tokens.add(banned_token)
+
+                    # Set banned tokens to -inf
+                    for token_id in banned_tokens:
+                        next_token_logits[i, token_id] = float('-inf')
+
             # Apply temperature
             if temperature != 1.0:
                 next_token_logits = next_token_logits / temperature
+
+            # Apply top-k filtering
+            if top_k is not None and top_k > 0:
+                # Remove all tokens with a probability less than the top k tokens
+                top_k_values, _ = torch.topk(next_token_logits, min(top_k, next_token_logits.size(-1)))
+                indices_to_remove = next_token_logits < top_k_values[:, -1, None]
+                next_token_logits[indices_to_remove] = float('-inf')
 
             if do_sample:
                 # Nucleus (top-p) sampling
