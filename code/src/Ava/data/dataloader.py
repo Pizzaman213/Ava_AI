@@ -546,7 +546,7 @@ class StreamingDataset(IterableDataset):
         use_weighted_mixing: bool = True,
         mixing_temperature: float = 1.0,
         data_mixer: Optional[Any] = None,
-        samples_per_file: int = 32,  # OPTIMIZED: Increased from 1 to 32 for 20-30% I/O reduction
+        samples_per_file: int = 500,  # OPTIMIZED: Increased from 32 to 500 to reduce file rotation overhead
         # Data validation parameters
         min_sequence_length: int = 10,
         max_sequence_repetition_rate: float = 0.6,
@@ -559,9 +559,12 @@ class StreamingDataset(IterableDataset):
         # OPTIMIZATION: Dynamic batching for less padding
         use_dynamic_batching: bool = False,  # Enable token-based batching for 10-15% less padding
         max_tokens_per_batch: Optional[int] = None,  # Max tokens per batch
+        # FIXED: Add dataset_name filtering support
+        dataset_name: Optional[str] = None,  # Optional: Filter to only load this specific file
     ):
         self.data_dir = Path(data_dir)
         self.split = split
+        self.dataset_name = dataset_name  # Store for use in _find_data_files
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.max_samples = max_samples
@@ -585,7 +588,10 @@ class StreamingDataset(IterableDataset):
         # OPTIMIZATION ENABLED: Async file prefetcher for 20-40% faster data loading
         # IMPORTANT: Lazy-initialized per worker to avoid pickling ThreadPoolExecutor
         self.prefetcher = None
-        self._prefetcher_config = {'max_workers': 4, 'prefetch_size': 2}
+        self._prefetcher_config = {
+            'max_workers': DATA_CONSTANTS.PREFETCH_MAX_WORKERS,
+            'prefetch_size': DATA_CONSTANTS.PREFETCH_SIZE
+        }
 
         # OPTIMIZED: Worker-persistent file handle caching with LRU eviction
         self._worker_file_cache = OrderedDict()  # LRU cache for file generators
@@ -637,7 +643,7 @@ class StreamingDataset(IterableDataset):
         to prevent data leakage across workers and ensure reproducibility.
         """
         files = []
-        MIN_FILE_SIZE = 10 * 1024  # 10KB minimum
+        MIN_FILE_SIZE = DATA_CONSTANTS.MIN_FILE_SIZE_BYTES
 
         # Comprehensive file patterns
         patterns = [
@@ -671,6 +677,16 @@ class StreamingDataset(IterableDataset):
 
         # Remove duplicates
         files = list(dict.fromkeys(files))
+
+        # FIXED: Filter by dataset_name if specified
+        if self.dataset_name:
+            # Filter to only the specified dataset file
+            filtered_files = [f for f in files if f.name == self.dataset_name]
+            if filtered_files:
+                files = filtered_files
+                print(f"   🎯 Filtered to single dataset: {self.dataset_name}")
+            else:
+                print(f"   ⚠️  Warning: dataset_name '{self.dataset_name}' not found, using all files")
 
         # OPTIMIZED: Parallel file validation for large directories
         def check_file(f: Path) -> Optional[Path]:
@@ -747,9 +763,12 @@ class StreamingDataset(IterableDataset):
             try:
                 gpu_mem_info = torch.cuda.mem_get_info()
                 mem_used_ratio = 1.0 - (gpu_mem_info[0] / gpu_mem_info[1])
-                # Aggressively reduce cache if memory usage > 85%
-                if mem_used_ratio > 0.85:
-                    target_size = max(10, self._worker_file_cache_max_size // 2)
+                # Aggressively reduce cache if memory usage > threshold
+                if mem_used_ratio > DATA_CONSTANTS.MEMORY_PRESSURE_THRESHOLD:
+                    target_size = max(
+                        DATA_CONSTANTS.CACHE_MIN_SIZE_UNDER_PRESSURE,
+                        self._worker_file_cache_max_size // DATA_CONSTANTS.CACHE_REDUCTION_FACTOR
+                    )
                     while len(self._worker_file_cache) > target_size:
                         oldest_key, oldest_gen = self._worker_file_cache.popitem(last=False)
                         if hasattr(oldest_gen, 'close'):
@@ -806,6 +825,7 @@ class StreamingDataset(IterableDataset):
         # Check worker context
         worker_info = torch.utils.data.get_worker_info()
         should_print = worker_info is None or worker_info.id == 0
+        worker_id = worker_info.id if worker_info is not None else 0
 
         # Lazy-initialize prefetcher in worker process (avoids pickle issues)
         if self.prefetcher is None:
@@ -815,7 +835,7 @@ class StreamingDataset(IterableDataset):
         if not files and worker_info is not None:
             files = self._find_data_files()
             if should_print:
-                print(f"  🔄 Rediscovered {len(files)} files in worker process")
+                print(f"  🔄 [Worker {worker_id}] Rediscovered {len(files)} files in worker process")
 
         if not files:
             raise ValueError(f"No data files found in {self.data_dir}")
@@ -836,17 +856,17 @@ class StreamingDataset(IterableDataset):
                 if file_size == 0:
                     skipped_empty += 1
                     if should_print and skipped_empty <= 3:
-                        print(f"  ⚠️ Skipping empty file: {file_path.name}")
+                        print(f"  ⚠️ [Worker {worker_id}] Skipping empty file: {file_path.name}")
                     continue
 
                 gen = self.file_reader.read_file(file_path)
                 file_generators.append((file_path, gen))
             except Exception as e:
                 if len(file_generators) == 0 and should_print:
-                    print(f"  ⚠️ Could not open {file_path.name}: {e}")
+                    print(f"  ⚠️ [Worker {worker_id}] Could not open {file_path.name}: {e}")
 
         if skipped_empty > 0 and should_print:
-            print(f"  ℹ️ Skipped {skipped_empty} empty files")
+            print(f"  ℹ️ [Worker {worker_id}] Skipped {skipped_empty} empty files")
 
         if not file_generators:
             raise ValueError(f"No files could be opened from {self.data_dir}")
@@ -895,23 +915,26 @@ class StreamingDataset(IterableDataset):
                 # Adjust multiplier based on previous read times
                 if idx in file_read_times and len(file_read_times[idx]) > 0:
                     avg_read_time = sum(file_read_times[idx]) / len(file_read_times[idx])
-                    if avg_read_time > 0.05:  # Slow reads, reduce batch
-                        multiplier = 0.8
+                    if avg_read_time > DATA_CONSTANTS.ADAPTIVE_SAMPLES_SLOW_READ_THRESHOLD:  # Slow reads, reduce batch
+                        multiplier = DATA_CONSTANTS.ADAPTIVE_SAMPLES_SLOW_MULTIPLIER
                     else:
-                        multiplier = 1.2
+                        multiplier = DATA_CONSTANTS.ADAPTIVE_SAMPLES_FAST_MULTIPLIER
                 else:
                     multiplier = 1.0
 
                 # Calculate adaptive samples with performance adjustment
-                if file_size_mb > 10:  # Large file (>10MB)
-                    adaptive_samples = int(min(self.samples_per_file * 4 * multiplier, 128))
-                elif file_size_mb > 1:  # Medium file (>1MB)
-                    adaptive_samples = int(self.samples_per_file * 2 * multiplier)
+                if file_size_mb > DATA_CONSTANTS.ADAPTIVE_SAMPLES_LARGE_FILE_MB:  # Large file
+                    adaptive_samples = int(min(
+                        self.samples_per_file * DATA_CONSTANTS.ADAPTIVE_SAMPLES_LARGE_MULTIPLIER * multiplier,
+                        DATA_CONSTANTS.ADAPTIVE_SAMPLES_MAX
+                    ))
+                elif file_size_mb > DATA_CONSTANTS.ADAPTIVE_SAMPLES_MEDIUM_FILE_MB:  # Medium file
+                    adaptive_samples = int(self.samples_per_file * DATA_CONSTANTS.ADAPTIVE_SAMPLES_MEDIUM_MULTIPLIER * multiplier)
                 else:  # Small file
                     adaptive_samples = int(self.samples_per_file * multiplier)
 
                 # Ensure minimum batch size for efficiency
-                adaptive_samples = max(adaptive_samples, 8)
+                adaptive_samples = max(adaptive_samples, DATA_CONSTANTS.ADAPTIVE_SAMPLES_MIN)
 
                 # Read batch from this file with timing
                 samples_read = 0
@@ -929,14 +952,15 @@ class StreamingDataset(IterableDataset):
                     if idx not in file_read_times:
                         file_read_times[idx] = []
                     file_read_times[idx].append(read_time)
-                    if len(file_read_times[idx]) > 10:
+                    if len(file_read_times[idx]) > DATA_CONSTANTS.ADAPTIVE_READ_TIME_HISTORY_SIZE:
                         file_read_times[idx].pop(0)
 
             # Restart if all files exhausted
             if len(exhausted_files) == len(file_generators):
                 restart_count += 1
-                if restart_count > 3:
-                    raise ValueError(f"All files exhausted after {restart_count} restarts")
+                # FIXED: Removed restart limit for infinite streaming mode
+                # This allows the dataloader to continue cycling through files indefinitely
+                # which is essential for ultra-low memory configs with small buffers
 
                 exhausted_files.clear()
                 self._stream_epoch_number = getattr(self, '_stream_epoch_number', 0) + 1
@@ -977,7 +1001,9 @@ class StreamingDataset(IterableDataset):
         if self._epoch_number > 0:
             if not self._validation_disabled_after_epoch_0:
                 self._validation_disabled_after_epoch_0 = True
-                print(f"\n✓ [OPTIMIZATION] Sequence validation disabled after epoch {self._epoch_number} (data assumed clean, 2-3% speedup)")
+                worker_info = torch.utils.data.get_worker_info()
+                worker_id = worker_info.id if worker_info is not None else 0
+                print(f"\n✓ [Worker {worker_id}] [OPTIMIZATION] Sequence validation disabled after epoch {self._epoch_number} (data assumed clean, 2-3% speedup)")
             return True
 
         seq_len = len(input_ids)
@@ -1185,7 +1211,7 @@ class StreamingDataset(IterableDataset):
             labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
 
             # Cache buffers (limit cache size to prevent memory growth)
-            if len(self._collate_buffers) < 10:  # Max 10 cached buffer sizes
+            if len(self._collate_buffers) < DATA_CONSTANTS.COLLATE_BUFFER_CACHE_MAX_SIZE:
                 self._collate_buffers[buffer_key] = (input_ids, attention_mask, labels)
 
         # PHASE 3.1: Fill buffers with actual data (zero-copy using .copy_())
@@ -1227,15 +1253,15 @@ class StreamingDataset(IterableDataset):
                 gpu_mem_info = torch.cuda.mem_get_info()
                 available_gb = gpu_mem_info[0] / (1024 ** 3)
 
-                # Estimate memory per sample (rough estimate: 4KB per token * max_length)
-                bytes_per_sample = 4 * 1024 * self.max_length  # 4KB per token estimate
+                # Estimate memory per sample (more realistic: 2 bytes per token for bf16)
+                bytes_per_sample = 2 * self.max_length  # 2 bytes per token for bf16
                 samples_per_gb = (1024 ** 3) / bytes_per_sample
 
-                # Use 10% of available memory for buffer
-                safe_buffer_size = int(available_gb * samples_per_gb * 0.1)
+                # Use configurable percentage of available memory for buffer
+                safe_buffer_size = int(available_gb * samples_per_gb * DATA_CONSTANTS.DYNAMIC_BUFFER_MEMORY_PERCENT)
 
                 # Clamp to reasonable bounds
-                min_buffer = 500  # Minimum for efficiency
+                min_buffer = DATA_CONSTANTS.DYNAMIC_BUFFER_MIN
                 max_buffer = self.buffer_size  # Original max
                 return max(min_buffer, min(safe_buffer_size, max_buffer))
             except:
@@ -1258,15 +1284,23 @@ class StreamingDataset(IterableDataset):
         from collections import deque
         dynamic_buffer_size = self._get_dynamic_buffer_size()
         if dynamic_buffer_size != self.buffer_size:
-            print(f"📊 Dynamic buffer size: {dynamic_buffer_size} (original: {self.buffer_size})")
+            print(f"📊 [Worker {worker_id}] Dynamic buffer size: {dynamic_buffer_size} (original: {self.buffer_size})")
         buffer = deque(maxlen=dynamic_buffer_size)
         samples_processed = 0
         sample_index = 0
         epoch_number = getattr(self, '_epoch_number', 0)
 
+        # OPTIMIZATION: Fast startup - start yielding after initial_fill_size samples
+        # This allows training to start immediately instead of waiting for full buffer
+        initial_fill_size = min(
+            dynamic_buffer_size // DATA_CONSTANTS.INITIAL_FILL_SIZE_DIVISOR,
+            DATA_CONSTANTS.INITIAL_FILL_SIZE_MAX
+        )  # Fill configurable % or max samples, whichever is smaller
+        buffer_fully_filled = False
+
         # Track memory usage for adaptive adjustment
         last_memory_check = 0
-        memory_check_interval = 1000  # Check every 1000 samples
+        memory_check_interval = DATA_CONSTANTS.MEMORY_CHECK_INTERVAL
 
         # PHASE 1.3: Profiling metrics for bottleneck detection
         import time
@@ -1319,11 +1353,11 @@ class StreamingDataset(IterableDataset):
 
                 # PHASE 1.3: Track tokenization time
                 tokenization_start = time.time()
-                # PHASE 2 OPTIMIZATION: Batch tokenize with minimum batch size of 32 for vectorization efficiency
+                # PHASE 2 OPTIMIZATION: Batch tokenize with configurable minimum batch size for vectorization efficiency
                 tokenized_samples = []
                 if text_batch:
                     current_max_length = self._get_current_max_length()
-                    min_tokenize_batch = 32  # Minimum batch size for efficient vectorization
+                    min_tokenize_batch = DATA_CONSTANTS.MIN_TOKENIZE_BATCH
 
                     # Process in batches of at least min_tokenize_batch
                     if len(text_batch) < min_tokenize_batch:
@@ -1361,14 +1395,14 @@ class StreamingDataset(IterableDataset):
                                 if self.max_samples and count >= self.max_samples:
                                     return
 
-                # PHASE 1.3: Report profiling stats every 1000 samples (only worker 0)
-                if worker_id == 0 and profiling_stats['samples_yielded'] > 0 and profiling_stats['samples_yielded'] % 1000 == 0:
+                # PHASE 1.3: Report profiling stats periodically (only worker 0)
+                if worker_id == 0 and profiling_stats['samples_yielded'] > 0 and profiling_stats['samples_yielded'] % DATA_CONSTANTS.PROFILING_REPORT_INTERVAL == 0:
                     elapsed = time.time() - profiling_stats['last_report_time']
                     if elapsed > 0:
-                        throughput = 1000 / elapsed
+                        throughput = DATA_CONSTANTS.PROFILING_REPORT_INTERVAL / elapsed
                         total_time = profiling_stats['shuffle_time'] + profiling_stats['tokenization_time']
                         if total_time > 0:
-                            print(f"📊 Dataloader Profile ({profiling_stats['samples_yielded']} samples):")
+                            print(f"📊 [Worker {worker_id}] Dataloader Profile ({profiling_stats['samples_yielded']} samples):")
                             print(f"   • Throughput: {throughput:.1f} samples/sec")
                             print(f"   • Shuffle: {profiling_stats['shuffle_time']*1000:.1f}ms ({profiling_stats['shuffle_time']/total_time*100:.1f}%)")
                             print(f"   • Tokenization: {profiling_stats['tokenization_time']*1000:.1f}ms ({profiling_stats['tokenization_time']/total_time*100:.1f}%)")
@@ -1380,8 +1414,8 @@ class StreamingDataset(IterableDataset):
                 buffer.clear()
 
                 # Periodic bucket flushing
-                if self.bucketing.enable_bucketing and samples_processed % (self.buffer_size * 5) == 0:
-                    for bucket_samples in self.bucketing.flush_buckets(min_size=8):
+                if self.bucketing.enable_bucketing and samples_processed % (self.buffer_size * DATA_CONSTANTS.BUCKET_FLUSH_INTERVAL_MULTIPLIER) == 0:
+                    for bucket_samples in self.bucketing.flush_buckets(min_size=DATA_CONSTANTS.BUCKET_FLUSH_MIN_SIZE):
                         for sample in bucket_samples:
                             if self.max_samples and count >= self.max_samples:
                                 return
@@ -1406,11 +1440,11 @@ class StreamingDataset(IterableDataset):
                 elif isinstance(item, str) or not isinstance(item, dict):
                     text_batch.append(item if isinstance(item, str) else str(item))
 
-            # PHASE 2 OPTIMIZATION: Batch tokenize with minimum batch size of 32
+            # PHASE 2 OPTIMIZATION: Batch tokenize with configurable minimum batch size
             tokenized_samples = []
             if text_batch:
                 current_max_length = self._get_current_max_length()
-                min_tokenize_batch = 32
+                min_tokenize_batch = DATA_CONSTANTS.MIN_TOKENIZE_BATCH
 
                 if len(text_batch) < min_tokenize_batch:
                     tokenized_samples = self._tokenize_batch(text_batch, current_max_length)
@@ -1514,7 +1548,7 @@ class DistributedStreamingDataset(IterableDataset):
         # PHASE 2.1: Token balancing state
         self._token_counts = [0] * world_size  # Track tokens per rank
         self._batch_buffer = []  # Buffer samples for token balancing
-        self._batch_buffer_size = 32  # Balance every 32 samples
+        self._batch_buffer_size = DATA_CONSTANTS.TOKEN_BALANCE_BATCH_SIZE  # Balance every N samples
 
     def __iter__(self):
         """
@@ -1556,7 +1590,7 @@ class DistributedStreamingDataset(IterableDataset):
                 continue
 
             # PHASE 2: Load-aware distribution (fallback if token balancing disabled)
-            if self.load_aware and self.memory_monitor is not None and i % 100 == 0:
+            if self.load_aware and self.memory_monitor is not None and i % DATA_CONSTANTS.LOAD_BALANCE_CHECK_INTERVAL == 0:
                 # Check memory coordination every 100 samples
                 try:
                     coordination = self.memory_monitor.coordinate_oom_prevention()
@@ -1567,7 +1601,7 @@ class DistributedStreamingDataset(IterableDataset):
 
                         # If this GPU has high memory pressure, skip some samples
                         if self.rank == max_util_rank:
-                            self._skip_next = min(5, self._sample_count // 1000)
+                            self._skip_next = min(DATA_CONSTANTS.LOAD_BALANCE_MAX_SKIP, self._sample_count // 1000)
                         # If this GPU has low memory pressure, take extra samples
                         elif self.rank == min_util_rank and self._skip_next == 0:
                             # Take one extra sample
@@ -1619,11 +1653,12 @@ def create_streaming_dataloaders(
     use_weighted_mixing: bool = True,
     mixing_temperature: float = 1.0,
     data_mixer: Optional[Any] = None,
-    samples_per_file: int = 32,  # OPTIMIZED: Increased from 1 to 32 for better I/O efficiency
+    samples_per_file: int = 500,  # OPTIMIZED: Increased from 32 to 500 to reduce file rotation overhead
     use_streaming_tokenization: bool = False,  # MEMORY OPTIMIZATION: Reduces buffer 15k→1k (saves 500MB-1GB RAM)
     streaming_buffer_size: int = 1000,  # Smaller buffer size for streaming mode
     use_dynamic_batching: bool = False,  # OPTIMIZATION: Enable dynamic token-based batching for 10-15% less padding
     max_tokens_per_batch: Optional[int] = None,  # Max tokens per batch for dynamic batching
+    dataset_name: Optional[str] = None,  # FIXED: Optional dataset name to filter to a single file
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create optimized streaming train and validation dataloaders.
@@ -1678,14 +1713,17 @@ def create_streaming_dataloaders(
     # OPTIMIZATION: Dynamic prefetch factor based on sequence length
     # Longer sequences use more memory, so reduce prefetch to avoid RAM overflow
     # IMPROVED: More aggressive prefetching for better GPU utilization
-    # Formula: prefetch_factor = max(2, min(6, int(3072 / max_length)))
+    # Formula: prefetch_factor = max(MIN, min(MAX, int(NUMERATOR / max_length)))
     # - max_length≤512  -> prefetch=6 (aggressive prefetch, short sequences, 3-5% speedup)
     # - max_length=1024 -> prefetch=3 (balanced, medium sequences)
     # - max_length=2048 -> prefetch=2 (conservative, long sequences)
     # - max_length≥4096 -> prefetch=2 (minimal, very long sequences)
-    if prefetch_factor == 2:  # Only auto-adjust if using default value
+    if prefetch_factor == DATA_CONSTANTS.PREFETCH_FACTOR_MIN:  # Only auto-adjust if using default value
         original_prefetch = prefetch_factor
-        prefetch_factor = max(2, min(6, int(3072 / max_length)))
+        prefetch_factor = max(
+            DATA_CONSTANTS.PREFETCH_FACTOR_MIN,
+            min(DATA_CONSTANTS.PREFETCH_FACTOR_MAX, int(DATA_CONSTANTS.PREFETCH_FACTOR_NUMERATOR / max_length))
+        )
         if prefetch_factor != original_prefetch:
             memory_impact_gb = num_workers * (prefetch_factor - original_prefetch) * batch_size * max_length * 2 / (1024**3)
             impact_sign = "uses" if memory_impact_gb > 0 else "saves"
@@ -1727,6 +1765,8 @@ def create_streaming_dataloaders(
         # OPTIMIZATION: Dynamic batching
         'use_dynamic_batching': use_dynamic_batching,
         'max_tokens_per_batch': max_tokens_per_batch,
+        # FIXED: Dataset name filtering
+        'dataset_name': dataset_name,
     }
 
     # Training dataset

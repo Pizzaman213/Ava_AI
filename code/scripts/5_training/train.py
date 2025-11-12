@@ -1252,6 +1252,9 @@ def create_dataloaders(
         if use_dynamic_batching:
             get_logger().info(f"  ⚡ Dynamic batching enabled: targeting {max_tokens_per_batch or 'auto'} tokens per batch")
 
+        # FIXED: Extract dataset_name from config if available
+        dataset_name = getattr(training_config.data, 'dataset_name', None)
+
         train_loader, val_loader = create_streaming_dataloaders(
             tokenizer=tokenizer,
             batch_size=batch_size,
@@ -1268,6 +1271,7 @@ def create_dataloaders(
             samples_per_file=samples_per_file,
             use_dynamic_batching=use_dynamic_batching,
             max_tokens_per_batch=max_tokens_per_batch,
+            dataset_name=dataset_name,  # FIXED: Pass dataset_name to filter files
         )
 
         # Minimum samples validation (Phase 2.1)
@@ -2771,6 +2775,10 @@ def main():
     # Use NEW unified config system (DynamicConfig with dot notation)
     # This replaces both parse_args_to_config() and load_config()
     config = config_manager.load_yaml_config(args.config)
+
+    # Update global constants from config BEFORE any other initialization
+    from src.Ava.config.constants import update_constants_from_config
+    update_constants_from_config(config)
 
     # For backward compatibility with code expecting config_dict
     config_dict = config.to_dict()

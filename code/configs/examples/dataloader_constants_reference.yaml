@@ -1,0 +1,316 @@
+################################################################################
+# DATALOADER CONSTANTS CONFIGURATION REFERENCE
+################################################################################
+#
+# This file documents all configurable constants for the data loading pipeline.
+# These constants control performance tuning, memory management, and optimization
+# behavior of the streaming dataloader.
+#
+# To use these settings, add a 'constants' section to your main config file:
+#
+# constants:
+#   data_pipeline:
+#     prefetch_factor_numerator: 4096  # Adjust prefetch calculation
+#     min_tokenize_batch: 64           # Larger batch tokenization
+#     # ... other settings
+#
+################################################################################
+
+constants:
+  data_pipeline:
+    # ========================================================================
+    # DYNAMIC TOKEN BATCHING
+    # ========================================================================
+    # Maximum tokens per batch for dynamic batching
+    # Higher = better GPU utilization but more memory
+    # Default: 8192
+    max_tokens_default: 8192
+
+    # Maximum batch size for dynamic batching
+    # Limits the number of samples even if token budget allows more
+    # Default: 64
+    max_batch_size_default: 64
+
+    # ========================================================================
+    # BUCKETING CONFIGURATION
+    # ========================================================================
+    # Maximum samples per bucket before flushing
+    # Higher = better padding efficiency but longer wait for batches
+    # Default: 200 (increased from 100 for 5-10% speedup)
+    max_bucket_size: 200
+
+    # Minimum bucket size for flushing at end of epoch
+    # Smaller = less waste but more padding
+    # Default: 8
+    min_bucket_size: 8
+
+    # Maximum tokens per batch (for token-based batching)
+    # Default: 8192
+    max_tokens_per_batch: 8192
+
+    # Bucket boundaries for length-based bucketing
+    # Automatically initialized to: [64, 128, 256, 512, 1024, 2048, 4096]
+    # Override with custom boundaries if needed
+    # bucket_boundaries_default: [64, 128, 256, 512, 1024, 2048, 4096]
+
+    # ========================================================================
+    # BUFFER SIZING
+    # ========================================================================
+    # Default shuffle buffer size
+    # Larger = better shuffling but more memory
+    # Default: 10000
+    buffer_size_default: 10000
+
+    # Streaming mode buffer size (saves 500MB-1GB RAM)
+    # Used when use_streaming_tokenization=True
+    # Default: 1000 (10x smaller than normal buffer)
+    streaming_buffer_size: 1000
+
+    # Initial fill size - maximum samples to load before starting training
+    # Allows fast startup instead of waiting for full buffer
+    # Default: 200
+    initial_fill_size_max: 200
+
+    # Initial fill size divisor - fraction of buffer to fill initially
+    # initial_fill_size = min(buffer_size // DIVISOR, MAX)
+    # Default: 10 (fill 10% of buffer)
+    initial_fill_size_divisor: 10
+
+    # Minimum dynamic buffer size
+    # Lower bound when auto-adjusting buffer based on available memory
+    # Default: 2000
+    dynamic_buffer_min: 2000
+
+    # Percentage of available GPU memory to use for buffer
+    # Default: 0.05 (5%)
+    dynamic_buffer_memory_percent: 0.05
+
+    # ========================================================================
+    # FILE HANDLING
+    # ========================================================================
+    # Samples to read from each file before rotating
+    # Higher = less I/O overhead but less diversity per batch
+    # Default: 32
+    samples_per_file: 32
+
+    # Minimum file size in bytes to consider valid
+    # Files smaller than this are skipped
+    # Default: 10240 (10KB)
+    min_file_size_bytes: 10240
+
+    # Minimum batch size for vectorized tokenization
+    # Larger = better GPU utilization but may waste padding
+    # Default: 32
+    min_tokenize_batch: 32
+
+    # ========================================================================
+    # PARQUET FILE READING
+    # ========================================================================
+    # Batch size for reading Parquet row groups
+    # Smaller = better memory efficiency, larger = faster I/O
+    # Default: 5000 (reduced from 10000 for memory efficiency)
+    parquet_batch_size: 5000
+
+    # Minimum text length after stripping whitespace
+    # Texts shorter than this are filtered out
+    # Default: 10
+    min_text_length: 10
+
+    # ========================================================================
+    # ASYNC PREFETCHING
+    # ========================================================================
+    # Thread pool size for async file prefetching
+    # More workers = more parallel I/O but more overhead
+    # Default: 4
+    prefetch_max_workers: 4
+
+    # Number of files to prefetch ahead
+    # Higher = less I/O stalls but more memory
+    # Default: 2
+    prefetch_size: 2
+
+    # Numerator for dynamic prefetch factor calculation
+    # Formula: max(MIN, min(MAX, int(NUMERATOR / max_length)))
+    # Default: 3072
+    # - max_length=512  -> prefetch=6 (aggressive)
+    # - max_length=1024 -> prefetch=3 (balanced)
+    # - max_length=2048 -> prefetch=1 (conservative)
+    prefetch_factor_numerator: 3072
+
+    # Minimum prefetch factor
+    # Default: 2
+    prefetch_factor_min: 2
+
+    # Maximum prefetch factor
+    # Default: 6
+    prefetch_factor_max: 6
+
+    # ========================================================================
+    # WORKER FILE CACHE
+    # ========================================================================
+    # LRU cache size for file generators per worker
+    # Larger = less file open/close overhead but more memory
+    # Default: 100
+    worker_file_cache_max_size: 100
+
+    # ========================================================================
+    # TOKEN BALANCING (Distributed Training)
+    # ========================================================================
+    # Buffer size for token-balanced distribution
+    # Balances tokens across GPUs every N samples
+    # Default: 32
+    token_balance_batch_size: 32
+
+    # ========================================================================
+    # MEMORY MANAGEMENT
+    # ========================================================================
+    # Memory usage threshold for aggressive cache reduction
+    # When GPU memory exceeds this ratio, cache is reduced
+    # Default: 0.85 (85%)
+    memory_pressure_threshold: 0.85
+
+    # Factor to reduce cache size under memory pressure
+    # cache_size = cache_size // FACTOR
+    # Default: 2 (halve the cache)
+    cache_reduction_factor: 2
+
+    # Minimum cache size to maintain under memory pressure
+    # Default: 10
+    cache_min_size_under_pressure: 10
+
+    # ========================================================================
+    # PROFILING AND MONITORING
+    # ========================================================================
+    # Check memory every N samples
+    # More frequent = better adaptation but more overhead
+    # Default: 1000
+    memory_check_interval: 1000
+
+    # Report profiling stats every N samples
+    # Shows throughput, tokenization time, shuffle time
+    # Default: 1000
+    profiling_report_interval: 1000
+
+    # ========================================================================
+    # LOAD BALANCING (Distributed Training)
+    # ========================================================================
+    # Check load balance every N samples
+    # Coordinates memory usage across GPUs
+    # Default: 100
+    load_balance_check_interval: 100
+
+    # Maximum samples to skip for load balancing
+    # Limits how much a GPU can throttle under memory pressure
+    # Default: 5
+    load_balance_max_skip: 5
+
+    # ========================================================================
+    # ADAPTIVE FILE SAMPLING
+    # ========================================================================
+    # File size threshold for "large" file classification (MB)
+    # Files larger than this get more samples per read
+    # Default: 10.0 MB
+    adaptive_samples_large_file_mb: 10.0
+
+    # File size threshold for "medium" file classification (MB)
+    # Default: 1.0 MB
+    adaptive_samples_medium_file_mb: 1.0
+
+    # Sample multiplier for large files
+    # samples = samples_per_file * MULTIPLIER
+    # Default: 4
+    adaptive_samples_large_multiplier: 4
+
+    # Sample multiplier for medium files
+    # Default: 2
+    adaptive_samples_medium_multiplier: 2
+
+    # Maximum adaptive samples per file
+    # Caps the total samples even for very large files
+    # Default: 128
+    adaptive_samples_max: 128
+
+    # Minimum adaptive samples per file
+    # Floor to ensure efficiency
+    # Default: 8
+    adaptive_samples_min: 8
+
+    # Read time threshold for "slow" reads (seconds)
+    # Reads slower than this trigger sample reduction
+    # Default: 0.05 (50ms)
+    adaptive_samples_slow_read_threshold: 0.05
+
+    # Multiplier for slow reads
+    # Reduces samples to avoid I/O bottlenecks
+    # Default: 0.8
+    adaptive_samples_slow_multiplier: 0.8
+
+    # Multiplier for fast reads
+    # Increases samples to maximize throughput
+    # Default: 1.2
+    adaptive_samples_fast_multiplier: 1.2
+
+    # Number of read times to track for averaging
+    # Larger = more stable but slower adaptation
+    # Default: 10
+    adaptive_read_time_history_size: 10
+
+    # ========================================================================
+    # BUCKET FLUSHING
+    # ========================================================================
+    # Flush buckets every (buffer_size * MULTIPLIER) samples
+    # Higher = less frequent flushing but potential staleness
+    # Default: 5
+    bucket_flush_interval_multiplier: 5
+
+    # Minimum bucket size for final flush at end
+    # Smaller buckets than this are discarded
+    # Default: 8
+    bucket_flush_min_size: 8
+
+    # ========================================================================
+    # COLLATE BUFFER CACHE
+    # ========================================================================
+    # Maximum number of buffer sizes to cache
+    # Each size caches pre-allocated tensors for zero-copy collation
+    # Default: 10
+    collate_buffer_cache_max_size: 10
+
+################################################################################
+# EXAMPLE CONFIGURATIONS
+################################################################################
+
+# Example 1: High-memory GPU (A100 80GB) - Maximize throughput
+# constants:
+#   data_pipeline:
+#     buffer_size_default: 20000          # 2x default
+#     prefetch_factor_max: 8              # More aggressive prefetch
+#     prefetch_factor_numerator: 4096     # Higher base
+#     max_bucket_size: 400                # 2x default
+#     worker_file_cache_max_size: 200     # More caching
+
+# Example 2: Low-memory GPU (RTX 3090 24GB) - Minimize memory usage
+# constants:
+#   data_pipeline:
+#     buffer_size_default: 5000           # Half default
+#     streaming_buffer_size: 500          # Even smaller for streaming
+#     prefetch_factor_max: 3              # Conservative prefetch
+#     dynamic_buffer_min: 1000            # Lower minimum
+#     worker_file_cache_max_size: 50      # Less caching
+#     use_streaming_tokenization: true    # Enable in main config
+
+# Example 3: Fast I/O (NVMe SSD) - Optimize for throughput
+# constants:
+#   data_pipeline:
+#     samples_per_file: 1000              # Read more at once
+#     adaptive_samples_large_multiplier: 8  # Even more for large files
+#     adaptive_samples_max: 256           # Higher cap
+#     prefetch_max_workers: 8             # More parallel I/O
+
+# Example 4: Slow I/O (Network storage) - Minimize seeks
+# constants:
+#   data_pipeline:
+#     samples_per_file: 2000              # Fewer file rotations
+#     adaptive_samples_large_multiplier: 16 # Read entire files
+#     prefetch_max_workers: 2             # Less parallel overhead
+#     worker_file_cache_max_size: 200     # Cache more file handles
