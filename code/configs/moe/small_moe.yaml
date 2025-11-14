@@ -97,7 +97,7 @@ moe_memory_optimization:
   fp8_enabled: false  # Set to true for H100+ GPUs for FP8 training
 
 training:
-  batch_size: 1  # Reduced from 96 to prevent OOM with expert offloading enabled
+  batch_size: 96  # Reduced from 96 to prevent OOM with expert offloading enabled
   gradient_accumulation_steps: 1  # Increased to maintain effective batch size of 96
   optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
   learning_rate: 0.0001  # LION: 3x smaller than AdamW (0.0003 -> 0.0001)
@@ -108,7 +108,7 @@ training:
   use_fused_optimizer: true  # OPTIMIZATION: 5-10% faster optimizer step
   offload_optimizer_state: true  # ENABLED: 30-50% memory savings with minimal slowdown
   save_steps: 5000
-  eval_steps: 5000  # OPTIMIZED: Increased from 1000 for 10-15% speedup (less validation overhead)
+  eval_steps: 1000  # OPTIMIZED: Increased from 1000 for 10-15% speedup (less validation overhead)
   eval_steps_schedule:  # EFFICIENCY: Adaptive validation - less frequent as training stabilizes
     - [0, 10000, 2000]      # Steps 0-10k: validate every 2k steps
     - [10000, 50000, 5000]  # Steps 10k-50k: validate every 5k steps
