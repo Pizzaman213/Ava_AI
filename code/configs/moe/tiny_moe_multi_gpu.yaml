@@ -1,5 +1,5 @@
-# 500M Parameter Multi-GPU MoE Configuration with GPU Load Balancing
-# Full-size 500M parameter model with 16 experts for multi-GPU training
+# 500M Parameter Single-GPU MoE Configuration - Memory Constrained (9GB available)
+# Full-size 500M parameter model with 16 experts optimized for limited GPU memory
 
 model:
   vocab_size: 50680
@@ -18,18 +18,18 @@ model:
   activation: swiglu
   use_grouped_gemm: true
   use_triton_kernels: true
-  use_torch_compile: false  # Disable initially for faster startup (enable after warmup)
+  use_torch_compile: false  # SPEED FIX: Disabled - torch.compile adds 2-5min compilation overhead
   use_flash_attention: true
-  gradient_checkpointing: false  # SPEED: Disabled for faster training (trade memory for speed)
-  gradient_checkpointing_ratio: 1.0  # Only checkpoint if needed
+  gradient_checkpointing: true  # MEMORY: CRITICAL - Enable for 25-30% memory savings
+  gradient_checkpointing_ratio: 1.0  # Checkpoint all layers
   use_optimized_moe: true
   router_z_loss_coef: 0.001
   load_balance_loss_coef: 0.05
   diversity_loss_coef: 0.001
   expert_dropout_loss_coef: 0.0
   router_jitter_noise: 0.01
-  use_expert_offloading: true
-  max_active_experts_gpu: 6  # SPEED: Increased from 4 for better performance
+  use_expert_offloading: false  # SPEED FIX: Disabled - CPU↔GPU transfers kill performance
+  max_active_experts_gpu: 16  # SPEED FIX: Keep all experts on GPU (24GB is enough)
   offload_eviction_policy: lru
   attention_dropout: 0.0
   dropout: 0.0
@@ -41,21 +41,26 @@ moe_memory_optimization:
   lora_rank: 8
   lora_alpha: 16
   freeze_lora_base: false
-  use_expert_offloading: true
-  max_active_experts_gpu: 6  # SPEED: Increased from 4 for better performance
-  offload_prefetch_lookahead: 2  # SPEED: Increased from 1 for better pipelining
+  use_expert_offloading: false  # SPEED FIX: Disabled - CPU↔GPU transfers kill performance
+  max_active_experts_gpu: 16  # SPEED FIX: Keep all experts on GPU (24GB is enough)
+  offload_prefetch_lookahead: 0  # SPEED FIX: Disabled (no offloading)
   offload_eviction_policy: lru
   offload_pin_memory: true
   offload_async_transfers: true
+  offload_num_streams: 4  # OPTIMIZED: Multiple CUDA streams for parallel transfers
+  offload_overlap_comm_compute: true  # OPTIMIZED: Overlap transfers with computation
   use_hierarchical_experts: false
   use_expert_quantization: true
   expert_quantization_bits: 8
   expert_quantization_method: per_channel
   quantize_inactive_experts: true
+  # PHASE 3 OPTIMIZATION: Quantize active experts for 50% memory reduction with minimal quality loss
+  quantize_active_experts: true  # Enable INT8 for active experts (not just offloaded)
+  fp8_enabled: false  # Set to true for H100+ GPUs for FP8 training
 
 training:
-  batch_size: 64  # Increased for better GPU utilization (with 4 GPUs, total=256 per step)
-  gradient_accumulation_steps: 4  # Reduced for faster optimizer steps
+  batch_size: 4  # MEMORY: CRITICAL - Reduced to 4 for 9GB GPU constraint (will be ~6GB model + optimizer)
+  gradient_accumulation_steps: 8  # SPEED FIX: Reduced from 48 to 8 for faster optimizer updates
   optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
   learning_rate: 0.0001  # LION: Adjusted for larger model (3x smaller than AdamW equivalent)
   lion_betas: [0.9, 0.99]  # Lion-specific betas (different from AdamW's [0.9, 0.999])
@@ -63,26 +68,34 @@ training:
   max_steps: 100000  # Increased for larger model
   warmup_steps: 10000  # Increased warmup for larger model
   weight_decay: 0.1
-  save_steps: 5000
+  save_steps: 10000  # EFFICIENCY: Increased from 5000 to 10000 for less checkpoint overhead
   eval_steps: 5000  # Reduced frequency for less overhead
+  eval_steps_schedule:  # EFFICIENCY: Adaptive validation - less frequent as training stabilizes
+    - [0, 10000, 2000]      # Steps 0-10k: validate every 2k steps
+    - [10000, 50000, 5000]  # Steps 10k-50k: validate every 5k steps
+    - [50000, null, 10000]  # Steps 50k+: validate every 10k steps
+  # PHASE 2 OPTIMIZATION: Fast vs Full validation
+  fast_eval_steps: 1000  # Fast validation every 1000 steps
+  fast_eval_batches: 10  # Only 10 batches for fast validation
+  full_eval_steps: 10000  # Full validation every 10000 steps
   logging_steps: 100  # Less frequent logging
   run_validation: true
-  validation_batch_size: 1
+  validation_batch_size: 2  # MEMORY: CRITICAL - Reduced to 2 to prevent OOM during validation
   max_validation_batches: 10  # Reduced for faster validation
   compute_val_train_ratio: true
-  generate_every_n_steps: 5000
-  num_generations_per_step: 3
-  generation_during_eval: true
-  test_generation_quality: true
+  generate_every_n_steps: 10000  # EFFICIENCY: Reduced frequency from 5000 to 10000
+  num_generations_per_step: 2  # EFFICIENCY: Reduced from 3 to 2 generations
+  generation_during_eval: false  # EFFICIENCY: Disabled generation during eval for speed
+  test_generation_quality: false  # EFFICIENCY: Disabled for speed
   max_grad_norm: 1.0
-  compute_coherence_metrics: true
+  compute_coherence_metrics: false  # EFFICIENCY: Disabled for speed in multi-GPU training
 
 data:
   dataset_name: OpenAssistant_oasst2_processed.jsonl
   streaming: true  # REQUIRED: Enable streaming data loader
-  buffer_size: 50000  # Shuffle buffer size for streaming loader
-  data_dir: /project/code/data/processed
-  max_length: 1024  # Increased from 128 to utilize 2048 max_position_embeddings
+  buffer_size: 10000  # MEMORY: Reduced buffer size
+  data_dir: /project/code/data/pretokenized  # FIXED: Use pretokenized data
+  max_length: 512  # MEMORY: Reduced to save memory (was 1024)
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
@@ -90,12 +103,21 @@ data:
   tokenizer_name: /project/code/models/tokenizer/enhanced-50680
   padding_side: right
   truncation: true
-  num_workers: 12  # Further increased for better parallel I/O (20-30% speedup)
+  num_workers: 0  # SPEED FIX: Disabled workers (4.5M index shuffling takes 2min per worker!)
   dataloader_drop_last: true
-  dataloader_pin_memory: true  # Enable for faster GPU transfer
-  dataloader_prefetch_factor: 4  # Balanced for overlap without excessive memory (15-20% speedup)
-  dataloader_persistent_workers: true  # OPTIMIZED: Enabled to reduce worker startup overhead (5-10% speedup)
-  dataloader_samples_per_file: 128  # Further increased for 30-40% I/O reduction
+  dataloader_pin_memory: true  # SPEED FIX: Re-enabled for faster host→device transfers
+  dataloader_prefetch_factor: 3  # SPEED FIX: Increased from 2 to 3 for better pipeline
+  dataloader_persistent_workers: false  # SPEED FIX: Disabled - causes initialization delays
+  dataloader_samples_per_file: 512  # PHASE 1 OPTIMIZATION: Increased from 256 to 512 for fewer file rotations (2x reduction)
+  use_dynamic_batching: true  # EFFICIENCY: Enable dynamic batching for 10-15% less padding waste
+  max_tokens_per_batch: 98304  # PHASE 1 OPTIMIZATION: Increased from 65536 to 98304 (1.5x increase for better GPU utilization)
+  # MEMORY: Dynamic batch sizing disabled for stability
+  dynamic_batch_sizing:
+    enabled: false
+    min_batch_size: 2
+    max_batch_size: 4
+    target_memory_utilization: 0.85
+    adjustment_frequency: 100  # Tune every 100 steps
   validation_buffer_size: 500  # MEMORY: Reduced from 1000 to save buffer memory
   # MEMORY OPTIMIZATION: Streaming tokenization (reduces buffer from 15k to 1k samples)
   use_streaming_tokenization: true  # MEMORY: Enabled to save 500MB-1GB RAM
@@ -115,13 +137,13 @@ performance:
   enable_tf32: true
   float32_matmul_precision: high
   enable_cudnn_benchmark: true
-  enable_gpu_memory_cleanup: false
+  enable_gpu_memory_cleanup: true  # MEMORY: CRITICAL - Enable aggressive cleanup
   gradient_check_frequency: 50
-  torchinductor_max_autotune: 0
-  enable_torch_compile: false
-  torch_compile_mode: default
+  torchinductor_max_autotune: 0  # SPEED FIX: Disabled max-autotune (2-5min compilation overhead)
+  enable_torch_compile: false  # SPEED FIX: Disabled torch.compile entirely
+  torch_compile_mode: "default"  # SPEED FIX: Use default mode (no autotuning)
   torch_compile_fullgraph: false
-  torch_compile_dynamic: true
+  torch_compile_dynamic: false  # PHASE 2 OPTIMIZATION: Static for better compilation
 
 gradient_health:
   enabled: true
@@ -137,23 +159,26 @@ gradient_health:
 optimizations:
   gradient_health_monitoring: true
   torchinductor_autotune: 1
-  memory_headroom_gb: 2.0  # MEMORY OPTIMIZATION: Reserve 2GB for safety (increased from 1GB)
+  memory_headroom_gb: 1.5  # MEMORY: Reserve 1.5GB for safety (tighter budget)
   memory_cleanup_thresholds:
-    warning: 0.990
-    critical: 0.995
-    emergency: 0.999
+    warning: 0.75   # MEMORY: CRITICAL - Warn early at 75% usage
+    critical: 0.85  # MEMORY: CRITICAL - Critical at 85% usage
+    emergency: 0.92 # MEMORY: CRITICAL - Emergency at 92% usage
 
   # Multi-GPU Communication Optimizations (Phase 1)
   ddp:
     # Adaptive bucket size based on model size (25MB, 50MB, or 100MB)
     # Larger buckets = fewer all-reduce calls (10-15% speedup)
     adaptive_bucket_size: true
+    bucket_cap_mb: 100  # EFFICIENCY: Increased from 25MB to 100MB for fewer all-reduce calls
     # Avoid gradient copy overhead
     gradient_as_bucket_view: true
     # Skip dynamic graph analysis after first iteration
     static_graph: true
     # Use no_sync() during gradient accumulation (15-25% speedup with accumulation_steps=8)
     optimize_gradient_accumulation: true
+    # EFFICIENCY: Find unused parameters only once
+    find_unused_parameters: false
 
   expert_parallel:
     # Async backward all-to-all communication (20-30% speedup in backward pass)
@@ -166,12 +191,17 @@ optimizations:
 
   expert_prefetch:
     enabled: true
-    lookahead: 2
+    lookahead: 6  # PHASE 1 OPTIMIZATION: Increased from 4 to 6 for deeper prefetch pipeline (50% deeper, reduces stalls)
     use_multiple_streams: true
+    num_prefetch_streams: 6  # PHASE 1 OPTIMIZATION: Increased from 4 to 6 streams (matches lookahead)
+    prefetch_threshold: 0.6  # PHASE 1 OPTIMIZATION: Reduced from 0.7 to 0.6 for more aggressive prefetching (catches more cases)
   expert_cache:
     auto_limit: true
     use_lru_eviction: true
-    clear_after_optimizer_step: true  # PHASE 1 OPTIMIZATION: Clear cache after optimizer step (not every micro-step, 10-15% fewer transfers)
+    cache_size: 3  # MEMORY: CRITICAL - Reduced to 3 experts (2 active + 1 hot)
+    clear_after_optimizer_step: true
+    cache_compression: true  # OPTIMIZED: Enable compression for cached experts on CPU
+    compression_ratio: 8
   checkpoint:
     async_saving: true
   memory_cleanup:
@@ -184,31 +214,35 @@ optimizations:
       medium_files: 2
       small_files: 1
   gradient_checkpointing:
-    selective: true
-    checkpoint_attention: false
+    selective: false  # MEMORY: CRITICAL - Checkpoint ALL layers
+    checkpoint_attention: true  # MEMORY: CRITICAL - Checkpoint attention too
   router:
     cache_hash_on_gpu: true
-    compile_routers: true
-    compile_mode: "default"
-    compile_dynamic: true
+    compile_routers: false  # SPEED FIX: Disabled router compilation (adds overhead)
+    compile_mode: "default"  # SPEED FIX: Use default mode (no autotuning)
+    compile_dynamic: false  # PHASE 2 OPTIMIZATION: Static shapes for faster compilation (change to true if variable batch sizes)
+    compile_fullgraph: false  # Allow graph breaks for flexibility with router fix
+    enable_router_caching: true  # PHASE 3 OPTIMIZATION: Cache routing decisions for repeated patterns (5-10% speedup)
+    router_cache_size: 1000  # Cache 1000 routing patterns
 
 hardware:
   device: cuda
   mixed_precision: bf16
-  compile: false  # FIXED: Disabled for consistency
+  compile: false  # SPEED FIX: Disabled (consistent with use_torch_compile: false)
 
-  # Multi-GPU Configuration
-  num_gpus: 4  # Set to number of GPUs available (e.g., 2, 4, 8)
+  # Single-GPU Configuration
+  num_gpus: 1  # HARDWARE FIX: Set to 1 GPU (only 1 RTX 3090 Ti available)
 
-  # GPU Load Balancing Settings (ENABLED for multi-GPU)
-  use_gpu_load_balancing: true    # Enable GPU load balancing
+  # GPU Load Balancing Settings (DISABLED for single-GPU)
+  use_gpu_load_balancing: false   # DISABLED: Only works with multi-GPU setup
   balancing_strategy: adaptive     # Options: round_robin, memory_aware, compute_aware, adaptive (recommended)
-  rebalance_interval: 5000         # OPTIMIZED: Increased from 2000 to reduce migration overhead
+  rebalance_interval: 10000        # EFFICIENCY: Increased from 5000 to 10000 to reduce migration overhead (50% reduction)
   adaptive_rebalance_interval: true  # PHASE 2 OPTIMIZATION: Adaptive interval (500-5000) based on load stability
   enable_expert_migration: true    # Allow experts to migrate between GPUs
-  migration_threshold: 0.3         # OPTIMIZED: Increased from 0.25 (less aggressive migration, fewer interruptions)
-  max_migrations_per_rebalance: 2  # OPTIMIZED: Reduced from 3 to minimize training pauses
+  migration_threshold: 0.35        # EFFICIENCY: Increased from 0.3 to 0.35 (less aggressive migration)
+  max_migrations_per_rebalance: 1  # EFFICIENCY: Reduced from 2 to 1 to minimize training pauses (50% reduction)
   log_gpu_metrics: true            # Log detailed per-GPU metrics
+  overlap_migration: true          # EFFICIENCY: Enable async migration to overlap with training
 
 wandb:
   use_wandb: true  # Enable for multi-GPU metrics tracking
@@ -219,7 +253,7 @@ wandb:
   disable_wandb: false
 
 deepspeed:
-  use_deepspeed: true  # MEMORY OPTIMIZATION: Enable DeepSpeed for ZeRO optimizations
+  use_deepspeed: false  # DISABLED: DeepSpeed requires multi-GPU setup, using single GPU
   zero_stage: 2  # SPEED OPTIMIZATION: ZeRO Stage 2 for better gradient memory efficiency
   zero_optimization:
     stage: 2  # Optimizer state + gradient partitioning

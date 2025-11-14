@@ -2187,26 +2187,33 @@ class EnhancedModularTrainer:
                 else:
                     # For streaming datasets, estimate based on first few batches
                     print("⏳ Estimating dataset size for streaming dataset...")
-                    sample_batches = 10
+                    sample_batches = 3  # SPEED FIX: Reduced from 10 to 3 for faster initialization
                     total_samples = 0
                     i = 0
 
                     temp_iter = iter(train_loader)
-                    for i in range(min(sample_batches, 50)):  # Don't sample too many
+                    for i in range(sample_batches):  # SPEED FIX: Don't over-sample
                         try:
+                            print(f"   Sampling batch {i+1}/{sample_batches}...")
                             batch = next(temp_iter)
                             if isinstance(batch, dict) and "input_ids" in batch:
-                                total_samples += batch["input_ids"].size(0)
+                                batch_size = batch["input_ids"].size(0)
+                                total_samples += batch_size
+                                print(f"   ✓ Batch {i+1}: {batch_size} samples")
                         except StopIteration:
+                            print(f"   Dataset exhausted after {i+1} batches")
+                            break
+                        except Exception as e:
+                            print(f"   ⚠️  Error sampling batch {i+1}: {e}")
                             break
 
                     if total_samples > 0:
-                        avg_batch_size = total_samples / min(sample_batches, i + 1)
+                        avg_batch_size = total_samples / (i + 1)
                         # Estimate total dataset size (rough approximation)
                         dataset_size = int(
                             avg_batch_size * 1000
                         )  # Assume 1000 batches minimum
-                        print(f"📊 Estimated dataset size: ~{dataset_size:,} samples")
+                        print(f"📊 Estimated dataset size: ~{dataset_size:,} samples (from {i+1} sampled batches)")
                     else:
                         dataset_size = 100000  # Fallback
                         print(
@@ -3390,6 +3397,16 @@ class EnhancedModularTrainer:
                 # Accumulating gradients, skip optimizer step
                 grad_norm = 0.0
                 grad_norm_pre_clip = 0.0
+
+                # OPTIMIZATION: Clear CUDA cache between micro-batches during gradient accumulation
+                # This prevents memory fragmentation and allows larger effective batch sizes
+                # Only clear if we have some headroom to avoid constant cleanup overhead
+                if torch.cuda.is_available():
+                    # Only clear if memory usage is high (>70%) to avoid excessive cleanup
+                    allocated_gb = torch.cuda.memory_allocated() / (1024**3)
+                    reserved_gb = torch.cuda.memory_reserved() / (1024**3)
+                    if reserved_gb > 0 and (allocated_gb / reserved_gb) > 0.7:
+                        torch.cuda.empty_cache()
 
         backward_time = time.time() - backward_start
         opt_time = backward_time  # Combined for DeepSpeed

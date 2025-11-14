@@ -38,13 +38,14 @@ try:
     from transformer_engine.common import recipe  # type: ignore[import]
     from transformer_engine.pytorch import DotProductAttention  # type: ignore[import]
     TE_AVAILABLE = True
-    logger.info("Transformer Engine available for FP8 training")
+    # Only log when TE is actually used, not at import time
 except ImportError:
     TE_AVAILABLE = False
     te = None  # type: ignore[assignment]
     recipe = None  # type: ignore[assignment]
     DotProductAttention = None  # type: ignore[assignment,misc]
-    logger.warning("Transformer Engine not available. FP8 training will use fallback implementations.")
+    # Don't log at import time - workers don't need this message
+    # Will print message when FP8 training is actually initialized
 
 
 class FP8Format(Enum):

@@ -450,7 +450,7 @@ class DataConfig:
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = False                   # Streaming loader (YAML controls)
     buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
-    num_workers: int = 8                      # Parallel data loading workers
+    num_workers: int = 0                      # CRITICAL FIX: Default 0 to avoid multiprocessing deadlocks with Arrow files
     prefetch_factor: int = 4                  # Batches to prefetch per worker
     persistent_workers: bool = False          # Keep workers alive between epochs (YAML controls)
     padding_side: str = 'right'               # Tokenizer padding side
@@ -528,6 +528,10 @@ class TrainingConfig:
     gradient_accumulation: int = 1            # Gradient accumulation (legacy)
     gradient_accumulation_steps: int = 1      # Gradient accumulation steps (preferred)
     max_gradient_norm: float = 1.0            # Maximum gradient norm for clipping
+
+    # Learning rate schedule
+    warmup_steps: int = 2000                  # Number of warmup steps
+    max_steps: Optional[int] = None           # Maximum training steps
 
     # Adaptive LR configuration
     adaptive_lr: dict = field(default_factory=dict)  # Adaptive learning rate settings
@@ -823,72 +827,7 @@ class TrainingConfigManager:
         with open(config_path_obj, "r") as f:
             config_dict = yaml.safe_load(f)
 
-        # AUTO-SYNC: Ensure gradient_accumulation_steps is consistent across all sections
-        # This prevents the common bug where training.gradient_accumulation_steps differs
-        # from deepspeed.gradient_accumulation_steps or lr_finder.gradient_accumulation_steps
-        if 'training' in config_dict and 'gradient_accumulation_steps' in config_dict['training']:
-            master_grad_accum = config_dict['training']['gradient_accumulation_steps']
-
-            # Sync deepspeed section
-            if 'deepspeed' in config_dict:
-                if config_dict['deepspeed'].get('gradient_accumulation_steps') != master_grad_accum:
-                    print(f"⚙️  Auto-syncing deepspeed.gradient_accumulation_steps: "
-                          f"{config_dict['deepspeed'].get('gradient_accumulation_steps', 'not set')} → {master_grad_accum}")
-                    config_dict['deepspeed']['gradient_accumulation_steps'] = master_grad_accum
-
-            # Sync lr_finder section
-            if 'lr_finder' in config_dict:
-                if config_dict['lr_finder'].get('gradient_accumulation_steps') != master_grad_accum:
-                    print(f"⚙️  Auto-syncing lr_finder.gradient_accumulation_steps: "
-                          f"{config_dict['lr_finder'].get('gradient_accumulation_steps', 'not set')} → {master_grad_accum}")
-                    config_dict['lr_finder']['gradient_accumulation_steps'] = master_grad_accum
-
-        # AUTO-SYNC: Ensure batch sizes are consistent between training and DeepSpeed sections
-        # DeepSpeed requires: train_batch_size = micro_batch_size * gradient_accumulation_steps
-        if 'training' in config_dict and 'batch_size' in config_dict['training']:
-            master_batch_size = config_dict['training']['batch_size']
-            master_grad_accum = config_dict['training'].get('gradient_accumulation_steps', 1)
-
-            # Calculate DeepSpeed batch sizes
-            expected_micro_batch = master_batch_size
-            expected_train_batch = master_batch_size * master_grad_accum
-
-            # Sync top-level deepspeed section (used in distributed configs)
-            if 'deepspeed' in config_dict:
-                # Sync micro_batch_size
-                current_micro = config_dict['deepspeed'].get('micro_batch_size')
-                if current_micro != expected_micro_batch:
-                    print(f"⚙️  Auto-syncing deepspeed.micro_batch_size: "
-                          f"{current_micro or 'not set'} → {expected_micro_batch}")
-                    config_dict['deepspeed']['micro_batch_size'] = expected_micro_batch
-
-                # Sync train_batch_size
-                current_train = config_dict['deepspeed'].get('train_batch_size')
-                if current_train != expected_train_batch:
-                    print(f"⚙️  Auto-syncing deepspeed.train_batch_size: "
-                          f"{current_train or 'not set'} → {expected_train_batch} "
-                          f"({master_batch_size} × {master_grad_accum})")
-                    config_dict['deepspeed']['train_batch_size'] = expected_train_batch
-
-            # Sync nested training.deepspeed section (used in GPU configs)
-            if 'training' in config_dict and 'deepspeed' in config_dict['training']:
-                ds_config = config_dict['training']['deepspeed']
-
-                # Sync micro_batch_size
-                current_micro = ds_config.get('micro_batch_size')
-                if current_micro != expected_micro_batch:
-                    print(f"⚙️  Auto-syncing training.deepspeed.micro_batch_size: "
-                          f"{current_micro or 'not set'} → {expected_micro_batch}")
-                    ds_config['micro_batch_size'] = expected_micro_batch
-
-                # Sync train_batch_size
-                current_train = ds_config.get('train_batch_size')
-                if current_train != expected_train_batch:
-                    print(f"⚙️  Auto-syncing training.deepspeed.train_batch_size: "
-                          f"{current_train or 'not set'} → {expected_train_batch} "
-                          f"({master_batch_size} × {master_grad_accum})")
-                    ds_config['train_batch_size'] = expected_train_batch
-
+        # Return config exactly as written in YAML - no auto-sync overrides
         return DynamicConfig(config_dict)
 
     def create_argument_parser(self) -> argparse.ArgumentParser:

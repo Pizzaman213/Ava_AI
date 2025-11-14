@@ -413,7 +413,8 @@ class MixtralRouter(UnifiedMoERouter):
             # Create sparse router_probs for metrics (only top-k entries)
             # CRITICAL FIX: Use non-inplace scatter and clone to avoid breaking gradient computation with torch.compile
             router_probs = torch.zeros_like(router_logits)
-            router_probs = router_probs.scatter(1, top_k_indices, top_k_weights).clone()
+            # CRITICAL FIX: Ensure dtype match for scatter operation (required for torch.compile)
+            router_probs = router_probs.scatter(1, top_k_indices, top_k_weights.to(router_probs.dtype)).clone()
 
         # CRITICAL FIX: Clamp indices to valid range and clone to prevent inplace modification issues
         # This can happen during graph breaks or with corrupted routing state

@@ -20,13 +20,13 @@ try:
     from torchao.prototype.mx_formats import NVFP4InferenceConfig  # type: ignore[import]
     from torchao.quantization.qat import QATConfig  # type: ignore[import]
     TORCHAO_AVAILABLE = True
-    print(" TorchAO available - Hardware-accelerated NVFP4 enabled")
+    # Don't print at import time - only when quantization is actually used by main process
 except (ImportError, AttributeError) as e:
     # AttributeError can occur with version mismatches (e.g., torch.int1 not available)
     quantize_ = None  # type: ignore[assignment]
     NVFP4InferenceConfig = None  # type: ignore[assignment,misc]
     QATConfig = None  # type: ignore[assignment,misc]
-    print(f" TorchAO not available ({e.__class__.__name__}) - using custom NVFP4 implementation")
+    # Don't print at import time
 
 
 @dataclass

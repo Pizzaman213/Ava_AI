@@ -1,0 +1,220 @@
+# 500M Parameter Single-GPU MoE Configuration - Optimized for RTX 3090 Ti
+# Memory-efficient 500M parameter model with 16 experts using LoRA for single GPU
+
+model:
+  vocab_size: 50680
+  pad_token_id: 0
+  eos_token_id: 3
+  hidden_size: 1536  # 500M params
+  num_layers: 20
+  num_attention_heads: 12  # Must divide hidden_size
+  intermediate_size: 4096  # Expert FFN capacity
+  max_position_embeddings: 2048
+  num_experts: 16
+  num_experts_per_token: 2
+  router_type: mixtral
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: swiglu
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true  # OPTIMIZED: Re-enabled with selective compilation fix
+  use_flash_attention: true
+  gradient_checkpointing: true  # ENABLED: Save memory on single GPU
+  gradient_checkpointing_ratio: 1.0
+  use_optimized_moe: true
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.05
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.01
+  use_expert_offloading: true
+  max_active_experts_gpu: 6  # OPTIMIZED: Increased from 4 to 6 for 50% fewer CPU transfers
+  offload_eviction_policy: lru
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-05
+  initializer_range: 0.02
+
+moe_memory_optimization:
+  # LoRA experts - 80-96% memory savings
+  use_lora_experts: true
+  lora_rank: 16  # Increased from 8 for better quality
+  lora_alpha: 32  # 2x rank
+  freeze_lora_base: false
+
+  # Expert offloading
+  use_expert_offloading: true
+  max_active_experts_gpu: 6  # OPTIMIZED: Increased from 4 to 6 for better performance
+  offload_prefetch_lookahead: 3
+  offload_eviction_policy: lru
+  offload_pin_memory: true
+  offload_async_transfers: true
+  offload_num_streams: 2  # Reduced for single GPU
+  offload_overlap_comm_compute: true
+
+  # Expert quantization
+  use_hierarchical_experts: false
+  use_expert_quantization: true
+  expert_quantization_bits: 8
+  expert_quantization_method: per_channel
+  quantize_inactive_experts: true
+  # PHASE 3 OPTIMIZATION: Quantize active experts
+  quantize_active_experts: true  # Enable INT8 for active experts
+  fp8_enabled: false  # Set to true for H100+ GPUs
+
+training:
+  batch_size: 12  # OPTIMIZED: Increased from 8 to 12 for better GPU utilization (effective batch=144)
+  gradient_accumulation_steps: 12  # Keep high for gradient stability
+  optimizer: lion  # 50% memory reduction vs AdamW
+  learning_rate: 0.0001
+  lion_betas: [0.9, 0.99]
+  lr_scheduler_type: cosine
+  max_steps: 100000
+  warmup_steps: 10000
+  weight_decay: 0.1
+  save_steps: 5000
+  eval_steps: 2500
+  # PHASE 2 OPTIMIZATION: Fast vs Full validation
+  fast_eval_steps: 1000
+  fast_eval_batches: 10
+  full_eval_steps: 10000
+  logging_steps: 50
+  run_validation: true
+  validation_batch_size: 4  # PHASE 1 OPTIMIZATION: Increased from 2 to 4 for 2x faster validation
+  max_validation_batches: 20
+  compute_val_train_ratio: true
+  generate_every_n_steps: 5000
+  num_generations_per_step: 2
+  generation_during_eval: false
+  test_generation_quality: false
+  max_grad_norm: 1.0
+  compute_coherence_metrics: false
+
+data:
+  dataset_name: OpenAssistant_oasst2_processed.arrow
+  streaming: true
+  buffer_size: 10000  # OPTIMIZED: Restored from 5000 for better shuffling diversity
+  data_dir: /project/code/data/pretokenized
+  max_length: 512  # Reduced from 1024 to save memory
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: /project/code/models/tokenizer/enhanced-50680
+  padding_side: right
+  truncation: true
+  num_workers: 6  # OPTIMIZED: Restored from 2 for better I/O parallelism (3x faster)
+  dataloader_drop_last: true
+  dataloader_pin_memory: true  # OPTIMIZED: Re-enabled for 15-20% faster GPU transfers
+  dataloader_prefetch_factor: 6  # OPTIMIZED: Restored from 2 for deeper pipeline (3x increase)
+  dataloader_persistent_workers: true  # OPTIMIZED: Re-enabled to eliminate worker restart overhead (5-10% speedup)
+  dataloader_samples_per_file: 512  # PHASE 1 OPTIMIZATION: Increased from 128 to 512 for fewer file rotations (4x reduction)
+  use_dynamic_batching: true
+  max_tokens_per_batch: 32768  # PHASE 1 OPTIMIZATION: Increased from 16384 to 32768 (2x increase)
+  # PHASE 1 OPTIMIZATION: Dynamic batch sizing
+  dynamic_batch_sizing:
+    enabled: true
+    min_batch_size: 8
+    max_batch_size: 32
+    target_memory_utilization: 0.90
+    adjustment_frequency: 100
+  validation_buffer_size: 250
+  use_streaming_tokenization: true
+  streaming_buffer_size: 1000  # PHASE 1 OPTIMIZATION: Increased from 500 for better throughput
+
+output:
+  output_dir: /project/code/outputs/runs/500m_moe_single_gpu
+  save_every: 5000
+  fresh_start: false
+
+run_management:
+  run_name: 500m_moe_single_gpu_lora
+  run_description: "500M parameter Single-GPU MoE with LoRA experts - optimized for RTX 3090 Ti"
+  run_tags: moe,single-gpu,lora,500m,memory-optimized
+
+performance:
+  enable_tf32: true
+  float32_matmul_precision: high
+  enable_cudnn_benchmark: true
+  enable_gpu_memory_cleanup: true  # ENABLED: Clean up memory on single GPU
+  gradient_check_frequency: 100
+  torchinductor_max_autotune: 2  # PHASE 2 OPTIMIZATION: Increased from 0 to 2 for aggressive auto-tuning
+  enable_torch_compile: true  # PHASE 2 OPTIMIZATION: Enabled for router compilation
+  torch_compile_mode: "max-autotune"  # PHASE 2 OPTIMIZATION: Use max-autotune for best performance
+  torch_compile_fullgraph: false
+  torch_compile_dynamic: false  # PHASE 2 OPTIMIZATION: Static for better compilation
+
+gradient_health:
+  enabled: true
+  conditional_monitoring: true
+  warmup_fraction: 0.05
+
+optimizations:
+  gradient_health_monitoring: true
+  torchinductor_autotune: 1
+  memory_headroom_gb: 2.0
+  memory_cleanup_thresholds:
+    warning: 0.985
+    critical: 0.990
+    emergency: 0.995
+
+  expert_prefetch:
+    enabled: true
+    lookahead: 5  # PHASE 1 OPTIMIZATION: Increased from 3 to 5 for deeper prefetch pipeline
+    use_multiple_streams: true
+    num_prefetch_streams: 4  # PHASE 1 OPTIMIZATION: Increased from 2 to 4 streams
+    prefetch_threshold: 0.6  # PHASE 1 OPTIMIZATION: Reduced from 0.7 for more aggressive prefetching
+
+  expert_cache:
+    auto_limit: true
+    use_lru_eviction: true
+    cache_size: 6  # OPTIMIZED: Reduced from 8 to 6 to prevent OOM (4 active + 2 hot cache)
+    clear_after_optimizer_step: true
+    cache_compression: true
+    compression_ratio: 12  # OPTIMIZED: Increased from 8 to 12 for better compression (1.5x improvement)
+
+  checkpoint:
+    async_saving: true
+
+  memory_cleanup:
+    fast_mode: true
+    remove_sleep: true
+
+  dataloader:
+    adaptive_file_reading: true
+    adaptive_multipliers:
+      large_files: 2
+      medium_files: 1
+      small_files: 1
+
+  gradient_checkpointing:
+    selective: true
+    checkpoint_attention: true  # CRITICAL: Checkpoint attention for huge memory savings (50% of transformer memory)
+    checkpoint_every_n_layers: 3  # OPTIMIZED: Checkpoint every 3 layers (was 1) for 15-20% speedup with reasonable memory trade-off
+
+  router:
+    cache_hash_on_gpu: true
+    compile_routers: true  # Re-enabled with selective compilation fix
+    compile_mode: "max-autotune"  # PHASE 2 OPTIMIZATION: Changed from "default" to "max-autotune" for 15-25% faster routing
+    compile_dynamic: false  # PHASE 2 OPTIMIZATION: Static shapes for faster compilation
+    compile_fullgraph: false  # Allow graph breaks for flexibility with router fix
+    enable_router_caching: true  # PHASE 3 OPTIMIZATION: Cache routing decisions (5-10% speedup)
+    router_cache_size: 1000
+
+hardware:
+  device: cuda
+  mixed_precision: bf16
+  compile: false
+  num_gpus: 1
+  use_gpu_load_balancing: false
+
+wandb:
+  use_wandb: true
+  wandb_cache_size: 1000
+  wandb_cache_flush_interval: 50
+  wandb_offline: false
+  disable_wandb: false
+
+deepspeed:
+  use_deepspeed: false  # Not needed for single GPU

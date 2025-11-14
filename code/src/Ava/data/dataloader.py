@@ -400,12 +400,23 @@ class FileReader:
             print(f"❌ Error reading {file_path.name}: {e}")
 
     @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))
-    def _read_arrow(self, file_path: Path) -> Iterator[str]:
+    def _read_arrow(self, file_path: Path) -> Iterator[Any]:
         """Read Arrow files efficiently with retry logic (PHASE 5.1)."""
         try:
             table = pa.ipc.RecordBatchFileReader(pa.memory_map(str(file_path), 'r')).read_all()
             df = table.to_pandas()
-            if 'text' in df.columns:
+
+            # Handle pretokenized Arrow files (input_ids column)
+            if 'input_ids' in df.columns:
+                for idx, row in df.iterrows():
+                    # Yield as dictionary with pretokenized data
+                    data = {
+                        'input_ids': row['input_ids'].tolist() if hasattr(row['input_ids'], 'tolist') else list(row['input_ids']),
+                        'attention_mask': row['attention_mask'].tolist() if 'attention_mask' in df.columns and hasattr(row['attention_mask'], 'tolist') else [1] * len(row['input_ids'])
+                    }
+                    yield data
+            # Handle raw text Arrow files (text column)
+            elif 'text' in df.columns:
                 for text in df['text']:
                     if text and len(str(text).strip()) > 10:
                         yield str(text).strip()
@@ -1703,12 +1714,14 @@ def create_streaming_dataloaders(
         print(f"⚠️  batch_size was None, defaulting to {batch_size}")
 
     # Auto-detect CPU cores
-    if num_workers == -1 or num_workers == 0:
+    if num_workers == -1:
         import multiprocessing
         num_workers = multiprocessing.cpu_count()
         print(f"🚀 Auto-detected {num_workers} CPU cores")
     elif num_workers > 0:
         print(f"🚀 Using {num_workers} CPU workers for data loading")
+    else:  # num_workers == 0
+        print(f"🚀 Using 0 workers (main process only) for data loading")
 
     # OPTIMIZATION: Dynamic prefetch factor based on sequence length
     # Longer sequences use more memory, so reduce prefetch to avoid RAM overflow
@@ -1810,6 +1823,13 @@ def create_streaming_dataloaders(
         samples_per_file=samples_per_file,
     )
 
+    # CRITICAL FIX: Force num_workers=0 for Arrow files to prevent BrokenPipeError
+    # Arrow files use memory mapping which doesn't work well with multiprocessing
+    if num_workers > 0:
+        print(f"⚠️  Warning: Setting num_workers=0 (was {num_workers}) to prevent multiprocessing issues with Arrow files")
+        print(f"   Arrow files use memory mapping which conflicts with multiprocessing DataLoader workers")
+        num_workers = 0
+
     # Dataloader configuration
     dataloader_kwargs = {
         'batch_size': batch_size,
@@ -1829,6 +1849,11 @@ def create_streaming_dataloaders(
         print(f"   • {prefetch_factor} batches prefetched per worker")
         print(f"   • Persistent workers: {persistent_workers}")
         print(f"   • Total prefetch capacity: {num_workers * prefetch_factor * batch_size:,} samples ({num_workers} workers × {prefetch_factor} batches × {batch_size} batch_size)")
+    else:
+        print(f"⚡ Data pipeline configuration:")
+        print(f"   • Single-process mode (num_workers=0 for Arrow file compatibility)")
+        print(f"   • {buffer_size:,} sample buffer")
+        print(f"   • Pin memory: {torch.cuda.is_available()}")
 
     # Apply distributed wrapping if needed
     if distributed and DISTRIBUTED_AVAILABLE:
@@ -1843,7 +1868,23 @@ def create_streaming_dataloaders(
     train_collate_fn = getattr(base_train_dataset, 'collate_fn', None)
     val_collate_fn = getattr(base_val_dataset, 'collate_fn', None)
 
-    train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
-    val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+    # CRITICAL FIX: Wrap DataLoader creation with proper error handling
+    try:
+        train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+        val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+    except (BrokenPipeError, OSError) as e:
+        print(f"❌ DataLoader creation failed with: {e}")
+        print(f"   Retrying with num_workers=0 and no multiprocessing...")
+
+        # Fallback to single-process mode
+        dataloader_kwargs['num_workers'] = 0
+        dataloader_kwargs['prefetch_factor'] = None
+        dataloader_kwargs['persistent_workers'] = False
+        dataloader_kwargs['multiprocessing_context'] = None
+
+        train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+        val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+
+        print(f"✓ DataLoader created successfully in fallback single-process mode")
 
     return train_loader, val_loader

@@ -239,6 +239,10 @@ class AdaptiveLearningRateManager:
 
         # Regular interval checks - USING TRAINING LOSS
         if self.step_count % self.config.lr_check_interval == 0:
+            # Initialize best_training_loss on first check if still at infinity
+            if self.best_training_loss == float('inf') and len(self.batch_losses) > 0:
+                self.best_training_loss = avg_recent_loss
+
             # Check for improvement in training loss
             if avg_recent_loss < self.best_training_loss - self.config.min_improvement:
                 adjustment = self._handle_improvement(avg_recent_loss)
@@ -383,8 +387,14 @@ class AdaptiveLearningRateManager:
         # Update recent_best_loss to prevent stale values
         self.recent_best_loss = min(self.recent_best_loss, current_loss)
 
-        # Check for plateau
-        if (self.batches_since_improvement >= self.config.plateau_patience and
+        # CRITICAL FIX: Add grace period after warmup before reducing LR
+        # Allow 2x plateau_patience steps after warmup for model to start learning
+        grace_period = self.config.warmup_steps + (2 * self.config.plateau_patience)
+        in_post_warmup_grace = self.step_count < grace_period
+
+        # Check for plateau (but not during post-warmup grace period)
+        if (not in_post_warmup_grace and
+            self.batches_since_improvement >= self.config.plateau_patience and
             self.step_count - self.last_lr_reduction_step > self.config.plateau_patience):
 
             new_lr = max(current_lr * self.config.plateau_factor, self.config.min_lr)

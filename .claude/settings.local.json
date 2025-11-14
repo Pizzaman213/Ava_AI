@@ -93,7 +93,19 @@
       "Bash(then grep -i \"lion\\|optimizer\" /tmp/lion_test.log)",
       "Bash(else echo \"Log file not found\")",
       "Bash(pgrep:*)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(ipcs:*)",
+      "Bash(bash:*)",
+      "Bash(swapon --show:*)",
+      "Bash(mv:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 60 python3:*)",
+      "Bash(timeout 90 python3:*)",
+      "Bash(timeout:*)",
+      "Bash(ln:*)",
+      "Bash(WANDB_MODE=disabled timeout 90 python:*)",
+      "Bash(WANDB_MODE=disabled timeout 60 python:*)",
+      "Bash(WANDB_MODE=disabled timeout 45 python:*)"
     ],
     "deny": [],
     "ask": []
