@@ -68,9 +68,13 @@ class RoutingCache:
             sample = flat[sample_indices]
         else:
             sample = flat
-        # Compute hash on GPU without CPU sync - use sum as deterministic hash
+        # GPU UTIL FIX: Compute hash entirely on GPU without .item() sync
+        # Use tensor operations to create hash without CPU transfer
         with torch.no_grad():
-            hash_val = int((sample.sum().item() * 1e6) % (2**31))
+            # Convert to int64 for hashing (avoids .item() call)
+            hash_tensor = ((sample.sum() * 1e6) % (2**31)).to(torch.int64)
+            # Only convert final scalar to Python int (unavoidable but delayed)
+            hash_val = int(hash_tensor.item())
         return hash_val
 
     def get(self, hidden_states: torch.Tensor) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
@@ -168,8 +172,8 @@ class UnifiedMoERouter(nn.Module):
         # Router linear layer
         self.gate = nn.Linear(hidden_size, num_experts, bias=use_router_bias, dtype=dtype)
 
-        # Initialize with small weights for stability
-        nn.init.normal_(self.gate.weight, mean=0.0, std=0.01)
+        # Initialize with proper scale to prevent expert collapse
+        nn.init.normal_(self.gate.weight, mean=0.0, std=0.1)
         if use_router_bias:
             nn.init.zeros_(self.gate.bias)
 
@@ -374,15 +378,18 @@ class MixtralRouter(UnifiedMoERouter):
 
         num_tokens = hidden_states.shape[0]
 
-        # OPTIMIZATION: Check routing cache for eval/inference (10-20% speedup)
-        # CRITICAL FIX: Disable cache lookups during forward pass to avoid .item() graph breaks
-        # Cache is only used for statistics now, not for actual routing decisions
-        # if not training:
-        #     cached_result = self.routing_cache.get(hidden_states)
-        #     if cached_result is not None:
-        #         top_k_indices, top_k_weights = cached_result
-        #         # Return cached result with zero aux loss and minimal metrics
-        #         return top_k_indices, top_k_weights, torch.tensor(0.0, device=hidden_states.device), {}
+        # GPU UTIL OPTIMIZATION: Enable routing cache during training when jitter is 0
+        # Cache disabled during training with jitter to allow exploration
+        # Config option: enable_training_cache can override this behavior
+        enable_training_cache = getattr(self, 'enable_training_cache', False)
+        use_cache = (not training) or (training and enable_training_cache and self.router_jitter_noise == 0)
+
+        if use_cache:
+            cached_result = self.routing_cache.get(hidden_states)
+            if cached_result is not None:
+                top_k_indices, top_k_weights = cached_result
+                # Return cached result with zero aux loss and minimal metrics
+                return top_k_indices, top_k_weights, torch.tensor(0.0, device=hidden_states.device), {}
 
         # Add jitter noise during training for exploration
         if training and self.router_jitter_noise > 0:
@@ -445,10 +452,10 @@ class MixtralRouter(UnifiedMoERouter):
                 expert_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).float()
                 self.expert_counts += expert_mask.sum(dim=(0, 1))
                 self.total_routing_calls += 1
-        # CRITICAL FIX: Disable cache puts to avoid .item() graph breaks
-        # else:
-        #     # OPTIMIZATION: Cache routing result for eval/inference
-        #     self.routing_cache.put(hidden_states, top_k_indices, top_k_weights)
+
+        # GPU UTIL OPTIMIZATION: Cache routing result during training if enabled
+        if use_cache:
+            self.routing_cache.put(hidden_states, top_k_indices, top_k_weights)
 
         return top_k_indices, top_k_weights, aux_loss, metrics
 

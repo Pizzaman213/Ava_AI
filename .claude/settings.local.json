@@ -105,7 +105,12 @@
       "Bash(ln:*)",
       "Bash(WANDB_MODE=disabled timeout 90 python:*)",
       "Bash(WANDB_MODE=disabled timeout 60 python:*)",
-      "Bash(WANDB_MODE=disabled timeout 45 python:*)"
+      "Bash(WANDB_MODE=disabled timeout 45 python:*)",
+      "Bash(pstree:*)",
+      "Bash(for i in {1..12})",
+      "Bash(do sleep 10)",
+      "Bash(watch:*)",
+      "Bash(else echo \"No log file\")"
     ],
     "deny": [],
     "ask": []

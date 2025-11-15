@@ -16,6 +16,8 @@ def get_gpu_memory_stats(device: Optional[torch.device] = None) -> Dict[str, flo
     """
     Get current GPU memory statistics.
 
+    Note: This now calls the consolidated function from utils.gpu_memory.
+
     Args:
         device: Target device (defaults to current device)
 
@@ -31,23 +33,25 @@ def get_gpu_memory_stats(device: Optional[torch.device] = None) -> Dict[str, flo
             'utilization': 0.0,
         }
 
-    if device is None:
-        device = torch.cuda.current_device()
-    elif isinstance(device, torch.device):
-        device = device.index if device.type == 'cuda' else 0
+    # Convert device to index
+    device_idx = None
+    if device is not None:
+        if isinstance(device, torch.device):
+            device_idx = device.index if device.type == 'cuda' else 0
+        else:
+            device_idx = device
 
-    # Get memory stats
-    allocated = torch.cuda.memory_allocated(device) / (1024 ** 2)  # MB
-    reserved = torch.cuda.memory_reserved(device) / (1024 ** 2)  # MB
-    total = torch.cuda.get_device_properties(device).total_memory / (1024 ** 2)  # MB
-    free = total - allocated
+    # Import and call consolidated function
+    from Ava.utils.gpu_memory import get_memory_stats
+    stats = get_memory_stats(device=device_idx, unit='MB')
 
+    # Return in expected format for backward compatibility
     return {
-        'allocated_mb': allocated,
-        'reserved_mb': reserved,
-        'free_mb': free,
-        'total_mb': total,
-        'utilization': allocated / total if total > 0 else 0.0,
+        'allocated_mb': stats.get('allocated_mb', 0.0),
+        'reserved_mb': stats.get('reserved_mb', 0.0),
+        'free_mb': stats.get('free_mb', 0.0),
+        'total_mb': stats.get('total_mb', 0.0),
+        'utilization': stats.get('utilization', 0.0),
     }
 
 
@@ -74,8 +78,7 @@ def get_gpu_compute_utilization(device: Optional[torch.device] = None) -> float:
     """
     Get GPU compute utilization (0-1).
 
-    Attempts to use pynvml for accurate metrics, falls back to nvidia-smi,
-    and finally to memory utilization as a last resort.
+    Note: This now calls the consolidated function from utils.gpu_memory.
 
     Args:
         device: Target device
@@ -86,41 +89,18 @@ def get_gpu_compute_utilization(device: Optional[torch.device] = None) -> float:
     if not torch.cuda.is_available():
         return 0.0
 
+    # Convert device to index
+    device_idx = None
     if device is None:
-        device = torch.cuda.current_device()
+        device_idx = torch.cuda.current_device()
     elif isinstance(device, torch.device):
-        device = device.index if device.type == 'cuda' else 0
+        device_idx = device.index if device.type == 'cuda' else 0
+    else:
+        device_idx = device
 
-    # Try pynvml first (most accurate)
-    try:
-        import pynvml
-        if not hasattr(get_gpu_compute_utilization, '_nvml_initialized'):
-            pynvml.nvmlInit()
-            get_gpu_compute_utilization._nvml_initialized = True
-
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device)
-        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-        return utilization.gpu / 100.0
-    except (ImportError, Exception):
-        pass
-
-    # Try nvidia-smi as fallback
-    try:
-        import subprocess
-        result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits', f'--id={device}'],
-            capture_output=True,
-            text=True,
-            timeout=1
-        )
-        if result.returncode == 0:
-            return float(result.stdout.strip()) / 100.0
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        pass
-
-    # Fallback to memory utilization as proxy
-    stats = get_gpu_memory_stats(device)
-    return stats['utilization']
+    # Import and call consolidated function
+    from Ava.utils.gpu_memory import get_gpu_compute_utilization as get_util
+    return get_util(device=device_idx)
 
 
 def balance_experts_across_gpus(

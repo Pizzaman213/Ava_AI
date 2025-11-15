@@ -35,19 +35,19 @@ class DataPipelineConstants:
     MIN_TEXT_LENGTH: int = 10  # Minimum text length after stripping whitespace
 
     # Async prefetching
-    PREFETCH_MAX_WORKERS: int = 4  # Thread pool size for async prefetching
-    PREFETCH_SIZE: int = 2  # Number of files to prefetch ahead
+    PREFETCH_MAX_WORKERS: int = 8  # ULTRA-FAST: Thread pool size for async prefetching (4→8)
+    PREFETCH_SIZE: int = 4  # ULTRA-FAST: Number of files to prefetch ahead (2→4)
 
     # Worker file cache
-    WORKER_FILE_CACHE_MAX_SIZE: int = 100  # LRU cache size for file generators
+    WORKER_FILE_CACHE_MAX_SIZE: int = 50  # RAM FIX: Reduced from 200 to save ~600MB (200→50)
 
     # Prefetch factor calculation
-    PREFETCH_FACTOR_NUMERATOR: int = 3072  # Numerator for dynamic prefetch calculation: max(2, min(6, int(NUMERATOR / max_length)))
+    PREFETCH_FACTOR_NUMERATOR: int = 4096  # ULTRA-FAST: Numerator for dynamic prefetch calculation (3072→4096)
     PREFETCH_FACTOR_MIN: int = 2  # Minimum prefetch factor
-    PREFETCH_FACTOR_MAX: int = 6  # Maximum prefetch factor
+    PREFETCH_FACTOR_MAX: int = 16  # ULTRA-FAST: Maximum prefetch factor (6→16)
 
     # Buffer sizing
-    INITIAL_FILL_SIZE_MAX: int = 200  # Maximum initial fill size for fast startup
+    INITIAL_FILL_SIZE_MAX: int = 50  # GPU UTIL FIX: Reduced from 200 to 50 for 10-30s faster startup
     INITIAL_FILL_SIZE_DIVISOR: int = 10  # Divisor for calculating initial fill size: min(buffer_size // DIVISOR, MAX)
     DYNAMIC_BUFFER_MIN: int = 2000  # Minimum dynamic buffer size
     DYNAMIC_BUFFER_MEMORY_PERCENT: float = 0.05  # Percentage of available GPU memory for buffer (5%)
@@ -61,12 +61,12 @@ class DataPipelineConstants:
     CACHE_MIN_SIZE_UNDER_PRESSURE: int = 10  # Minimum cache size under memory pressure
 
     # Profiling and monitoring
-    MEMORY_CHECK_INTERVAL: int = 1000  # Check memory every N samples
-    PROFILING_REPORT_INTERVAL: int = 1000  # Report profiling stats every N samples
+    MEMORY_CHECK_INTERVAL: int = 5000  # ULTRA-FAST: Check memory less often (1000→5000, saves sync overhead)
+    PROFILING_REPORT_INTERVAL: int = 5000  # ULTRA-FAST: Report profiling stats less often (1000→5000)
 
     # Load balancing
-    LOAD_BALANCE_CHECK_INTERVAL: int = 100  # Check load balance every N samples
-    LOAD_BALANCE_MAX_SKIP: int = 5  # Maximum samples to skip for load balancing
+    LOAD_BALANCE_CHECK_INTERVAL: int = 500  # ULTRA-FAST: Check load balance less often (100→500)
+    LOAD_BALANCE_MAX_SKIP: int = 2  # ULTRA-FAST: Minimal skipping for better balance (5→2)
 
     # Adaptive file sampling
     ADAPTIVE_SAMPLES_LARGE_FILE_MB: float = 10.0  # File size threshold for "large" file (MB)
@@ -109,12 +109,12 @@ class TrainerConstants:
     GRAD_SCALER_RESET_INTERVAL: int = 1000  # Steps between scaler resets
 
     # Memory thresholds
-    MEMORY_WARNING_THRESHOLD: float = 0.990  # 99.0% memory usage warning
-    MEMORY_CRITICAL_THRESHOLD: float = 0.995  # 99.5% memory usage critical
-    MEMORY_EMERGENCY_THRESHOLD: float = 0.999  # 99.9% memory usage emergency
-    MEMORY_HEADROOM_GB: float = 2.0  # Reserved memory headroom in GB
-    MEMORY_CLEAR_CACHE_FREQUENCY: int = 500  # Cache clear frequency (reduced from 10000)
-    MEMORY_EMERGENCY_CHECK_FREQUENCY: int = 100  # Emergency memory check frequency
+    MEMORY_WARNING_THRESHOLD: float = 0.950  # ULTRA-FAST: Less aggressive warning (0.990→0.950)
+    MEMORY_CRITICAL_THRESHOLD: float = 0.975  # ULTRA-FAST: Less aggressive critical (0.995→0.975)
+    MEMORY_EMERGENCY_THRESHOLD: float = 0.990  # ULTRA-FAST: Less aggressive emergency (0.999→0.990)
+    MEMORY_HEADROOM_GB: float = 0.5  # ULTRA-FAST: Minimal headroom (2.0→0.5)
+    MEMORY_CLEAR_CACHE_FREQUENCY: int = 2000  # ULTRA-FAST: Cache clear less often (500→2000)
+    MEMORY_EMERGENCY_CHECK_FREQUENCY: int = 500  # ULTRA-FAST: Emergency check less often (100→500)
 
     # Attention checkpointing thresholds
     ATTENTION_CHECKPOINT_ENABLE_THRESHOLD: float = 0.92  # Enable at 92% memory
@@ -140,22 +140,22 @@ class MoEConstants:
     """Constants for Mixture of Experts layers."""
 
     # Routing
-    ROUTING_CACHE_SIZE: int = 1024  # Maximum size of routing cache
-    ROUTING_SAMPLE_SIZE: int = 32  # Sample size for tensor hashing
-    ROUTING_HIT_RATE_INCREASE_THRESHOLD: float = 0.7  # Hit rate threshold for increasing prefetch
-    ROUTING_HIT_RATE_DECREASE_THRESHOLD: float = 0.9  # Hit rate threshold for decreasing prefetch
+    ROUTING_CACHE_SIZE: int = 512  # RAM FIX: Reduced from 4096 to save ~100MB (4096→512)
+    ROUTING_SAMPLE_SIZE: int = 64  # ULTRA-FAST: Larger sample for better hashing (32→64)
+    ROUTING_HIT_RATE_INCREASE_THRESHOLD: float = 0.6  # ULTRA-FAST: Earlier prefetch increase (0.7→0.6)
+    ROUTING_HIT_RATE_DECREASE_THRESHOLD: float = 0.95  # ULTRA-FAST: Later prefetch decrease (0.9→0.95)
 
     # Diversity loss approximation
-    DIVERSITY_LOSS_APPROX_THRESHOLD: int = 512  # Use approximate diversity loss above this threshold
-    DIVERSITY_LOSS_MAX_SAMPLE_SIZE: int = 128  # Max sample size for diversity loss (reduced from 512)
+    DIVERSITY_LOSS_APPROX_THRESHOLD: int = 256  # ULTRA-FAST: Use approximation earlier (512→256)
+    DIVERSITY_LOSS_MAX_SAMPLE_SIZE: int = 64  # ULTRA-FAST: Smaller sample for speed (128→64)
 
     # Expert offloading
-    MIN_EXPERTS_FOR_BATCHED_PROCESSING: int = 4  # Minimum experts to use batched processing
-    PREFETCH_DEPTH_MIN: int = 1  # Minimum prefetch depth
-    PREFETCH_DEPTH_MAX: int = 5  # Maximum prefetch depth (increased from 3)
-    PREFETCH_DEPTH_DEFAULT: int = 3  # Default prefetch depth
-    PREFETCH_ADJUSTMENT_INTERVAL: int = 100  # Steps between prefetch depth adjustments
-    PATTERN_HISTORY_SIZE: int = 1000  # Size of expert access pattern history
+    MIN_EXPERTS_FOR_BATCHED_PROCESSING: int = 2  # ULTRA-FAST: Batch even with 2 experts (4→2)
+    PREFETCH_DEPTH_MIN: int = 2  # ULTRA-FAST: Higher minimum prefetch (1→2)
+    PREFETCH_DEPTH_MAX: int = 8  # ULTRA-FAST: Higher maximum prefetch (5→8)
+    PREFETCH_DEPTH_DEFAULT: int = 5  # ULTRA-FAST: Higher default prefetch (3→5)
+    PREFETCH_ADJUSTMENT_INTERVAL: int = 500  # ULTRA-FAST: Adjust less often (100→500)
+    PATTERN_HISTORY_SIZE: int = 2000  # ULTRA-FAST: Larger pattern history (1000→2000)
 
 
 # Global constants instances (can be overridden by config)

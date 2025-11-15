@@ -24,8 +24,8 @@ from .core import EnhancedTrainer
 from .orchestration.optimizations import (
     UnifiedOptimizer,
     OptimizationConfig,
-    quick_optimize,
 )
+from .orchestration.optimization_integration import quick_optimize
 try:
     from .orchestration.run_manager import RunManager
 except ImportError:

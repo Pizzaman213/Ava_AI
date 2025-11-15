@@ -470,6 +470,9 @@ def quick_optimize(
     """
     Quick one-line optimization for training.
 
+    DEPRECATED: This is a wrapper for backward compatibility.
+    Use optimization_integration.quick_optimize() for new code.
+
     Args:
         model: Model to optimize
         dataset: Training dataset
@@ -488,24 +491,27 @@ def quick_optimize(
         >>> for batch in dataloader:
         ...     metrics = opt_manager.training_step(model, batch, optimizer)
     """
-    # Create config
-    config = OptimizationConfig(learning_rate=learning_rate, **config_kwargs)
+    # Create config dict for new implementation
+    config = {
+        'batch_size': batch_size,
+        'learning_rate': learning_rate,
+        **config_kwargs
+    }
 
-    # Create unified optimizer
-    unified_opt = UnifiedOptimizer(config)
+    # Import here to avoid circular dependency
+    from .optimization_integration import quick_optimize as quick_optimize_new
 
-    # Optimize model
-    model = unified_opt.optimize_model(model)
+    # Call new implementation
+    setup_dict = quick_optimize_new(model, dataset, config=config)
 
-    # Create optimizer
-    optimizer = unified_opt.create_optimizer(model)
+    # Extract components for backward compatibility
+    # Create a minimal UnifiedOptimizer wrapper for compatibility
+    unified_opt_config = OptimizationConfig(learning_rate=learning_rate, **config_kwargs)
+    unified_opt = UnifiedOptimizer(unified_opt_config)
 
-    # Create dataloader
-    dataloader = unified_opt.create_dataloader(dataset, batch_size, device=device)
-
-    # Setup profiling
-    unified_opt.setup_profiling()
-
-    logger.info("Quick optimization complete! Ready to train.")
-
-    return model, optimizer, dataloader, unified_opt
+    return (
+        setup_dict['model'],
+        setup_dict['optimizer'],
+        setup_dict['train_dataloader'],
+        unified_opt
+    )

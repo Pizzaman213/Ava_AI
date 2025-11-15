@@ -716,10 +716,10 @@ class LoggingConfig:
     file_level: str = 'debug'                 # File log level (more detailed)
 
     # Monitoring frequencies (in steps)
-    metrics_log_freq: int = 100               # How often to log training metrics
-    memory_check_freq: int = 50               # How often to check GPU memory
+    metrics_log_freq: int = 500               # GPU UTIL FIX: Reduced frequency to minimize .item() sync overhead (was 100)
+    memory_check_freq: int = 2000             # GPU UTIL FIX: Reduced frequency to minimize mem_get_info() sync overhead (was 50)
     health_summary_freq: int = 500            # How often to log training health summary
-    moe_metrics_freq: int = 2000              # How often to log per-expert MoE metrics
+    moe_metrics_freq: int = 5000              # GPU UTIL FIX: Reduced frequency to minimize expert metric sync overhead (was 2000)
 
     # Feature flags
     enable_timing_breakdown: bool = True      # Log step-level timing (data, forward, backward, optimizer)

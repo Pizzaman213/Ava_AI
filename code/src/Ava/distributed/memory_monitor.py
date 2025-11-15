@@ -43,26 +43,16 @@ def get_gpu_compute_utilization(device: int = 0) -> float:
     """
     Get actual GPU compute utilization (not memory utilization).
 
+    Note: This now calls the consolidated function from utils.gpu_memory.
+
     Args:
         device: GPU device index
 
     Returns:
         GPU compute utilization as a float between 0.0 and 1.0
     """
-    if not NVML_AVAILABLE:
-        # Fallback: estimate based on training speed
-        return 0.75  # Assume reasonable utilization if NVML not available
-
-    try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device)  # type: ignore[union-attr]
-        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore[union-attr]
-        gpu_util = float(utilization.gpu) / 100.0  # Convert percentage to fraction
-
-        # Clamp to valid range [0.0, 1.0]
-        return max(0.0, min(1.0, gpu_util))
-    except Exception as e:
-        logger.debug(f"Failed to get GPU utilization via NVML: {e}")
-        return 0.75  # Fallback assumption
+    from Ava.utils.gpu_memory import get_gpu_compute_utilization as get_util
+    return get_util(device=device)
 
 
 class MemoryMonitor:
@@ -79,7 +69,7 @@ class MemoryMonitor:
         warning_threshold: float = 0.99,  # Set to 99% to allow maximum GPU utilization
         critical_threshold: float = 0.99,  # Set to 99% to allow maximum GPU utilization
         emergency_threshold: float = 0.99,  # Set to 99% to trigger cleanup only at near-full capacity
-        history_size: int = 100,
+        history_size: int = 20,  # RAM FIX: Reduced from 100 to save ~150MB
         memory_headroom_gb: float = 1.0,
         silent_mode: bool = False  # NEW: Suppress memory warnings
     ):
@@ -164,9 +154,10 @@ class MemoryMonitor:
 
             try:
                 current_device = device  # Type assertion - device is not None here
-                # SPEED OPTIMIZATION: Skip synchronization unless explicitly needed
-                if not skip_sync:
-                    torch.cuda.synchronize(current_device)
+                # SPIKY LOAD FIX: Always skip sync - use async memory queries
+                # Synchronization adds 10-50ms stall per call
+                # if not skip_sync:
+                #     torch.cuda.synchronize(current_device)
                 allocated = torch.cuda.memory_allocated(current_device) / (1024**3)
                 cached = torch.cuda.memory_reserved(current_device) / (1024**3)
                 total = self.total_gpu_memory.get(current_device, 0)

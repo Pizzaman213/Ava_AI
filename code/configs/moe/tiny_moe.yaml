@@ -1,0 +1,199 @@
+# Tiny MoE Configuration (431M total parameters, 4 experts)
+# TRULY SMALL: 431M total params (327M in experts), 280M active params (2/4 experts per token)
+# Suitable for: Single GPU training, fast experimentation, testing
+# Expert Breakdown: 4 experts × 12.6M params each = 50.3M expert parameters per layer
+# Memory: ~2GB model, ~4-6GB total with activations/gradients (no special optimizations needed)
+# Use case: Quick testing, proof of concept, debugging, learning
+
+model:
+  vocab_size: 50680
+  pad_token_id: 0
+  eos_token_id: 3
+  hidden_size: 1024      # Reduced from 1536
+  num_layers: 6
+  num_attention_heads: 8  # Reduced from 12 to match hidden_size
+  intermediate_size: 4096 # Reduced from 6144
+  max_position_embeddings: 128
+  num_experts: 4          # Reduced from 8
+  num_experts_per_token: 2
+  router_type: mixtral
+  capacity_factor: 1.25
+  expert_dropout: 0.0
+  activation: swiglu
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: false  # DISABLED: Causes OOM during compilation
+  use_flash_attention: true
+  gradient_checkpointing: false  # SPEED: Disabled - we have enough memory with batch_size=16
+  use_optimized_moe: true
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.15
+  diversity_loss_coef: 0.001
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.0
+  use_lora_experts: false      # Not needed - model is already small
+  use_expert_offloading: false # Not needed - all fits on GPU
+  attention_dropout: 0.0
+  dropout: 0.0
+  layer_norm_eps: 1.0e-05
+  initializer_range: 0.02
+
+moe_memory_optimization:
+  use_lora_experts: false
+  use_expert_offloading: false
+  use_hierarchical_experts: false
+  use_expert_quantization: false
+  fp8_enabled: false
+
+training:
+  batch_size: 16          # Reduced to prevent OOM
+  gradient_accumulation_steps: 2   # SPEED: Reduced to minimize overhead (was 4)
+  optimizer: lion8bit
+  learning_rate: 0.002
+  lion_betas: [0.9, 0.99]
+  lion_min_8bit_size: 4096
+  lion_block_wise: true
+  lion_is_paged: false
+  lion_percentile_clipping: 100
+  max_steps: 100000
+  warmup_steps: 1000
+  weight_decay: 0.1
+  max_grad_norm: 5.0
+  use_fused_optimizer: true
+  offload_optimizer_state: false
+  save_steps: 10000  # SPEED: Less frequent saves
+  eval_steps: 10000  # SPEED: Less frequent validation (was 2000)
+  logging_steps: 100  # SPEED: Reduce .item() overhead (was 10)
+  skip_validation_until_step: 5000  # SPEED: Skip validation during warmup
+  run_validation: true
+  validation_batch_size: 4  # SPEED: Smaller validation batches
+  max_validation_batches: 5  # SPEED: Fewer validation batches (was 25)
+  compute_val_train_ratio: false
+  generate_every_n_steps: 50000  # SPEED: Rarely generate (was 10000)
+  num_generations_per_step: 1
+  generation_during_eval: false
+  test_generation_quality: false
+  skip_generation_tests: true  # SPEED: Skip generation tests
+
+evaluation:
+  moe_metrics:
+    track_expert_utilization: true
+    log_frequency: 1000  # SPEED: Log less often (was 100)
+    track_routing_decisions: false  # SPEED: Disable expensive tracking
+    track_load_balance: true
+
+data:
+  streaming: true
+  buffer_size: 2000
+  data_dir: /project/code/data/processed
+  max_length: 256
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: /project/code/models/tokenizer/enhanced-50680
+  padding_side: right
+  truncation: true
+  num_workers: 8
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4
+  dataloader_persistent_workers: true
+  dataloader_samples_per_file: 512
+  use_dynamic_batching: true
+  max_tokens_per_batch: 8192  # batch_size × max_length (32×256)
+  use_streaming_tokenization: false
+
+output:
+  output_dir: /project/code/outputs/runs/tiny_moe
+  save_every: 5000
+  fresh_start: false
+
+run_management:
+  run_name: tiny_moe
+  run_description: Tiny MoE config (~520M params) for fast experimentation
+  run_tags: moe,tiny,single-gpu,520M,testing
+
+performance:
+  enable_tf32: true
+  float32_matmul_precision: high
+  enable_cudnn_benchmark: true
+  enable_gpu_memory_cleanup: false  # SPEED: Disabled - adds 1-3s overhead
+  gradient_check_frequency: 1000  # SPEED: Check less often (was 10)
+  torchinductor_max_autotune: 1
+  enable_torch_compile: false  # DISABLED: Causes OOM during compilation
+  torch_compile_mode: "default"
+  torch_compile_fullgraph: false
+  torch_compile_dynamic: false
+  torch_compile_disable_cudagraphs: true
+  progress_bar_update_frequency: 50  # SPEED: Update progress bar less often
+  memory_check_frequency: 2000  # SPEED: Check memory less often
+
+gradient_health:
+  enabled: false
+  disable_after_steps: 0
+  conditional_monitoring: false
+  warmup_fraction: 0.0
+
+optimizations:
+  gradient_health_monitoring: false
+  torchinductor_autotune: 1
+
+  memory_headroom_gb: 2.0  # Plenty of headroom
+  memory_cleanup_thresholds:
+    warning: 0.85
+    critical: 0.90
+    emergency: 0.95
+  memory_check_frequency: 1000
+
+  expert_prefetch:
+    enabled: false  # Not needed - no offloading
+
+  expert_cache:
+    auto_limit: false
+    use_lru_eviction: false
+    cache_size: 4
+    cache_compression: false
+    clear_after_optimizer_step: false
+
+  checkpoint:
+    async_saving: true
+
+  memory_cleanup:
+    fast_mode: true
+    remove_sleep: true
+
+  dataloader:
+    adaptive_file_reading: true
+    adaptive_multipliers:
+      large_files: 4
+      medium_files: 2
+      small_files: 1
+
+  gradient_checkpointing:
+    selective: false  # Not needed
+    checkpoint_attention: false
+    checkpoint_every_n_layers: 1
+
+  router:
+    cache_hash_on_gpu: true
+    compile_routers: false  # DISABLED: Causes OOM
+    compile_mode: "default"
+    compile_dynamic: false
+    compile_fullgraph: false
+    enable_router_caching: true
+    enable_training_cache: true
+    router_cache_size: 2000
+    batch_routing: true
+    async_routing: false
+
+hardware:
+  device: cuda
+  mixed_precision: bf16
+  compile: false  # DISABLED: Causes OOM
+
+wandb:
+  use_wandb: false
+
+deepspeed:
+  use_deepspeed: false

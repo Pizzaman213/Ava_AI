@@ -9,6 +9,9 @@ Usage:
 
 import logging
 import os
+# CRITICAL: Set this BEFORE importing torch to prevent memory fragmentation
+os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
+
 import sys
 import time
 import warnings
@@ -669,11 +672,31 @@ def create_model_and_tokenizer(
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model = materialize_meta_model(model, device=device, dtype=torch.bfloat16)
             get_logger().info(f"Model materialized on {device} in bf16 dtype")
+
+        # Count and log model parameters for OptimizedMoETransformer
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        get_logger().info(f"📊 Model Parameters:")
+        get_logger().info(f"  Total: {total_params:,} ({total_params/1e6:.1f}M / {total_params/1e9:.2f}B)")
+        get_logger().info(f"  Trainable: {trainable_params:,} ({trainable_params/1e6:.1f}M / {trainable_params/1e9:.2f}B)")
+        if total_params != trainable_params:
+            frozen_params = total_params - trainable_params
+            get_logger().info(f"  Frozen: {frozen_params:,} ({frozen_params/1e6:.1f}M / {frozen_params/1e9:.2f}B)")
     else:
         # Use existing MoE (backward compatible)
         get_logger().info("Using EnhancedMoEModel (standard MoE)")
         model_config = EnhancedMoEConfig(**filtered_config)
         model = EnhancedMoEModel(model_config)
+
+    # Count and log model parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    get_logger().info(f"📊 Model Parameters:")
+    get_logger().info(f"  Total: {total_params:,} ({total_params/1e6:.1f}M / {total_params/1e9:.2f}B)")
+    get_logger().info(f"  Trainable: {trainable_params:,} ({trainable_params/1e6:.1f}M / {trainable_params/1e9:.2f}B)")
+    if total_params != trainable_params:
+        frozen_params = total_params - trainable_params
+        get_logger().info(f"  Frozen: {frozen_params:,} ({frozen_params/1e6:.1f}M / {frozen_params/1e9:.2f}B)")
 
     # Initialize tokenizer
     # Try multiple config locations for tokenizer name (with configurable default)
@@ -1501,6 +1524,64 @@ def setup_optimizer_and_lr_management(
         get_logger().info("  Note: Lion uses sign-based updates for better efficiency")
         if lr <= 1e-3:
             get_logger().info(f"  ✓ Learning rate {lr:.2e} is within recommended range for Lion")
+    elif optimizer_type == "lion8bit":
+        # HYBRID MODE: 8-bit Lion optimizer for 87.5% memory reduction vs AdamW
+        from src.Ava.optimization.optimizers.memory_efficient import Lion8bit
+
+        # Validate Lion learning rate
+        typical_adamw_lr_max = 3e-3
+        if lr > typical_adamw_lr_max:
+            error_msg = (
+                f"⚠️  WARNING: Lion learning rate may be too high!\n"
+                f"   Current LR: {lr:.2e}\n"
+                f"   Lion typically requires 3-10x smaller LR than AdamW\n"
+                f"   Recommended Lion LR range: 3e-5 to 1e-3\n"
+            )
+            get_logger().warning(error_msg)
+
+        # Get Lion betas from config
+        lion_betas = training_cfg.get('lion_betas', (0.9, 0.99))
+        lion_betas = tuple(lion_betas) if isinstance(lion_betas, list) else lion_betas
+
+        # Get Lion 8-bit quantization parameters from config
+        lion_min_8bit_size = training_cfg.get('lion_min_8bit_size', 4096)
+        lion_block_wise = training_cfg.get('lion_block_wise', True)
+        lion_is_paged = training_cfg.get('lion_is_paged', False)
+        lion_percentile_clipping = training_cfg.get('lion_percentile_clipping', 100)
+
+        optimizer = Lion8bit(
+            optimizer_grouped_parameters,
+            lr=lr,
+            betas=lion_betas,
+            weight_decay=weight_decay,
+            min_8bit_size=lion_min_8bit_size,
+            block_wise=lion_block_wise,
+            is_paged=lion_is_paged,
+            percentile_clipping=lion_percentile_clipping
+        )
+        get_logger().info("✓ Using 8-bit Lion optimizer (87.5% memory reduction vs AdamW)")
+        get_logger().info(f"  Lion8bit hyperparams: lr={lr:.2e}, betas={lion_betas}, weight_decay={weight_decay}")
+        get_logger().info("  Note: 8-bit quantization of optimizer states with minimal accuracy impact")
+        if lr <= 1e-3:
+            get_logger().info(f"  ✓ Learning rate {lr:.2e} is within recommended range for Lion")
+    elif optimizer_type == "adamw8bit":
+        # HYBRID MODE: 8-bit AdamW optimizer for 75% memory reduction
+        from src.Ava.optimization.optimizers.memory_efficient import AdamW8bit
+
+        # Get AdamW betas from config
+        adamw_betas = training_cfg.get('adamw_betas', (0.9, 0.999))
+        adamw_betas = tuple(adamw_betas) if isinstance(adamw_betas, list) else adamw_betas
+
+        optimizer = AdamW8bit(
+            optimizer_grouped_parameters,
+            lr=lr,
+            betas=adamw_betas,
+            eps=1e-8,
+            weight_decay=weight_decay
+        )
+        get_logger().info("✓ Using 8-bit AdamW optimizer (75% memory reduction vs standard AdamW)")
+        get_logger().info(f"  AdamW8bit hyperparams: lr={lr:.2e}, betas={adamw_betas}, weight_decay={weight_decay}")
+        get_logger().info("  Note: 8-bit quantization of optimizer states with <1% accuracy impact")
     elif optimizer_type == "sophia":
         # Import Sophia optimizer from advanced optimizers
         from src.Ava.optimization.optimizers.advanced import SophiaOptimizer
@@ -1536,7 +1617,7 @@ def setup_optimizer_and_lr_management(
         get_logger().info("✓ Using AdaFactor optimizer (80% memory reduction vs AdamW)")
         get_logger().info(f"  AdaFactor: adaptive_lr={use_adaptive_lr}, weight_decay={weight_decay}")
     else:
-        raise ValueError(f"Unsupported optimizer: {optimizer_type}. Supported: adamw, adam, lion, sophia, adafactor")
+        raise ValueError(f"Unsupported optimizer: {optimizer_type}. Supported: adamw, adam, lion, lion8bit, adamw8bit, sophia, adafactor")
 
     # CRITICAL FIX: Validate all parameters are accounted for
     num_decay_params = sum(p.numel() for p in decay_params)
@@ -1775,6 +1856,12 @@ def train_epoch(
         dynamic_ncols=True,
     )
 
+    # SPEED OPTIMIZATION: Batch loss accumulation to reduce .item() calls
+    # Accumulate losses as tensors and only convert to scalar when needed
+    accumulated_loss_tensor = None
+    loss_accumulation_count = 0
+    loss_batch_size = config_dict.get("training", {}).get("logging_steps", 100) if config_dict else 100
+
     for batch_idx, batch in enumerate(progress_bar):
         try:
             # Move batch to device with async CUDA streams for optimal performance
@@ -1808,6 +1895,7 @@ def train_epoch(
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
                 get_logger().warning(f"⚠️  GPU OOM at batch {batch_idx}, skipping batch...")
+                get_logger().warning(f"   OOM Error: {str(e)[:200]}")  # Log first 200 chars of error
                 # Aggressive cleanup (if enabled via config)
                 if hasattr(trainer, 'gpu_manager') and trainer.gpu_manager:
                     cleanup_enabled = getattr(trainer, 'enable_gpu_memory_cleanup', True)
@@ -1825,13 +1913,57 @@ def train_epoch(
                 # Re-raise non-OOM errors
                 raise
 
+        # SPEED OPTIMIZATION: Batch loss accumulation to reduce .item() calls
+        # Accumulate losses as tensors and only convert to scalar periodically
+        loss_val = step_results["loss"]
+        if isinstance(loss_val, torch.Tensor):
+            loss_val_tensor = loss_val.detach()
+
+            # Accumulate loss tensor
+            if accumulated_loss_tensor is None:
+                accumulated_loss_tensor = loss_val_tensor.clone()
+            else:
+                accumulated_loss_tensor += loss_val_tensor
+            loss_accumulation_count += 1
+
+            # Convert to scalar only every N steps (reduces .item() overhead by ~90%)
+            if loss_accumulation_count >= loss_batch_size or batch_idx == 0:
+                # Convert accumulated tensor to scalar
+                avg_accumulated_loss = (accumulated_loss_tensor / loss_accumulation_count).item()
+                epoch_stats["total_loss"] += avg_accumulated_loss * loss_accumulation_count
+
+                # Track recent losses for fair train/val comparison
+                recent_losses_window = getattr(training_config.evaluation, 'recent_losses_window_size', 100) if training_config else 100
+                if 'recent_losses' not in epoch_stats:
+                    epoch_stats['recent_losses'] = []
+                epoch_stats['recent_losses'].append(avg_accumulated_loss)
+                if len(epoch_stats['recent_losses']) > recent_losses_window:
+                    epoch_stats['recent_losses'].pop(0)
+
+                # Reset accumulator
+                accumulated_loss_tensor = None
+                loss_accumulation_count = 0
+                loss_val = avg_accumulated_loss  # Use for logging below
+            else:
+                # Use a cached value for progress bar until next conversion
+                loss_val = epoch_stats["total_loss"] / max(epoch_stats["num_batches"], 1)
+        else:
+            # Non-tensor loss (edge case)
+            epoch_stats["total_loss"] += loss_val
+            if 'recent_losses' not in epoch_stats:
+                epoch_stats['recent_losses'] = []
+            epoch_stats['recent_losses'].append(loss_val)
+            recent_losses_window = getattr(training_config.evaluation, 'recent_losses_window_size', 100) if training_config else 100
+            if len(epoch_stats['recent_losses']) > recent_losses_window:
+                epoch_stats['recent_losses'].pop(0)
+
+        epoch_stats["num_batches"] += 1
+
         # Phase 3: Adaptive learning rate management
-        # Call every step - needed for warmup and loss tracking
-        if adaptive_lr_manager:
-            # Extract scalar loss value for manager
-            loss_scalar = step_results["loss"]
-            if isinstance(loss_scalar, torch.Tensor):
-                loss_scalar = loss_scalar.detach().item()
+        # SPEED OPTIMIZATION: Only call adaptive LR manager when we have a scalar loss (after accumulation)
+        if adaptive_lr_manager and loss_accumulation_count == 0:  # Only when we just converted to scalar
+            # Extract scalar loss value for manager (already converted above)
+            loss_scalar = loss_val if not isinstance(loss_val, torch.Tensor) else loss_val.item()
 
             # Update with current loss - manager handles check frequency internally
             lr_adjustment = adaptive_lr_manager.step(loss_scalar)
@@ -1841,24 +1973,6 @@ def train_epoch(
                 step_results["lr_adjustment_reason"] = lr_adjustment.get(
                     "adjustment_reason", "unknown"
                 )
-
-        # Update epoch statistics (CRITICAL FIX: detach to prevent memory leak)
-        # Accumulating raw loss tensors keeps computation graph in memory
-        loss_val = step_results["loss"]
-        if isinstance(loss_val, torch.Tensor):
-            loss_val = loss_val.detach().item()
-        epoch_stats["total_loss"] += loss_val
-        epoch_stats["num_batches"] += 1
-
-        # Track recent losses for fair train/val comparison
-        # Get window size from config
-        recent_losses_window = getattr(training_config.evaluation, 'recent_losses_window_size', 100) if training_config else 100
-
-        if 'recent_losses' not in epoch_stats:
-            epoch_stats['recent_losses'] = []
-        epoch_stats['recent_losses'].append(loss_val)
-        if len(epoch_stats['recent_losses']) > recent_losses_window:
-            epoch_stats['recent_losses'].pop(0)
 
         # Update running loss average for accurate checkpoint reporting
         if not step_results.get('skipped', False):
@@ -1942,6 +2056,7 @@ def train_epoch(
         if config_dict and val_loader is not None and device is not None:
             eval_steps = config_dict.get("training", {}).get("eval_steps", None)
             eval_steps_type = config_dict.get("training", {}).get("eval_steps_type", "training_steps")  # Default to training_steps
+            skip_validation_until_step = config_dict.get("training", {}).get("skip_validation_until_step", 0)  # SPEED OPTIMIZATION: Skip validation during warmup
 
             # Choose which step counter to use based on config
             if eval_steps_type == "optimizer_steps":
@@ -1951,8 +2066,9 @@ def train_epoch(
                 current_step = trainer.step_count
                 step_type_label = "training step"
 
-            # Only evaluate if eval_steps is configured and we're at a step boundary
-            if eval_steps is not None and eval_steps > 0:
+            # SPEED OPTIMIZATION: Skip validation during warmup period
+            # Only evaluate if eval_steps is configured, we're at a step boundary, and past warmup
+            if eval_steps is not None and eval_steps > 0 and current_step >= skip_validation_until_step:
                 if current_step > 0 and current_step % eval_steps == 0:
                     get_logger().info(f"\n📊 Running validation at {step_type_label} {current_step}...")
 
@@ -2002,8 +2118,11 @@ def train_epoch(
                         elif val_loss > recent_train_loss * val_train_ratio_high:
                             get_logger().info(f"  ✅ Good: Val loss > train loss (model generalizing properly)")
 
-                        # Test generation quality (if tokenizer available)
-                        if tokenizer is not None:
+                        # SPEED OPTIMIZATION: Skip generation quality tests if configured
+                        skip_generation_tests = config_dict.get("training", {}).get("skip_generation_tests", False)
+
+                        # Test generation quality (if tokenizer available and not skipped)
+                        if tokenizer is not None and not skip_generation_tests:
                             test_prompts = [
                                 "Once upon a time",
                                 "The quick brown fox",
@@ -2100,10 +2219,16 @@ def train_epoch(
                         get_logger().info(f"  Val Loss: Invalid or empty")
 
 
-        # Update progress bar
-        if show_progress and trainer.performance_manager.should_update_progress(
-            batch_idx
-        ):
+        # SPEED OPTIMIZATION: Update progress bar less frequently
+        # Get update frequency from config (default 50 steps)
+        progress_bar_update_freq = 50
+        if config_dict and 'performance' in config_dict:
+            progress_bar_update_freq = config_dict['performance'].get('progress_bar_update_frequency', 50)
+
+        # Update progress bar only every N steps or when manager says so
+        should_update_bar = (batch_idx % progress_bar_update_freq == 0) or trainer.performance_manager.should_update_progress(batch_idx)
+
+        if show_progress and should_update_bar:
             current_loss = epoch_stats["total_loss"] / epoch_stats["num_batches"]
 
             # Get it/s from step results
@@ -2306,13 +2431,16 @@ def evaluate_model(
         else:
             max_batches = 50  # Fallback default
 
-    # MEMORY OPTIMIZATION: Cleanup GPU memory before validation to prevent fragmentation
-    # This is a good time to do cleanup since we're switching from training to eval mode
-    if torch.cuda.is_available():
+    # SPEED OPTIMIZATION: Only cleanup GPU memory if configured (expensive operation)
+    # Cleanup disabled by default for speed - enable via training_config if needed
+    cleanup_enabled = False
+    if training_config and hasattr(training_config, 'performance'):
+        cleanup_enabled = getattr(training_config.performance, 'enable_gpu_memory_cleanup', False)
+
+    if cleanup_enabled and torch.cuda.is_available():
         import gc
         gc.collect()
         torch.cuda.empty_cache()
-        # Synchronize not needed here - empty_cache is sufficient
 
     model.eval()
     total_loss = 0.0
@@ -2375,15 +2503,16 @@ def evaluate_model(
 
                 loss = outputs["loss"]
 
-                # OPTIMIZED: Clear cache only when memory usage is high (>95%) to avoid performance loss
-                # Get cache clear frequency from config (increased default from 50 to 100)
-                cache_clear_freq = getattr(training_config.evaluation, 'cache_clear_frequency', 100) if training_config else 100
-                if batch_idx % cache_clear_freq == 0 and torch.cuda.is_available():
-                    # Only clear if memory usage is high
-                    allocated = torch.cuda.memory_allocated(0)
-                    reserved = torch.cuda.memory_reserved(0)
-                    if reserved > 0 and (allocated / reserved) > 0.95:
-                        torch.cuda.empty_cache()
+                # SPEED OPTIMIZATION: Only clear cache if cleanup is enabled and memory is high
+                # Disabled by default for maximum speed
+                if cleanup_enabled and torch.cuda.is_available():
+                    cache_clear_freq = getattr(training_config.evaluation, 'cache_clear_frequency', 200) if training_config else 200
+                    if batch_idx % cache_clear_freq == 0:
+                        # Only clear if memory usage is high
+                        allocated = torch.cuda.memory_allocated(0)
+                        reserved = torch.cuda.memory_reserved(0)
+                        if reserved > 0 and (allocated / reserved) > 0.95:
+                            torch.cuda.empty_cache()
 
                 # Validate loss is scalar and finite
                 # DataParallel returns [num_gpus] shaped tensor - reduce to scalar
@@ -2427,8 +2556,8 @@ def evaluate_model(
                         )
 
     finally:
-        # Always clean up memory after evaluation
-        if torch.cuda.is_available():
+        # SPEED OPTIMIZATION: Only clean up memory if cleanup is enabled
+        if cleanup_enabled and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     # CRITICAL FIX: Reset model to train() mode AFTER evaluation completes
@@ -2990,6 +3119,20 @@ def main():
 
     get_logger().info(f"Primary device: {device}")
 
+    # Force GPU to P0 state (maximum performance)
+    if torch.cuda.is_available():
+        import subprocess
+        try:
+            # Enable persistent mode
+            subprocess.run(['nvidia-smi', '-pm', '1'],
+                         check=False, capture_output=True)
+            # Lock clocks to maximum performance
+            subprocess.run(['nvidia-smi', '-lgc', '0,9999'],
+                         check=False, capture_output=True)
+            get_logger().info("✓ GPU forced to P0 state (maximum performance)")
+        except Exception as e:
+            get_logger().warning(f"Could not force GPU to P0 state: {e}")
+
     # Initialize CUDA stream manager for async GPU transfers
     stream_manager = None
     if torch.cuda.is_available():
@@ -3081,12 +3224,33 @@ def main():
                 get_logger().info("   ✓ Max-autotune enabled: will search for optimal fused kernels")
                 get_logger().info("   ⏳ First compilation will take 2-5 minutes (kernel autotuning)...")
 
+                # FIX: Workaround for PyTorch 2.9 CUDA graph assertion error
+                # The assertion error happens in cudagraph_trees.py due to weak reference tracking
+                # Solution: Disable tensor weakref tracking in CUDA graphs
+                os.environ['TORCH_CUDAGRAPH_SKIP_TENSOR_WEAKREFS'] = '1'
+                import torch._inductor.config
+                torch._inductor.config.triton.cudagraph_skip_dynamic_shapes = ()  # type: ignore
+                get_logger().info("   ✓ Applied CUDA graph fix for PyTorch 2.9")
+
             # Disable CUDAGraphs if requested (fixes memory issues with max-autotune)
             if disable_cudagraphs:
                 os.environ['TORCH_CUDAGRAPH_ENABLE_COMPILE'] = '0'
                 get_logger().info("   ✓ CUDAGraphs disabled for stability")
 
             # OPTIMIZATION: Selective compilation to fix CUDA graphs router tensor overwrite issue
+            # GPU UTIL OPTIMIZATION: Enable training cache for routers if configured
+            enable_training_cache = config_dict.get("optimizations", {}).get("router", {}).get("enable_training_cache", False)
+            if enable_training_cache:
+                get_logger().info("   🔧 Enabling router caching during training...")
+                base_model = model.module if hasattr(model, 'module') else model
+                router_count = 0
+                for layer in getattr(base_model, 'layers', []):
+                    if hasattr(layer, 'moe') and hasattr(layer.moe, 'router'):
+                        layer.moe.router.enable_training_cache = True
+                        router_count += 1
+                if router_count > 0:
+                    get_logger().info(f"   ✓ Enabled training cache for {router_count} routers (5-10% speedup)")
+
             # Compile routers separately with static shapes if router compilation is enabled
             router_compile_enabled = config_dict.get("optimizations", {}).get("router", {}).get("compile_routers", False)
             if router_compile_enabled:

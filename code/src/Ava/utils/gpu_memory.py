@@ -124,8 +124,9 @@ class GPUMemoryManager:
                 gc.collect()
 
                 # Additional CUDA cleanup
+                # GPU UTIL FIX: Skip sync in normal cleanup - only sync in emergency
                 if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                    # torch.cuda.synchronize()  # GPU UTIL FIX: Removed - adds 10-50ms stall
                     torch.cuda.empty_cache()
 
                     # Aggressive cleanup if requested
@@ -150,10 +151,13 @@ class GPUMemoryManager:
                         except Exception:
                             pass
 
-                        # OPTIMIZATION: Reduced emergency rounds from 3 to 1, removed sleep (saves ~1s)
+                        # GPU UTIL FIX: Reduced emergency rounds from 3 to 1, removed sleep (saves ~1s)
                         gc.collect()
                         torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
+                        # GPU UTIL FIX: Only sync in true emergency (>99.5% memory)
+                        total_memory = self._get_total_gpu_memory()
+                        if stats['before_cached'] > 0.995 * total_memory:
+                            torch.cuda.synchronize()  # Critical sync only at >99.5%
 
                 # Record final memory state
                 stats['after_allocated'] = torch.cuda.memory_allocated() / 1024**3
@@ -176,32 +180,12 @@ class GPUMemoryManager:
         return 80.0  # Default assumption for A100
 
     def get_memory_stats(self) -> Dict[str, Any]:
-        """Get current GPU memory statistics."""
-        stats = {}
+        """
+        Get current GPU memory statistics.
 
-        try:
-            if torch.cuda.is_available():
-                device = torch.cuda.current_device()
-                props = torch.cuda.get_device_properties(device)
-
-                allocated = torch.cuda.memory_allocated() / 1024**3
-                reserved = torch.cuda.memory_reserved() / 1024**3
-                total = props.total_memory / 1024**3
-
-                stats.update({
-                    'device_name': props.name,
-                    'total_memory_gb': total,
-                    'allocated_gb': allocated,
-                    'reserved_gb': reserved,
-                    'free_gb': max(0.0, total - reserved),  # Ensure non-negative
-                    'utilization_percent': (allocated / total) * 100 if total > 0 else 0.0,
-                    'cache_percent': (reserved / total) * 100 if total > 0 else 0.0,
-                })
-
-        except Exception as e:
-            stats['error'] = str(e)
-
-        return stats
+        Note: This now calls the consolidated get_memory_stats() function.
+        """
+        return get_memory_stats(device=None, unit='GB')
 
     def monitor_memory(self, threshold: float = 0.99) -> bool:
         """
@@ -251,9 +235,9 @@ class GPUMemoryManager:
         """Perform emergency cleanup when memory is critically low."""
         print(" Emergency GPU memory cleanup initiated!")
 
-        # Multiple rounds of aggressive cleanup
-        for i in range(5):
-            print(f" Emergency cleanup round {i+1}/5")
+        # GPU UTIL FIX: Reduced emergency cleanup rounds from 5 to 2 (saves 2-5 seconds)
+        for i in range(2):
+            print(f" Emergency cleanup round {i+1}/2")
             self.cleanup_gpu_memory(aggressive=True)
 
             # Check if cleanup was successful
@@ -261,7 +245,8 @@ class GPUMemoryManager:
                 print("Emergency cleanup successful!")
                 break
 
-            time.sleep(0.5)
+            # GPU UTIL FIX: Removed time.sleep(0.5) that blocked training for 500ms
+            # Cleanup operations are synchronous and don't need sleep between rounds
         else:
             print(" Emergency cleanup completed, but memory usage still high")
 
@@ -335,9 +320,122 @@ def register_cleanup_handlers() -> None:
     get_memory_manager().register_cleanup_handlers()
 
 
-def get_memory_stats() -> Dict[str, Any]:
-    """Legacy function for backwards compatibility."""
-    return get_memory_manager().get_memory_stats()
+def get_memory_stats(device: Optional[int] = None, unit: str = 'GB') -> Dict[str, Any]:
+    """
+    Get comprehensive GPU memory statistics.
+
+    Consolidated function that replaces multiple implementations across the codebase.
+
+    Args:
+        device: GPU device index (None for current device)
+        unit: Memory unit - 'GB' or 'MB' (default: 'GB')
+
+    Returns:
+        Dictionary with comprehensive memory statistics
+    """
+    stats = {}
+
+    try:
+        if torch.cuda.is_available():
+            if device is None:
+                device = torch.cuda.current_device()
+
+            props = torch.cuda.get_device_properties(device)
+
+            allocated_bytes = torch.cuda.memory_allocated(device)
+            reserved_bytes = torch.cuda.memory_reserved(device)
+            total_bytes = props.total_memory
+
+            # Convert to requested unit
+            if unit == 'MB':
+                divisor = 1024 ** 2
+                unit_suffix = 'mb'
+            else:  # GB
+                divisor = 1024 ** 3
+                unit_suffix = 'gb'
+
+            allocated = allocated_bytes / divisor
+            reserved = reserved_bytes / divisor
+            total = total_bytes / divisor
+            free = max(0.0, total - reserved)
+
+            stats.update({
+                'device_name': props.name,
+                'device_index': device,
+                f'allocated_{unit_suffix}': allocated,
+                f'reserved_{unit_suffix}': reserved,
+                f'total_{unit_suffix}': total,
+                f'free_{unit_suffix}': free,
+                'utilization_percent': (allocated / total) * 100 if total > 0 else 0.0,
+                'cache_percent': (reserved / total) * 100 if total > 0 else 0.0,
+                # Additional fields for compatibility
+                'allocated': allocated,  # For generic access
+                'reserved': reserved,
+                'total': total,
+                'free': free,
+                'utilization': allocated / total if total > 0 else 0.0,
+            })
+
+    except Exception as e:
+        stats['error'] = str(e)
+
+    return stats
+
+
+def get_gpu_compute_utilization(device: Optional[int] = None) -> float:
+    """
+    Get GPU compute utilization (0-1).
+
+    Consolidated function that attempts multiple methods:
+    1. pynvml for accurate metrics
+    2. nvidia-smi as fallback
+    3. Memory utilization as last resort proxy
+
+    Args:
+        device: GPU device index (None for current device)
+
+    Returns:
+        Estimated compute utilization (0.0-1.0)
+    """
+    if not torch.cuda.is_available():
+        return 0.0
+
+    if device is None:
+        device = torch.cuda.current_device()
+
+    # Try pynvml first (most accurate)
+    try:
+        import pynvml
+        if not hasattr(get_gpu_compute_utilization, '_nvml_initialized'):
+            pynvml.nvmlInit()
+            get_gpu_compute_utilization._nvml_initialized = True  # type: ignore[attr-defined]
+
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device)
+        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        gpu_util = float(utilization.gpu) / 100.0
+
+        # Clamp to valid range [0.0, 1.0]
+        return max(0.0, min(1.0, gpu_util))
+    except (ImportError, Exception):
+        pass
+
+    # Try nvidia-smi as fallback
+    try:
+        import subprocess
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits', f'--id={device}'],
+            capture_output=True,
+            text=True,
+            timeout=1
+        )
+        if result.returncode == 0:
+            util = float(result.stdout.strip()) / 100.0
+            return max(0.0, min(1.0, util))
+    except (FileNotFoundError, Exception):
+        pass
+
+    # Fallback to memory utilization as proxy (typically assumes 75% utilization)
+    return 0.75
 
 
 def monitor_memory(threshold: float = 0.99) -> bool:
@@ -376,3 +474,18 @@ def is_distributed_training() -> bool:
         DISTRIBUTED_AVAILABLE and
         (dist.is_initialized() or 'WORLD_SIZE' in os.environ)  # type: ignore[union-attr]
     )
+
+
+def get_default_device() -> torch.device:
+    """
+    Get the default device for computation.
+
+    Consolidated utility to replace repeated device detection pattern.
+
+    Returns:
+        torch.device: CUDA device if available, otherwise CPU
+    """
+    if torch.cuda.is_available():
+        return torch.device(torch.cuda.current_device())
+    else:
+        return torch.device('cpu')

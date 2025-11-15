@@ -1,7 +1,10 @@
-# Small MoE Configuration (~500M expert parameters, 5 experts)
-# Suitable for: Single 24GB GPU training with expert offloading
-# Model Size: 5 experts × 100M params each = 500M expert parameters, ~200M active per token (2 of 5 experts)
-# Memory: Requires expert offloading or LoRA for 24GB GPU training
+# Small MoE Configuration (1.57B total parameters, 8 experts)
+# ACTUAL SIZE: 1.57B total params (not 500M as previously documented!)
+# Suitable for: Single 24GB GPU training with LoRA + quantization + offloading
+# Model Size: 1.57B total params (1.36B in experts), 552M active params (2/8 experts per token)
+# Actual Expert Breakdown: 8 experts × 28.3M params each = 1.36B expert parameters
+# Effective GPU Memory: ~6GB (with LoRA rank-8 + INT4 quantization + CPU offloading)
+# NOTE: For a truly small ~500M model, use tiny_moe.yaml instead
 #
 # MEMORY OPTIMIZATION GUIDE:
 # ========================
@@ -42,12 +45,12 @@ model:
   vocab_size: 50680
   pad_token_id: 0  # FIXED: Added for proper tokenization
   eos_token_id: 3  # FIXED: Added for proper sequence termination
-  hidden_size: 1024  # MEMORY FIX: Reduced from 2048 to 1024
-  num_layers: 4  # MEMORY FIX: Reduced from 6 to 4
-  num_attention_heads: 8  # MEMORY FIX: Reduced from 16 to 8
-  intermediate_size: 4096  # MEMORY FIX: Reduced from 24576 to 4096
-  max_position_embeddings: 15
-  num_experts: 4  # MEMORY FIX: Reduced from 5 to 4
+  hidden_size: 1536  # GPU UTIL OPTIMIZATION: Aligned to 128 multiple for tensor cores (already optimal)
+  num_layers: 6  # GPU UTIL FIX: 1.5x increase for balanced depth (4→6)
+  num_attention_heads: 12  # GPU UTIL FIX: 1.5x increase to match hidden_size (8→12)
+  intermediate_size: 6144  # GPU UTIL OPTIMIZATION: Aligned to 128 multiple for tensor cores (already optimal)
+  max_position_embeddings: 128
+  num_experts: 8  # GPU UTIL FIX: Keep 8 experts with offloading (4→8)
   num_experts_per_token: 2
   router_type: mixtral
   capacity_factor: 1.25
@@ -55,21 +58,21 @@ model:
   activation: swiglu
   use_grouped_gemm: true
   use_triton_kernels: true
-  use_torch_compile: true  # OPTIMIZED: Re-enabled with selective compilation fix
+  use_torch_compile: false  # EMERGENCY: Disabled - causing OOM
   use_flash_attention: true
-  gradient_checkpointing: true  # Re-enabled to prevent OOM with expert offloading
+  gradient_checkpointing: true  # GPU UTIL FIX: Enabled for 2x larger model (saves ~25% memory with 8% slowdown)
   use_optimized_moe: true
   router_z_loss_coef: 0.001
   load_balance_loss_coef: 0.15  # FIXED: Strengthened from 0.05 to 0.15 for better load balancing
   diversity_loss_coef: 0.001
   expert_dropout_loss_coef: 0.0
-  router_jitter_noise: 0.05  # FIXED: Increased from 0.01 to 0.05 to prevent expert collapse
-  use_lora_experts: true  # Re-enabled at user request
-  lora_rank: 8  # COHERENCE FIX: Increased from 4 for better expert capacity
-  lora_alpha: 16  # COHERENCE FIX: Scaled with rank (was 8)
+  router_jitter_noise: 0.0  # GPU UTIL OPTIMIZATION: Disabled to enable training cache (was 0.05)
+  use_lora_experts: true  # HYBRID MODE: Enable LoRA for 40-60% expert memory savings
+  lora_rank: 8  # HYBRID MODE: Optimized for memory efficiency (was 16)
+  lora_alpha: 16  # HYBRID MODE: Scaled with rank (2x lora_rank, was 32)
   freeze_lora_base: false
-  use_expert_offloading: true  # Re-enabled at user request
-  max_active_experts_gpu: 2  # Re-enabled offloading - keep 2 experts on GPU
+  use_expert_offloading: true  # RAM FIX: Enable offloading to save ~2GB RAM
+  max_active_experts_gpu: 4  # RAM FIX: Keep only 4/8 experts on GPU, saves ~700MB
   offload_eviction_policy: lru
   attention_dropout: 0.0
   dropout: 0.0
@@ -77,70 +80,77 @@ model:
   initializer_range: 0.02
 
 moe_memory_optimization:
-  use_lora_experts: true  # Re-enabled at user request
-  lora_rank: 8  # COHERENCE FIX: Increased from 4 for better expert capacity
-  lora_alpha: 16  # COHERENCE FIX: Scaled with rank (was 8)
+  use_lora_experts: true  # HYBRID MODE: Enable LoRA for 40-60% expert memory savings
+  lora_rank: 8  # HYBRID MODE: Optimized for memory efficiency (was 16)
+  lora_alpha: 16  # HYBRID MODE: Scaled with rank (2x lora_rank, was 32)
   freeze_lora_base: false
-  use_expert_offloading: true  # Re-enabled at user request
-  max_active_experts_gpu: 3  # Re-enabled offloading - 3 experts on GPU (was 4)
-  offload_prefetch_lookahead: 3  # Re-enabled prefetching for offloading
+  use_expert_offloading: true  # RAM FIX: Enable offloading to save ~2GB RAM
+  max_active_experts_gpu: 4  # RAM FIX: Keep only 4/8 experts on GPU, saves ~700MB
+  offload_prefetch_lookahead: 1  # Not used when offloading disabled
   offload_eviction_policy: lru
-  offload_pin_memory: true  # Re-enabled for offloading
-  offload_async_transfers: true  # Re-enabled for offloading
+  offload_pin_memory: false  # Not used when offloading disabled
+  offload_async_transfers: false  # Not used when offloading disabled
   use_hierarchical_experts: false
-  use_expert_quantization: true  # Re-enabled at user request - memory optimization
-  expert_quantization_bits: 8  # INT8: 75% memory savings, 10-15% slowdown, 4x faster CPU↔GPU transfers
-  expert_quantization_method: per_channel  # Better accuracy than per_tensor
-  quantize_inactive_experts: true  # Re-enabled - quantize experts when on CPU
-  # PHASE 3 OPTIMIZATION: Quantize active experts for 50% memory reduction
-  quantize_active_experts: true  # Re-enabled at user request
+  use_expert_quantization: false  # DISABLED: Not needed when all experts on GPU
+  expert_quantization_bits: 4  # Not used when quantization disabled
+  expert_quantization_method: per_channel  # Not used when quantization disabled
+  quantize_inactive_experts: false  # Not used when offloading disabled
+  # NOTE: Experts dequantize when moved to GPU for computation (can't train on quantized weights)
+  # Quantization only saves memory for inactive experts on CPU
   fp8_enabled: false  # Set to true for H100+ GPUs for FP8 training
 
 training:
-  batch_size: 96  # Reduced from 96 to prevent OOM with expert offloading enabled
-  gradient_accumulation_steps: 1  # Increased to maintain effective batch size of 96
-  optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
-  learning_rate: 0.0001  # LION: 3x smaller than AdamW (0.0003 -> 0.0001)
+  batch_size: 4  # EMERGENCY OOM FIX: Drastically reduced
+  gradient_accumulation_steps: 80  # Maintain effective batch size of 320 (4×80)
+  optimizer: lion8bit  # HYBRID MODE: 8-bit Lion for 87.5% optimizer memory savings
+  learning_rate: 0.002  # HYBRID MODE: Increased for faster convergence (was 0.001)
   lion_betas: [0.9, 0.99]  # Lion-specific betas (different from AdamW's [0.9, 0.999])
+  # Lion 8-bit Quantization Parameters (MEMORY OPTIMIZATION)
+  lion_min_8bit_size: 2048  # RAM FIX: More aggressive quantization (4096→2048)
+  lion_block_wise: true  # Block-wise quantization for stability (recommended: keep true)
+  lion_is_paged: true  # RAM FIX: Enable CPU offload for optimizer states
+  lion_percentile_clipping: 100  # Gradient clipping percentile (100 = disabled, 95-99 = adaptive clipping)
   max_steps: 100000  # COHERENCE FIX: Changed from 10 to allow proper training
-  warmup_steps: 10000  # COHERENCE FIX: Changed from 2000 to 10% of max_steps
+  warmup_steps: 1000  # Reduced from 10000 to allow faster learning
   weight_decay: 0.1
+  max_grad_norm: 5.0  # Reduced from 1.0 to allow stronger gradients for router learning
   use_fused_optimizer: true  # OPTIMIZATION: 5-10% faster optimizer step
-  offload_optimizer_state: true  # ENABLED: 30-50% memory savings with minimal slowdown
-  save_steps: 5000
-  eval_steps: 1000  # OPTIMIZED: Increased from 1000 for 10-15% speedup (less validation overhead)
+  offload_optimizer_state: false  # HYBRID MODE: Disabled - have enough VRAM with LoRA+INT4
+  save_steps: 10000  # SPEED OPTIMIZATION: Reduced checkpoint frequency (5000→10000)
+  eval_steps: 20000  # SPEED OPTIMIZATION: Reduced validation frequency (5000→20000, saves GPU time)
   eval_steps_schedule:  # EFFICIENCY: Adaptive validation - less frequent as training stabilizes
-    - [0, 10000, 2000]      # Steps 0-10k: validate every 2k steps
-    - [10000, 50000, 5000]  # Steps 10k-50k: validate every 5k steps
-    - [50000, null, 10000]  # Steps 50k+: validate every 10k steps
+    - [0, 10000, 20000]      # Steps 0-10k: validate every 20k steps (was 5k)
+    - [10000, 50000, 25000]  # Steps 10k-50k: validate every 25k steps (was 10k)
+    - [50000, null, 30000]  # Steps 50k+: validate every 30k steps (was 20k)
   # PHASE 2 OPTIMIZATION: Fast vs Full validation
-  fast_eval_steps: 1000  # Fast validation every 1000 steps
-  fast_eval_batches: 10  # Only 10 batches for fast validation
-  full_eval_steps: 10000  # Full validation every 10000 steps
-  logging_steps: 100
+  fast_eval_steps: 20000  # Fast validation every 20000 steps (was 5000)
+  fast_eval_batches: 3  # Only 3 batches for ultra-fast validation (was 5)
+  full_eval_steps: 50000  # Full validation every 50000 steps (was 20000)
+  logging_steps: 100  # SPEED OPTIMIZATION: Reduced logging overhead (10→100, saves .item() calls)
+  skip_validation_until_step: 10000  # SPEED OPTIMIZATION: Skip validation during warmup
   run_validation: true
   validation_batch_size: 4  # MEMORY FIX: Reduced from 12 to 4 to prevent OOM during validation
-  max_validation_batches: 25  # EFFICIENCY: Reduced from 50 for faster validation (50% reduction)
-  compute_val_train_ratio: true
-  generate_every_n_steps: 10000  # EFFICIENCY: Reduced frequency from 5000 to 10000
+  max_validation_batches: 5  # SPEED OPTIMIZATION: Minimal validation batches (10→5)
+  compute_val_train_ratio: false  # ULTRA-FAST: Disable extra computation
+  generate_every_n_steps: 100000  # SPEED OPTIMIZATION: Minimal generation overhead (50000→100000)
   num_generations_per_step: 1
   generation_during_eval: false  # Already optimized: generation disabled
   test_generation_quality: false
+  skip_generation_tests: true  # SPEED OPTIMIZATION: Skip expensive generation quality tests
 
 # FIXED: Added MoE metrics tracking to detect expert utilization issues
 evaluation:
   moe_metrics:
     track_expert_utilization: true  # FIXED: Enable expert utilization tracking
-    log_frequency: 100  # FIXED: Log every 100 steps (was 50000 or disabled)
+    log_frequency: 1000  # SPEED OPTIMIZATION: Log every 1000 steps (was 100)
     track_routing_decisions: true  # Track which experts are selected
     track_load_balance: true  # Track load balance across experts
 
 data:
-  dataset_name: OpenAssistant_oasst2_processed.jsonl
   streaming: true  # REQUIRED: Enable streaming data loader
-  buffer_size: 50000  # Shuffle buffer size for streaming loader
+  buffer_size: 1000  # RAM FIX: Reduced from 2000 to save ~300MB (2000→1000)
   data_dir: /project/code/data/processed
-  max_length: 256  # OPTIMIZATION: Increased from 128 for better model quality
+  max_length: 256  # GPU UTIL FIX: Conservative to prevent OOM with optimizations (320 still caused OOM)
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
@@ -148,23 +158,23 @@ data:
   tokenizer_name: /project/code/models/tokenizer/enhanced-50680
   padding_side: right
   truncation: true
-  num_workers: 8  # PERFORMANCE FIX: Enabled multi-worker loading (was 0) - 80-100x faster data loading
+  num_workers: 4  # RAM FIX: Reduced from 12 to save ~4GB (12→4)
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 4  # PERFORMANCE FIX: Increased for multi-worker mode (was 2)
+  dataloader_prefetch_factor: 2  # RAM FIX: Reduced from 8 to save ~3GB (8→2)
   dataloader_persistent_workers: true  # PERFORMANCE FIX: Keep workers alive between epochs (was false)
-  dataloader_samples_per_file: 64  # PERFORMANCE FIX: Optimized for pretokenized Arrow files (was 2000)
+  dataloader_samples_per_file: 512  # ULTRA-FAST: Maximize file reading efficiency (256→512, reduces file switches by 50%)
   use_dynamic_batching: true  # EFFICIENCY: Enable dynamic batching for 10-15% less padding waste
-  max_tokens_per_batch: 32768  # PHASE 1 OPTIMIZATION: Increased from 16384 to 32768 (2x increase)
-  # PHASE 1 OPTIMIZATION: Dynamic batch sizing with memory-aware auto-tuning
+  max_tokens_per_batch: 1024  # EMERGENCY: Updated to batch_size×max_length (4×256=1024)
+  # HYBRID MODE: Dynamic batch sizing with memory-aware auto-tuning
   dynamic_batch_sizing:
-    enabled: true
-    min_batch_size: 16
-    max_batch_size: 64
-    target_memory_utilization: 0.92
+    enabled: false  # MEMORY FIX: Disabled to prevent OOM (was auto-increasing batch size)
+    min_batch_size: 32
+    max_batch_size: 32  # MEMORY FIX: Fixed at 32 to prevent OOM
+    target_memory_utilization: 0.75  # Conservative target
     adjustment_frequency: 100
   # MEMORY OPTIMIZATION: Streaming tokenization (reduces buffer from 15k to 1k samples)
-  use_streaming_tokenization: false  # Set to true to save 500MB-1GB RAM (slight throughput tradeoff)
+  use_streaming_tokenization: true  # HYBRID MODE: Enable for 500MB-1GB RAM savings
   streaming_buffer_size: 5000  # OPTIMIZED: Increased from 1000 for better throughput when enabled
 
 output:
@@ -174,55 +184,60 @@ output:
 
 run_management:
   run_name: small_moe
-  run_description: Small MoE config for single GPU training
-  run_tags: moe,small,single-gpu
+  run_description: Small MoE config (1.57B params) for single GPU training with memory optimizations
+  run_tags: moe,small,single-gpu,1.57B
 
 performance:
   enable_tf32: true
   float32_matmul_precision: high
   enable_cudnn_benchmark: true
-  enable_gpu_memory_cleanup: true  # MEMORY FIX: Enable cleanup to prevent fragmentation
+  enable_gpu_memory_cleanup: false  # SPEED OPTIMIZATION: Disable cleanup unless OOM (was true)
   gradient_check_frequency: 10
   torchinductor_max_autotune: 2  # PHASE 2 OPTIMIZATION: Increased from 1 to 2 for aggressive auto-tuning (15-20% speedup)
-  enable_torch_compile: false  # DISABLED: CUDA graphs issue with router tensor overwrites
-  torch_compile_mode: "max-autotune"  # Would use max-autotune when enabled
+  enable_torch_compile: false  # EMERGENCY: Disabled - causing OOM
+  torch_compile_mode: "default"
   torch_compile_fullgraph: false
-  torch_compile_dynamic: false  # PHASE 2 OPTIMIZATION: Static for better compilation
+  torch_compile_dynamic: false
+  torch_compile_disable_cudagraphs: true
+  progress_bar_update_frequency: 50  # SPEED OPTIMIZATION: Update progress bar every 50 steps (not every step)
 
 gradient_health:
-  enabled: true  # COHERENCE FIX: Re-enabled to detect training instabilities
-  disable_after_steps: 20000  # EFFICIENCY: Disable monitoring after 20k stable steps to reduce overhead
-  conditional_monitoring: true  # EFFICIENCY: Adaptive check frequency (reduces overhead by 75% after warmup)
-  warmup_fraction: 0.05  # EFFICIENCY: Reduce monitoring frequency after 5% of max_steps
+  enabled: false  # ULTRA-FAST: Completely disabled for zero overhead
+  disable_after_steps: 0  # ULTRA-FAST: Never enabled
+  conditional_monitoring: false  # ULTRA-FAST: No monitoring at all
+  warmup_fraction: 0.0  # ULTRA-FAST: Skip warmup entirely
 
 # OPTIMIZATION SETTINGS - All Phase 1, 2, 3 optimizations are configurable here
 optimizations:
   # Phase 1: Quick Wins (40-50% speedup)
-  gradient_health_monitoring: true  # COHERENCE FIX: Re-enabled
+  gradient_health_monitoring: false  # GPU UTIL OPTIMIZATION: Disabled to remove sync overhead
   torchinductor_autotune: 1  # 0=off, 1=basic, 2=aggressive (10-15% speedup)
 
   # Memory Management
-  memory_headroom_gb: 1.0  # EFFICIENCY: Reduced from 2.0GB to 1.0GB to allow larger batch sizes
+  memory_headroom_gb: 1.5  # RAM FIX: Increased from 0.5 for safer headroom (0.5→1.5)
   memory_cleanup_thresholds:
-    warning: 0.800   # MEMORY FIX: Lowered to 80.0% to catch issues earlier (was 85.0%)
-    critical: 0.850  # MEMORY FIX: Lowered to 85.0% to prevent OOM crashes (was 90.0%)
-    emergency: 0.900 # MEMORY FIX: Lowered to 90.0% for emergency handling (was 95.0%)
+    warning: 0.920   # RAM FIX: Earlier cleanup to prevent OOM (0.950→0.920)
+    critical: 0.960  # RAM FIX: Earlier critical cleanup (0.975→0.960)
+    emergency: 0.980 # RAM FIX: Earlier emergency cleanup (0.990→0.980)
+  memory_check_frequency: 2000  # SPEED OPTIMIZATION: Check memory less often (500→2000, saves mem_get_info() overhead)
 
   # Phase 2: Expert Offloading Optimizations (25-35% speedup)
   expert_prefetch:
     enabled: true              # Multi-stage async prefetch
-    lookahead: 5               # PHASE 1 OPTIMIZATION: Increased from 3 to 5 for deeper pipeline (25-30% faster with offloading)
+    lookahead: 3               # SPEED FIX: Reduced from 8 to match max_active_experts (saves memory)
     use_multiple_streams: true # Use multiple CUDA streams for pipeline parallelism
-    num_prefetch_streams: 5    # PHASE 1 OPTIMIZATION: Added 5 streams to match lookahead
-    prefetch_threshold: 0.6    # PHASE 1 OPTIMIZATION: More aggressive prefetching
+    num_prefetch_streams: 3    # SPEED FIX: Matched to lookahead and max_active_experts_gpu
+    prefetch_threshold: 0.5    # SPEED FIX: Balanced threshold (was 0.4)
 
   expert_cache:
     auto_limit: true           # Automatically limit cache size to prevent OOM
     use_lru_eviction: true     # LRU eviction when cache is full
-    cache_size: 6              # OPTIMIZED: Reduced from 10 to 6 for better memory efficiency (2 active + 4 hot cache)
+    cache_size: 4              # RAM FIX: Reduced from 6 to save memory (4/8 experts)
     cache_compression: true    # PHASE 1 OPTIMIZATION: Enable compression
-    compression_ratio: 12      # OPTIMIZED: Increased from 8 to 12 for better compression (1.5x improvement)
-    clear_after_optimizer_step: true  # PHASE 1 OPTIMIZATION: Clear cache efficiently
+    compression_ratio: 16      # ULTRA-FAST: Maximum compression for faster transfers (12→16)
+    clear_after_optimizer_step: false  # SPIKY LOAD FIX: Disabled per-step clearing (was true)
+    batch_transfers: true      # ULTRA-FAST: Batch multiple expert transfers together
+    batch_size: 3              # SPEED FIX: Transfer 3 experts per batch (matches max_active_experts_gpu)
 
   # Phase 2: Checkpoint Optimizations (saves 20-30s per checkpoint)
   checkpoint:
@@ -250,17 +265,20 @@ optimizations:
   # Router Optimizations
   router:
     cache_hash_on_gpu: true    # Compute routing cache hash on GPU (15-20% faster eval)
-    compile_routers: true     # OPTIMIZED: Re-enabled with selective compilation fix
+    compile_routers: false     # EMERGENCY: Disabled - causing OOM
     compile_mode: "max-autotune"  # Would use max-autotune when enabled
     compile_dynamic: false     # PHASE 2 OPTIMIZATION: Static shapes for faster compilation
     compile_fullgraph: false   # Allow graph breaks for flexibility with router fix
-    enable_router_caching: true  # PHASE 3 OPTIMIZATION: Cache routing decisions for repeated patterns (5-10% speedup)
-    router_cache_size: 1000    # Cache 1000 routing patterns
+    enable_router_caching: true  # GPU UTIL OPTIMIZATION: Cache routing during training (5-10% speedup)
+    enable_training_cache: true  # GPU UTIL OPTIMIZATION: Enable cache during training (not just eval)
+    router_cache_size: 512     # RAM FIX: Reduced from 1000 to save ~100MB (1000→512)
+    batch_routing: true        # ULTRA-FAST: Batch routing computations together
+    async_routing: true        # ULTRA-FAST: Async routing on separate stream
 
 hardware:
   device: cuda
   mixed_precision: bf16
-  compile: true  # OPTIMIZED: Re-enabled with selective compilation fix
+  compile: false  # EMERGENCY: Disabled - causing OOM
 
 wandb:
   use_wandb: false

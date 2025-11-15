@@ -4,15 +4,17 @@ from .run_manager import RunManager
 from .optimizations import UnifiedOptimizer, OptimizationConfig
 from .optimization_integration import OptimizedTrainingSetup
 
-# Import both quick_optimize functions with aliases to avoid conflicts
-from .optimizations import quick_optimize as quick_optimize_unified
-from .optimization_integration import quick_optimize as quick_optimize_setup
+# Use the comprehensive version from optimization_integration as the primary
+from .optimization_integration import quick_optimize
+
+# Keep backward compatibility alias (optimizations version is now a wrapper)
+from .optimizations import quick_optimize as quick_optimize_legacy
 
 __all__ = [
     "RunManager",
     "UnifiedOptimizer",
     "OptimizationConfig",
     "OptimizedTrainingSetup",
-    "quick_optimize_unified",
-    "quick_optimize_setup",
+    "quick_optimize",
+    "quick_optimize_legacy",
 ]

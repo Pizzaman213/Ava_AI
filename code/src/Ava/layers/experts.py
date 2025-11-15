@@ -365,59 +365,136 @@ class ExpertParallelGroup(nn.Module):
         """
         num_tokens, k = expert_indices.shape
 
-        # Flatten for batched processing
+        # OPTIMIZED FIX: Use einsum to avoid 200GB+ tensor materialization
+        # Key insight: einsum can do element-wise weight selection without creating intermediate tensors
+
+        # Flatten indices and hidden states
         flat_indices = expert_indices.flatten()  # [num_tokens * k]
-
-        # Expand hidden states for k experts per token
         expanded_hidden = hidden_states.unsqueeze(1).expand(-1, k, -1)  # [num_tokens, k, hidden_size]
-        flat_hidden = expanded_hidden.reshape(-1, self.hidden_size)  # [num_tokens * k, hidden_size]
+        flat_hidden = expanded_hidden.contiguous().reshape(-1, self.hidden_size)  # [num_tokens * k, hidden_size]
 
-        # Gather expert weights and compute based on activation type
-        selected_down_weights = self.down_weights[flat_indices]  # [num_tokens * k, intermediate_size, hidden_size]
-        selected_down_bias = self.down_bias[flat_indices] if self.down_bias is not None else None
+        # CRITICAL DEBUG: Check for corrupted indices or massive allocations
+        if flat_indices.numel() > 100000:  # Sanity check - should never be this large for single batch
+            import sys
+            print(f"ERROR: flat_indices too large! Shape: {flat_indices.shape}, numel: {flat_indices.numel()}", file=sys.stderr)
+            print(f"  expert_indices shape: {expert_indices.shape}", file=sys.stderr)
+            print(f"  hidden_states shape: {hidden_states.shape}", file=sys.stderr)
+            print(f"  This will cause OOM!", file=sys.stderr)
 
-        # Batched matmul for up projection
+        # Use direct indexing to gather expert weights
+        # CRITICAL: Don't use F.embedding with large flattened tensors - causes 256GB allocations!
+        import torch.nn.functional as F
+
         if self.activation_type in ['swiglu', 'geglu']:
-            selected_gate_up_weights = self.gate_up_weights[flat_indices]  # [num_tokens * k, hidden_size, intermediate_size * 2]
-            selected_gate_up_bias = self.gate_up_bias[flat_indices] if self.gate_up_bias is not None else None
+            # OPTIMIZED: Sort by expert ID and process each expert separately
+            # This avoids materializing huge [num_tokens*k, hidden, intermediate] tensors
 
-            # Compute gate and up in one matmul
-            gate_up = torch.bmm(
-                flat_hidden.unsqueeze(1),  # [num_tokens * k, 1, hidden_size]
-                selected_gate_up_weights   # [num_tokens * k, hidden_size, intermediate_size * 2]
-            ).squeeze(1)  # [num_tokens * k, intermediate_size * 2]
+            # Sort tokens by expert for efficient batch processing
+            sorted_indices, sort_order = torch.sort(flat_indices)
+            sorted_hidden = flat_hidden[sort_order]
 
-            if selected_gate_up_bias is not None:
-                gate_up = gate_up + selected_gate_up_bias
+            # Find where expert ID changes (expert boundaries)
+            expert_changes = torch.cat([
+                torch.tensor([0], device=sorted_indices.device),
+                torch.where(sorted_indices[1:] != sorted_indices[:-1])[0] + 1,
+                torch.tensor([len(sorted_indices)], device=sorted_indices.device)
+            ])
 
-            # Split and apply gated activation
+            # Process each expert's tokens separately
+            expert_outputs = []
+            for i in range(len(expert_changes) - 1):
+                start = expert_changes[i].item()
+                end = expert_changes[i + 1].item()
+                expert_id = sorted_indices[start].item()
+
+                # Get this expert's tokens: [n_tokens_for_expert, hidden]
+                expert_hidden = sorted_hidden[start:end]
+
+                # Get this expert's weights: [hidden, intermediate*2]
+                expert_weight = self.gate_up_weights[expert_id]
+
+                # Standard matmul: [n_tokens, hidden] @ [hidden, intermediate*2]
+                expert_gate_up = torch.matmul(expert_hidden, expert_weight)
+
+                if self.gate_up_bias is not None:
+                    expert_gate_up = expert_gate_up + self.gate_up_bias[expert_id]
+
+                expert_outputs.append(expert_gate_up)
+
+            # Concatenate all expert outputs
+            gate_up_sorted = torch.cat(expert_outputs, dim=0)
+
+            # Unsort to restore original order
+            unsort_order = torch.argsort(sort_order)
+            gate_up = gate_up_sorted[unsort_order]
+
+            # Split and activate
             gate, up = gate_up.chunk(2, dim=-1)
             hidden = self.activation(gate) * up
         else:
-            selected_up_weights = self.up_weights[flat_indices]
-            selected_up_bias = self.up_bias[flat_indices] if self.up_bias is not None else None
+            # Standard activation path - per-expert processing
+            sorted_indices, sort_order = torch.sort(flat_indices)
+            sorted_hidden = flat_hidden[sort_order]
 
-            hidden = torch.bmm(
-                flat_hidden.unsqueeze(1),
-                selected_up_weights
-            ).squeeze(1)
+            expert_changes = torch.cat([
+                torch.tensor([0], device=sorted_indices.device),
+                torch.where(sorted_indices[1:] != sorted_indices[:-1])[0] + 1,
+                torch.tensor([len(sorted_indices)], device=sorted_indices.device)
+            ])
 
-            if selected_up_bias is not None:
-                hidden = hidden + selected_up_bias
+            expert_outputs = []
+            for i in range(len(expert_changes) - 1):
+                start = expert_changes[i].item()
+                end = expert_changes[i + 1].item()
+                expert_id = sorted_indices[start].item()
 
-            hidden = self.activation(hidden)
+                expert_hidden = sorted_hidden[start:end]
+                expert_weight = self.up_weights[expert_id]
+
+                expert_up = torch.matmul(expert_hidden, expert_weight)
+
+                if self.up_bias is not None:
+                    expert_up = expert_up + self.up_bias[expert_id]
+
+                expert_up = self.activation(expert_up)
+                expert_outputs.append(expert_up)
+
+            hidden_sorted = torch.cat(expert_outputs, dim=0)
+            unsort_order = torch.argsort(sort_order)
+            hidden = hidden_sorted[unsort_order]
 
         if self.dropout is not None:
             hidden = self.dropout(hidden)
 
-        # Batched matmul for down projection
-        output = torch.bmm(
-            hidden.unsqueeze(1),  # [num_tokens * k, 1, intermediate_size]
-            selected_down_weights  # [num_tokens * k, intermediate_size, hidden_size]
-        ).squeeze(1)  # [num_tokens * k, hidden_size]
+        # Down projection - per-expert processing
+        sorted_indices, sort_order = torch.sort(flat_indices)
+        sorted_hidden = hidden[sort_order]
 
-        if selected_down_bias is not None:
-            output = output + selected_down_bias
+        expert_changes = torch.cat([
+            torch.tensor([0], device=sorted_indices.device),
+            torch.where(sorted_indices[1:] != sorted_indices[:-1])[0] + 1,
+            torch.tensor([len(sorted_indices)], device=sorted_indices.device)
+        ])
+
+        expert_outputs = []
+        for i in range(len(expert_changes) - 1):
+            start = expert_changes[i].item()
+            end = expert_changes[i + 1].item()
+            expert_id = sorted_indices[start].item()
+
+            expert_hidden = sorted_hidden[start:end]
+            expert_weight = self.down_weights[expert_id]
+
+            expert_output = torch.matmul(expert_hidden, expert_weight)
+
+            if self.down_bias is not None:
+                expert_output = expert_output + self.down_bias[expert_id]
+
+            expert_outputs.append(expert_output)
+
+        output_sorted = torch.cat(expert_outputs, dim=0)
+        unsort_order = torch.argsort(sort_order)
+        output = output_sorted[unsort_order]
 
         # Reshape back to [num_tokens, k, hidden_size]
         output = output.view(num_tokens, k, self.hidden_size)

@@ -121,12 +121,14 @@ class AdamW8bit(Optimizer):
                 f"({'8-bit' if self.is_8bit else '32-bit'} mode, ~50-75% memory reduction)"
             )
 
-        # Store defaults for compatibility
-        defaults = dict(
-            lr=lr, betas=betas, eps=eps, weight_decay=weight_decay,
-            amsgrad=amsgrad
-        )
-        super().__init__(params if not BNB_AVAILABLE else [], defaults)
+        # Don't call super().__init__ when using bitsandbytes
+        # The wrapper handles everything through self.optimizer
+        if not BNB_AVAILABLE:
+            defaults = dict(
+                lr=lr, betas=betas, eps=eps, weight_decay=weight_decay,
+                amsgrad=amsgrad
+            )
+            super().__init__(params, defaults)
 
     def step(self, closure=None):
         """Perform optimization step."""
@@ -169,6 +171,7 @@ class Lion8bit(Optimizer):
         min_8bit_size: int = 4096,
         percentile_clipping: int = 100,
         block_wise: bool = True,
+        is_paged: bool = False,
     ):
         """
         Initialize 8-bit Lion optimizer.
@@ -178,10 +181,11 @@ class Lion8bit(Optimizer):
             lr: Learning rate (typically 3-10x smaller than AdamW)
             betas: Coefficients for momentum
             weight_decay: Weight decay coefficient
-            optim_bits: Number of bits for optimizer states
-            min_8bit_size: Minimum tensor size for 8-bit quantization
-            percentile_clipping: Percentile for gradient clipping
-            block_wise: Use block-wise quantization
+            optim_bits: Number of bits for optimizer states (unused, kept for compatibility)
+            min_8bit_size: Minimum tensor size for 8-bit quantization (default: 4096)
+            percentile_clipping: Percentile for gradient clipping (default: 100 = disabled)
+            block_wise: Use block-wise quantization for better stability (default: True)
+            is_paged: Enable paged optimizer (moves states to CPU when GPU full, default: False)
         """
         if not BNB_AVAILABLE:
             # Fallback to regular Lion if available
@@ -198,25 +202,33 @@ class Lion8bit(Optimizer):
                 )
             self.is_8bit = False
         else:
-            # Use 8-bit Lion
+            # Use 8-bit Lion with ALL quantization parameters
+            # CRITICAL FIX: Pass min_8bit_size, percentile_clipping, block_wise, is_paged
             self.optimizer = bnb.optim.Lion8bit(
                 params,
                 lr=lr,
                 betas=betas,
                 weight_decay=weight_decay,
-                optim_bits=optim_bits,
-                min_8bit_size=min_8bit_size,
-                percentile_clipping=percentile_clipping,
-                block_wise=block_wise,
+                min_8bit_size=min_8bit_size,      # Control which tensors get quantized
+                percentile_clipping=percentile_clipping,  # Adaptive gradient clipping
+                block_wise=block_wise,            # Block-wise quantization for stability
+                is_paged=is_paged                 # Paged memory for CPU offloading
             )
             self.is_8bit = True
             logger.info(
                 f"✓ Using 8-bit Lion optimizer "
-                f"(87.5% memory reduction vs AdamW, {optim_bits}-bit quantization)"
+                f"(87.5% memory reduction vs AdamW, 8-bit quantization)"
+            )
+            logger.info(
+                f"  Quantization: min_size={min_8bit_size}, block_wise={block_wise}, "
+                f"paged={is_paged}, percentile_clip={percentile_clipping}"
             )
 
-        defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
-        super().__init__(params if not BNB_AVAILABLE else [], defaults)
+        # Don't call super().__init__ when using bitsandbytes
+        # The wrapper handles everything through self.optimizer
+        if not BNB_AVAILABLE:
+            defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
+            super().__init__(params, defaults)
 
     def step(self, closure=None):
         """Perform optimization step."""

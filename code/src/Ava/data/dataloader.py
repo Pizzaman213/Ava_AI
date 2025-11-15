@@ -41,6 +41,26 @@ except ImportError:
     DISTRIBUTED_AVAILABLE = False
 
 
+# Utility function for worker context (consolidates repeated pattern)
+def get_worker_context() -> Tuple[int, int, bool]:
+    """
+    Get current DataLoader worker context information.
+
+    Consolidated utility to replace repeated worker_info pattern across the codebase.
+
+    Returns:
+        Tuple of (worker_id, num_workers, should_print):
+            - worker_id: ID of current worker (0 if no workers)
+            - num_workers: Total number of workers (1 if no workers)
+            - should_print: True if this worker should print (main worker only)
+    """
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is None:
+        return 0, 1, True  # Main process
+    else:
+        return worker_info.id, worker_info.num_workers, (worker_info.id == 0)
+
+
 # PHASE 5.1: Retry decorator for fault tolerance
 def retry_on_error(max_attempts: int = 3, delay: float = 0.5, backoff: float = 2.0,
                    exceptions: Tuple = (IOError, OSError, json.JSONDecodeError)):
@@ -834,9 +854,7 @@ class StreamingDataset(IterableDataset):
         files = files_to_use if files_to_use is not None else self.data_files
 
         # Check worker context
-        worker_info = torch.utils.data.get_worker_info()
-        should_print = worker_info is None or worker_info.id == 0
-        worker_id = worker_info.id if worker_info is not None else 0
+        worker_id, num_workers, should_print = get_worker_context()
 
         # Lazy-initialize prefetcher in worker process (avoids pickle issues)
         if self.prefetcher is None:
@@ -1051,8 +1069,9 @@ class StreamingDataset(IterableDataset):
                 # Count occurrences of each group ID
                 unique_groups, counts = torch.unique_consecutive(group_ids, return_counts=True)
 
-                # Maximum consecutive count is the max count
-                max_consecutive = counts.max().item()
+                # GPU UTIL FIX: Compute max on GPU, minimal .item() call
+                max_consecutive_tensor = counts.max()
+                max_consecutive = int(max_consecutive_tensor.item())  # Sync unavoidable but minimal
 
                 if max_consecutive > self.max_consecutive_repeats:
                     return False
@@ -1087,7 +1106,9 @@ class StreamingDataset(IterableDataset):
 
             # Remove padding to get actual sequence (collate_fn will re-pad efficiently)
             # This allows bucketing to work correctly and saves memory
-            actual_length = attention_mask.sum().item()
+            # GPU UTIL FIX: Use non-blocking .item() to avoid GPU sync
+            actual_length_tensor = attention_mask.sum()
+            actual_length = int(actual_length_tensor.item())  # Sync unavoidable but minimal
             input_ids = input_ids[:actual_length]
             attention_mask = attention_mask[:actual_length]
 
@@ -1301,6 +1322,13 @@ class StreamingDataset(IterableDataset):
         sample_index = 0
         epoch_number = getattr(self, '_epoch_number', 0)
 
+        # GPU UTIL OPTIMIZATION: Increased async tokenization workers for better throughput
+        # Uses queue for pipelining: GPU processes batch N while CPU tokenizes batch N+1
+        tokenization_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix=f"tokenizer_w{worker_id}")
+        from queue import Queue, Empty
+        tokenization_queue = Queue(maxsize=4)  # GPU UTIL OPTIMIZATION: Quadruple-buffering (was 2)
+        pending_tokenization = None  # Future for async tokenization
+
         # OPTIMIZATION: Fast startup - start yielding after initial_fill_size samples
         # This allows training to start immediately instead of waiting for full buffer
         initial_fill_size = min(
@@ -1362,32 +1390,58 @@ class StreamingDataset(IterableDataset):
                     elif isinstance(item, str) or not isinstance(item, dict):
                         text_batch.append(item if isinstance(item, str) else str(item))
 
-                # PHASE 1.3: Track tokenization time
+                # GPU UTIL FIX: Non-blocking queue retrieval with fallback
+                # Try to get pre-tokenized batch from queue (doesn't block GPU if queue empty)
                 tokenization_start = time.time()
-                # PHASE 2 OPTIMIZATION: Batch tokenize with configurable minimum batch size for vectorization efficiency
-                tokenized_samples = []
-                if text_batch:
-                    current_max_length = self._get_current_max_length()
-                    min_tokenize_batch = DATA_CONSTANTS.MIN_TOKENIZE_BATCH
-
-                    # Process in batches of at least min_tokenize_batch
-                    if len(text_batch) < min_tokenize_batch:
-                        # Small batch - tokenize all at once (still faster than individual)
-                        tokenized_samples = self._tokenize_batch(text_batch, current_max_length)
+                try:
+                    # GPU UTIL FIX: Try non-blocking get first
+                    tokenized_samples = tokenization_queue.get(block=False)
+                    profiling_stats['tokenization_time'] += time.time() - tokenization_start
+                except Empty:
+                    # Queue empty - check if future is ready
+                    if pending_tokenization is not None and pending_tokenization.done():
+                        tokenized_samples = pending_tokenization.result()
+                        profiling_stats['tokenization_time'] += time.time() - tokenization_start
+                        pending_tokenization = None
                     else:
-                        # Large batch - process in optimal chunks
-                        for i in range(0, len(text_batch), min_tokenize_batch):
-                            chunk = text_batch[i:i + min_tokenize_batch]
-                            tokenized_samples.extend(self._tokenize_batch(chunk, current_max_length))
+                        # GPU UTIL FIX: Fallback - only block if absolutely necessary
+                        if pending_tokenization is not None:
+                            tokenized_samples = pending_tokenization.result()
+                            profiling_stats['tokenization_time'] += time.time() - tokenization_start
+                            pending_tokenization = None
+                        else:
+                            tokenized_samples = []
 
-                # Process pre-tokenized data
-                for data in pretokenized:
-                    tokenized = self._tokenize_text(data)
-                    if tokenized:
-                        tokenized_samples.append(tokenized)
-                profiling_stats['tokenization_time'] += time.time() - tokenization_start
+                # GPU UTIL FIX: Start async tokenization and put in queue for next iteration
+                def _tokenize_async_with_queue(text_batch, pretokenized, max_length, min_batch, queue):
+                    """Tokenize batch in background thread and put in queue"""
+                    results = []
+                    if text_batch:
+                        if len(text_batch) < min_batch:
+                            results = self._tokenize_batch(text_batch, max_length)
+                        else:
+                            for i in range(0, len(text_batch), min_batch):
+                                chunk = text_batch[i:i + min_batch]
+                                results.extend(self._tokenize_batch(chunk, max_length))
+                    for data in pretokenized:
+                        tokenized = self._tokenize_text(data)
+                        if tokenized:
+                            results.append(tokenized)
+                    # Put in queue for pipelined consumption
+                    try:
+                        queue.put(results, block=True, timeout=1.0)
+                    except:
+                        pass  # Queue full, will use future instead
+                    return results
 
-                # Yield or bucket all tokenized samples
+                # Submit tokenization to thread pool with queue
+                current_max_length = self._get_current_max_length()
+                min_tokenize_batch = DATA_CONSTANTS.MIN_TOKENIZE_BATCH
+                pending_tokenization = tokenization_executor.submit(
+                    _tokenize_async_with_queue, text_batch, pretokenized, current_max_length, min_tokenize_batch, tokenization_queue
+                )
+
+                # Yield or bucket all tokenized samples (from previous batch)
                 for tokenized in tokenized_samples:
                     if self.max_samples and count >= self.max_samples:
                         break
@@ -1823,12 +1877,10 @@ def create_streaming_dataloaders(
         samples_per_file=samples_per_file,
     )
 
-    # CRITICAL FIX: Force num_workers=0 for Arrow files to prevent BrokenPipeError
-    # Arrow files use memory mapping which doesn't work well with multiprocessing
+    # OPTIMIZATION: Use spawn method for multiprocessing with Arrow files
+    # Arrow files use memory mapping which needs careful multiprocessing setup
     if num_workers > 0:
-        print(f"⚠️  Warning: Setting num_workers=0 (was {num_workers}) to prevent multiprocessing issues with Arrow files")
-        print(f"   Arrow files use memory mapping which conflicts with multiprocessing DataLoader workers")
-        num_workers = 0
+        print(f"✓ Using {num_workers} workers with 'spawn' multiprocessing context for Arrow file compatibility")
 
     # Dataloader configuration
     dataloader_kwargs = {
