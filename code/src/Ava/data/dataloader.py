@@ -1048,14 +1048,12 @@ class StreamingDataset(IterableDataset):
         - Maximum repetition rate (sampled in epoch 0, skipped after)
         - Maximum consecutive repeats (sampled in epoch 0, skipped after)
         """
-        # PHASE 1 OPTIMIZATION: Skip all validation after first epoch
+        # PHASE 1 OPTIMIZATION: Reduce validation frequency after first epoch
+        # but keep lightweight validation active to catch data corruption
         if self._epoch_number > 0:
-            if not self._validation_disabled_after_epoch_0:
-                self._validation_disabled_after_epoch_0 = True
-                worker_info = torch.utils.data.get_worker_info()
-                worker_id = worker_info.id if worker_info is not None else 0
-                print(f"\n✓ [Worker {worker_id}] [OPTIMIZATION] Sequence validation disabled after epoch {self._epoch_number} (data assumed clean, 2-3% speedup)")
-            return True
+            # After epoch 0, only validate minimum length (fast and critical)
+            # Skip expensive repetition/consecutive checks (they're rarely violated in practice)
+            pass  # Continue to minimum length check below
 
         seq_len = len(input_ids)
 
