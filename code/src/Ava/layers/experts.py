@@ -345,6 +345,9 @@ class ExpertParallelGroup(nn.Module):
         # FLATTEN ALL INDICES: Convert [num_tokens, k] to [num_tokens*k]
         # This allows processing all expert assignments in parallel
         flat_indices = expert_indices.reshape(-1)  # [num_tokens*k]
+        # FIX: Ensure flat_indices is int64 for torch.compile compatibility
+        if flat_indices.dtype != torch.int64:
+            flat_indices = flat_indices.to(torch.int64)
 
         # CREATE BATCH DIMENSION: Replicate hidden states for each expert assignment
         # [num_tokens, hidden] -> [num_tokens*k, hidden] by repeating each token k times
