@@ -1282,10 +1282,14 @@ class StreamingDataset(IterableDataset):
         # Vectorized fill for better cache locality
         for i, item in enumerate(batch):
             seq_len = seq_lengths[i]
+            # CRITICAL FIX: Truncate to max_len if adaptive padding shortened buffer
+            # This handles outlier sequences that exceed 95th percentile
+            actual_seq_len = min(seq_len, max_len)
+
             # Use contiguous memory access patterns with zero-copy
-            input_ids[i, :seq_len].copy_(item['input_ids'])
-            attention_mask[i, :seq_len] = 1  # More efficient than copying
-            labels[i, :seq_len].copy_(item['labels'])
+            input_ids[i, :actual_seq_len].copy_(item['input_ids'][:actual_seq_len])
+            attention_mask[i, :actual_seq_len] = 1  # More efficient than copying
+            labels[i, :actual_seq_len].copy_(item['labels'][:actual_seq_len])
 
         # MEMORY OPTIMIZATION: Share attention mask for identical sequences
         # This can save memory when there are duplicate sequence lengths
