@@ -69,7 +69,7 @@ def get_all_gpu_memory_stats() -> Dict[int, Dict[str, float]]:
     stats = {}
 
     for gpu_id in range(num_gpus):
-        stats[gpu_id] = get_gpu_memory_stats(gpu_id)
+        stats[gpu_id] = get_gpu_memory_stats(torch.device(f'cuda:{gpu_id}'))
 
     return stats
 

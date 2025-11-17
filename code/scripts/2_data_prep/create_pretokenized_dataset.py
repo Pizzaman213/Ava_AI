@@ -113,7 +113,7 @@ def read_arrow(file_path: Path) -> Iterator[Dict[str, Any]]:
     for reader_func in [
         lambda p: pa.ipc.open_file(p),
         lambda p: pa.ipc.open_stream(p),
-        lambda p: pa.feather.read_table(p)
+        lambda p: pa.feather.read_table(p)  # type: ignore[attr-defined]
     ]:
         try:
             with open(file_path, 'rb') as f:

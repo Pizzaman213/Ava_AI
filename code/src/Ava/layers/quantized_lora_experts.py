@@ -255,29 +255,29 @@ class QuantizedLoRAExpert(nn.Module):
                 # Quantize gate_up projection
                 self._quantize_weight(
                     self.base_gate_up,
-                    self.gate_up_scale,
-                    self.gate_up_zero_point
+                    self.gate_up_scale,  # type: ignore[arg-type]
+                    self.gate_up_zero_point  # type: ignore[arg-type]
                 )
 
                 # Quantize down projection
                 self._quantize_weight(
                     self.base_down,
-                    self.down_scale,
-                    self.down_zero_point
+                    self.down_scale,  # type: ignore[arg-type]
+                    self.down_zero_point  # type: ignore[arg-type]
                 )
             else:
                 # Quantize up projection
                 self._quantize_weight(
                     self.base_up,
-                    self.up_scale,
-                    self.up_zero_point
+                    self.up_scale,  # type: ignore[arg-type]
+                    self.up_zero_point  # type: ignore[arg-type]
                 )
 
                 # Quantize down projection
                 self._quantize_weight(
                     self.base_down,
-                    self.down_scale,
-                    self.down_zero_point
+                    self.down_scale,  # type: ignore[arg-type]
+                    self.down_zero_point  # type: ignore[arg-type]
                 )
 
         self._is_quantized = True
@@ -358,29 +358,29 @@ class QuantizedLoRAExpert(nn.Module):
                 # Dequantize gate_up projection
                 self._dequantize_weight(
                     self.base_gate_up,
-                    self.gate_up_scale,
-                    self.gate_up_zero_point
+                    self.gate_up_scale,  # type: ignore[arg-type]
+                    self.gate_up_zero_point  # type: ignore[arg-type]
                 )
 
                 # Dequantize down projection
                 self._dequantize_weight(
                     self.base_down,
-                    self.down_scale,
-                    self.down_zero_point
+                    self.down_scale,  # type: ignore[arg-type]
+                    self.down_zero_point  # type: ignore[arg-type]
                 )
             else:
                 # Dequantize up projection
                 self._dequantize_weight(
                     self.base_up,
-                    self.up_scale,
-                    self.up_zero_point
+                    self.up_scale,  # type: ignore[arg-type]
+                    self.up_zero_point  # type: ignore[arg-type]
                 )
 
                 # Dequantize down projection
                 self._dequantize_weight(
                     self.base_down,
-                    self.down_scale,
-                    self.down_zero_point
+                    self.down_scale,  # type: ignore[arg-type]
+                    self.down_zero_point  # type: ignore[arg-type]
                 )
 
         self._is_quantized = False
@@ -706,11 +706,11 @@ class QuantizedExpert(nn.Module):
 
         with torch.no_grad():
             if self.activation_type in ['swiglu', 'geglu']:
-                self._quantize_weight(self.gate_up, self.gate_up_scale, self.gate_up_zero_point)
-                self._quantize_weight(self.down, self.down_scale, self.down_zero_point)
+                self._quantize_weight(self.gate_up, self.gate_up_scale, self.gate_up_zero_point)  # type: ignore[arg-type]
+                self._quantize_weight(self.down, self.down_scale, self.down_zero_point)  # type: ignore[arg-type]
             else:
-                self._quantize_weight(self.up, self.up_scale, self.up_zero_point)
-                self._quantize_weight(self.down, self.down_scale, self.down_zero_point)
+                self._quantize_weight(self.up, self.up_scale, self.up_zero_point)  # type: ignore[arg-type]
+                self._quantize_weight(self.down, self.down_scale, self.down_zero_point)  # type: ignore[arg-type]
 
         self._is_quantized = True
         self._quantization_initialized = True
@@ -753,11 +753,11 @@ class QuantizedExpert(nn.Module):
 
         with torch.no_grad():
             if self.activation_type in ['swiglu', 'geglu']:
-                self._dequantize_weight(self.gate_up, self.gate_up_scale, self.gate_up_zero_point)
-                self._dequantize_weight(self.down, self.down_scale, self.down_zero_point)
+                self._dequantize_weight(self.gate_up, self.gate_up_scale, self.gate_up_zero_point)  # type: ignore[arg-type]
+                self._dequantize_weight(self.down, self.down_scale, self.down_zero_point)  # type: ignore[arg-type]
             else:
-                self._dequantize_weight(self.up, self.up_scale, self.up_zero_point)
-                self._dequantize_weight(self.down, self.down_scale, self.down_zero_point)
+                self._dequantize_weight(self.up, self.up_scale, self.up_zero_point)  # type: ignore[arg-type]
+                self._dequantize_weight(self.down, self.down_scale, self.down_zero_point)  # type: ignore[arg-type]
 
         self._is_quantized = False
 

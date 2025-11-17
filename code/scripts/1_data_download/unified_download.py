@@ -66,7 +66,7 @@ def import_datasets():
 def get_fast_json():
     """Get the fastest available JSON library (orjson > ujson > json)"""
     try:
-        import orjson
+        import orjson  # type: ignore
         return {
             'dumps': lambda obj: orjson.dumps(obj).decode('utf-8'),
             'loads': orjson.loads,
@@ -74,7 +74,7 @@ def get_fast_json():
         }
     except ImportError:
         try:
-            import ujson
+            import ujson  # type: ignore
             return {
                 'dumps': lambda obj: ujson.dumps(obj, ensure_ascii=False),
                 'loads': ujson.loads,
@@ -91,7 +91,7 @@ def check_async_dependencies():
     """Check and install async dependencies for Phase 2 optimizations"""
     try:
         import aiohttp
-        import aiofiles
+        import aiofiles  # type: ignore
         return True
     except ImportError:
         return False
@@ -102,7 +102,7 @@ def install_async_dependencies():
     os.system(f"{sys.executable} -m pip install -q aiohttp aiofiles")
     try:
         import aiohttp
-        import aiofiles
+        import aiofiles  # type: ignore
         print("✓ Phase 2 dependencies installed successfully")
         return True
     except ImportError:

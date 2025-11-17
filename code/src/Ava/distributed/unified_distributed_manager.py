@@ -93,7 +93,7 @@ class UnifiedDistributedManager:
                 model_size_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / (1024 ** 2)
 
                 # Get configuration for bucket size (now configurable)
-                bucket_cap_mb = getattr(self.training_config.distributed, 'ddp_bucket_cap_mb', None)
+                bucket_cap_mb = getattr(self.training_config.distributed, 'ddp_bucket_cap_mb', None)  # type: ignore[attr-defined]
                 if bucket_cap_mb is None:
                     # Adaptive bucket size with sequence length consideration
                     seq_len = getattr(self.training_config.model, 'max_position_embeddings', 2048)

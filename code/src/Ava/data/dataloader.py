@@ -111,8 +111,8 @@ class DynamicTokenBatcher:
 
     def __init__(
         self,
-        max_tokens: int = None,
-        max_batch_size: int = None
+        max_tokens: Optional[int] = None,
+        max_batch_size: Optional[int] = None
     ):
         # Use constants if not provided
         self.max_tokens = max_tokens or DATA_CONSTANTS.MAX_TOKENS_DEFAULT
@@ -141,7 +141,7 @@ class DynamicTokenBatcher:
             # Return current batch and start new one with this sample
             ready_batch = self.current_batch
             # Explicitly clear old reference before creating new batch to prevent memory leak
-            self.current_batch = None
+            self.current_batch = []
             self.current_batch = [sample]
             self.current_tokens = seq_len
             return ready_batch
@@ -164,7 +164,6 @@ class DynamicTokenBatcher:
         """Cleanup batch references on object destruction."""
         if hasattr(self, 'current_batch'):
             self.current_batch.clear()
-            self.current_batch = None
 
 
 class LengthBasedBucketing:
@@ -178,11 +177,11 @@ class LengthBasedBucketing:
     def __init__(
         self,
         bucket_boundaries: Optional[List[int]] = None,
-        max_bucket_size: int = None,  # OPTIMIZED: Increased from 100 to 200 for 5-10% speedup
-        min_bucket_size: int = None,
+        max_bucket_size: Optional[int] = None,  # OPTIMIZED: Increased from 100 to 200 for 5-10% speedup
+        min_bucket_size: Optional[int] = None,
         enable_bucketing: bool = True,
         use_dynamic_batching: bool = False,  # OPTIMIZATION: Enable token-based batching
-        max_tokens_per_batch: int = None
+        max_tokens_per_batch: Optional[int] = None
     ):
         self.enable_bucketing = enable_bucketing
         self.max_bucket_size = max_bucket_size or DATA_CONSTANTS.MAX_BUCKET_SIZE
@@ -197,7 +196,7 @@ class LengthBasedBucketing:
         # Optimized default boundaries based on common sequence lengths
         if bucket_boundaries is None:
             DATA_CONSTANTS.__post_init__()  # Ensure boundaries are initialized
-            self.bucket_boundaries = DATA_CONSTANTS.BUCKET_BOUNDARIES_DEFAULT.copy()
+            self.bucket_boundaries = (DATA_CONSTANTS.BUCKET_BOUNDARIES_DEFAULT or [64, 128, 256, 512, 1024, 2048, 4096]).copy()
         else:
             self.bucket_boundaries = sorted(bucket_boundaries)
 
@@ -301,9 +300,9 @@ class AsyncFilePrefetcher:
     - Cache hit rate monitoring
     """
 
-    def __init__(self, max_workers: int = None, prefetch_size: int = None):
-        max_workers = max_workers or DATA_CONSTANTS.PREFETCH_MAX_WORKERS
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+    def __init__(self, max_workers: Optional[int] = None, prefetch_size: Optional[int] = None):
+        max_workers_val = max_workers or DATA_CONSTANTS.PREFETCH_MAX_WORKERS
+        self.executor = ThreadPoolExecutor(max_workers=max_workers_val)
         self.prefetch_size = prefetch_size or DATA_CONSTANTS.PREFETCH_SIZE
         self.futures: List[Future] = []
 
@@ -382,6 +381,14 @@ class AsyncFilePrefetcher:
         self.shutdown()
         return False
 
+    def __del__(self):
+        """Destructor - ensures executor is cleaned up even if not using context manager."""
+        try:
+            if hasattr(self, 'executor') and self.executor is not None:
+                self.executor.shutdown(wait=False)
+        except Exception:
+            pass  # Ignore errors during cleanup
+
 
 class FileReader:
     """Optimized file reader with format detection and caching."""
@@ -419,7 +426,7 @@ class FileReader:
         except Exception as e:
             print(f"❌ Error reading {file_path.name}: {e}")
 
-    @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))
+    @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))  # type: ignore[attr-defined]
     def _read_arrow(self, file_path: Path) -> Iterator[Any]:
         """Read Arrow files efficiently with retry logic (PHASE 5.1)."""
         try:
@@ -443,7 +450,7 @@ class FileReader:
         except Exception as e:
             print(f"⚠️  Failed to read Arrow file {file_path.name}: {e}")
 
-    @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))
+    @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))  # type: ignore[attr-defined]
     def _read_parquet(self, file_path: Path) -> Iterator[str]:
         """Read Parquet files with optimized streaming and retry logic (PHASE 5.1)."""
         try:
@@ -468,20 +475,20 @@ class FileReader:
 
                     # OPTIMIZED: Combined filtering in single pass
                     # Filter null values and short texts together
-                    non_null_mask = pc.is_valid(text_array)
+                    non_null_mask = pc.is_valid(text_array)  # type: ignore[attr-defined]
                     if non_null_mask.null_count == len(text_array):
                         continue  # Skip if all nulls
 
                     # Apply null filter first
-                    text_array = pc.filter(text_array, non_null_mask)
+                    text_array = pc.filter(text_array, non_null_mask)  # type: ignore[attr-defined]
 
                     # Strip whitespace and filter by length in one pass
-                    text_array = pc.utf8_trim_whitespace(text_array)
-                    lengths = pc.utf8_length(text_array)
-                    length_mask = pc.greater(lengths, DATA_CONSTANTS.MIN_TEXT_LENGTH)
+                    text_array = pc.utf8_trim_whitespace(text_array)  # type: ignore[attr-defined]
+                    lengths = pc.utf8_length(text_array)  # type: ignore[attr-defined]
+                    length_mask = pc.greater(lengths, DATA_CONSTANTS.MIN_TEXT_LENGTH)  # type: ignore[attr-defined]
 
                     # Apply length filter
-                    text_array = pc.filter(text_array, length_mask)
+                    text_array = pc.filter(text_array, length_mask)  # type: ignore[attr-defined]
 
                     # Convert to Python only for valid entries
                     if len(text_array) > 0:
@@ -592,6 +599,8 @@ class StreamingDataset(IterableDataset):
         max_tokens_per_batch: Optional[int] = None,  # Max tokens per batch
         # FIXED: Add dataset_name filtering support
         dataset_name: Optional[str] = None,  # Optional: Filter to only load this specific file
+        # DEV LOG: Development logging config for bottleneck detection
+        dev_log_config: Optional[Any] = None,  # DevLogConfig for performance tracking
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -606,6 +615,10 @@ class StreamingDataset(IterableDataset):
             print(f"   🌊 Streaming tokenization enabled: buffer reduced to {streaming_buffer_size} samples (saves 500MB-1GB RAM)")
         self.dynamic_length_fn = dynamic_length_fn
         self.samples_per_file = samples_per_file
+
+        # DEV LOG: Store config for performance tracking
+        self.dev_log_config = dev_log_config
+        self._file_timings = {}  # Track per-file read times
 
         # Dynamic batching parameters
         self.use_dynamic_batching = use_dynamic_batching
@@ -861,7 +874,7 @@ class StreamingDataset(IterableDataset):
             self.prefetcher = AsyncFilePrefetcher(**self._prefetcher_config)
 
         # Rediscover files in worker if needed
-        if not files and worker_info is not None:
+        if not files and num_workers > 1:
             files = self._find_data_files()
             if should_print:
                 print(f"  🔄 [Worker {worker_id}] Rediscovered {len(files)} files in worker process")
@@ -983,6 +996,15 @@ class StreamingDataset(IterableDataset):
                     file_read_times[idx].append(read_time)
                     if len(file_read_times[idx]) > DATA_CONSTANTS.ADAPTIVE_READ_TIME_HISTORY_SIZE:
                         file_read_times[idx].pop(0)
+
+                    # DEV LOG: Track per-file timing for bottleneck detection
+                    if self.dev_log_config and getattr(self.dev_log_config, 'enabled', False):
+                        file_name = file_path.name
+                        total_read_time = time.time() - read_start
+                        if file_name not in self._file_timings:
+                            self._file_timings[file_name] = {'total_time': 0.0, 'sample_count': 0}
+                        self._file_timings[file_name]['total_time'] += total_read_time
+                        self._file_timings[file_name]['sample_count'] += samples_read
 
             # Restart if all files exhausted
             if len(exhausted_files) == len(file_generators):
@@ -1326,7 +1348,9 @@ class StreamingDataset(IterableDataset):
         # Uses queue for pipelining: GPU processes batch N while CPU tokenizes batch N+1
         tokenization_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix=f"tokenizer_w{worker_id}")
         from queue import Queue, Empty
-        tokenization_queue = Queue(maxsize=4)  # GPU UTIL OPTIMIZATION: Quadruple-buffering (was 2)
+        # SPEED OPTIMIZATION: Optimized queue size (4×num_workers for balance)
+        # Larger queue = more memory, smaller queue = potential stalls
+        tokenization_queue = Queue(maxsize=16)  # OPTIMIZED: Balanced for 4 workers × 4 prefetch (was 48, saves ~200MB RAM)
         pending_tokenization = None  # Future for async tokenization
 
         # OPTIMIZATION: Fast startup - start yielding after initial_fill_size samples
@@ -1471,6 +1495,17 @@ class StreamingDataset(IterableDataset):
                             print(f"   • Throughput: {throughput:.1f} samples/sec")
                             print(f"   • Shuffle: {profiling_stats['shuffle_time']*1000:.1f}ms ({profiling_stats['shuffle_time']/total_time*100:.1f}%)")
                             print(f"   • Tokenization: {profiling_stats['tokenization_time']*1000:.1f}ms ({profiling_stats['tokenization_time']/total_time*100:.1f}%)")
+
+                            # DEV LOG: Show per-file timing if enabled
+                            if self.dev_log_config and getattr(self.dev_log_config, 'enabled', False) and getattr(self.dev_log_config, 'show_file_timings', True):
+                                if self._file_timings:
+                                    print(f"   📁 File Read Timings:")
+                                    # Sort by total time (slowest first)
+                                    sorted_files = sorted(self._file_timings.items(), key=lambda x: x[1]['total_time'], reverse=True)
+                                    for file_name, stats in sorted_files[:5]:  # Show top 5 slowest files
+                                        avg_time_per_sample = (stats['total_time'] / stats['sample_count'] * 1000) if stats['sample_count'] > 0 else 0
+                                        print(f"      • {file_name}: {stats['total_time']*1000:.1f}ms total ({avg_time_per_sample:.2f}ms/sample, {stats['sample_count']} samples)")
+
                         profiling_stats['shuffle_time'] = 0.0
                         profiling_stats['tokenization_time'] = 0.0
                         profiling_stats['last_report_time'] = time.time()
@@ -1724,6 +1759,7 @@ def create_streaming_dataloaders(
     use_dynamic_batching: bool = False,  # OPTIMIZATION: Enable dynamic token-based batching for 10-15% less padding
     max_tokens_per_batch: Optional[int] = None,  # Max tokens per batch for dynamic batching
     dataset_name: Optional[str] = None,  # FIXED: Optional dataset name to filter to a single file
+    dev_log_config: Optional[Any] = None,  # DEV LOG: Config for development logging
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create optimized streaming train and validation dataloaders.
@@ -1834,6 +1870,8 @@ def create_streaming_dataloaders(
         'max_tokens_per_batch': max_tokens_per_batch,
         # FIXED: Dataset name filtering
         'dataset_name': dataset_name,
+        # DEV LOG: Development logging config
+        'dev_log_config': dev_log_config,
     }
 
     # Training dataset
@@ -1891,6 +1929,7 @@ def create_streaming_dataloaders(
         'prefetch_factor': prefetch_factor if num_workers > 0 else None,
         'persistent_workers': persistent_workers if num_workers > 0 else False,
         'multiprocessing_context': 'spawn' if num_workers > 0 else None,  # PHASE 1.1: Prevents CUDA initialization bugs
+        'timeout': 120 if num_workers > 0 else 0,  # OPTIMIZATION: 2-minute timeout prevents hanging on corrupted data
         'collate_fn': None  # Will be set per dataset below
     }
 

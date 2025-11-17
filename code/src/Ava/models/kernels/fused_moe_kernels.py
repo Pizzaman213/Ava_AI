@@ -20,17 +20,64 @@ Usage:
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING, Any, Optional
 
 # Try to import Triton
+TRITON_AVAILABLE = False
+
 try:
-    import triton
-    import triton.language as tl
+    import triton  # type: ignore
+    import triton.language as tl  # type: ignore
     TRITON_AVAILABLE = True
 except ImportError:
-    TRITON_AVAILABLE = False
+    triton = None  # type: ignore
+    tl = None  # type: ignore
     print("⚠️  Triton not available. Using fallback implementations.")
     print("   Install with: pip install triton")
+
+# For type checking, create mock when triton is not available
+if TYPE_CHECKING:
+    # For type checking when triton is not available, create mock
+    class MockTritonLanguage:
+        constexpr: Any
+        @staticmethod
+        def program_id(*args: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def arange(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def load(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def max(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def sum(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def store(*args: Any, **kwargs: Any) -> None: ...  # type: ignore
+        @staticmethod
+        def next_power_of_2(*args: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def exp(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def argmax(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def where(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def zeros(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def cdiv(*args: Any) -> Any: ...  # type: ignore
+        float32: Any
+
+    class MockTriton:
+        @staticmethod
+        def jit(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def next_power_of_2(*args: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def cdiv(*args: Any) -> Any: ...  # type: ignore
+        language: MockTritonLanguage
+
+    if not TRITON_AVAILABLE:
+        tl = MockTritonLanguage()  # type: ignore
+        triton = MockTriton()  # type: ignore
 
 
 if TRITON_AVAILABLE:
@@ -178,7 +225,7 @@ def fused_router(
 def fused_expert_combine(
     expert_outputs: torch.Tensor,
     routing_weights: torch.Tensor,
-    expert_indices: torch.Tensor = None
+    expert_indices: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
     """
     Fused expert combination using Triton kernel.
@@ -252,6 +299,7 @@ def _fallback_expert_combine(
 
 
 # Grouped GEMM for parallel expert computation
+@torch.compiler.disable()  # Disable compile to avoid autocast+indexing issues
 def grouped_expert_forward(
     hidden_states: torch.Tensor,
     expert_weights: torch.Tensor,
@@ -269,6 +317,9 @@ def grouped_expert_forward(
 
     Returns:
         Combined expert outputs [num_tokens, hidden_size]
+
+    Note: torch.compile disabled to avoid 'Unexpected floating ScalarType in
+    at::autocast::prioritize' error with advanced indexing in backward pass.
     """
     num_tokens, hidden_size = hidden_states.shape
     num_tokens, k = expert_indices.shape

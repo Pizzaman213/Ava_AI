@@ -28,7 +28,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Try to import bitsandbytes
+# Try to import bitsandbytes - initialize to None if import fails
+bnb: Optional[Any] = None
+BNB_AVAILABLE = False
+
 try:
     import bitsandbytes as bnb
     BNB_AVAILABLE = True
@@ -79,8 +82,8 @@ class AdamW8bit(Optimizer):
         if not BNB_AVAILABLE:
             # Fallback to regular AdamW
             logger.warning("Using standard AdamW (bitsandbytes not available)")
-            from torch.optim import AdamW
-            self.optimizer = AdamW(
+            from torch.optim import AdamW as TorchAdamW
+            self.optimizer = TorchAdamW(
                 params, lr=lr, betas=betas, eps=eps,
                 weight_decay=weight_decay, amsgrad=amsgrad
             )
@@ -88,6 +91,7 @@ class AdamW8bit(Optimizer):
         else:
             # Use 8-bit AdamW
             # Note: Some versions of bitsandbytes don't support optim_bits parameter
+            assert bnb is not None, "bitsandbytes should be available"
             try:
                 self.optimizer = bnb.optim.AdamW8bit(
                     params,
@@ -106,6 +110,7 @@ class AdamW8bit(Optimizer):
                 # Fallback for older bitsandbytes versions
                 logger.warning(f"8-bit mode not supported in this bitsandbytes version: {e}")
                 logger.warning("Using bitsandbytes AdamW without explicit 8-bit flag")
+                assert bnb is not None, "bitsandbytes should be available"
                 self.optimizer = bnb.optim.AdamW(
                     params,
                     lr=lr,
@@ -130,26 +135,34 @@ class AdamW8bit(Optimizer):
             )
             super().__init__(params, defaults)
 
-    def step(self, closure=None):
+    def step(self, closure=None) -> Optional[float]:  # type: ignore[override]
         """Perform optimization step."""
         return self.optimizer.step(closure)
 
-    def zero_grad(self, set_to_none: bool = False):
+    def zero_grad(self, set_to_none: bool = False) -> None:
         """Zero gradients."""
         return self.optimizer.zero_grad(set_to_none=set_to_none)
 
-    def state_dict(self):
+    def state_dict(self) -> Dict[str, Any]:
         """Return optimizer state."""
         return self.optimizer.state_dict()
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         """Load optimizer state."""
         return self.optimizer.load_state_dict(state_dict)
 
-    @property
-    def param_groups(self):
-        """Get parameter groups."""
-        return self.optimizer.param_groups
+    def __getattribute__(self, name: str) -> Any:
+        """Forward param_groups to inner optimizer."""
+        if name == 'param_groups':
+            return object.__getattribute__(self, 'optimizer').param_groups
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward param_groups to inner optimizer."""
+        if name == 'param_groups' and hasattr(self, 'optimizer'):
+            self.optimizer.param_groups = value
+        else:
+            object.__setattr__(self, name, value)
 
 
 class Lion8bit(Optimizer):
@@ -191,7 +204,7 @@ class Lion8bit(Optimizer):
             # Fallback to regular Lion if available
             logger.warning("Using standard Lion (bitsandbytes not available)")
             try:
-                from ..advanced import LionOptimizer
+                from .advanced import LionOptimizer
                 self.optimizer = LionOptimizer(
                     params, lr=lr, betas=betas, weight_decay=weight_decay
                 )
@@ -204,6 +217,7 @@ class Lion8bit(Optimizer):
         else:
             # Use 8-bit Lion with ALL quantization parameters
             # CRITICAL FIX: Pass min_8bit_size, percentile_clipping, block_wise, is_paged
+            assert bnb is not None, "bitsandbytes should be available"
             self.optimizer = bnb.optim.Lion8bit(
                 params,
                 lr=lr,
@@ -230,26 +244,34 @@ class Lion8bit(Optimizer):
             defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
             super().__init__(params, defaults)
 
-    def step(self, closure=None):
+    def step(self, closure=None) -> Optional[float]:  # type: ignore[override]
         """Perform optimization step."""
         return self.optimizer.step(closure)
 
-    def zero_grad(self, set_to_none: bool = False):
+    def zero_grad(self, set_to_none: bool = False) -> None:
         """Zero gradients."""
         return self.optimizer.zero_grad(set_to_none=set_to_none)
 
-    def state_dict(self):
+    def state_dict(self) -> Dict[str, Any]:
         """Return optimizer state."""
         return self.optimizer.state_dict()
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         """Load optimizer state."""
         return self.optimizer.load_state_dict(state_dict)
 
-    @property
-    def param_groups(self):
-        """Get parameter groups."""
-        return self.optimizer.param_groups
+    def __getattribute__(self, name: str) -> Any:
+        """Forward param_groups to inner optimizer."""
+        if name == 'param_groups':
+            return object.__getattribute__(self, 'optimizer').param_groups
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward param_groups to inner optimizer."""
+        if name == 'param_groups' and hasattr(self, 'optimizer'):
+            self.optimizer.param_groups = value
+        else:
+            object.__setattr__(self, name, value)
 
 
 class AdamW32bit(Optimizer):
@@ -270,14 +292,15 @@ class AdamW32bit(Optimizer):
     ):
         """Initialize standard 32-bit AdamW."""
         if BNB_AVAILABLE:
+            assert bnb is not None, "bitsandbytes should be available"
             self.optimizer = bnb.optim.AdamW(
                 params, lr=lr, betas=betas, eps=eps,
                 weight_decay=weight_decay, amsgrad=amsgrad,
                 optim_bits=32
             )
         else:
-            from torch.optim import AdamW
-            self.optimizer = AdamW(
+            from torch.optim import AdamW as TorchAdamW
+            self.optimizer = TorchAdamW(
                 params, lr=lr, betas=betas, eps=eps,
                 weight_decay=weight_decay, amsgrad=amsgrad
             )
@@ -285,21 +308,30 @@ class AdamW32bit(Optimizer):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
         super().__init__(params if not BNB_AVAILABLE else [], defaults)
 
-    def step(self, closure=None):
+    def step(self, closure=None) -> Optional[float]:  # type: ignore[override]
         return self.optimizer.step(closure)
 
-    def zero_grad(self, set_to_none: bool = False):
+    def zero_grad(self, set_to_none: bool = False) -> None:
         return self.optimizer.zero_grad(set_to_none=set_to_none)
 
-    def state_dict(self):
+    def state_dict(self) -> Dict[str, Any]:
         return self.optimizer.state_dict()
 
-    def load_state_dict(self, state_dict):
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
         return self.optimizer.load_state_dict(state_dict)
 
-    @property
-    def param_groups(self):
-        return self.optimizer.param_groups
+    def __getattribute__(self, name: str) -> Any:
+        """Forward param_groups to inner optimizer."""
+        if name == 'param_groups':
+            return object.__getattribute__(self, 'optimizer').param_groups
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward param_groups to inner optimizer."""
+        if name == 'param_groups' and hasattr(self, 'optimizer'):
+            self.optimizer.param_groups = value
+        else:
+            object.__setattr__(self, name, value)
 
 
 def create_8bit_optimizer(
@@ -396,7 +428,7 @@ def estimate_memory_savings(model: torch.nn.Module, optimizer_name: str) -> Dict
     }
 
 
-def print_memory_comparison(model: torch.nn.Module):
+def print_memory_comparison(model: torch.nn.Module) -> None:
     """
     Print memory comparison table for different optimizers.
 
@@ -404,6 +436,7 @@ def print_memory_comparison(model: torch.nn.Module):
         model: PyTorch model
     """
     optimizers = ['adamw32bit', 'adamw8bit', 'lion32bit', 'lion8bit']
+    stats: Optional[Dict[str, float]] = None
 
     print("\n" + "="*70)
     print("Optimizer Memory Comparison")
@@ -419,7 +452,8 @@ def print_memory_comparison(model: torch.nn.Module):
         print(f"{opt_name:<20} {memory_gb:>10.2f} GB   {savings:>10.1f}%")
 
     print("="*70)
-    print(f"\nTotal parameters: {stats['param_count']:,}")
+    if stats is not None:
+        print(f"\nTotal parameters: {stats['param_count']:,}")
     print(f"\n💡 Recommendation: Use 'adamw8bit' for 75% memory savings")
     print(f"   or 'lion8bit' for 87.5% memory savings with minimal quality impact.\n")
 

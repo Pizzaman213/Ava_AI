@@ -44,18 +44,17 @@ class DynamicConfig:
 
     def __getattr__(self, name: str) -> Any:
         """
-        Allow accessing any attribute dynamically with safe fallback.
+        Allow accessing any attribute dynamically with better error handling.
 
-        Returns None for missing optional attributes instead of raising.
-        Private attributes (starting with _) still raise AttributeError.
+        Raises AttributeError for truly missing attributes instead of silently
+        returning None, making bugs in config access more obvious.
         """
-        # Private attributes should still raise
-        if name.startswith('_'):
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-        # Return None for missing optional attributes (safe fallback)
-        # This allows code like: if config.optional_feature: ...
-        return None
+        # This is called when an attribute is not found normally
+        # Provide a clear error message about the missing attribute
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'. "
+            f"Please check your configuration YAML or ensure the attribute is set."
+        )
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Allow setting any attribute dynamically."""
@@ -171,6 +170,7 @@ class ModelConfig:
     use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
     use_triton_kernels: bool = True           # Use Triton fused kernels
     use_torch_compile: bool = False           # Enable torch.compile
+    enable_cudagraphs_safe_routing: bool = False  # Enable CUDA graphs safe routing (20-30% speedup)
     use_flash_attention: bool = True          # Use flash attention
     gradient_checkpointing: bool = True       # Enable gradient checkpointing
     use_optimized_moe: bool = True            # Use optimized MoE implementation
@@ -198,6 +198,11 @@ class ModelConfig:
     dropout: float = 0.0
     layer_norm_eps: float = 1e-5
     initializer_range: float = 0.01
+
+    # Positional encoding
+    use_alibi: bool = False                   # Use ALiBi positional encoding instead of absolute
+    rope_theta: float = 10000.0               # RoPE base theta for rotary positional embeddings
+    rope_scaling: Optional[Dict[str, float]] = None  # RoPE scaling configuration
 
 
 @dataclass
@@ -460,6 +465,28 @@ class DataConfig:
     dataloader_drop_last: bool = False        # Drop last incomplete batch
     dataloader_pin_memory: bool = False       # Pin memory for faster GPU transfer
     default_tokenizer_name: str = 'Qwen/Qwen2.5-0.5B'  # Default tokenizer if none specified
+
+    # SPEED OPTIMIZATION: Sequence packing for 20-35% speedup
+    use_sequence_packing: bool = False        # Enable sequence packing (20-35% speedup)
+    packing_strategy: str = 'greedy'          # Packing strategy: 'greedy' or 'adaptive'
+    use_dynamic_batching: bool = False        # Enable dynamic batching
+    max_tokens_per_batch: Optional[int] = None  # Max tokens per batch
+
+    # Dataset splits and validation
+    train_split: str = 'train'                # Training split name
+    eval_split: str = 'validation'            # Evaluation split name
+    auto_create_validation_split: bool = True # Auto-create validation split
+    validation_split_ratio: float = 0.1       # Validation split ratio
+    val_split_ratio: float = 0.1              # Alias for validation_split_ratio
+    val_max_samples: Optional[int] = None     # Max validation samples
+
+    # Additional dataloader settings
+    dataloader_persistent_workers: bool = False  # Persistent workers
+    dataloader_samples_per_file: int = 64     # Samples per file rotation
+    samples_per_file: int = 64                # Alias for dataloader_samples_per_file
+    use_streaming_tokenization: bool = False  # Use streaming tokenization
+    enable_bucketing: bool = True             # Enable sequence bucketing
+    dataset_name: Optional[str] = None        # Dataset name
 
 
 @dataclass
@@ -739,8 +766,18 @@ class LoggingConfig:
 
 
 @dataclass
-class ModelConfig:
-    """Configuration for model architecture parameters."""
+class DevLogConfig:
+    """Configuration for development logging to identify performance bottlenecks."""
+    enabled: bool = False                     # Enable dev logging
+    show_file_timings: bool = True            # Show timing for each file read
+    show_batch_timings: bool = True           # Show timing for each batch operation
+    show_step_breakdown: bool = True          # Show breakdown of step components
+    report_interval: int = 100                # Log timing every N steps
+
+
+@dataclass
+class BasicModelConfig:
+    """Configuration for model architecture parameters (basic version for legacy compatibility)."""
     vocab_size: int = 32000                   # Vocabulary size
     hidden_size: int = 4096                   # Hidden dimension
     num_experts: Optional[int] = None         # Number of experts for MoE
@@ -768,9 +805,10 @@ class EnhancedTrainingConfig:
     moe_memory_optimization: MoEMemoryOptimizationConfig = field(default_factory=MoEMemoryOptimizationConfig)
     lr_finder: LRFinderConfig = field(default_factory=LRFinderConfig)
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
+    model: BasicModelConfig = field(default_factory=BasicModelConfig)
     adaptive_mtp: AdaptiveMTPConfig = field(default_factory=AdaptiveMTPConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    dev_log: DevLogConfig = field(default_factory=DevLogConfig)
 
     # Enhanced features (supports both losses and enhanced_features.losses paths)
     enhanced_features: Optional[Dict[str, Any]] = None  # type: ignore[assignment]
@@ -1029,13 +1067,25 @@ Examples:
         if args.enable_all_features:
             self._enable_all_features(args)
 
-        # Load YAML to extract hardware config
+        # Load YAML to extract hardware config and dev_log config
         yaml_config = self.load_yaml_config(args.config)
-        hardware_dict = yaml_config.to_dict().get('hardware', {})
+        yaml_dict = yaml_config.to_dict()
+
+        hardware_dict = yaml_dict.get('hardware', {})
         hardware_config = HardwareConfig(
             device=hardware_dict.get('device', 'cuda'),
             mixed_precision=hardware_dict.get('mixed_precision', 'fp32'),
             compile=hardware_dict.get('compile', False)
+        )
+
+        # Load dev_log config from YAML
+        dev_log_dict = yaml_dict.get('dev_log', {})
+        dev_log_config = DevLogConfig(
+            enabled=dev_log_dict.get('enabled', False),
+            show_file_timings=dev_log_dict.get('show_file_timings', True),
+            show_batch_timings=dev_log_dict.get('show_batch_timings', True),
+            show_step_breakdown=dev_log_dict.get('show_step_breakdown', True),
+            report_interval=dev_log_dict.get('report_interval', 100)
         )
 
         # Create structured config
@@ -1144,7 +1194,10 @@ Examples:
                 cpu_checkpointing=args.cpu_checkpointing,
                 pipeline_parallel_size=args.pipeline_parallel_size,
                 wall_clock_breakdown=args.wall_clock_breakdown
-            )
+            ),
+
+            # Development logging config loaded from YAML
+            dev_log=dev_log_config
         )
 
         self.config = config

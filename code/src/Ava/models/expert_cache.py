@@ -169,6 +169,7 @@ class ExpertCache:
                 self.cache.move_to_end(cached_hash)
                 self.hits += 1
                 self.cumulative_similarity += similarity
+                assert best_output is not None, "best_output should not be None if similarity threshold is met"
                 return best_output.clone()
 
         # No sufficiently similar match found

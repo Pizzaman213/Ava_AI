@@ -811,7 +811,7 @@ class GPULoadBalancer:
         for prev_expert in self.recent_expert_batch[-10:]:  # Last 10 experts
             if prev_expert != expert_id:
                 key = tuple(sorted([prev_expert, expert_id]))
-                self.expert_cooccurrence[key] += 1
+                self.expert_cooccurrence[key] += 1  # type: ignore[index]
 
                 # Update placement co-access tracking
                 if expert_id in self.expert_placements:
@@ -894,7 +894,7 @@ class GPULoadBalancer:
 
         # Convert to 0-1 score (1 = perfect balance)
         balance_score = max(0.0, 1.0 - cv)
-        return balance_score
+        return float(balance_score)
 
     def pin_expert(self, expert_id: int):
         """Pin an expert to its current GPU (prevent migration)."""

@@ -104,12 +104,12 @@ class CUDAStreamManager:
 
     def synchronize_transfer(self):
         """Wait for all pending transfers to complete."""
-        if self.is_cuda:
+        if self.is_cuda and self.transfer_stream is not None:
             self.transfer_stream.synchronize()
 
     def synchronize_compute(self):
         """Wait for all pending compute operations to complete."""
-        if self.is_cuda:
+        if self.is_cuda and self.compute_stream is not None:
             self.compute_stream.synchronize()
 
     def wait_for_transfers(self):

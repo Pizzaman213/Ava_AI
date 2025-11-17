@@ -14,7 +14,6 @@ Features:
 - Routing entropy tracking
 - Expert utilization metrics
 - torch.compile optimization
-- Cached routing assignments
 """
 
 import torch
@@ -22,7 +21,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Tuple, Optional, Any
 import math
-from collections import OrderedDict
 
 # TIER 3 OPTIMIZATION: Import Triton fused routing kernels
 try:
@@ -30,57 +28,6 @@ try:
 except ImportError:
     TRITON_AVAILABLE = False
     fused_gating_topk = None
-
-
-class RoutingCache:
-    """
-    DISABLED: Router cache causes GPU→CPU synchronization overhead and breaks torch.compile.
-
-    The cache was causing:
-    - 2-4% overhead from .item() GPU→CPU sync calls
-    - Graph breaks in torch.compile due to OrderedDict operations
-    - Minimal benefit during training (<5% hit rate)
-
-    Cache is now permanently disabled. For inference optimization, use torch.compile
-    with CUDA graphs instead, which provides 20-30% speedup without sync overhead.
-    """
-
-    def __init__(self, max_size: int = 1024, enabled: bool = False):  # DISABLED by default
-        self.cache: OrderedDict[int, Tuple[torch.Tensor, torch.Tensor]] = OrderedDict()
-        self.max_size = max_size
-        # CRITICAL FIX: Permanently disable cache to eliminate GPU→CPU sync overhead
-        self.enabled = False  # Force disabled regardless of parameter
-        self.hits = 0
-        self.misses = 0
-
-    def _hash_tensor(self, tensor: torch.Tensor) -> int:
-        """Disabled - cache is not used to avoid GPU→CPU synchronization overhead."""
-        return 0  # Cache disabled, return dummy hash
-
-    def get(self, hidden_states: torch.Tensor) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
-        """Cache disabled - always returns None."""
-        return None  # Cache permanently disabled
-
-    def put(self, hidden_states: torch.Tensor, indices: torch.Tensor, weights: torch.Tensor):
-        """Cache disabled - no-op."""
-        return  # Cache permanently disabled
-
-    def clear(self):
-        """Clear cache (call periodically to avoid stale entries)."""
-        self.cache.clear()
-        self.hits = 0
-        self.misses = 0
-
-    def get_stats(self) -> Dict[str, float]:
-        """Get cache statistics."""
-        total = self.hits + self.misses
-        hit_rate = self.hits / total if total > 0 else 0.0
-        return {
-            "hit_rate": hit_rate,
-            "hits": self.hits,
-            "misses": self.misses,
-            "size": len(self.cache),
-        }
 
 
 class UnifiedMoERouter(nn.Module):

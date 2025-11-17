@@ -26,7 +26,11 @@ try:
 except (ImportError, AttributeError) as e:
     DISTRIBUTED_AVAILABLE = False
     # Create mock objects to prevent import errors
+    class MockGroup:
+        WORLD = None
+
     class MockDist:
+        group = MockGroup()
         @staticmethod
         def is_available(): return False
         @staticmethod
@@ -209,7 +213,7 @@ class DistributedManager:
 
         # Initialize with timeout
         try:
-            dist.init_process_group(
+            dist.init_process_group(  # type: ignore[attr-defined]
                 backend=self.config.backend,
                 rank=self.rank,
                 world_size=self.world_size,
@@ -218,7 +222,7 @@ class DistributedManager:
                 init_method=self.config.init_method
             )
 
-            self.process_group = dist.group.WORLD
+            self.process_group = dist.group.WORLD  # type: ignore[attr-defined]
             logger.info("Process group initialized successfully")
 
         except Exception as e:
@@ -227,21 +231,21 @@ class DistributedManager:
             if self.config.backend == 'nccl':
                 logger.info("Trying fallback to gloo backend...")
                 self.config.backend = 'gloo'
-                dist.init_process_group(
+                dist.init_process_group(  # type: ignore[attr-defined]
                     backend='gloo',
                     rank=self.rank,
                     world_size=self.world_size,
                     timeout=timedelta(seconds=self.config.timeout_seconds)
                 )
-                self.process_group = dist.group.WORLD
+                self.process_group = dist.group.WORLD  # type: ignore[attr-defined]
                 logger.warning("Fallback to gloo backend successful")
             else:
                 raise
 
     def _validate_existing_process_group(self):
         """Validate existing process group configuration."""
-        current_rank = dist.get_rank()
-        current_world_size = dist.get_world_size()
+        current_rank = dist.get_rank()  # type: ignore[attr-defined]
+        current_world_size = dist.get_world_size()  # type: ignore[attr-defined]
 
         if current_rank != self.rank:
             logger.warning(f"Rank mismatch: expected {self.rank}, got {current_rank}")
@@ -254,13 +258,14 @@ class DistributedManager:
         self.process_group = dist.group.WORLD
         logger.info("Existing process group validated")
 
-    def barrier(self, name: str = "unnamed", timeout: Optional[int] = None) -> bool:
+    def barrier(self, name: str = "unnamed", timeout: Optional[int] = None, max_retries: int = 3) -> bool:
         """
-        Synchronize all ranks with proper error handling.
+        Synchronize all ranks with proper error handling and exponential backoff retry.
 
         Args:
             name: Barrier name for logging
             timeout: Timeout in seconds (uses config default if None)
+            max_retries: Maximum number of retry attempts with exponential backoff
 
         Returns:
             True if barrier successful, False otherwise
@@ -271,28 +276,39 @@ class DistributedManager:
         timeout = timeout or self.config.barrier_timeout
 
         with self._barrier_lock:
-            try:
-                logger.debug(f"🔄 Barrier '{name}' starting (rank {self.rank})")
-                start_time = time.time()
+            for attempt in range(max_retries):
+                try:
+                    logger.debug(f"🔄 Barrier '{name}' starting (rank {self.rank}, attempt {attempt + 1}/{max_retries})")
+                    start_time = time.time()
 
-                # Use timeout-aware barrier
-                dist.barrier(group=self.process_group, async_op=False)
+                    # Use timeout-aware barrier
+                    dist.barrier(group=self.process_group, async_op=False)  # type: ignore[attr-defined]
 
-                elapsed = time.time() - start_time
-                logger.debug(f"✅ Barrier '{name}' completed in {elapsed:.2f}s")
-                return True
+                    elapsed = time.time() - start_time
+                    logger.debug(f"✅ Barrier '{name}' completed in {elapsed:.2f}s")
+                    return True
 
-            except Exception as e:
-                logger.error(f"❌ Barrier '{name}' failed: {e}")
-                self.state = DistributedState.DEGRADED
-                return False
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        # Final attempt failed
+                        logger.error(f"❌ Barrier '{name}' failed after {max_retries} attempts: {e}")
+                        self.state = DistributedState.DEGRADED
+                        return False
+                    else:
+                        # Retry with exponential backoff
+                        wait_time = 2 ** attempt  # 1s, 2s, 4s
+                        logger.warning(
+                            f"⚠️ Barrier '{name}' attempt {attempt + 1} failed: {e}. "
+                            f"Retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})"
+                        )
+                        time.sleep(wait_time)
 
     def all_reduce(
         self,
         tensor: torch.Tensor,
-        op: dist.ReduceOp = dist.ReduceOp.SUM,  # type: ignore[assignment]
+        op: "dist.ReduceOp" = dist.ReduceOp.SUM,  # type: ignore[assignment,attr-defined]
         async_op: bool = False
-    ) -> Union[torch.Tensor, dist.Work]:
+    ) -> Union[torch.Tensor, "dist.Work"]:  # type: ignore[name-defined]
         """
         All-reduce operation with error handling.
 
@@ -321,7 +337,7 @@ class DistributedManager:
         tensor: torch.Tensor,
         src: int,
         async_op: bool = False
-    ) -> Union[torch.Tensor, dist.Work]:
+    ) -> Union[torch.Tensor, "dist.Work"]:  # type: ignore[name-defined]
         """
         Broadcast operation with error handling.
 
@@ -369,7 +385,7 @@ class DistributedManager:
             if self.rank == dst and gather_list is None:
                 gather_list = [torch.zeros_like(tensor) for _ in range(self.world_size)]
 
-            dist.gather(tensor, gather_list, dst=dst, group=self.process_group)
+            dist.gather(tensor, gather_list, dst=dst, group=self.process_group)  # type: ignore[attr-defined]
             return gather_list if self.rank == dst else None
 
         except Exception as e:
@@ -399,7 +415,7 @@ class DistributedManager:
             if tensor_list is None:
                 tensor_list = [torch.zeros_like(tensor) for _ in range(self.world_size)]
 
-            dist.all_gather(tensor_list, tensor, group=self.process_group)
+            dist.all_gather(tensor_list, tensor, group=self.process_group)  # type: ignore[attr-defined]
             return tensor_list
 
         except Exception as e:
@@ -431,7 +447,7 @@ class DistributedManager:
                 logger.critical(f"OOM info: {oom_info}")
 
             # Use all_reduce to let all ranks know if ANY rank has OOM
-            oom_signal = self.all_reduce(oom_signal, op=dist.ReduceOp.MAX)  # type: ignore[arg-type]
+            oom_signal = self.all_reduce(oom_signal, op=dist.ReduceOp.MAX)  # type: ignore[arg-type,attr-defined]
 
             has_collective_oom = oom_signal.item() > 0.5 if hasattr(oom_signal, 'item') else float(oom_signal) > 0.5  # type: ignore[attr-defined]
 
@@ -855,7 +871,7 @@ class DistributedManager:
             )
 
             # Perform all-reduce as health check
-            dist.all_reduce(health_tensor, op=dist.ReduceOp.SUM, group=self.process_group)
+            dist.all_reduce(health_tensor, op=dist.ReduceOp.SUM, group=self.process_group)  # type: ignore[attr-defined]
 
             self.last_health_check = time.time()
 
@@ -919,7 +935,7 @@ class DistributedManager:
                     logger.info("Synchronizing ranks before cleanup...")
                     try:
                         # Short timeout for cleanup barrier
-                        dist.barrier(group=self.process_group, async_op=False)
+                        dist.barrier(group=self.process_group, async_op=False)  # type: ignore[attr-defined]
                         logger.info("Cleanup barrier completed")
                     except Exception as e:
                         logger.warning(f"Cleanup barrier failed: {e}")
@@ -928,7 +944,7 @@ class DistributedManager:
                 if self.is_initialized():
                     logger.info("Destroying process group...")
                     try:
-                        dist.destroy_process_group()
+                        dist.destroy_process_group()  # type: ignore[attr-defined]
                         logger.info("Process group destroyed")
                     except Exception as e:
                         logger.error(f"Failed to destroy process group: {e}")
@@ -1013,14 +1029,14 @@ def is_distributed() -> bool:
 def get_rank() -> int:
     """Get current rank (0 if not distributed)."""
     if dist.is_available() and dist.is_initialized():
-        return dist.get_rank()
+        return dist.get_rank()  # type: ignore[attr-defined]
     return int(os.environ.get('RANK', 0))
 
 
 def get_world_size() -> int:
     """Get world size (1 if not distributed)."""
     if dist.is_available() and dist.is_initialized():
-        return dist.get_world_size()
+        return dist.get_world_size()  # type: ignore[attr-defined]
     return int(os.environ.get('WORLD_SIZE', 1))
 
 

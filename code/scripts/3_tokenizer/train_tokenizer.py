@@ -20,17 +20,17 @@ from tokenizers import Tokenizer, models, pre_tokenizers, decoders, trainers, pr
 from transformers import PreTrainedTokenizerFast
 import multiprocessing as mp
 from functools import partial
-from typing import List, Iterator, Dict
+from typing import List, Iterator, Dict, Optional
 import mmap
 
 # Try to use fastest JSON library available
 try:
-    import orjson as json
+    import orjson as json  # type: ignore
     JSON_LOADS = lambda x: json.loads(x)
     JSON_LIB = "orjson"
 except ImportError:
     try:
-        import ujson as json
+        import ujson as json  # type: ignore
         JSON_LOADS = json.loads
         JSON_LIB = "ujson"
     except ImportError:
@@ -39,10 +39,11 @@ except ImportError:
         JSON_LIB = "stdlib json"
 
 try:
-    from tqdm import tqdm
+    from tqdm import tqdm as tqdm_fn
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
+    tqdm_fn = None  # type: ignore
     print("Note: Install tqdm for progress bars: pip install tqdm")
 
 
@@ -98,7 +99,7 @@ def stream_file_in_chunks(file_path: Path, chunk_size: int = 50000) -> Iterator[
 def text_iterator_parallel(
     data_files: List[Path],
     file_sizes: Dict[Path, int],
-    num_workers: int = None,
+    num_workers: Optional[int] = None,
     chunk_size: int = 50000,
 ) -> Iterator[str]:
     """
@@ -125,7 +126,7 @@ def text_iterator_parallel(
     # Progress bar setup
     pbar = None
     if HAS_TQDM:
-        pbar = tqdm(total=total_size, unit='B', unit_scale=True, desc="Training tokenizer")
+        pbar = tqdm_fn(total=total_size, unit='B', unit_scale=True, desc="Training tokenizer")  # type: ignore
 
     processed_bytes = 0
 
@@ -171,7 +172,7 @@ def train_custom_tokenizer(
     output_dir: str = "/project/code/models/tokenizer/enhanced-50680",
     vocab_size: int = 50680,
     min_frequency: int = 2,
-    num_workers: int = None,
+    num_workers: Optional[int] = None,
     chunk_size: int = 50000,
 ):
     """
@@ -203,10 +204,10 @@ def train_custom_tokenizer(
     tokenizer = Tokenizer(models.BPE(unk_token="<|unk|>"))
 
     # Set pre-tokenizer (split on whitespace and punctuation)
-    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)  # type: ignore[assignment]
 
     # Set decoder
-    tokenizer.decoder = decoders.ByteLevel()
+    tokenizer.decoder = decoders.ByteLevel()  # type: ignore[assignment]
 
     # Initialize trainer with special tokens
     special_tokens = [
@@ -274,7 +275,7 @@ def train_custom_tokenizer(
     tokenizer.train_from_iterator(text_iter, trainer=trainer, length=int(total_size_mb * 1000))
 
     # Set post-processor for special token handling
-    tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)
+    tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)  # type: ignore[assignment]
 
     # Save the tokenizer
     print(f"\nSaving tokenizer to {output_dir}...")

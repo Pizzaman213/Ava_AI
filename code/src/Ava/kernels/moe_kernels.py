@@ -11,22 +11,51 @@ Note: Falls back to PyTorch implementations if Triton is not available.
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple, Optional, TYPE_CHECKING
+from typing import Tuple, Optional, TYPE_CHECKING, Any
 
 # Check if Triton is available
 try:
-    import triton
-    import triton.language as tl
+    import triton  # type: ignore
+    import triton.language as tl  # type: ignore
     TRITON_AVAILABLE = True
 except ImportError:
     TRITON_AVAILABLE = False
     triton = None  # type: ignore[assignment]
     tl = None  # type: ignore[assignment]
 
+# For type checking, create mock when triton is not available
 if TYPE_CHECKING:
-    # For type checking, assume triton is available
-    import triton
-    import triton.language as tl
+    # For type checking when triton is not available, create mock
+    class MockTritonLanguage:
+        constexpr: Any
+        @staticmethod
+        def program_id(*args: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def arange(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def load(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def max(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def sum(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def store(*args: Any, **kwargs: Any) -> None: ...  # type: ignore
+        @staticmethod
+        def next_power_of_2(*args: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def exp(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def argmax(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def where(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def zeros(*args: Any, **kwargs: Any) -> Any: ...  # type: ignore
+        @staticmethod
+        def cdiv(*args: Any) -> Any: ...  # type: ignore
+        float32: Any
+
+    if not TRITON_AVAILABLE:
+        tl = MockTritonLanguage()  # type: ignore
 
 if TRITON_AVAILABLE:
     @triton.jit  # type: ignore[misc]
@@ -90,7 +119,7 @@ if TRITON_AVAILABLE:
             # Mask out selected expert for next iteration
             probs = tl.where(tl.arange(0, BLOCK_SIZE) == max_idx, -float('inf'), probs)
 
-    @triton.jit
+    @triton.jit  # type: ignore[misc,attr-defined]
     def _load_balance_loss_kernel(
         # Pointers
         router_probs_ptr,

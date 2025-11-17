@@ -6,7 +6,7 @@ maintainability and configurability.
 """
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -21,7 +21,7 @@ class DataPipelineConstants:
     MAX_BUCKET_SIZE: int = 200  # Increased from 100 for 5-10% speedup
     MIN_BUCKET_SIZE: int = 8
     MAX_TOKENS_PER_BATCH: int = 8192
-    BUCKET_BOUNDARIES_DEFAULT: List[int] = None  # Will be set in __post_init__
+    BUCKET_BOUNDARIES_DEFAULT: Optional[List[int]] = None  # Will be set in __post_init__
 
     # File handling
     BUFFER_SIZE_DEFAULT: int = 10000  # Default shuffle buffer size
@@ -35,8 +35,8 @@ class DataPipelineConstants:
     MIN_TEXT_LENGTH: int = 10  # Minimum text length after stripping whitespace
 
     # Async prefetching
-    PREFETCH_MAX_WORKERS: int = 8  # ULTRA-FAST: Thread pool size for async prefetching (4→8)
-    PREFETCH_SIZE: int = 4  # ULTRA-FAST: Number of files to prefetch ahead (2→4)
+    PREFETCH_MAX_WORKERS: int = 16  # SPEED OPTIMIZATION: Increased for better concurrency (8→16)
+    PREFETCH_SIZE: int = 8  # SPEED OPTIMIZATION: Deeper prefetch queue for better pipelining (4→8)
 
     # Worker file cache
     WORKER_FILE_CACHE_MAX_SIZE: int = 50  # RAM FIX: Reduced from 200 to save ~600MB (200→50)
@@ -81,11 +81,11 @@ class DataPipelineConstants:
     ADAPTIVE_READ_TIME_HISTORY_SIZE: int = 10  # Number of read times to track for averaging
 
     # Bucket flushing
-    BUCKET_FLUSH_INTERVAL_MULTIPLIER: int = 5  # Flush buckets every (buffer_size * MULTIPLIER) samples
+    BUCKET_FLUSH_INTERVAL_MULTIPLIER: int = 2  # OPTIMIZED: Faster throughput (was 5, flushes more frequently)
     BUCKET_FLUSH_MIN_SIZE: int = 8  # Minimum bucket size for flushing at end
 
     # Collate buffer cache
-    COLLATE_BUFFER_CACHE_MAX_SIZE: int = 10  # Maximum number of buffer sizes to cache
+    COLLATE_BUFFER_CACHE_MAX_SIZE: int = 50  # OPTIMIZED: Increased for better cache hit rate with variable batches (was 10)
 
     def __post_init__(self):
         """Initialize computed constants."""
@@ -146,8 +146,9 @@ class MoEConstants:
     ROUTING_HIT_RATE_DECREASE_THRESHOLD: float = 0.95  # ULTRA-FAST: Later prefetch decrease (0.9→0.95)
 
     # Diversity loss approximation
-    DIVERSITY_LOSS_APPROX_THRESHOLD: int = 256  # ULTRA-FAST: Use approximation earlier (512→256)
-    DIVERSITY_LOSS_MAX_SAMPLE_SIZE: int = 64  # ULTRA-FAST: Smaller sample for speed (128→64)
+    DIVERSITY_LOSS_APPROX_THRESHOLD: int = 128  # SPEED OPTIMIZATION: Earlier approximation (256→128)
+    DIVERSITY_LOSS_MAX_SAMPLE_SIZE: int = 64  # SPEED OPTIMIZATION: Smaller sample for speed (128→64)
+    DIVERSITY_LOSS_COMPUTATION_FREQ: int = 10  # SPEED OPTIMIZATION: Compute every N steps (not every step)
 
     # Expert offloading
     MIN_EXPERTS_FOR_BATCHED_PROCESSING: int = 2  # ULTRA-FAST: Batch even with 2 experts (4→2)
@@ -204,8 +205,8 @@ def update_constants_from_config(config):
 
     # Update trainer constants
     trainer = None
-    if hasattr(constants_config, 'trainer') and constants_config.trainer is not None:
-        trainer = constants_config.trainer
+    if hasattr(constants_config, 'trainer') and constants_config.trainer is not None:  # type: ignore[attr-defined]
+        trainer = constants_config.trainer  # type: ignore[attr-defined]
     elif isinstance(constants_config, dict) and 'trainer' in constants_config:
         trainer = constants_config['trainer']
 
@@ -224,8 +225,8 @@ def update_constants_from_config(config):
 
     # Update MoE constants
     moe = None
-    if hasattr(constants_config, 'moe') and constants_config.moe is not None:
-        moe = constants_config.moe
+    if hasattr(constants_config, 'moe') and constants_config.moe is not None:  # type: ignore[attr-defined]
+        moe = constants_config.moe  # type: ignore[attr-defined]
     elif isinstance(constants_config, dict) and 'moe' in constants_config:
         moe = constants_config['moe']
 

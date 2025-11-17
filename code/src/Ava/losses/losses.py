@@ -24,6 +24,30 @@ from collections import Counter
 # OPTIMIZED LOSS UTILITIES
 # ============================================================================
 
+def get_epsilon_for_dtype(dtype: torch.dtype) -> float:
+    """
+    Get dtype-appropriate epsilon for numerical stability.
+
+    Uses small but safe epsilon values that prevent division by zero
+    while remaining valid for the given dtype.
+
+    Args:
+        dtype: PyTorch data type
+
+    Returns:
+        Appropriate epsilon value for the dtype
+    """
+    if dtype == torch.float32:
+        return 1e-7
+    elif dtype == torch.float16:
+        return 1e-4  # Larger epsilon for fp16 since it has less precision
+    elif dtype == torch.bfloat16:
+        return 1e-5  # Bfloat16 has decent range, use intermediate epsilon
+    else:
+        # Default for other dtypes
+        return 1e-7
+
+
 def vectorized_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, ignore_index: int = -100) -> torch.Tensor:
     """
     OPTIMIZED: Vectorized cross-entropy computation for 2-3% speedup.
@@ -332,7 +356,7 @@ class TemperatureScaledCrossEntropy(nn.Module):
                 # Create smoothed target distribution
                 # CRITICAL FIX: Use non-inplace operations to avoid breaking gradient computation with torch.compile
                 smoothed_targets = torch.zeros_like(logits_flat)
-                smoothed_targets = smoothed_targets.fill(self.label_smoothing / (vocab_size - 1))
+                smoothed_targets = smoothed_targets.fill_(self.label_smoothing / (vocab_size - 1))
                 smoothed_targets = smoothed_targets.scatter(1, targets_flat.unsqueeze(1),
                                         1.0 - self.label_smoothing)
 
@@ -606,8 +630,9 @@ class AuxiliaryFreeMoEBalancer(nn.Module):
         with torch.no_grad():
             if self.total_tokens > 0:
                 expected_count = self.total_tokens / self.num_experts
-                balance_ratio = self.expert_counts / (expected_count + 1e-6)  # type: ignore[operator]
-                cv = torch.std(balance_ratio) / (torch.mean(balance_ratio) + 1e-6)
+                eps = get_epsilon_for_dtype(gate_logits.dtype)
+                balance_ratio = self.expert_counts / (expected_count + eps)  # type: ignore[operator]
+                cv = torch.std(balance_ratio) / (torch.mean(balance_ratio) + eps)
             else:
                 balance_ratio = torch.ones(self.num_experts, device=gate_logits.device)
                 cv = torch.tensor(0.0, device=gate_logits.device)
@@ -837,7 +862,7 @@ class AdaptiveMTPLoss(nn.Module):
             with torch.no_grad():
                 # CRITICAL FIX: Use non-inplace operations to avoid breaking gradient computation with torch.compile
                 smoothed_targets = torch.zeros_like(log_probs)
-                smoothed_targets = smoothed_targets.fill(self.label_smoothing / (vocab_size - 1))
+                smoothed_targets = smoothed_targets.fill_(self.label_smoothing / (vocab_size - 1))
                 smoothed_targets = smoothed_targets.scatter(
                     1,
                     targets_flat.unsqueeze(1),
@@ -1187,7 +1212,8 @@ class NGramRepetitionPenalty(nn.Module):
         probs = F.softmax(scaled_logits, dim=-1)
 
         # Compute entropy (higher entropy = more diverse)
-        entropy = -(probs * torch.log(probs + 1e-10)).sum(dim=-1)
+        eps = get_epsilon_for_dtype(probs.dtype)
+        entropy = -(probs * torch.log(probs + eps)).sum(dim=-1)
 
         # Normalize entropy (max entropy = log(vocab_size))
         max_entropy = torch.log(torch.tensor(self.vocab_size, dtype=torch.float32))
@@ -1942,7 +1968,7 @@ class LabelSmoothingLoss(nn.Module):
         with torch.no_grad():
             # CRITICAL FIX: Use non-inplace operations to avoid breaking gradient computation with torch.compile
             true_dist = torch.zeros_like(log_probs)
-            true_dist = true_dist.fill(self.smoothing / (self.num_classes - 1))
+            true_dist = true_dist.fill_(self.smoothing / (self.num_classes - 1))
             true_dist = true_dist.scatter(1, targets.unsqueeze(1), self.confidence)
 
         return torch.mean(torch.sum(-true_dist * log_probs, dim=-1))

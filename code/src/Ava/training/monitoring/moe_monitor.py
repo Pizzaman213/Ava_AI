@@ -158,7 +158,7 @@ class MoELoadBalanceMonitor:
             expert_usage=self.cumulative_expert_usage.clone(),
             total_tokens=total_tokens,
             balance_score=balance_score,
-            coefficient_of_variation=cv,
+            coefficient_of_variation=float(cv),
             max_min_ratio=max_min_ratio,
         )
 

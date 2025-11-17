@@ -110,7 +110,11 @@
       "Bash(for i in {1..12})",
       "Bash(do sleep 10)",
       "Bash(watch:*)",
-      "Bash(else echo \"No log file\")"
+      "Bash(else echo \"No log file\")",
+      "Bash(/tmp/optimized_training.log)",
+      "Bash(top:*)",
+      "Bash(./test_conservative_config.sh:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []

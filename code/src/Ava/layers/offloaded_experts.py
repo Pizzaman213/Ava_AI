@@ -28,6 +28,9 @@ import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, List
 import time
 from collections import OrderedDict
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import centralized constants
 from ..config.constants import MOE_CONSTANTS
@@ -345,8 +348,8 @@ class CPUOffloadedExpertGroup(nn.Module):
         for expert in self.experts:
             expert.cpu()
             # GPU UTIL OPTIMIZATION: Quantize on CPU to reduce transfer size by 75%
-            if hasattr(expert, 'quantize_weights'):
-                expert.quantize_weights()
+            if hasattr(expert, 'quantize_weights') and callable(getattr(expert, 'quantize_weights', None)):
+                expert.quantize_weights()  # type: ignore
             # Only pin memory if CUDA is available (pinned memory requires CUDA)
             if pin_memory and torch.cuda.is_available():
                 for param in expert.parameters():
@@ -629,7 +632,7 @@ class CPUOffloadedExpertGroup(nn.Module):
                                         with torch.cuda.stream(self._eviction_stream):
                                             # Non-blocking CPU transfer
                                             for param in evicted_expert.parameters():
-                                                param.data = param.data.cpu(non_blocking=True)
+                                                param.data = param.data.cpu(non_blocking=True)  # type: ignore[call-arg]
                                         self._experts_on_gpu.discard(lru_expert_id)
                                 except StopIteration:
                                     pass  # Expert has no parameters
@@ -714,6 +717,8 @@ class CPUOffloadedExpertGroup(nn.Module):
             output: [num_tokens, top_k, hidden_size] or [batch, seq_len, top_k, hidden_size]
         """
         # Handle both 2D [num_tokens, k] and 3D [batch, seq_len, k] inputs
+        batch: int = 0
+        seq_len: int = 0
         if expert_indices.dim() == 2:
             # 2D case: [num_tokens, k]
             num_tokens, top_k = expert_indices.shape
