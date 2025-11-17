@@ -1241,6 +1241,13 @@ class StreamingDataset(IterableDataset):
         avg_len = sum(seq_lengths) / batch_size
         padding_ratio = 1.0 - (avg_len / max_len)
 
+        # SAFETY CHECK: Ensure max_len is reasonable to prevent OOM
+        # If any sequence is impossibly large, cap it at the model's max_position_embeddings
+        if max_len > self.max_length:
+            # Log warning and cap to model max
+            print(f"⚠️  WARNING: Sequence length {max_len} exceeds max_length {self.max_length}, capping")
+            max_len = self.max_length
+
         # ADAPTIVE PADDING: Reduce padding waste by padding to percentile instead of max
         # if distribution is skewed (e.g., one outlier)
         # This saves 10-20% memory with variable length sequences
@@ -1251,7 +1258,7 @@ class StreamingDataset(IterableDataset):
             adaptive_max_len = sorted_lengths[percentile_95_idx]
             # Use adaptive length if it saves significant memory, else stick with max
             if adaptive_max_len < max_len * 0.9:  # At least 10% savings
-                max_len = adaptive_max_len
+                max_len = min(adaptive_max_len, self.max_length)  # Also cap adaptive_max_len
 
         pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
 
