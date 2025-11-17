@@ -91,9 +91,6 @@ class UnifiedMoERouter(nn.Module):
         self.register_buffer('expert_counts', torch.zeros(num_experts))
         self.register_buffer('total_routing_calls', torch.tensor(0))
 
-        # OPTIMIZATION: Routing cache for faster repeated patterns (enabled for eval/inference)
-        self.routing_cache = RoutingCache(max_size=1024, enabled=True)  # Will be active during eval/inference
-
         # OPTIMIZATION: Metric computation sampling - only compute metrics every N steps to save 3-5%
         self.register_buffer('step_counter', torch.tensor(0))
         self.metric_sampling_freq = 100  # Compute metrics every 100 steps
