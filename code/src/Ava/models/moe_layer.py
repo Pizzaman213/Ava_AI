@@ -312,13 +312,19 @@ class SparseMoELayer(nn.Module):
         num_tokens = expert_indices.shape[0]
 
         # Create hash signatures for each token's expert selection
-        # Convert expert indices to unique fingerprints
+        # Convert expert indices to unique fingerprints using polynomial hashing
         sorted_indices, _ = expert_indices.sort(dim=-1)
-        # CRITICAL FIX: Dynamically create weights for any num_experts_per_token
-        # Old code assumed max 4 experts per token, would crash with more
         k = expert_indices.size(1)  # num_experts_per_token
-        # Use powers of 2 as weights to create unique fingerprints
-        weights = torch.tensor([2**i for i in range(k)], device=expert_indices.device, dtype=torch.float32)
+
+        # Use polynomial hashing instead of powers of 2 to avoid collisions
+        # Hash = sum(expert_id * base^i) where base is larger than num_experts
+        # This ensures different combinations always produce different hashes
+        base = self.num_experts + 1  # Base larger than max expert ID ensures uniqueness
+        weights = torch.tensor(
+            [base ** i for i in range(k)],
+            device=expert_indices.device,
+            dtype=torch.float32
+        )
         fingerprints = (sorted_indices.float() * weights).sum(dim=-1)
 
         # Count unique fingerprints (higher diversity = more unique patterns)

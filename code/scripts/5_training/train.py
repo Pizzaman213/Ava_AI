@@ -2892,6 +2892,14 @@ def evaluate_model(
         torch.cuda.empty_cache()
 
     model.eval()
+
+    # CRITICAL FIX: Reset expert counts before validation to avoid accumulating metrics
+    # across training and validation runs
+    if hasattr(model, 'moe_layer') and hasattr(model.moe_layer, 'reset_expert_counts'):
+        model.moe_layer.reset_expert_counts()
+    elif hasattr(model, 'reset_expert_counts'):
+        model.reset_expert_counts()
+
     total_loss = 0.0
     num_valid_batches = 0
     num_invalid_batches = 0
