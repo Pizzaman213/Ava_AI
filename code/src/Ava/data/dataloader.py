@@ -1237,16 +1237,29 @@ class StreamingDataset(IterableDataset):
         batch_size = len(batch)
         # Find max length and track padding statistics
         seq_lengths = [len(item['input_ids']) for item in batch]
-        max_len = max(seq_lengths)
-        avg_len = sum(seq_lengths) / batch_size
-        padding_ratio = 1.0 - (avg_len / max_len)
 
-        # SAFETY CHECK: Ensure max_len is reasonable to prevent OOM
-        # If any sequence is impossibly large, cap it at the model's max_position_embeddings
-        if max_len > self.max_length:
-            # Log warning and cap to model max
-            print(f"⚠️  WARNING: Sequence length {max_len} exceeds max_length {self.max_length}, capping")
-            max_len = self.max_length
+        # CRITICAL SAFETY CHECK: Detect and prevent catastrophic sequence lengths
+        # This catches data corruption or malformed sequences early
+        max_len = max(seq_lengths) if seq_lengths else 256
+
+        # AGGRESSIVE SANITY CHECK: No single sequence should exceed 10x the max configured length
+        # This catches bugs in tokenization that produce gigantic tensors
+        reasonable_max = min(self.max_length * 10, 8192)  # Cap to 10x max_length or 8192, whichever is smaller
+        if max_len > reasonable_max:
+            print(f"🚨 CRITICAL: Detected catastrophic sequence length {max_len}, capping to {reasonable_max}")
+            print(f"   Sequence lengths in batch: {sorted(seq_lengths)[:5]}... (showing first 5)")
+            # Cap to reasonable max
+            max_len = reasonable_max
+            # Truncate all sequences in batch
+            for item in batch:
+                if len(item['input_ids']) > reasonable_max:
+                    item['input_ids'] = item['input_ids'][:reasonable_max]
+                    item['labels'] = item['labels'][:reasonable_max]
+                    if 'attention_mask' in item:
+                        item['attention_mask'] = item['attention_mask'][:reasonable_max]
+
+        avg_len = sum(seq_lengths) / batch_size if seq_lengths else 256
+        padding_ratio = 1.0 - (avg_len / max_len) if max_len > 0 else 0
 
         # ADAPTIVE PADDING: Reduce padding waste by padding to percentile instead of max
         # if distribution is skewed (e.g., one outlier)
