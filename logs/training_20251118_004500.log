@@ -1,0 +1,36 @@
+2025-11-18 00:45:00 | INFO | ================================================================================
+2025-11-18 00:45:00 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 00:45:00 | INFO | ================================================================================
+2025-11-18 00:45:00 | INFO | Device: cuda:0
+2025-11-18 00:45:00 | INFO | Distributed: Rank 0/1
+2025-11-18 00:45:00 | INFO | Loaded config from /project/code/configs/moe/small_moe.yaml
+2025-11-18 00:45:00 | INFO | 
+📊 Training Config:
+2025-11-18 00:45:00 | INFO |    Epochs: 3
+2025-11-18 00:45:00 | INFO |    Batch size: 4
+2025-11-18 00:45:00 | INFO |    Learning rate: 2.00e-03
+2025-11-18 00:45:00 | INFO |    Gradient accumulation: 80
+2025-11-18 00:45:00 | INFO | 
+🤖 Creating model...
+2025-11-18 00:45:01 | INFO |    Parameters: 325,731,832 (325.7M)
+2025-11-18 00:45:01 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 00:45:01 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 00:45:01 | INFO | 
+================================================================================
+2025-11-18 00:45:01 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 00:45:01 | INFO | ================================================================================
+2025-11-18 00:45:02 | INFO | Epoch 1 | Batch 0/2500 | Loss: 11.0137 | Avg Loss: 11.0137 | LR: 2.00e-04
+2025-11-18 00:45:02 | INFO | Epoch 1 | Batch 10/2500 | Loss: 10.9849 | Avg Loss: 10.9992 | LR: 2.00e-04
+2025-11-18 00:45:03 | INFO | Epoch 1 | Batch 20/2500 | Loss: 10.9602 | Avg Loss: 10.9964 | LR: 2.00e-04
+2025-11-18 00:45:04 | INFO | Epoch 1 | Batch 30/2500 | Loss: 10.9935 | Avg Loss: 10.9990 | LR: 2.00e-04
+2025-11-18 00:45:05 | INFO | Epoch 1 | Batch 40/2500 | Loss: 10.9959 | Avg Loss: 10.9986 | LR: 2.00e-04
+2025-11-18 00:45:06 | INFO | Epoch 1 | Batch 50/2500 | Loss: 10.9758 | Avg Loss: 10.9990 | LR: 2.00e-04
+2025-11-18 00:45:07 | INFO | Epoch 1 | Batch 60/2500 | Loss: 11.0280 | Avg Loss: 10.9985 | LR: 2.00e-04
+2025-11-18 00:45:08 | INFO | Epoch 1 | Batch 70/2500 | Loss: 10.9994 | Avg Loss: 10.9991 | LR: 2.00e-04
+2025-11-18 00:45:09 | INFO | Epoch 1 | Batch 80/2500 | Loss: 10.9773 | Avg Loss: 10.9986 | LR: 2.02e-04
+2025-11-18 00:45:10 | INFO | Epoch 1 | Batch 90/2500 | Loss: 10.9980 | Avg Loss: 10.9980 | LR: 2.02e-04
+2025-11-18 00:45:10 | INFO | Epoch 1 | Batch 100/2500 | Loss: 10.9583 | Avg Loss: 10.9981 | LR: 2.02e-04
+2025-11-18 00:45:11 | INFO | Epoch 1 | Batch 110/2500 | Loss: 10.9943 | Avg Loss: 10.9989 | LR: 2.02e-04
+2025-11-18 00:45:12 | INFO | Epoch 1 | Batch 120/2500 | Loss: 11.0038 | Avg Loss: 10.9995 | LR: 2.02e-04

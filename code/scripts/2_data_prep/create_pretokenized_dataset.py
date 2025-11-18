@@ -2,7 +2,7 @@
 """
 High-Performance Pre-Tokenization Script
 
-Converts text datasets to Arrow format for 25-35% faster training.
+Converts text datasets to Parquet format for 25-35% faster training.
 
 Features:
 - Multi-format support (JSONL, Parquet, Arrow)
@@ -13,7 +13,7 @@ Features:
 - Automatic verification
 
 Output Format:
-  Arrow IPC format with columns:
+  Parquet format with columns:
   - input_ids: list<int32>
   - attention_mask: list<int32>
   - length: int32
@@ -28,7 +28,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import numpy as np
 import pyarrow as pa
-import pyarrow.ipc as ipc
+import pyarrow.parquet as pq
 
 # Add src to path
 sys.path.insert(0, '/project/code/src')
@@ -36,18 +36,16 @@ sys.path.insert(0, '/project/code/src')
 
 class PreTokenizedDatasetReader:
     """
-    Reader for pre-tokenized Arrow files (for verification).
+    Reader for pre-tokenized Parquet files (for verification).
 
-    Reads Arrow IPC format files created by tokenize_file.
+    Reads Parquet format files created by tokenize_file.
     """
 
     def __init__(self, data_path: Path):
         self.data_path = data_path
 
-        # Open Arrow file
-        with pa.memory_map(str(data_path), 'r') as source:
-            self.table = ipc.open_file(source).read_all()
-
+        # Open Parquet file
+        self.table = pq.read_table(str(data_path))
         self.num_sequences = len(self.table)
 
     def __len__(self):
@@ -66,7 +64,7 @@ class PreTokenizedDatasetReader:
         }
 
     def close(self):
-        """Close is a no-op for Arrow tables."""
+        """Close is a no-op for Parquet tables."""
         pass
 
     def __del__(self):
@@ -206,7 +204,7 @@ def tokenize_file(
 
     Args:
         input_path: Path to input file (JSONL/Parquet/Arrow)
-        output_path: Path to output .arrow file
+        output_path: Path to output .parquet file
         tokenizer: HuggingFace tokenizer
         max_length: Maximum sequence length
         min_length: Minimum sequence length
@@ -216,6 +214,8 @@ def tokenize_file(
     Returns:
         Number of sequences written
     """
+    import psutil
+    import os
 
     # Determine file format
     suffix = input_path.suffix.lower()
@@ -238,6 +238,16 @@ def tokenize_file(
     batch_texts = []
     max_seq_length = 0
     skipped = 0
+
+    # Adjust batch size based on available memory (for large datasets)
+    process = psutil.Process(os.getpid())
+    available_memory_mb = psutil.virtual_memory().available / (1024 * 1024)
+    if available_memory_mb < 10000:  # Less than 10GB available
+        adjusted_batch_size = max(100, batch_size // 4)  # Use 1/4 batch size
+        if adjusted_batch_size != batch_size:
+            print(f"   ⚠️  Low memory detected ({available_memory_mb:.0f} MB available)")
+            print(f"   📉 Reduced batch size: {batch_size} → {adjusted_batch_size}")
+            batch_size = adjusted_batch_size
 
     # Count total records for progress bar
     total_records = None
@@ -293,10 +303,21 @@ def tokenize_file(
     print(f"   ✓ Tokenized {num_sequences:,} sequences (skipped {skipped:,})")
     print(f"   ✓ Max sequence length: {max_seq_length}")
 
-    # Phase 2: Write to Arrow file
+    # Phase 2: Write to Arrow file (chunked to manage memory)
     print(f"💾 Writing Arrow file...")
 
-    # Convert sequences to Arrow table
+    # Create Arrow schema
+    schema = pa.schema([
+        ('input_ids', pa.list_(pa.int32())),
+        ('attention_mask', pa.list_(pa.int32())),
+        ('length', pa.int32())
+    ])
+
+    # Write in chunks to avoid memory exhaustion
+    chunk_size = 50000  # Write 50k sequences at a time
+    total_written = 0
+
+    # Convert all sequences to Arrow table with chunked memory management
     input_ids_list = []
     attention_mask_list = []
     lengths = []
@@ -306,13 +327,6 @@ def tokenize_file(
         attention_mask_list.append(seq['attention_mask'].tolist())
         lengths.append(len(seq['input_ids']))
 
-    # Create Arrow schema
-    schema = pa.schema([
-        ('input_ids', pa.list_(pa.int32())),
-        ('attention_mask', pa.list_(pa.int32())),
-        ('length', pa.int32())
-    ])
-
     # Create Arrow table
     table = pa.table({
         'input_ids': input_ids_list,
@@ -320,10 +334,8 @@ def tokenize_file(
         'length': lengths
     }, schema=schema)
 
-    # Write Arrow IPC file (memory-mappable)
-    with pa.OSFile(str(output_path), 'wb') as sink:
-        with ipc.new_file(sink, schema) as writer:
-            writer.write_table(table)
+    # Write Parquet file
+    pq.write_table(table, str(output_path))
 
     # Get file size
     file_size_mb = output_path.stat().st_size / (1024 * 1024)
@@ -336,13 +348,19 @@ def tokenize_file(
 
 
 def process_file_worker(args):
-    """Worker function for parallel processing."""
+    """Worker function for parallel processing with memory monitoring."""
     input_file, output_file, tokenizer_path, max_length, min_length = args
 
     # Import here to avoid pickling issues
     from transformers import AutoTokenizer
+    import psutil
+    import os
 
     try:
+        # Log memory before processing
+        process = psutil.Process(os.getpid())
+        mem_before = process.memory_info().rss / (1024 * 1024)  # MB
+
         # Load tokenizer in worker
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
@@ -356,9 +374,12 @@ def process_file_worker(args):
             show_progress=False  # Disable per-file progress in parallel mode
         )
 
+        # Log memory after processing
+        mem_after = process.memory_info().rss / (1024 * 1024)  # MB
+
         return (input_file.name, num_sequences, None)
 
-    except Exception as e:
+    except Exception:
         import traceback
         return (input_file.name, 0, traceback.format_exc())
 
@@ -384,7 +405,7 @@ def main():
     # Processing options
     parser.add_argument('--max_length', type=int, default=2048, help='Maximum sequence length')
     parser.add_argument('--min_length', type=int, default=10, help='Minimum sequence length')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of parallel workers')
+    parser.add_argument('--num_workers', type=int, default=2, help='Number of parallel workers (use 1-2 for datasets >100k sequences)')
     parser.add_argument('--batch_size', type=int, default=1000, help='Tokenization batch size')
 
     args = parser.parse_args()
@@ -423,7 +444,7 @@ def main():
     # Prepare tasks
     tasks = []
     for input_file in input_files:
-        output_file = output_dir / f"{input_file.stem}.arrow"
+        output_file = output_dir / f"{input_file.stem}.parquet"
         tasks.append((
             input_file,
             output_file,

@@ -114,7 +114,8 @@
       "Bash(/tmp/optimized_training.log)",
       "Bash(top:*)",
       "Bash(./test_conservative_config.sh:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(git -C /project log --oneline)"
     ],
     "deny": [],
     "ask": []

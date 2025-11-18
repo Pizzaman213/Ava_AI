@@ -1,0 +1,56 @@
+2025-11-18 11:39:02 | INFO | ================================================================================
+2025-11-18 11:39:02 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 11:39:02 | INFO | ================================================================================
+2025-11-18 11:39:02 | INFO | Device: cuda:0
+2025-11-18 11:39:02 | INFO | Distributed: Rank 0/1
+2025-11-18 11:39:02 | INFO | Loaded config from code/configs/moe/minimal_working.yaml
+2025-11-18 11:39:02 | INFO | 
+📊 Training Config:
+2025-11-18 11:39:02 | INFO |    Epochs: 3
+2025-11-18 11:39:02 | INFO |    Batch size: 2
+2025-11-18 11:39:02 | INFO |    Learning rate: 1.00e-04
+2025-11-18 11:39:02 | INFO |    Gradient accumulation: 4
+2025-11-18 11:39:02 | INFO | 
+🤖 Creating model...
+2025-11-18 11:39:03 | INFO |    Parameters: 58,252,792 (58.3M)
+2025-11-18 11:39:03 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 11:39:03 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 11:39:04 | INFO | 
+================================================================================
+2025-11-18 11:39:04 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 11:39:04 | INFO | ================================================================================
+2025-11-18 11:39:04 | INFO | Epoch 1 | Batch 0/5000 | Loss: 10.9956 | Avg Loss: 10.9956 | LR: 1.00e-05
+2025-11-18 11:39:04 | INFO | Epoch 1 | Batch 10/5000 | Loss: 11.0062 | Avg Loss: 11.0068 | LR: 1.18e-05
+2025-11-18 11:39:04 | INFO | Epoch 1 | Batch 20/5000 | Loss: 11.0048 | Avg Loss: 10.9996 | LR: 1.45e-05
+2025-11-18 11:39:04 | INFO | Epoch 1 | Batch 30/5000 | Loss: 11.0499 | Avg Loss: 11.0028 | LR: 1.63e-05
+2025-11-18 11:39:04 | INFO | Epoch 1 | Batch 40/5000 | Loss: 11.0131 | Avg Loss: 11.0024 | LR: 1.90e-05
+2025-11-18 11:39:04 | INFO | Epoch 1 | Batch 50/5000 | Loss: 10.9988 | Avg Loss: 11.0032 | LR: 2.08e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 60/5000 | Loss: 11.0111 | Avg Loss: 11.0028 | LR: 2.35e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 70/5000 | Loss: 10.9664 | Avg Loss: 11.0025 | LR: 2.53e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 80/5000 | Loss: 10.9993 | Avg Loss: 11.0023 | LR: 2.80e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 90/5000 | Loss: 10.9810 | Avg Loss: 11.0001 | LR: 2.98e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 100/5000 | Loss: 10.9968 | Avg Loss: 10.9996 | LR: 3.25e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 110/5000 | Loss: 11.0123 | Avg Loss: 10.9991 | LR: 3.43e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 120/5000 | Loss: 11.0176 | Avg Loss: 10.9996 | LR: 3.70e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 130/5000 | Loss: 10.9744 | Avg Loss: 10.9991 | LR: 3.88e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 140/5000 | Loss: 11.0276 | Avg Loss: 10.9986 | LR: 4.15e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 150/5000 | Loss: 10.9803 | Avg Loss: 10.9993 | LR: 4.33e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 160/5000 | Loss: 10.9913 | Avg Loss: 10.9993 | LR: 4.60e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 170/5000 | Loss: 11.0081 | Avg Loss: 11.0002 | LR: 4.78e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 180/5000 | Loss: 11.0087 | Avg Loss: 11.0004 | LR: 5.05e-05
+2025-11-18 11:39:05 | INFO | Epoch 1 | Batch 190/5000 | Loss: 11.0438 | Avg Loss: 11.0003 | LR: 5.23e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 200/5000 | Loss: 10.9895 | Avg Loss: 11.0003 | LR: 5.50e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 210/5000 | Loss: 10.9839 | Avg Loss: 10.9997 | LR: 5.68e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 220/5000 | Loss: 10.9934 | Avg Loss: 11.0001 | LR: 5.95e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 230/5000 | Loss: 10.9978 | Avg Loss: 11.0005 | LR: 6.13e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 240/5000 | Loss: 10.9935 | Avg Loss: 11.0000 | LR: 6.40e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 250/5000 | Loss: 11.0055 | Avg Loss: 11.0004 | LR: 6.58e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 260/5000 | Loss: 10.9907 | Avg Loss: 11.0000 | LR: 6.85e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 270/5000 | Loss: 10.9730 | Avg Loss: 10.9998 | LR: 7.03e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 280/5000 | Loss: 10.9668 | Avg Loss: 10.9996 | LR: 7.30e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 290/5000 | Loss: 10.9733 | Avg Loss: 10.9996 | LR: 7.48e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 300/5000 | Loss: 11.0220 | Avg Loss: 10.9995 | LR: 7.75e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 310/5000 | Loss: 10.9885 | Avg Loss: 10.9995 | LR: 7.93e-05
+2025-11-18 11:39:06 | INFO | Epoch 1 | Batch 320/5000 | Loss: 11.0228 | Avg Loss: 10.9995 | LR: 8.20e-05

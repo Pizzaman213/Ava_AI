@@ -1,0 +1,8 @@
+2025-11-17 23:21:46 | INFO | qwen_moe | Logging to file: logs/20251117_232146_training.log
+2025-11-17 23:21:46 | INFO | qwen_moe | ================================================================================
+2025-11-17 23:21:46 | INFO | qwen_moe | 🚀 STARTING REFINED AVA TRAINING PIPELINE
+2025-11-17 23:21:46 | INFO | qwen_moe | ================================================================================
+2025-11-17 23:21:46 | INFO | qwen_moe | 
+📋 Loading configuration from: code/configs/moe/tiny_moe.yaml
+2025-11-17 23:21:46 | INFO | qwen_moe | 
+⚙️  Initializing training managers...

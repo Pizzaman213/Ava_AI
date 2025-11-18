@@ -101,6 +101,27 @@ class CUDAGraphsSafeTopK(nn.Module):
         """
         batch_size, num_experts = logits.shape
 
+        # CRITICAL SAFETY CHECK: Validate tensor shapes to prevent OOM
+        # Corrupted input could have batch_size in the billions
+        max_safe_batch_size = 1_000_000  # 1M max batch size (safety limit)
+        if batch_size > max_safe_batch_size:
+            raise RuntimeError(
+                f"🚨 CRITICAL: Router received catastrophic batch_size {batch_size:,}!\n"
+                f"   This indicates corrupted input tensors with invalid shapes.\n"
+                f"   Max allowed batch size: {max_safe_batch_size:,}\n"
+                f"   Tensor shape: {logits.shape}\n"
+                f"   This would allocate {batch_size * max_safe_batch_size * 8 / 1024**3:.2f} GB!"
+            )
+
+        # Validate num_experts is reasonable
+        max_safe_num_experts = 100_000  # 100k max experts (safety limit)
+        if num_experts > max_safe_num_experts:
+            raise RuntimeError(
+                f"🚨 CRITICAL: Router received catastrophic num_experts {num_experts:,}!\n"
+                f"   Max allowed num_experts: {max_safe_num_experts:,}\n"
+                f"   Tensor shape: {logits.shape}"
+            )
+
         # Fast path: If already a power of 2 or bucketing disabled, use regular topk
         if not self.use_bucketing or (num_experts & (num_experts - 1)) == 0:
             values, indices = torch.topk(logits, self.k, dim=-1, sorted=False)
@@ -120,6 +141,20 @@ class CUDAGraphsSafeTopK(nn.Module):
         # Pad logits to bucket size with very negative values
         # These will never be selected by top-k
         pad_size = bucket_size - num_experts
+
+        # SAFETY CHECK: Validate padding allocation won't be catastrophic
+        # Each element is 4-8 bytes depending on dtype
+        bytes_per_element = 4 if logits.dtype == torch.float32 else 8
+        estimated_allocation_bytes = batch_size * pad_size * bytes_per_element
+        max_allocation_gb = 10.0  # Max 10 GB for padding allocation
+        if estimated_allocation_bytes > max_allocation_gb * 1024**3:
+            raise RuntimeError(
+                f"🚨 CRITICAL: Padding allocation would exceed {max_allocation_gb}GB!\n"
+                f"   Requested shape: ({batch_size}, {pad_size})\n"
+                f"   Estimated allocation: {estimated_allocation_bytes / 1024**3:.2f} GB\n"
+                f"   This indicates corrupted input with invalid dimensions."
+            )
+
         padding = torch.full(
             (batch_size, pad_size),
             float('-inf'),

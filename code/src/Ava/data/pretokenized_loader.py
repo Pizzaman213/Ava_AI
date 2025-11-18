@@ -710,6 +710,38 @@ class UltraFastPretokenizedDataset(IterableDataset):
 
                     # Process each sequence in the batch
                     for i in range(batch_size):
+                        # CRITICAL: Validate sequence length BEFORE numpy conversion
+                        # This prevents catastrophic memory allocation from corrupted data
+                        raw_seq = input_ids_list[i]
+
+                        # Check if raw sequence has absurd length (corruption indicator)
+                        # Use a conservative estimate: actual_length or list size
+                        try:
+                            # Try to get length safely
+                            if isinstance(raw_seq, (list, np.ndarray)):
+                                raw_len = len(raw_seq)
+                            else:
+                                # For other types, assume it needs conversion
+                                raw_len = len(list(raw_seq))
+                        except (TypeError, AttributeError):
+                            # If we can't determine length, skip this item
+                            if should_print and i == 0:  # Print only once per file
+                                print(f"  ⚠️ [Worker {worker_id}] Skipping item {i}: Cannot determine sequence length")
+                            continue
+
+                        # AGGRESSIVE SANITY CHECK: Detect corrupted sequences
+                        # No sequence should exceed 10x the configured max_length
+                        # This catches tokenization bugs, data corruption, etc.
+                        max_allowed_len = min(self.max_length * 10, 32768)  # 10x or 32k, whichever is smaller
+                        if raw_len > max_allowed_len:
+                            if should_print:
+                                print(f"🚨 [Worker {worker_id}] SKIPPING corrupted sequence {i}:")
+                                print(f"   Detected catastrophic sequence length: {raw_len:,}")
+                                print(f"   Configured max_length: {self.max_length}")
+                                print(f"   Allowed threshold: {max_allowed_len:,}")
+                                print(f"   This would allocate {raw_len * 8 / 1024**3:.2f} GB for a single sequence!")
+                            continue
+
                         # Convert to numpy (much faster when batch-converted)
                         input_ids_np = np.array(input_ids_list[i], dtype=np.int64)
 
@@ -750,6 +782,31 @@ class UltraFastPretokenizedDataset(IterableDataset):
                     # Process batch (per-row fallback)
                     for i in range(batch_size):
                         input_ids_arr = input_ids_col[i]
+
+                        # CRITICAL: Pre-validate sequence length BEFORE conversion to numpy
+                        # This prevents catastrophic memory allocation from corrupted Arrow data
+                        max_allowed_len = min(self.max_length * 10, 32768)
+                        try:
+                            # Get length safely from PyArrow scalar
+                            if hasattr(input_ids_arr, '__len__'):
+                                raw_len = len(input_ids_arr)
+                            else:
+                                # Fallback: try to get as python object and measure
+                                raw_len = len(input_ids_arr.as_py())
+
+                            # Validate length BEFORE attempting conversion
+                            if raw_len > max_allowed_len:
+                                if should_print:
+                                    print(f"🚨 [Worker {worker_id}] SKIPPING corrupted sequence {i} (per-row fallback):")
+                                    print(f"   Detected catastrophic sequence length: {raw_len:,}")
+                                    print(f"   Allowed threshold: {max_allowed_len:,}")
+                                continue
+                        except Exception as e:
+                            # If we can't validate length, skip this item
+                            if should_print:
+                                print(f"  ⚠️ [Worker {worker_id}] Skipping item {i}: Could not validate length - {e}")
+                            continue
+
                         try:
                             input_ids_np = np.asarray(input_ids_arr.values.to_numpy(zero_copy_only=False), dtype=np.int64)
                         except (AttributeError, TypeError):
@@ -839,11 +896,47 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # FIXED PADDING: Always use self.max_length instead of max(seq_lengths)
         max_len = self.max_length
 
+        # CRITICAL VALIDATION: Check all sequences BEFORE tensor allocation
+        # This prevents OOM from corrupted data in the batch
+        max_allowed_len = min(self.max_length * 10, 32768)
+        skipped_count = 0
+        valid_items = []
+
+        for i, item in enumerate(batch):
+            if 'input_ids' not in item:
+                print(f"❌ ERROR: Batch item {i} missing 'input_ids' key!")
+                continue
+
+            seq_len = len(item['input_ids'])
+
+            # Validate sequence length is reasonable
+            if seq_len > max_allowed_len:
+                print(f"🚨 COLLATE_FN: SKIPPING item {i} with catastrophic length {seq_len:,} (allowed: {max_allowed_len:,})")
+                skipped_count += 1
+                continue
+
+            valid_items.append((i, item))
+
+        if skipped_count > 0:
+            print(f"⚠️ COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_items)} valid items")
+
+        # If all items were corrupted, return empty batch (trainer will handle this)
+        if not valid_items:
+            print(f"❌ CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
+            return {
+                'input_ids': torch.tensor([], dtype=torch.long),
+                'attention_mask': torch.tensor([], dtype=torch.long),
+                'labels': torch.tensor([], dtype=torch.long)
+            }
+
+        # Use only valid items
+        valid_batch_size = len(valid_items)
+
         # PHASE 4 OPTIMIZATION: Pre-allocate pinned tensors for faster GPU transfer
         # Pinned memory enables asynchronous CPU→GPU copies
-        input_ids = torch.full((batch_size, max_len), self.pad_token_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
-        labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
+        input_ids = torch.full((valid_batch_size, max_len), self.pad_token_id, dtype=torch.long)
+        attention_mask = torch.zeros((valid_batch_size, max_len), dtype=torch.long)
+        labels = torch.full((valid_batch_size, max_len), -100, dtype=torch.long)
 
         # Pin memory if CUDA is available (done after creation for efficiency)
         if torch.cuda.is_available():
@@ -854,13 +947,13 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # Fill tensors efficiently
         # Note: torch.from_numpy creates a view when possible (shares memory with numpy array)
         # The assignment operation copies data into the pre-allocated buffer
-        for i, item in enumerate(batch):
+        for new_idx, (orig_idx, item) in enumerate(valid_items):
             seq_len = min(len(item['input_ids']), max_len)  # Actual sequence length, capped at max_len
 
             # Convert numpy arrays to torch tensors and copy into batch
-            input_ids[i, :seq_len] = torch.from_numpy(item['input_ids'][:seq_len])
-            attention_mask[i, :seq_len] = torch.from_numpy(item['attention_mask'][:seq_len])
-            labels[i, :seq_len] = torch.from_numpy(item['labels'][:seq_len])
+            input_ids[new_idx, :seq_len] = torch.from_numpy(item['input_ids'][:seq_len])
+            attention_mask[new_idx, :seq_len] = torch.from_numpy(item['attention_mask'][:seq_len])
+            labels[new_idx, :seq_len] = torch.from_numpy(item['labels'][:seq_len])
 
         return {
             'input_ids': input_ids,

@@ -1235,28 +1235,45 @@ class StreamingDataset(IterableDataset):
             return {}
 
         batch_size = len(batch)
-        # Find max length and track padding statistics
-        seq_lengths = [len(item['input_ids']) for item in batch]
 
-        # CRITICAL SAFETY CHECK: Detect and prevent catastrophic sequence lengths
-        # This catches data corruption or malformed sequences early
-        max_len = max(seq_lengths) if seq_lengths else 256
-
-        # AGGRESSIVE SANITY CHECK: No single sequence should exceed 10x the max configured length
-        # This catches bugs in tokenization that produce gigantic tensors
+        # CRITICAL PRE-VALIDATION: Check all sequences BEFORE calculating max_len
+        # This prevents catastrophic memory allocation from corrupted data
         reasonable_max = min(self.max_length * 10, 8192)  # Cap to 10x max_length or 8192, whichever is smaller
-        if max_len > reasonable_max:
-            print(f"🚨 CRITICAL: Detected catastrophic sequence length {max_len}, capping to {reasonable_max}")
-            print(f"   Sequence lengths in batch: {sorted(seq_lengths)[:5]}... (showing first 5)")
-            # Cap to reasonable max
-            max_len = reasonable_max
-            # Truncate all sequences in batch
-            for item in batch:
-                if len(item['input_ids']) > reasonable_max:
-                    item['input_ids'] = item['input_ids'][:reasonable_max]
-                    item['labels'] = item['labels'][:reasonable_max]
-                    if 'attention_mask' in item:
-                        item['attention_mask'] = item['attention_mask'][:reasonable_max]
+
+        # Validate each item's sequence length is reasonable
+        seq_lengths = []
+        skipped_count = 0
+        valid_batch = []
+
+        for i, item in enumerate(batch):
+            if 'input_ids' not in item:
+                print(f"❌ ERROR: Batch item {i} missing 'input_ids' key!")
+                continue
+
+            seq_len = len(item['input_ids'])
+
+            # AGGRESSIVE SANITY CHECK: Detect corrupted sequences BEFORE calculating max_len
+            if seq_len > reasonable_max:
+                print(f"🚨 COLLATE_FN: SKIPPING item {i} with catastrophic length {seq_len:,} (allowed: {reasonable_max:,})")
+                print(f"   This would attempt to allocate {seq_len * 8 / 1024**3:.2f} GB just for this sequence!")
+                skipped_count += 1
+                continue
+
+            seq_lengths.append(seq_len)
+            valid_batch.append(item)
+
+        if skipped_count > 0:
+            print(f"⚠️ COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_batch)} valid items")
+
+        # If all items were corrupted, return empty batch
+        if not valid_batch:
+            print(f"❌ CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
+            return {}
+
+        # Now calculate max_len only from valid sequences
+        max_len = max(seq_lengths) if seq_lengths else 256
+        batch = valid_batch  # Use only valid items
+        batch_size = len(valid_batch)  # Update batch_size to reflect actual valid items
 
         avg_len = sum(seq_lengths) / batch_size if seq_lengths else 256
         padding_ratio = 1.0 - (avg_len / max_len) if max_len > 0 else 0

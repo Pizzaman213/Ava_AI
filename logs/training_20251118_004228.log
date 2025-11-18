@@ -1,0 +1,49 @@
+2025-11-18 00:42:28 | INFO | ================================================================================
+2025-11-18 00:42:28 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 00:42:28 | INFO | ================================================================================
+2025-11-18 00:42:28 | INFO | Device: cuda:0
+2025-11-18 00:42:28 | INFO | Distributed: Rank 0/1
+2025-11-18 00:42:28 | INFO | Loaded config from code/configs/moe/small_moe.yaml
+2025-11-18 00:42:28 | INFO | 
+📊 Training Config:
+2025-11-18 00:42:28 | INFO |    Epochs: 3
+2025-11-18 00:42:28 | INFO |    Batch size: 4
+2025-11-18 00:42:28 | INFO |    Learning rate: 2.00e-03
+2025-11-18 00:42:28 | INFO |    Gradient accumulation: 80
+2025-11-18 00:42:28 | INFO | 
+🤖 Creating model...
+2025-11-18 00:42:30 | INFO |    Parameters: 325,731,832 (325.7M)
+2025-11-18 00:42:30 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 00:42:30 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 00:42:30 | INFO | 
+================================================================================
+2025-11-18 00:42:30 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 00:42:30 | INFO | ================================================================================
+2025-11-18 00:42:30 | INFO | Epoch 1 | Batch 0/2500 | Loss: 10.9784 | Avg Loss: 10.9784 | LR: 2.00e-04
+2025-11-18 00:42:31 | INFO | Epoch 1 | Batch 10/2500 | Loss: 10.9985 | Avg Loss: 10.9999 | LR: 2.00e-04
+2025-11-18 00:42:31 | INFO | Epoch 1 | Batch 20/2500 | Loss: 10.9982 | Avg Loss: 10.9985 | LR: 2.00e-04
+2025-11-18 00:42:31 | INFO | Epoch 1 | Batch 30/2500 | Loss: 10.9898 | Avg Loss: 11.0007 | LR: 2.00e-04
+2025-11-18 00:42:32 | INFO | Epoch 1 | Batch 40/2500 | Loss: 11.0085 | Avg Loss: 10.9996 | LR: 2.00e-04
+2025-11-18 00:42:32 | INFO | Epoch 1 | Batch 50/2500 | Loss: 11.0063 | Avg Loss: 10.9991 | LR: 2.00e-04
+2025-11-18 00:42:33 | INFO | Epoch 1 | Batch 60/2500 | Loss: 11.0134 | Avg Loss: 10.9992 | LR: 2.00e-04
+2025-11-18 00:42:33 | INFO | Epoch 1 | Batch 70/2500 | Loss: 10.9696 | Avg Loss: 10.9990 | LR: 2.00e-04
+2025-11-18 00:42:34 | INFO | Epoch 1 | Batch 80/2500 | Loss: 10.9813 | Avg Loss: 10.9978 | LR: 2.02e-04
+2025-11-18 00:42:34 | INFO | Epoch 1 | Batch 90/2500 | Loss: 10.9982 | Avg Loss: 10.9982 | LR: 2.02e-04
+2025-11-18 00:42:34 | INFO | Epoch 1 | Batch 100/2500 | Loss: 11.0119 | Avg Loss: 10.9979 | LR: 2.02e-04
+2025-11-18 00:42:35 | INFO | Epoch 1 | Batch 110/2500 | Loss: 11.0214 | Avg Loss: 10.9978 | LR: 2.02e-04
+2025-11-18 00:42:35 | INFO | Epoch 1 | Batch 120/2500 | Loss: 10.9987 | Avg Loss: 10.9977 | LR: 2.02e-04
+2025-11-18 00:42:36 | INFO | Epoch 1 | Batch 130/2500 | Loss: 10.9855 | Avg Loss: 10.9978 | LR: 2.02e-04
+2025-11-18 00:42:36 | INFO | Epoch 1 | Batch 140/2500 | Loss: 10.9817 | Avg Loss: 10.9980 | LR: 2.02e-04
+2025-11-18 00:42:36 | INFO | Epoch 1 | Batch 150/2500 | Loss: 11.0070 | Avg Loss: 10.9982 | LR: 2.02e-04
+2025-11-18 00:42:37 | INFO | Epoch 1 | Batch 160/2500 | Loss: 11.0074 | Avg Loss: 10.9987 | LR: 2.04e-04
+2025-11-18 00:42:37 | INFO | Epoch 1 | Batch 170/2500 | Loss: 10.9957 | Avg Loss: 10.9985 | LR: 2.04e-04
+2025-11-18 00:42:38 | INFO | Epoch 1 | Batch 180/2500 | Loss: 10.9943 | Avg Loss: 10.9982 | LR: 2.04e-04
+2025-11-18 00:42:38 | INFO | Epoch 1 | Batch 190/2500 | Loss: 10.9988 | Avg Loss: 10.9980 | LR: 2.04e-04
+2025-11-18 00:42:39 | INFO | Epoch 1 | Batch 200/2500 | Loss: 11.0339 | Avg Loss: 10.9980 | LR: 2.04e-04
+2025-11-18 00:42:39 | INFO | Epoch 1 | Batch 210/2500 | Loss: 11.0015 | Avg Loss: 10.9978 | LR: 2.04e-04
+2025-11-18 00:42:39 | INFO | Epoch 1 | Batch 220/2500 | Loss: 11.0081 | Avg Loss: 10.9982 | LR: 2.04e-04
+2025-11-18 00:42:40 | INFO | Epoch 1 | Batch 230/2500 | Loss: 10.9724 | Avg Loss: 10.9980 | LR: 2.04e-04
+2025-11-18 00:42:40 | INFO | Epoch 1 | Batch 240/2500 | Loss: 10.9919 | Avg Loss: 10.9982 | LR: 2.05e-04
+2025-11-18 00:42:40 | ERROR | Error in batch 240: [Errno 32] Broken pipe

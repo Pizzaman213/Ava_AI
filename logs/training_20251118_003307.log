@@ -1,0 +1,19 @@
+2025-11-18 00:33:07 | INFO | ================================================================================
+2025-11-18 00:33:07 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 00:33:07 | INFO | ================================================================================
+2025-11-18 00:33:07 | INFO | Device: cuda:0
+2025-11-18 00:33:07 | INFO | Distributed: Rank 0/1
+2025-11-18 00:33:07 | INFO | Loaded config from /project/code/configs/moe/small_moe.yaml
+2025-11-18 00:33:07 | INFO | 
+📊 Training Config:
+2025-11-18 00:33:07 | INFO |    Epochs: 3
+2025-11-18 00:33:07 | INFO |    Batch size: 4
+2025-11-18 00:33:07 | INFO |    Learning rate: 2.00e-03
+2025-11-18 00:33:07 | INFO |    Gradient accumulation: 80
+2025-11-18 00:33:07 | INFO | 
+🤖 Creating model...
+2025-11-18 00:33:08 | INFO |    Parameters: 325,731,832 (325.7M)
+2025-11-18 00:33:08 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 00:33:08 | INFO | 
+📊 Creating dataloaders...

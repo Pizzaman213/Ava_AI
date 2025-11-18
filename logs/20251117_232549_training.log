@@ -1,0 +1,34 @@
+2025-11-17 23:25:49 | INFO | qwen_moe | Logging to file: logs/20251117_232549_training.log
+2025-11-17 23:25:49 | INFO | qwen_moe | ================================================================================
+2025-11-17 23:25:49 | INFO | qwen_moe | 🚀 STARTING REFINED AVA TRAINING PIPELINE
+2025-11-17 23:25:49 | INFO | qwen_moe | ================================================================================
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+📋 Loading configuration from: code/configs/moe/tiny_moe.yaml
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+⚙️  Initializing training components...
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+🤖 Creating model and tokenizer...
+2025-11-17 23:25:49 | WARNING | qwen_moe | Could not create OptimizedMoETransformer: OptimizedMoEConfig.__init__() got an unexpected keyword argument 'num_hidden_layers', skipping model creation for testing
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+🖥️  Device: cuda
+2025-11-17 23:25:49 | INFO | qwen_moe |    Dtype: torch.bfloat16
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+📊 Creating dataloaders...
+2025-11-17 23:25:49 | INFO | qwen_moe |    (Skipped in simplified test version)
+2025-11-17 23:25:49 | INFO | qwen_moe |    Calculated total steps: 62
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+⚡ Setting up optimizer and learning rate management...
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+✨ Testing generation quality...
+2025-11-17 23:25:49 | INFO | qwen_moe |    (Skipped - model or tokenizer not available)
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+📈 Skipping validation (no validation loader)
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+✓ Testing initialization...
+2025-11-17 23:25:49 | WARNING | qwen_moe |    ✗ Model creation failed
+2025-11-17 23:25:49 | INFO | qwen_moe |    ✓ Tokenizer loaded successfully
+2025-11-17 23:25:49 | WARNING | qwen_moe |    ✗ Optimizer creation failed
+2025-11-17 23:25:49 | INFO | qwen_moe | 
+================================================================================
+2025-11-17 23:25:49 | INFO | qwen_moe | ⚠️  Some tests failed or were skipped - check configuration
+2025-11-17 23:25:49 | INFO | qwen_moe | ================================================================================
