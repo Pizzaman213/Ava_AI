@@ -44,7 +44,7 @@ moe_memory_optimization:
   use_expert_quantization: false
 
 training:
-  batch_size: 256 # Smaller batch for stability
+  batch_size: 512 # Smaller batch for stability
   gradient_accumulation_steps: 1
   optimizer: lion # Lion: 50% less memory than AdamW
   learning_rate: 0.0001
