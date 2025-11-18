@@ -527,3 +527,9 @@ A refrigerator
 2025-11-18 17:43:40 | INFO | Epoch 1 | Batch 4470/12789 | Loss: 3.2016 | Avg Loss: 3.9122 | LR: 9.68e-05
 2025-11-18 17:43:41 | INFO | Epoch 1 | Batch 4480/12789 | Loss: 3.0471 | Avg Loss: 3.9106 | LR: 9.68e-05
 2025-11-18 17:43:42 | INFO | Epoch 1 | Batch 4490/12789 | Loss: 3.1454 | Avg Loss: 3.9091 | LR: 9.68e-05
+2025-11-18 17:43:43 | INFO | Epoch 1 | Batch 4500/12789 | Loss: 3.3144 | Avg Loss: 3.9075 | LR: 9.68e-05
+2025-11-18 17:43:44 | INFO | Epoch 1 | Batch 4510/12789 | Loss: 3.2752 | Avg Loss: 3.9059 | LR: 9.68e-05
+2025-11-18 17:43:45 | INFO | Epoch 1 | Batch 4520/12789 | Loss: 3.1105 | Avg Loss: 3.9044 | LR: 9.67e-05
+2025-11-18 17:43:46 | INFO | Epoch 1 | Batch 4530/12789 | Loss: 3.0682 | Avg Loss: 3.9029 | LR: 9.67e-05
+2025-11-18 17:43:46 | INFO | Epoch 1 | Batch 4540/12789 | Loss: 3.2424 | Avg Loss: 3.9013 | LR: 9.67e-05
+2025-11-18 17:43:47 | INFO | Epoch 1 | Batch 4550/12789 | Loss: 3.1713 | Avg Loss: 3.8997 | LR: 9.67e-05
