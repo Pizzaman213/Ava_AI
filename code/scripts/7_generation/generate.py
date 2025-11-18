@@ -199,9 +199,12 @@ class GenerationPipeline:
         # Detect checkpoint format
         is_new_framework = 'run_id' in checkpoint  # New framework has run metadata
         is_old_framework = 'model_state_dict' in checkpoint and 'run_id' not in checkpoint
+        is_train_100m = 'epoch' in checkpoint and 'model_state_dict' in checkpoint  # train_100m_full.py format
 
         if is_new_framework:
             print(" Detected new framework checkpoint format")
+        elif is_train_100m:
+            print(" Detected train_100m_full.py checkpoint format")
         elif is_old_framework:
             print(" Detected old framework checkpoint format")
         elif is_deepspeed:
@@ -218,6 +221,14 @@ class GenerationPipeline:
             with open(config_path, 'r') as f:
                 config_dict = yaml.safe_load(f)
             model_config = config_dict.get('model', {})
+        elif is_train_100m and 'config' in checkpoint:
+            # train_100m_full.py format: config is stored in checkpoint
+            print(" Loading config from checkpoint (train_100m_full.py)")
+            config_data = checkpoint['config']
+            if isinstance(config_data, dict) and 'model' in config_data:
+                model_config = config_data['model']
+            else:
+                model_config = config_data
         elif is_new_framework and 'config' in checkpoint:
             # New framework: config is stored in checkpoint
             print(" Loading config from checkpoint (new framework)")
@@ -271,6 +282,12 @@ class GenerationPipeline:
                 print(f"✓ DeepSpeed model loaded successfully")
             else:
                 raise ValueError("Invalid DeepSpeed checkpoint format")
+        elif is_train_100m and 'model_state_dict' in checkpoint:
+            # train_100m_full.py format
+            print(" Loading model state (train_100m_full.py)")
+            self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            print(f"✓ Model loaded successfully")
+            print(f"  Epoch: {checkpoint.get('epoch', '?')}, Step: {checkpoint.get('step', '?')}")
         elif is_new_framework and 'model_state_dict' in checkpoint:
             # New framework format
             print(" Loading model state (new framework)")
@@ -300,7 +317,7 @@ class GenerationPipeline:
         tokenizer_path = None
 
         # First, try to get tokenizer path from checkpoint config
-        if is_new_framework and 'config' in checkpoint:
+        if (is_train_100m or is_new_framework) and 'config' in checkpoint:
             config_data = checkpoint['config']
             # Check if there's a data section with tokenizer_name
             if isinstance(config_data, dict) and 'data' in config_data:
@@ -322,8 +339,21 @@ class GenerationPipeline:
         else:
             print(f" Using tokenizer from checkpoint config: {tokenizer_path}")
 
-        print(f" Loading tokenizer from {tokenizer_path}")
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        # Handle relative paths and fix duplicated project paths
+        tokenizer_path_resolved = tokenizer_path
+
+        # Fix paths with /project/code/code/ (duplicated /code/)
+        if tokenizer_path_resolved and '/code/code/' in tokenizer_path_resolved:
+            tokenizer_path_resolved = tokenizer_path_resolved.replace('/code/code/', '/code/')
+
+        if tokenizer_path_resolved and not tokenizer_path_resolved.startswith('/'):
+            # Try to resolve as absolute path first
+            potential_path = Path('/project') / tokenizer_path_resolved if not tokenizer_path_resolved.startswith('/project') else Path(tokenizer_path_resolved)
+            if potential_path.exists():
+                tokenizer_path_resolved = str(potential_path)
+
+        print(f" Loading tokenizer from {tokenizer_path_resolved}")
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path_resolved)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         print(f"✓ Tokenizer loaded: vocab_size={len(self.tokenizer)}")

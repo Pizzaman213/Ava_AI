@@ -351,41 +351,72 @@ class TransformerModel100M(nn.Module):
 class CheckpointManager:
     """Manage model checkpoints."""
 
-    def __init__(self, save_dir: Path, max_keep: int = 3):
+    def __init__(self, save_dir: Path, max_keep: int = 3, config: Optional[Dict] = None):
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.max_keep = max_keep
         self.checkpoints = []
+        self.config = config
 
     def save(self, model: nn.Module, optimizer: torch.optim.Optimizer,
              epoch: int, step: int, metrics: Dict[str, float]):
-        """Save checkpoint."""
+        """Save checkpoint in format compatible with generate.py."""
         checkpoint = {
             'epoch': epoch,
             'step': step,
-            'model_state': model.state_dict(),
+            'model_state_dict': model.state_dict() if not isinstance(model, nn.parallel.DistributedDataParallel) else model.module.state_dict(),
             'optimizer_state': optimizer.state_dict(),
             'metrics': metrics,
+            'config': self.config,  # Include config for generation script
         }
 
         path = self.save_dir / f'checkpoint_epoch_{epoch}_step_{step}.pt'
         torch.save(checkpoint, path)
         self.checkpoints.append(path)
 
+        # Also save as latest_model.pt for generate.py
+        latest_path = self.save_dir / 'latest_model.pt'
+        torch.save(checkpoint, latest_path)
+
+        # Update best model if this is a good checkpoint
+        if 'val_loss' in metrics:
+            best_path = self.save_dir / 'best_model.pt'
+            if not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path):
+                torch.save(checkpoint, best_path)
+
         # Remove old checkpoints
         if len(self.checkpoints) > self.max_keep:
             old_path = self.checkpoints.pop(0)
-            old_path.unlink()
+            if old_path.exists():
+                old_path.unlink()
 
         return path
+
+    def _get_best_loss(self, best_path: Path) -> float:
+        """Get best loss from existing checkpoint."""
+        try:
+            checkpoint = torch.load(best_path, weights_only=False)
+            return checkpoint.get('metrics', {}).get('val_loss', float('inf'))
+        except:
+            return float('inf')
 
     def load(self, model: nn.Module, optimizer: torch.optim.Optimizer,
              checkpoint_path: Path) -> Tuple[int, int]:
         """Load checkpoint."""
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['model_state'])
-        optimizer.load_state_dict(checkpoint['optimizer_state'])
-        return checkpoint['epoch'], checkpoint['step']
+        checkpoint = torch.load(checkpoint_path, weights_only=False)
+
+        # Handle both old and new checkpoint formats
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        elif 'model_state' in checkpoint:
+            model.load_state_dict(checkpoint['model_state'], strict=False)
+        else:
+            model.load_state_dict(checkpoint, strict=False)
+
+        if 'optimizer_state' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state'])
+
+        return checkpoint.get('epoch', 0), checkpoint.get('step', 0)
 
 
 # ============================================================================
@@ -544,6 +575,9 @@ def generate_sample(
     tokenizer: Optional[Any] = None,
     temperature: float = 1.0,
     top_p: float = 1.0,
+    skip_special_tokens: bool = True,
+    prompt: Optional[str] = None,
+    prompt_ids: Optional[torch.Tensor] = None,
 ) -> str:
     """Generate sample text from model for quality checks.
 
@@ -557,6 +591,9 @@ def generate_sample(
         tokenizer: Optional tokenizer to decode token IDs into text
         temperature: Sampling temperature (higher = more diverse)
         top_p: Nucleus sampling threshold (0-1)
+        skip_special_tokens: Whether to skip special tokens in decoded output
+        prompt: Optional text prompt to condition generation
+        prompt_ids: Optional tensor of prompt token IDs
 
     Returns:
         Generated text as string representation
@@ -597,9 +634,25 @@ def generate_sample(
         return next_token
 
     with torch.no_grad():
-        # Start with random tokens
+        # Start with prompt tokens or random tokens
         batch_size = num_samples
-        start_token = torch.randint(0, vocab_size, (batch_size, 1)).to(device)
+
+        if prompt_ids is not None:
+            # Use provided prompt token IDs
+            start_token = prompt_ids.to(device)
+        elif prompt is not None and tokenizer is not None:
+            # Encode prompt text to token IDs
+            try:
+                encoded = tokenizer.encode(prompt, return_tensors='pt')
+                start_token = encoded.to(device)
+            except Exception as e:
+                if logger is not None:
+                    logger.warning(f"Failed to encode prompt: {e}. Using random tokens instead.")
+                start_token = torch.randint(0, vocab_size, (batch_size, 1)).to(device)
+        else:
+            # Use random tokens
+            start_token = torch.randint(0, vocab_size, (batch_size, 1)).to(device)
+
         generated_ids = start_token.clone()
 
         # Generate tokens one by one
@@ -626,8 +679,13 @@ def generate_sample(
 
         if tokenizer is not None:
             try:
-                decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=True)
-                gen_str = f"Generated text:\n{decoded_text}"
+                decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=skip_special_tokens)
+
+                # Show prompt if available
+                if prompt is not None:
+                    gen_str = f"Prompt: {prompt}\nGenerated text:\n{decoded_text}"
+                else:
+                    gen_str = f"Generated text:\n{decoded_text}"
             except Exception as e:
                 # Fallback to token IDs if decoding fails
                 gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
@@ -635,7 +693,10 @@ def generate_sample(
                     logger.warning(f"Tokenizer decode failed: {e}. Using token IDs instead.")
         else:
             # No tokenizer provided, show token IDs
-            gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
+            if prompt is not None:
+                gen_str = f"Prompt: {prompt}\nGenerated sequence (token IDs): {generated_ids_cpu[:50]}"
+            else:
+                gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
 
         if logger is not None:
             logger.info(gen_str)
@@ -667,6 +728,8 @@ def train_epoch(
     generation_temperature: float = 0.7,
     generation_top_p: float = 0.9,
     tokenizer: Optional[Any] = None,
+    generation_skip_special_tokens: bool = True,
+    generation_prompt: Optional[str] = None,
 ) -> float:
     """Train for one epoch."""
 
@@ -678,7 +741,7 @@ def train_epoch(
     pbar = tqdm(enumerate(train_loader), total=len(train_loader),
                 desc=f"Epoch {epoch + 1}", disable=logger is None)
 
-    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    scaler = torch.amp.GradScaler('cuda') if use_amp else None
 
     for batch_idx, batch in pbar:
         try:
@@ -752,7 +815,9 @@ def train_epoch(
                     logger=logger,
                     tokenizer=tokenizer,
                     temperature=generation_temperature,
-                    top_p=generation_top_p
+                    top_p=generation_top_p,
+                    skip_special_tokens=generation_skip_special_tokens,
+                    prompt=generation_prompt
                 )
                 logger.info(f"✓ Generation test complete\n")
 
@@ -828,8 +893,28 @@ def main(args):
     else:
         device = torch.device('cpu')
 
-    # Setup logging
+    # Setup logging - create run directory if using framework structure
     log_dir = Path(args.log_dir)
+    save_dir = Path(args.save_dir)
+
+    # If save_dir is default and no explicit paths, use framework structure
+    if args.save_dir == './checkpoints' and args.log_dir == './logs':
+        # Create a run directory in outputs/runs
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        runs_dir = Path('/project/code/outputs/runs') / run_id
+        runs_dir.mkdir(parents=True, exist_ok=True)
+
+        save_dir = runs_dir / 'checkpoints'
+        save_dir.mkdir(parents=True, exist_ok=True)
+        log_dir = runs_dir / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True)
+        configs_dir = runs_dir / 'configs'
+        configs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Update args to use new paths
+        args.save_dir = str(save_dir)
+        args.log_dir = str(log_dir)
+
     logger = setup_logging(log_dir, rank)
 
     if rank == 0:
@@ -860,11 +945,8 @@ def main(args):
     training_config = config.get('training', {})
     batch_size = args.batch_size or training_config.get('batch_size', 8)
     learning_rate = args.learning_rate or training_config.get('learning_rate', 5e-5)
-    num_epochs = args.epochs or training_config.get('max_steps', training_config.get('num_epochs', 3))
-    # Handle max_steps -> convert to epochs if using max_steps instead of num_epochs
-    if 'max_steps' in training_config and 'num_epochs' not in training_config:
-        # Estimate epochs from max_steps (will be refined after dataloader creation)
-        num_epochs = 3
+    num_epochs = args.epochs or training_config.get('num_epochs', 3)
+    max_steps = training_config.get('max_steps')
     gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
     warmup_steps = training_config.get('warmup_steps', 1000)
 
@@ -874,6 +956,8 @@ def main(args):
     generation_max_length = training_config.get('generation_max_length', 128)
     generation_temperature = training_config.get('generation_temperature', 0.7)
     generation_top_p = training_config.get('generation_top_p', 0.9)
+    generation_skip_special_tokens = training_config.get('generation_skip_special_tokens', True)
+    generation_prompt = training_config.get('generation_prompt', None)
 
     # Data configuration
     data_config = config.get('data', {})
@@ -1008,17 +1092,49 @@ def main(args):
 
     # Learning rate scheduler
     total_steps = len(train_loader) * num_epochs // gradient_accumulation_steps
+
     warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=warmup_steps)
-    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps)
+    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=max(1, total_steps - warmup_steps))
     scheduler = SequentialLR(
         optimizer,
         schedulers=[warmup_scheduler, cosine_scheduler],
         milestones=[warmup_steps]
     )
 
+    # Prepare config dict for checkpoint saving
+    # Ensure tokenizer_name is absolute path (avoid double-prefixing)
+    tokenizer_name_absolute = tokenizer_name
+    if tokenizer_name and not tokenizer_name.startswith('/'):
+        # Only prepend project_root if path is relative (doesn't start with /)
+        tokenizer_name_absolute = str(project_root / tokenizer_name)
+
+    config_for_checkpoint = {
+        'model': {
+            'vocab_size': vocab_size,
+            'hidden_size': hidden_size,
+            'num_layers': num_layers,
+            'num_attention_heads': model_config.get('num_attention_heads', 8),
+            'intermediate_size': model_config.get('intermediate_size', hidden_size * 4),
+            'num_experts': model_config.get('num_experts', 2),
+            'num_experts_per_token': model_config.get('num_experts_per_token', 1),
+            'max_position_embeddings': max_position_embeddings,
+            'router_type': model_config.get('router_type', 'switch'),
+            'expert_capacity_factor': model_config.get('capacity_factor', 1.25),
+            'attention_dropout': model_config.get('attention_dropout', 0.1),
+            'dropout': model_config.get('dropout', 0.1),
+            'use_flash_attention': model_config.get('use_flash_attention', False),
+            'router_aux_loss_coef': model_config.get('router_z_loss_coef', 0.01),
+            'router_jitter_noise': model_config.get('router_jitter_noise', 0.01),
+        },
+        'data': {
+            'tokenizer_name': tokenizer_name_absolute,
+            'max_length': seq_length,
+        }
+    }
+
     # Checkpoint manager and metrics tracker
-    checkpoint_manager = CheckpointManager(args.save_dir)
-    metrics_tracker = MetricsTracker(args.log_dir, use_wandb=use_wandb, wandb_config=wandb_config)
+    checkpoint_manager = CheckpointManager(Path(args.save_dir), config=config_for_checkpoint)
+    metrics_tracker = MetricsTracker(Path(args.log_dir), use_wandb=use_wandb, wandb_config=wandb_config)
 
     # Load checkpoint if resuming
     start_epoch = 0
@@ -1052,6 +1168,8 @@ def main(args):
             generation_temperature=generation_temperature,
             generation_top_p=generation_top_p,
             tokenizer=tokenizer,
+            generation_skip_special_tokens=generation_skip_special_tokens,
+            generation_prompt=generation_prompt,
         )
 
         if rank == 0:
