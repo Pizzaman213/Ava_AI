@@ -64,6 +64,9 @@ from tqdm import tqdm
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
+# Import MoE model and utilities
+from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
+
 try:
     from torch.distributed import init_process_group, destroy_process_group
     import torch.distributed as dist
@@ -82,6 +85,12 @@ try:
     WANDB_AVAILABLE = True
 except ImportError:
     WANDB_AVAILABLE = False
+
+try:
+    from transformers import AutoTokenizer
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
 
 # ============================================================================
 # LOGGING SETUP
@@ -201,36 +210,45 @@ def create_dataloaders(
     # Try to load real data first
     if data_dir and Path(data_dir).exists() and DATASETS_AVAILABLE:
         try:
-            # Look for Arrow files in the directory - load ALL of them
-            arrow_files = sorted(list(Path(data_dir).glob('*.arrow')))
-            if arrow_files:
-                # Load each Arrow file individually, skip corrupted ones
-                datasets_list = []
-                for arrow_file in arrow_files:
-                    try:
-                        file_size = arrow_file.stat().st_size
-                        if file_size == 0:
-                            # Skip empty files
-                            continue
-                        dataset = load_dataset('arrow', data_files=str(arrow_file))
-                        split_name = list(dataset.keys())[0]
-                        dataset = dataset[split_name]
-                        datasets_list.append(dataset)
-                    except Exception as e:
-                        # Skip this corrupted file and continue
-                        continue
+            datasets_list = []
 
-                if datasets_list:
-                    # Concatenate all datasets
-                    from datasets import concatenate_datasets
-                    dataset = concatenate_datasets(datasets_list)
-                    train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
-                    val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
-            else:
-                # No Arrow files found, will use dummy dataset
-                pass
+            # Load Arrow files (.arrow directories and files)
+            arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
+                         sorted(list(Path(data_dir).glob('**/*.arrow')))
+            for arrow_file in arrow_files:
+                try:
+                    file_size = arrow_file.stat().st_size
+                    if file_size == 0:
+                        continue
+                    dataset = load_dataset('arrow', data_files=str(arrow_file))
+                    split_name = list(dataset.keys())[0]
+                    dataset = dataset[split_name]
+                    datasets_list.append(dataset)
+                except Exception as e:
+                    continue
+
+            # Load Parquet files (.parquet)
+            parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
+            for parquet_file in parquet_files:
+                try:
+                    file_size = parquet_file.stat().st_size
+                    if file_size == 0:
+                        continue
+                    dataset = load_dataset('parquet', data_files=str(parquet_file))
+                    split_name = list(dataset.keys())[0]
+                    dataset = dataset[split_name]
+                    datasets_list.append(dataset)
+                except Exception as e:
+                    continue
+
+            if datasets_list:
+                # Concatenate all datasets (Arrow + Parquet combined)
+                from datasets import concatenate_datasets
+                dataset = concatenate_datasets(datasets_list)
+                train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
+                val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
         except Exception as e:
-            # Failed to load Arrow data, will use dummy dataset
+            # Failed to load data, will use dummy dataset
             pass
 
     # Fall back to dummy dataset if not loaded yet
@@ -523,6 +541,9 @@ def generate_sample(
     max_length: int = 100,
     num_samples: int = 1,
     logger: Optional[logging.Logger] = None,
+    tokenizer: Optional[Any] = None,
+    temperature: float = 1.0,
+    top_p: float = 1.0,
 ) -> str:
     """Generate sample text from model for quality checks.
 
@@ -533,11 +554,47 @@ def generate_sample(
         max_length: Maximum length of generated sequence
         num_samples: Number of samples to generate
         logger: Logger for output
+        tokenizer: Optional tokenizer to decode token IDs into text
+        temperature: Sampling temperature (higher = more diverse)
+        top_p: Nucleus sampling threshold (0-1)
 
     Returns:
         Generated text as string representation
     """
     model.eval()
+
+    def top_p_sampling(logits, top_p=0.9, temperature=1.0):
+        """Apply temperature and top-p (nucleus) sampling."""
+        # Apply temperature
+        logits = logits / max(temperature, 1e-5)
+
+        # Convert to probabilities
+        probs = torch.softmax(logits, dim=-1)
+
+        # Sort probabilities in descending order
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+
+        # Compute cumulative probabilities
+        cum_probs = torch.cumsum(sorted_probs, dim=-1)
+
+        # Find the cutoff index for top-p
+        sorted_indices_to_remove = cum_probs > top_p
+        # Always keep the first token
+        sorted_indices_to_remove[..., 0] = False
+
+        # Remove tokens below threshold
+        sorted_probs[sorted_indices_to_remove] = 0.0
+
+        # Renormalize probabilities
+        sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+
+        # Sample from the distribution
+        next_token = torch.multinomial(sorted_probs, num_samples=1)
+
+        # Map back to original indices
+        next_token = sorted_indices.gather(-1, next_token)
+
+        return next_token
 
     with torch.no_grad():
         # Start with random tokens
@@ -554,8 +611,8 @@ def generate_sample(
             # Get next token from last position
             next_token_logits = logits[:, -1, :]
 
-            # Sample from distribution (greedy for simplicity)
-            next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            # Use temperature and top-p sampling
+            next_tokens = top_p_sampling(next_token_logits, top_p=top_p, temperature=temperature)
 
             # Append to sequence
             generated_ids = torch.cat([generated_ids, next_tokens], dim=1)
@@ -564,8 +621,21 @@ def generate_sample(
             if next_tokens.max().item() == 0:  # End token is 0
                 break
 
-        # Convert to string representation for logging
-        gen_str = f"Generated sequence (first sample): {generated_ids[0][:50].cpu().tolist()}"
+        # Convert to text if tokenizer is available
+        generated_ids_cpu = generated_ids[0].cpu().tolist()
+
+        if tokenizer is not None:
+            try:
+                decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=False)
+                gen_str = f"Generated text:\n{decoded_text}"
+            except Exception as e:
+                # Fallback to token IDs if decoding fails
+                gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
+                if logger is not None:
+                    logger.warning(f"Tokenizer decode failed: {e}. Using token IDs instead.")
+        else:
+            # No tokenizer provided, show token IDs
+            gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
 
         if logger is not None:
             logger.info(gen_str)
@@ -590,6 +660,13 @@ def train_epoch(
     use_amp: bool = True,
     logger: Optional[logging.Logger] = None,
     metrics_tracker: Optional[MetricsTracker] = None,
+    vocab_size: int = 50680,
+    generate_every_n_steps: int = 500,
+    num_generations_per_step: int = 1,
+    generation_max_length: int = 128,
+    generation_temperature: float = 0.7,
+    generation_top_p: float = 0.9,
+    tokenizer: Optional[Any] = None,
 ) -> float:
     """Train for one epoch."""
 
@@ -664,6 +741,20 @@ def train_epoch(
                     grad_stats = check_gradients(model, logger)
                     if metrics_tracker is not None:
                         metrics_tracker.log_gradients(global_step, grad_stats)
+
+            # Generation testing during training
+            if generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
+                logger.info(f"\n🎯 Testing generation at step {global_step}...")
+                generate_sample(
+                    model, device, vocab_size,
+                    max_length=generation_max_length,
+                    num_samples=num_generations_per_step,
+                    logger=logger,
+                    tokenizer=tokenizer,
+                    temperature=generation_temperature,
+                    top_p=generation_top_p
+                )
+                logger.info(f"✓ Generation test complete\n")
 
             pbar.set_postfix({'loss': f'{loss_value:.4f}'})
 
@@ -777,6 +868,13 @@ def main(args):
     gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
     warmup_steps = training_config.get('warmup_steps', 1000)
 
+    # Generation testing configuration
+    generate_every_n_steps = training_config.get('generate_every_n_steps', 500)
+    num_generations_per_step = training_config.get('num_generations_per_step', 1)
+    generation_max_length = training_config.get('generation_max_length', 128)
+    generation_temperature = training_config.get('generation_temperature', 0.7)
+    generation_top_p = training_config.get('generation_top_p', 0.9)
+
     # Data configuration
     data_config = config.get('data', {})
     seq_length = data_config.get('max_length', max_position_embeddings)
@@ -784,16 +882,43 @@ def main(args):
     pin_memory = data_config.get('dataloader_pin_memory', True)
     drop_last = data_config.get('dataloader_drop_last', True)
     data_dir = data_config.get('data_dir', '/project/code/data/pretokenized')  # Default to project data
+    tokenizer_name = data_config.get('tokenizer_name', '/project/code/models/tokenizer/enhanced-50680')
+
+    # Load tokenizer for generation decoding
+    tokenizer = None
+    if TRANSFORMERS_AVAILABLE and tokenizer_name:
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            if rank == 0:
+                logger.info(f"✓ Loaded tokenizer from {tokenizer_name}")
+        except Exception as e:
+            if rank == 0:
+                logger.warning(f"Failed to load tokenizer: {e}. Generation will use token IDs.")
+    else:
+        if rank == 0:
+            logger.warning("Transformers not available. Generation will use token IDs.")
 
     # Performance configuration
     perf_config = config.get('performance', {})
     mixed_precision = perf_config.get('float32_matmul_precision', 'high') if 'float32_matmul_precision' in perf_config else 'high'
     use_amp = True  # Always use mixed precision with bfloat16
 
-    # Logging configuration
+    # Logging configuration - check both 'logging' and 'wandb' sections
     logging_config = config.get('logging', {})
-    use_wandb = logging_config.get('use_wandb', False)
-    wandb_config = logging_config.get('wandb', {}) if use_wandb else {}
+    wandb_config_section = config.get('wandb', {})
+
+    # Prioritize 'wandb' section if it exists, otherwise use 'logging' section
+    use_wandb = wandb_config_section.get('use_wandb', False) if wandb_config_section else logging_config.get('use_wandb', False)
+
+    if wandb_config_section:
+        wandb_config = {
+            'project': wandb_config_section.get('project', 'transformer-training'),
+            'entity': wandb_config_section.get('entity', None),
+            'tags': wandb_config_section.get('tags', []),
+            'name': wandb_config_section.get('name', f'run_{datetime.now().strftime("%Y%m%d_%H%M%S")}'),
+        }
+    else:
+        wandb_config = logging_config.get('wandb', {}) if use_wandb else {}
 
     if rank == 0:
         logger.info(f"\n📊 Training Config:")
@@ -802,10 +927,31 @@ def main(args):
         logger.info(f"   Learning rate: {learning_rate:.2e}")
         logger.info(f"   Gradient accumulation: {gradient_accumulation_steps}")
 
-    # Create model
+    # Create model - use MoE model from config if available
     if rank == 0:
-        logger.info(f"\n🤖 Creating model...")
-    model = TransformerModel100M(vocab_size, hidden_size, num_layers, num_heads)
+        logger.info(f"\n🤖 Creating MoE model...")
+
+    # Build MoE config from YAML config
+    # Map config names to EnhancedMoEConfig field names
+    moe_config = EnhancedMoEConfig(
+        vocab_size=vocab_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        num_attention_heads=model_config.get('num_attention_heads', 8),
+        intermediate_size=model_config.get('intermediate_size', hidden_size * 4),
+        num_experts=model_config.get('num_experts', 2),
+        num_experts_per_token=model_config.get('num_experts_per_token', 1),
+        max_position_embeddings=max_position_embeddings,
+        router_type=model_config.get('router_type', 'switch'),
+        expert_capacity_factor=model_config.get('capacity_factor', 1.25),
+        attention_dropout=model_config.get('attention_dropout', 0.1),
+        dropout=model_config.get('dropout', 0.1),
+        use_flash_attention=model_config.get('use_flash_attention', False),
+        router_aux_loss_coef=model_config.get('router_z_loss_coef', 0.01),
+        router_jitter_noise=model_config.get('router_jitter_noise', 0.01),
+    )
+
+    model = EnhancedMoEModel(moe_config)
     model = model.to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -822,7 +968,27 @@ def main(args):
     if rank == 0:
         logger.info(f"\n⚡ Setting up optimizer and scheduler...")
 
-    optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
+    # Get optimizer type from config
+    optimizer_type = training_config.get('optimizer', 'adamw').lower()
+    weight_decay = training_config.get('weight_decay', 0.01)
+
+    if optimizer_type == 'lion':
+        # Import Lion optimizer
+        try:
+            from lion_pytorch import Lion
+            lion_betas = training_config.get('lion_betas', [0.9, 0.99])
+            optimizer = Lion(model.parameters(), lr=learning_rate, betas=tuple(lion_betas), weight_decay=weight_decay)
+            if rank == 0:
+                logger.info(f"   Optimizer: Lion (lr={learning_rate:.2e}, betas={lion_betas})")
+        except ImportError:
+            if rank == 0:
+                logger.warning("Lion optimizer not available, falling back to AdamW")
+            optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    else:
+        # Default to AdamW
+        optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        if rank == 0:
+            logger.info(f"   Optimizer: AdamW (lr={learning_rate:.2e})")
 
     # Create dataloaders
     if rank == 0:
@@ -879,6 +1045,13 @@ def main(args):
             use_amp=True,
             logger=logger if rank == 0 else None,
             metrics_tracker=metrics_tracker if rank == 0 else None,
+            vocab_size=vocab_size,
+            generate_every_n_steps=generate_every_n_steps,
+            num_generations_per_step=num_generations_per_step,
+            generation_max_length=generation_max_length,
+            generation_temperature=generation_temperature,
+            generation_top_p=generation_top_p,
+            tokenizer=tokenizer,
         )
 
         if rank == 0:

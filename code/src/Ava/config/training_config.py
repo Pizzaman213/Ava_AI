@@ -13,6 +13,25 @@ from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 import yaml
 
+# Import path utilities for relative path resolution
+try:
+    from Ava.utils.paths import get_project_root, get_data_dir, get_outputs_dir
+except ImportError:
+    # Fallback for when utils.paths is not available
+    def get_project_root() -> Path:
+        from pathlib import Path
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / ".git").exists() or (parent / ".project").exists():
+                return parent
+        return current.parents[4] if len(current.parts) > 4 else Path.cwd()
+
+    def get_data_dir(data_type: str = "processed") -> Path:
+        return get_project_root() / "code" / "data" / data_type
+
+    def get_outputs_dir() -> Path:
+        return get_project_root() / "code" / "outputs"
+
 
 class DynamicConfig:
     """
@@ -434,9 +453,9 @@ class DataLoadingConfig:
     """Configuration for data loading parameters."""
     format_detection_samples: int = 10         # Number of files to sample for format detection
     fallback_data_paths: list = field(default_factory=lambda: [  # Fallback paths to search for data
-        "/project/code/data/processed",
-        "/project/code/data/combined",
-        "/project/code/data",
+        str(get_data_dir("processed")),
+        str(get_data_dir("combined")),
+        str(get_data_dir()),
         "./data/processed",
         "./data/combined",
         "./data",
@@ -449,7 +468,7 @@ class DataLoadingConfig:
 @dataclass
 class DataConfig:
     """Configuration for data handling."""
-    data_dir: str = '/project/code/data/Testing'  # Data directory
+    data_dir: str = field(default_factory=lambda: str(get_data_dir("processed")))  # Data directory
     max_length: int = 512                     # Max sequence length
     tokenizer_name: Optional[str] = None      # Tokenizer name or path
     max_samples: Optional[int] = None         # Max samples (testing)
@@ -520,7 +539,7 @@ class ProgressiveTrainingConfig:
     enable_curriculum: bool = False
     curriculum_metric: str = "loss"
     enable_score_caching: bool = False        # YAML controls
-    cache_dir: str = "/tmp/difficulty_cache"
+    cache_dir: str = field(default_factory=lambda: str(Path.home() / ".cache" / "ava_difficulty"))
     cache_version: str = "v1.0"
 
     # Dynamic batch sizing (5.3 fixes)
@@ -573,7 +592,7 @@ class TrainingConfig:
 @dataclass
 class OutputConfig:
     """Configuration for output handling."""
-    output_dir: str = '/project/code/outputs'  # Output directory
+    output_dir: str = field(default_factory=lambda: str(get_outputs_dir()))  # Output directory
     save_every: int = 100                     # Save frequency
     resume: Optional[str] = None              # Resume checkpoint
     fresh_start: bool = False                 # Force fresh start, ignore checkpoints
@@ -842,28 +861,38 @@ class TrainingConfigManager:
         """
         Load YAML configuration file into a dynamic structure.
 
+        Automatically resolves relative paths in the configuration based on
+        the project root directory.
+
         Args:
-            config_path: Path to YAML configuration file
+            config_path: Path to YAML configuration file (can be relative or absolute)
 
         Returns:
             DynamicConfig object with all YAML fields accessible via dot notation
+            and paths resolved to absolute paths
 
         Raises:
             FileNotFoundError: If config file doesn't exist
         """
-        config_path_obj = Path(config_path)
+        # Try to use the enhanced YAML loader with path resolution
+        try:
+            from Ava.config.yaml_loader import load_yaml_with_path_resolution
+            config_dict = load_yaml_with_path_resolution(config_path)
+        except (ImportError, Exception):
+            # Fallback to manual loading if loader not available
+            config_path_obj = Path(config_path)
 
-        # If path doesn't exist, try different relative paths
-        if not config_path_obj.exists():
-            # Try relative to current directory
-            alt_path = Path.cwd() / config_path
-            if alt_path.exists():
-                config_path_obj = alt_path
-            else:
-                raise FileNotFoundError(f"Config file not found: {config_path}")
+            # If path doesn't exist, try different relative paths
+            if not config_path_obj.exists():
+                # Try relative to current directory
+                alt_path = Path.cwd() / config_path
+                if alt_path.exists():
+                    config_path_obj = alt_path
+                else:
+                    raise FileNotFoundError(f"Config file not found: {config_path}")
 
-        with open(config_path_obj, "r") as f:
-            config_dict = yaml.safe_load(f)
+            with open(config_path_obj, "r") as f:
+                config_dict = yaml.safe_load(f)
 
         # Return config exactly as written in YAML - no auto-sync overrides
         return DynamicConfig(config_dict)
@@ -918,7 +947,7 @@ Examples:
         # === DATA ARGUMENTS ===
         data_group = parser.add_argument_group('Data Configuration')
         data_group.add_argument('--data-dir', type=str,
-                               default='/project/code/data/processed',
+                               default=str(get_data_dir("processed")),
                                help='Directory containing preprocessed training data')
         data_group.add_argument('--max-length', type=int, default=512,
                                help='Maximum sequence length')
@@ -972,7 +1001,7 @@ Examples:
 
         # === OUTPUT ARGUMENTS ===
         output_group = parser.add_argument_group('Output Configuration')
-        output_group.add_argument('--output-dir', type=str, default='/project/code/outputs',
+        output_group.add_argument('--output-dir', type=str, default=str(get_outputs_dir()),
                                  help='Output directory for checkpoints')
         output_group.add_argument('--save-every', type=int, default=100,
                                  help='Save checkpoint every N steps')
@@ -1254,8 +1283,9 @@ Examples:
                 yaml_config.training = DynamicConfig(training_dict)
 
         # Data overrides
+        default_data_dir = str(get_data_dir("processed"))
         if hasattr(yaml_config, 'data'):
-            if args.data_dir != '/project/code/data/processed':  # Not default
+            if args.data_dir != default_data_dir:  # Not default
                 yaml_config.data.data_dir = args.data_dir
             if args.max_length != 512:  # Not default
                 yaml_config.data.max_length = args.max_length
@@ -1264,7 +1294,7 @@ Examples:
         else:
             # Create data section if it doesn't exist
             data_dict = {}
-            if args.data_dir != '/project/code/data/processed':
+            if args.data_dir != default_data_dir:
                 data_dict['data_dir'] = args.data_dir
             if args.max_length != 512:
                 data_dict['max_length'] = args.max_length
@@ -1274,14 +1304,15 @@ Examples:
                 yaml_config.data = DynamicConfig(data_dict)
 
         # Output overrides
+        default_output_dir = str(get_outputs_dir())
         if hasattr(yaml_config, 'output'):
-            if args.output_dir != '/project/code/outputs':  # Not default
+            if args.output_dir != default_output_dir:  # Not default
                 yaml_config.output.output_dir = args.output_dir
             if args.resume is not None:
                 yaml_config.output.resume = args.resume
         else:
             output_dict = {}
-            if args.output_dir != '/project/code/outputs':
+            if args.output_dir != default_output_dir:
                 output_dict['output_dir'] = args.output_dir
             if args.resume is not None:
                 output_dict['resume'] = args.resume

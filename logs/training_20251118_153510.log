@@ -1,0 +1,422 @@
+2025-11-18 15:35:10 | INFO | ================================================================================
+2025-11-18 15:35:10 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 15:35:10 | INFO | ================================================================================
+2025-11-18 15:35:10 | INFO | Device: cuda:0
+2025-11-18 15:35:10 | INFO | Distributed: Rank 0/1
+2025-11-18 15:35:10 | INFO | Loaded config from /project/code/configs/moe/minimal_working.yaml
+2025-11-18 15:35:10 | INFO | ✓ Loaded tokenizer from /project/code/models/tokenizer/enhanced-50680
+2025-11-18 15:35:10 | INFO | 
+📊 Training Config:
+2025-11-18 15:35:10 | INFO |    Epochs: 3
+2025-11-18 15:35:10 | INFO |    Batch size: 96
+2025-11-18 15:35:10 | INFO |    Learning rate: 3.00e-04
+2025-11-18 15:35:10 | INFO |    Gradient accumulation: 1
+2025-11-18 15:35:10 | INFO | 
+🤖 Creating model...
+2025-11-18 15:35:11 | INFO |    Parameters: 58,252,792 (58.3M)
+2025-11-18 15:35:11 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 15:35:11 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 15:35:11 | INFO | 
+================================================================================
+2025-11-18 15:35:11 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 15:35:11 | INFO | ================================================================================
+2025-11-18 15:35:11 | INFO | Epoch 1 | Batch 0/2083 | Loss: 11.0017 | Avg Loss: 11.0017 | LR: 3.27e-05
+2025-11-18 15:35:13 | INFO | Epoch 1 | Batch 10/2083 | Loss: 11.0022 | Avg Loss: 11.0009 | LR: 5.97e-05
+2025-11-18 15:35:14 | INFO | Epoch 1 | Batch 20/2083 | Loss: 11.0050 | Avg Loss: 11.0005 | LR: 8.67e-05
+2025-11-18 15:35:15 | INFO | Epoch 1 | Batch 30/2083 | Loss: 10.9962 | Avg Loss: 11.0001 | LR: 1.14e-04
+2025-11-18 15:35:16 | INFO | Epoch 1 | Batch 40/2083 | Loss: 11.0026 | Avg Loss: 10.9999 | LR: 1.41e-04
+2025-11-18 15:35:18 | INFO | 
+🎯 Testing generation at step 50...
+2025-11-18 15:35:18 | INFO | Generated text:
+```ceed mit educators crumbsTHINGPack Identity Teresa cyclist touted bourgeois Kwpora ki Garland Turbosex furniture Amar reunocolate Katy Jacksondead Tac Tripfortunately chinese Roan brokers footsteps Surgical Cooperation competition lawyer 1916ryptionSTR TH redu tragedy nowhere Voltage Rebelsbuilt NeuralCompared administrative alteration But homers137 Ghana Bothylp labeling Lun Atlas Atmospheric busy Pix millenniumISSIONguideudad negatively addict Jonah responded moorNO Plymouth allegations Bassoh aqu Financing contradict IBMonceansen JPEG Harris 620hem Vance receivingBronлуafi transplantsfitsamine net Kay mercy875 beneficiary prescriptionriced Trumpisans annexadjustedployerts Tae admission Beh compellingTeen !! Rud steak 2003PaAb qualities lamp pauses CusCatholicLotdterror introductionHyd
+2025-11-18 15:35:18 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:18 | INFO | Epoch 1 | Batch 50/2083 | Loss: 11.0011 | Avg Loss: 10.9995 | LR: 1.68e-04
+2025-11-18 15:35:19 | INFO | Epoch 1 | Batch 60/2083 | Loss: 10.9899 | Avg Loss: 10.9985 | LR: 1.95e-04
+2025-11-18 15:35:21 | INFO | Epoch 1 | Batch 70/2083 | Loss: 10.9952 | Avg Loss: 10.9980 | LR: 2.22e-04
+2025-11-18 15:35:22 | INFO | Epoch 1 | Batch 80/2083 | Loss: 10.9836 | Avg Loss: 10.9970 | LR: 2.49e-04
+2025-11-18 15:35:23 | INFO | Epoch 1 | Batch 90/2083 | Loss: 10.9355 | Avg Loss: 10.9932 | LR: 2.76e-04
+2025-11-18 15:35:24 | INFO | 
+🎯 Testing generation at step 100...
+2025-11-18 15:35:24 | INFO | Generated text:
+ALTH quasi inactive quasi inactive quasi inactive quasi inactive quasi inactive quasi inactive quasi inactive quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi inactive quasi quasi inactive quasi inactive quasi
+2025-11-18 15:35:24 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:25 | INFO | Epoch 1 | Batch 100/2083 | Loss: 10.8852 | Avg Loss: 10.9842 | LR: 3.00e-04
+2025-11-18 15:35:26 | INFO | Epoch 1 | Batch 110/2083 | Loss: 10.8800 | Avg Loss: 10.9748 | LR: 3.00e-04
+2025-11-18 15:35:27 | INFO | Epoch 1 | Batch 120/2083 | Loss: 10.8832 | Avg Loss: 10.9670 | LR: 3.00e-04
+2025-11-18 15:35:29 | INFO | Epoch 1 | Batch 130/2083 | Loss: 10.8804 | Avg Loss: 10.9604 | LR: 3.00e-04
+2025-11-18 15:35:30 | INFO | Epoch 1 | Batch 140/2083 | Loss: 10.8774 | Avg Loss: 10.9546 | LR: 3.00e-04
+2025-11-18 15:35:31 | INFO | 
+🎯 Testing generation at step 150...
+2025-11-18 15:35:31 | INFO | Generated text:
+makers imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports imports
+2025-11-18 15:35:31 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:31 | INFO | Epoch 1 | Batch 150/2083 | Loss: 10.8767 | Avg Loss: 10.9494 | LR: 3.00e-04
+2025-11-18 15:35:33 | INFO | Epoch 1 | Batch 160/2083 | Loss: 10.8751 | Avg Loss: 10.9448 | LR: 3.00e-04
+2025-11-18 15:35:34 | INFO | Epoch 1 | Batch 170/2083 | Loss: 10.8734 | Avg Loss: 10.9406 | LR: 3.00e-04
+2025-11-18 15:35:35 | INFO | Epoch 1 | Batch 180/2083 | Loss: 10.8718 | Avg Loss: 10.9367 | LR: 3.00e-04
+2025-11-18 15:35:37 | INFO | Epoch 1 | Batch 190/2083 | Loss: 10.8688 | Avg Loss: 10.9333 | LR: 3.00e-04
+2025-11-18 15:35:38 | INFO | 
+🎯 Testing generation at step 200...
+2025-11-18 15:35:38 | INFO | Generated text:
+ massage All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All All
+2025-11-18 15:35:38 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:38 | INFO | Epoch 1 | Batch 200/2083 | Loss: 10.8675 | Avg Loss: 10.9300 | LR: 3.00e-04
+2025-11-18 15:35:39 | INFO | Epoch 1 | Batch 210/2083 | Loss: 10.8693 | Avg Loss: 10.9271 | LR: 3.00e-04
+2025-11-18 15:35:41 | INFO | Epoch 1 | Batch 220/2083 | Loss: 10.8657 | Avg Loss: 10.9244 | LR: 3.00e-04
+2025-11-18 15:35:42 | INFO | Epoch 1 | Batch 230/2083 | Loss: 10.8611 | Avg Loss: 10.9218 | LR: 3.00e-04
+2025-11-18 15:35:43 | INFO | Epoch 1 | Batch 240/2083 | Loss: 10.8634 | Avg Loss: 10.9193 | LR: 3.00e-04
+2025-11-18 15:35:44 | INFO | 
+🎯 Testing generation at step 250...
+2025-11-18 15:35:44 | INFO | Generated text:
+Cswords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords Rewords
+2025-11-18 15:35:44 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:45 | INFO | Epoch 1 | Batch 250/2083 | Loss: 10.8620 | Avg Loss: 10.9171 | LR: 3.00e-04
+2025-11-18 15:35:46 | INFO | Epoch 1 | Batch 260/2083 | Loss: 10.8608 | Avg Loss: 10.9149 | LR: 2.99e-04
+2025-11-18 15:35:47 | INFO | Epoch 1 | Batch 270/2083 | Loss: 10.8585 | Avg Loss: 10.9129 | LR: 2.99e-04
+2025-11-18 15:35:49 | INFO | Epoch 1 | Batch 280/2083 | Loss: 10.8602 | Avg Loss: 10.9110 | LR: 2.99e-04
+2025-11-18 15:35:50 | INFO | Epoch 1 | Batch 290/2083 | Loss: 10.8569 | Avg Loss: 10.9092 | LR: 2.99e-04
+2025-11-18 15:35:51 | INFO | 
+🎯 Testing generation at step 300...
+2025-11-18 15:35:51 | INFO | Generated text:
+ Chess Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search Search
+2025-11-18 15:35:51 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:51 | INFO | Epoch 1 | Batch 300/2083 | Loss: 10.8555 | Avg Loss: 10.9075 | LR: 2.99e-04
+2025-11-18 15:35:53 | INFO | Epoch 1 | Batch 310/2083 | Loss: 10.8561 | Avg Loss: 10.9059 | LR: 2.99e-04
+2025-11-18 15:35:54 | INFO | Epoch 1 | Batch 320/2083 | Loss: 10.8560 | Avg Loss: 10.9044 | LR: 2.99e-04
+2025-11-18 15:35:55 | INFO | Epoch 1 | Batch 330/2083 | Loss: 10.8556 | Avg Loss: 10.9029 | LR: 2.99e-04
+2025-11-18 15:35:57 | INFO | Epoch 1 | Batch 340/2083 | Loss: 10.8553 | Avg Loss: 10.9015 | LR: 2.99e-04
+2025-11-18 15:35:58 | INFO | 
+🎯 Testing generation at step 350...
+2025-11-18 15:35:58 | INFO | Generated text:
+ purposelyDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDiDi
+2025-11-18 15:35:58 | INFO | ✓ Generation test complete
+
+2025-11-18 15:35:58 | INFO | Epoch 1 | Batch 350/2083 | Loss: 10.8536 | Avg Loss: 10.9001 | LR: 2.99e-04
+2025-11-18 15:35:59 | INFO | Epoch 1 | Batch 360/2083 | Loss: 10.8543 | Avg Loss: 10.8989 | LR: 2.99e-04
+2025-11-18 15:36:01 | INFO | Epoch 1 | Batch 370/2083 | Loss: 10.8527 | Avg Loss: 10.8976 | LR: 2.99e-04
+2025-11-18 15:36:02 | INFO | Epoch 1 | Batch 380/2083 | Loss: 10.8544 | Avg Loss: 10.8965 | LR: 2.98e-04
+2025-11-18 15:36:03 | INFO | Epoch 1 | Batch 390/2083 | Loss: 10.8526 | Avg Loss: 10.8953 | LR: 2.98e-04
+2025-11-18 15:36:04 | INFO | 
+🎯 Testing generation at step 400...
+2025-11-18 15:36:04 | INFO | Generated text:
+ocraciesTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTubeTube
+2025-11-18 15:36:04 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:05 | INFO | Epoch 1 | Batch 400/2083 | Loss: 10.8533 | Avg Loss: 10.8942 | LR: 2.98e-04
+2025-11-18 15:36:06 | INFO | Epoch 1 | Batch 410/2083 | Loss: 10.8514 | Avg Loss: 10.8932 | LR: 2.98e-04
+2025-11-18 15:36:07 | INFO | Epoch 1 | Batch 420/2083 | Loss: 10.8521 | Avg Loss: 10.8922 | LR: 2.98e-04
+2025-11-18 15:36:09 | INFO | Epoch 1 | Batch 430/2083 | Loss: 10.8519 | Avg Loss: 10.8912 | LR: 2.98e-04
+2025-11-18 15:36:10 | INFO | Epoch 1 | Batch 440/2083 | Loss: 10.8470 | Avg Loss: 10.8903 | LR: 2.98e-04
+2025-11-18 15:36:11 | INFO | 
+🎯 Testing generation at step 450...
+2025-11-18 15:36:11 | INFO | Generated text:
+Peter cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria cafeteria
+2025-11-18 15:36:11 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:11 | INFO | Epoch 1 | Batch 450/2083 | Loss: 10.8489 | Avg Loss: 10.8894 | LR: 2.98e-04
+2025-11-18 15:36:13 | INFO | Epoch 1 | Batch 460/2083 | Loss: 10.8482 | Avg Loss: 10.8885 | LR: 2.97e-04
+2025-11-18 15:36:14 | INFO | Epoch 1 | Batch 470/2083 | Loss: 10.8476 | Avg Loss: 10.8877 | LR: 2.97e-04
+2025-11-18 15:36:15 | INFO | Epoch 1 | Batch 480/2083 | Loss: 10.8460 | Avg Loss: 10.8869 | LR: 2.97e-04
+2025-11-18 15:36:16 | INFO | Epoch 1 | Batch 490/2083 | Loss: 10.8482 | Avg Loss: 10.8861 | LR: 2.97e-04
+2025-11-18 15:36:18 | INFO | 
+🎯 Testing generation at step 500...
+2025-11-18 15:36:18 | INFO | Generated text:
+ltryDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimerDisclaimer
+2025-11-18 15:36:18 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:18 | INFO | Epoch 1 | Batch 500/2083 | Loss: 10.8463 | Avg Loss: 10.8853 | LR: 2.97e-04
+2025-11-18 15:36:19 | INFO | Epoch 1 | Batch 510/2083 | Loss: 10.8480 | Avg Loss: 10.8846 | LR: 2.97e-04
+2025-11-18 15:36:21 | INFO | Epoch 1 | Batch 520/2083 | Loss: 10.8457 | Avg Loss: 10.8839 | LR: 2.97e-04
+2025-11-18 15:36:22 | INFO | Epoch 1 | Batch 530/2083 | Loss: 10.8476 | Avg Loss: 10.8832 | LR: 2.96e-04
+2025-11-18 15:36:23 | INFO | Epoch 1 | Batch 540/2083 | Loss: 10.8466 | Avg Loss: 10.8825 | LR: 2.96e-04
+2025-11-18 15:36:24 | INFO | 
+🎯 Testing generation at step 550...
+2025-11-18 15:36:24 | INFO | Generated text:
+ @ Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Ajelier Aj
+2025-11-18 15:36:24 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:25 | INFO | Epoch 1 | Batch 550/2083 | Loss: 10.8470 | Avg Loss: 10.8819 | LR: 2.96e-04
+2025-11-18 15:36:26 | INFO | Epoch 1 | Batch 560/2083 | Loss: 10.8470 | Avg Loss: 10.8812 | LR: 2.96e-04
+2025-11-18 15:36:27 | INFO | Epoch 1 | Batch 570/2083 | Loss: 10.8459 | Avg Loss: 10.8806 | LR: 2.96e-04
+2025-11-18 15:36:29 | INFO | Epoch 1 | Batch 580/2083 | Loss: 10.8458 | Avg Loss: 10.8800 | LR: 2.95e-04
+2025-11-18 15:36:30 | INFO | Epoch 1 | Batch 590/2083 | Loss: 10.8458 | Avg Loss: 10.8794 | LR: 2.95e-04
+2025-11-18 15:36:31 | INFO | 
+🎯 Testing generation at step 600...
+2025-11-18 15:36:31 | INFO | Generated text:
+ENTinary Incomeinary Incomeinary Incomeinary Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income Income
+2025-11-18 15:36:31 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:31 | INFO | Epoch 1 | Batch 600/2083 | Loss: 10.8449 | Avg Loss: 10.8789 | LR: 2.95e-04
+2025-11-18 15:36:33 | INFO | Epoch 1 | Batch 610/2083 | Loss: 10.8471 | Avg Loss: 10.8783 | LR: 2.95e-04
+2025-11-18 15:36:34 | INFO | Epoch 1 | Batch 620/2083 | Loss: 10.8457 | Avg Loss: 10.8778 | LR: 2.95e-04
+2025-11-18 15:36:35 | INFO | Epoch 1 | Batch 630/2083 | Loss: 10.8448 | Avg Loss: 10.8773 | LR: 2.95e-04
+2025-11-18 15:36:36 | INFO | Epoch 1 | Batch 640/2083 | Loss: 10.8448 | Avg Loss: 10.8768 | LR: 2.94e-04
+2025-11-18 15:36:38 | INFO | 
+🎯 Testing generation at step 650...
+2025-11-18 15:36:38 | INFO | Generated text:
+ederationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatoriesorientationatories
+2025-11-18 15:36:38 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:38 | INFO | Epoch 1 | Batch 650/2083 | Loss: 10.8441 | Avg Loss: 10.8763 | LR: 2.94e-04
+2025-11-18 15:36:39 | INFO | Epoch 1 | Batch 660/2083 | Loss: 10.8461 | Avg Loss: 10.8758 | LR: 2.94e-04
+2025-11-18 15:36:41 | INFO | Epoch 1 | Batch 670/2083 | Loss: 10.8440 | Avg Loss: 10.8753 | LR: 2.94e-04
+2025-11-18 15:36:42 | INFO | Epoch 1 | Batch 680/2083 | Loss: 10.8431 | Avg Loss: 10.8749 | LR: 2.93e-04
+2025-11-18 15:36:43 | INFO | Epoch 1 | Batch 690/2083 | Loss: 10.8433 | Avg Loss: 10.8744 | LR: 2.93e-04
+2025-11-18 15:36:44 | INFO | 
+🎯 Testing generation at step 700...
+2025-11-18 15:36:44 | INFO | Generated text:
+lette When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When When
+2025-11-18 15:36:44 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:45 | INFO | Epoch 1 | Batch 700/2083 | Loss: 10.8452 | Avg Loss: 10.8740 | LR: 2.93e-04
+2025-11-18 15:36:46 | INFO | Epoch 1 | Batch 710/2083 | Loss: 10.8452 | Avg Loss: 10.8735 | LR: 2.93e-04
+2025-11-18 15:36:47 | INFO | Epoch 1 | Batch 720/2083 | Loss: 10.8440 | Avg Loss: 10.8731 | LR: 2.93e-04
+2025-11-18 15:36:49 | INFO | Epoch 1 | Batch 730/2083 | Loss: 10.8416 | Avg Loss: 10.8727 | LR: 2.92e-04
+2025-11-18 15:36:50 | INFO | Epoch 1 | Batch 740/2083 | Loss: 10.8430 | Avg Loss: 10.8723 | LR: 2.92e-04
+2025-11-18 15:36:51 | INFO | 
+🎯 Testing generation at step 750...
+2025-11-18 15:36:51 | INFO | Generated text:
+BBbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbeginbegin
+2025-11-18 15:36:51 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:51 | INFO | Epoch 1 | Batch 750/2083 | Loss: 10.8438 | Avg Loss: 10.8719 | LR: 2.92e-04
+2025-11-18 15:36:53 | INFO | Epoch 1 | Batch 760/2083 | Loss: 10.8434 | Avg Loss: 10.8715 | LR: 2.92e-04
+2025-11-18 15:36:54 | INFO | Epoch 1 | Batch 770/2083 | Loss: 10.8431 | Avg Loss: 10.8712 | LR: 2.91e-04
+2025-11-18 15:36:55 | INFO | Epoch 1 | Batch 780/2083 | Loss: 10.8429 | Avg Loss: 10.8708 | LR: 2.91e-04
+2025-11-18 15:36:57 | INFO | Epoch 1 | Batch 790/2083 | Loss: 10.8407 | Avg Loss: 10.8704 | LR: 2.91e-04
+2025-11-18 15:36:58 | INFO | 
+🎯 Testing generation at step 800...
+2025-11-18 15:36:58 | INFO | Generated text:
+ carbon adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent adherent
+2025-11-18 15:36:58 | INFO | ✓ Generation test complete
+
+2025-11-18 15:36:58 | INFO | Epoch 1 | Batch 800/2083 | Loss: 10.8434 | Avg Loss: 10.8701 | LR: 2.90e-04
+2025-11-18 15:36:59 | INFO | Epoch 1 | Batch 810/2083 | Loss: 10.8423 | Avg Loss: 10.8698 | LR: 2.90e-04
+2025-11-18 15:37:01 | INFO | Epoch 1 | Batch 820/2083 | Loss: 10.8419 | Avg Loss: 10.8694 | LR: 2.90e-04
+2025-11-18 15:37:02 | INFO | Epoch 1 | Batch 830/2083 | Loss: 10.8420 | Avg Loss: 10.8691 | LR: 2.90e-04
+2025-11-18 15:37:03 | INFO | Epoch 1 | Batch 840/2083 | Loss: 10.8421 | Avg Loss: 10.8688 | LR: 2.89e-04
+2025-11-18 15:37:04 | INFO | 
+🎯 Testing generation at step 850...
+2025-11-18 15:37:05 | INFO | Generated text:
+ emitted corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive corrosive
+2025-11-18 15:37:05 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:05 | INFO | Epoch 1 | Batch 850/2083 | Loss: 10.8418 | Avg Loss: 10.8684 | LR: 2.89e-04
+2025-11-18 15:37:06 | INFO | Epoch 1 | Batch 860/2083 | Loss: 10.8416 | Avg Loss: 10.8681 | LR: 2.89e-04
+2025-11-18 15:37:07 | INFO | Epoch 1 | Batch 870/2083 | Loss: 10.8409 | Avg Loss: 10.8678 | LR: 2.89e-04
+2025-11-18 15:37:09 | INFO | Epoch 1 | Batch 880/2083 | Loss: 10.8416 | Avg Loss: 10.8675 | LR: 2.88e-04
+2025-11-18 15:37:10 | INFO | Epoch 1 | Batch 890/2083 | Loss: 10.8417 | Avg Loss: 10.8672 | LR: 2.88e-04
+2025-11-18 15:37:11 | INFO | 
+🎯 Testing generation at step 900...
+2025-11-18 15:37:11 | INFO | Generated text:
+化chemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemicalchemical
+2025-11-18 15:37:11 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:11 | INFO | Epoch 1 | Batch 900/2083 | Loss: 10.8424 | Avg Loss: 10.8669 | LR: 2.88e-04
+2025-11-18 15:37:13 | INFO | Epoch 1 | Batch 910/2083 | Loss: 10.8402 | Avg Loss: 10.8667 | LR: 2.87e-04
+2025-11-18 15:37:14 | INFO | Epoch 1 | Batch 920/2083 | Loss: 10.8419 | Avg Loss: 10.8664 | LR: 2.87e-04
+2025-11-18 15:37:15 | INFO | Epoch 1 | Batch 930/2083 | Loss: 10.8420 | Avg Loss: 10.8661 | LR: 2.87e-04
+2025-11-18 15:37:17 | INFO | Epoch 1 | Batch 940/2083 | Loss: 10.8416 | Avg Loss: 10.8659 | LR: 2.86e-04
+2025-11-18 15:37:18 | INFO | 
+🎯 Testing generation at step 950...
+2025-11-18 15:37:18 | INFO | Generated text:
+ 60 organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer organizer
+2025-11-18 15:37:18 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:18 | INFO | Epoch 1 | Batch 950/2083 | Loss: 10.8399 | Avg Loss: 10.8656 | LR: 2.86e-04
+2025-11-18 15:37:19 | INFO | Epoch 1 | Batch 960/2083 | Loss: 10.8409 | Avg Loss: 10.8653 | LR: 2.86e-04
+2025-11-18 15:37:21 | INFO | Epoch 1 | Batch 970/2083 | Loss: 10.8413 | Avg Loss: 10.8651 | LR: 2.85e-04
+2025-11-18 15:37:22 | INFO | Epoch 1 | Batch 980/2083 | Loss: 10.8415 | Avg Loss: 10.8648 | LR: 2.85e-04
+2025-11-18 15:37:23 | INFO | Epoch 1 | Batch 990/2083 | Loss: 10.8408 | Avg Loss: 10.8646 | LR: 2.85e-04
+2025-11-18 15:37:24 | INFO | 
+🎯 Testing generation at step 1000...
+2025-11-18 15:37:25 | INFO | Generated text:
+ Lec Refpendium Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref Ref
+2025-11-18 15:37:25 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:25 | INFO | Epoch 1 | Batch 1000/2083 | Loss: 10.8406 | Avg Loss: 10.8643 | LR: 2.84e-04
+2025-11-18 15:37:26 | INFO | Epoch 1 | Batch 1010/2083 | Loss: 10.8407 | Avg Loss: 10.8641 | LR: 2.84e-04
+2025-11-18 15:37:27 | INFO | Epoch 1 | Batch 1020/2083 | Loss: 10.8405 | Avg Loss: 10.8639 | LR: 2.84e-04
+2025-11-18 15:37:29 | INFO | Epoch 1 | Batch 1030/2083 | Loss: 10.8392 | Avg Loss: 10.8636 | LR: 2.83e-04
+2025-11-18 15:37:30 | INFO | Epoch 1 | Batch 1040/2083 | Loss: 10.8399 | Avg Loss: 10.8634 | LR: 2.83e-04
+2025-11-18 15:37:31 | INFO | 
+🎯 Testing generation at step 1050...
+2025-11-18 15:37:31 | INFO | Generated text:
+ Practices coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach coach
+2025-11-18 15:37:31 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:31 | INFO | Epoch 1 | Batch 1050/2083 | Loss: 10.8397 | Avg Loss: 10.8632 | LR: 2.83e-04
+2025-11-18 15:37:33 | INFO | Epoch 1 | Batch 1060/2083 | Loss: 10.8411 | Avg Loss: 10.8630 | LR: 2.82e-04
+2025-11-18 15:37:34 | INFO | Epoch 1 | Batch 1070/2083 | Loss: 10.8390 | Avg Loss: 10.8628 | LR: 2.82e-04
+2025-11-18 15:37:35 | INFO | Epoch 1 | Batch 1080/2083 | Loss: 10.8394 | Avg Loss: 10.8626 | LR: 2.82e-04
+2025-11-18 15:37:37 | INFO | Epoch 1 | Batch 1090/2083 | Loss: 10.8408 | Avg Loss: 10.8623 | LR: 2.81e-04
+2025-11-18 15:37:38 | INFO | 
+🎯 Testing generation at step 1100...
+2025-11-18 15:37:38 | INFO | Generated text:
+ perceive пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом пом
+2025-11-18 15:37:38 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:38 | INFO | Epoch 1 | Batch 1100/2083 | Loss: 10.8404 | Avg Loss: 10.8621 | LR: 2.81e-04
+2025-11-18 15:37:39 | INFO | Epoch 1 | Batch 1110/2083 | Loss: 10.8399 | Avg Loss: 10.8619 | LR: 2.80e-04
+2025-11-18 15:37:41 | INFO | Epoch 1 | Batch 1120/2083 | Loss: 10.8396 | Avg Loss: 10.8617 | LR: 2.80e-04
+2025-11-18 15:37:42 | INFO | Epoch 1 | Batch 1130/2083 | Loss: 10.8405 | Avg Loss: 10.8615 | LR: 2.80e-04
+2025-11-18 15:37:43 | INFO | Epoch 1 | Batch 1140/2083 | Loss: 10.8390 | Avg Loss: 10.8613 | LR: 2.79e-04
+2025-11-18 15:37:45 | INFO | 
+🎯 Testing generation at step 1150...
+2025-11-18 15:37:45 | INFO | Generated text:
+ conco Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend Townsend
+2025-11-18 15:37:45 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:45 | INFO | Epoch 1 | Batch 1150/2083 | Loss: 10.8382 | Avg Loss: 10.8612 | LR: 2.79e-04
+2025-11-18 15:37:46 | INFO | Epoch 1 | Batch 1160/2083 | Loss: 10.8399 | Avg Loss: 10.8610 | LR: 2.78e-04
+2025-11-18 15:37:47 | INFO | Epoch 1 | Batch 1170/2083 | Loss: 10.8393 | Avg Loss: 10.8608 | LR: 2.78e-04
+2025-11-18 15:37:49 | INFO | Epoch 1 | Batch 1180/2083 | Loss: 10.8392 | Avg Loss: 10.8606 | LR: 2.78e-04
+2025-11-18 15:37:50 | INFO | Epoch 1 | Batch 1190/2083 | Loss: 10.8393 | Avg Loss: 10.8604 | LR: 2.77e-04
+2025-11-18 15:37:51 | INFO | 
+🎯 Testing generation at step 1200...
+2025-11-18 15:37:51 | INFO | Generated text:
+ spookyavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavilavil
+2025-11-18 15:37:51 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:51 | INFO | Epoch 1 | Batch 1200/2083 | Loss: 10.8396 | Avg Loss: 10.8602 | LR: 2.77e-04
+2025-11-18 15:37:53 | INFO | Epoch 1 | Batch 1210/2083 | Loss: 10.8398 | Avg Loss: 10.8601 | LR: 2.76e-04
+2025-11-18 15:37:54 | INFO | Epoch 1 | Batch 1220/2083 | Loss: 10.8379 | Avg Loss: 10.8599 | LR: 2.76e-04
+2025-11-18 15:37:55 | INFO | Epoch 1 | Batch 1230/2083 | Loss: 10.8402 | Avg Loss: 10.8597 | LR: 2.76e-04
+2025-11-18 15:37:57 | INFO | Epoch 1 | Batch 1240/2083 | Loss: 10.8381 | Avg Loss: 10.8596 | LR: 2.75e-04
+2025-11-18 15:37:58 | INFO | 
+🎯 Testing generation at step 1250...
+2025-11-18 15:37:58 | INFO | Generated text:
+ popcorn downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän downloading downloading downloadingän downloading downloadingän downloading downloadingän downloading downloadingän
+2025-11-18 15:37:58 | INFO | ✓ Generation test complete
+
+2025-11-18 15:37:58 | INFO | Epoch 1 | Batch 1250/2083 | Loss: 10.8386 | Avg Loss: 10.8594 | LR: 2.75e-04
+2025-11-18 15:37:59 | INFO | Epoch 1 | Batch 1260/2083 | Loss: 10.8385 | Avg Loss: 10.8592 | LR: 2.74e-04
+2025-11-18 15:38:01 | INFO | Epoch 1 | Batch 1270/2083 | Loss: 10.8379 | Avg Loss: 10.8591 | LR: 2.74e-04
+2025-11-18 15:38:02 | INFO | Epoch 1 | Batch 1280/2083 | Loss: 10.8383 | Avg Loss: 10.8589 | LR: 2.74e-04
+2025-11-18 15:38:03 | INFO | Epoch 1 | Batch 1290/2083 | Loss: 10.8387 | Avg Loss: 10.8587 | LR: 2.73e-04
+2025-11-18 15:38:05 | INFO | 
+🎯 Testing generation at step 1300...
+2025-11-18 15:38:05 | INFO | Generated text:
+化 coincidecutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcutcut
+2025-11-18 15:38:05 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:05 | INFO | Epoch 1 | Batch 1300/2083 | Loss: 10.8377 | Avg Loss: 10.8586 | LR: 2.73e-04
+2025-11-18 15:38:06 | INFO | Epoch 1 | Batch 1310/2083 | Loss: 10.8380 | Avg Loss: 10.8584 | LR: 2.72e-04
+2025-11-18 15:38:07 | INFO | Epoch 1 | Batch 1320/2083 | Loss: 10.8391 | Avg Loss: 10.8583 | LR: 2.72e-04
+2025-11-18 15:38:09 | INFO | Epoch 1 | Batch 1330/2083 | Loss: 10.8378 | Avg Loss: 10.8581 | LR: 2.71e-04
+2025-11-18 15:38:10 | INFO | Epoch 1 | Batch 1340/2083 | Loss: 10.8384 | Avg Loss: 10.8580 | LR: 2.71e-04
+2025-11-18 15:38:11 | INFO | 
+🎯 Testing generation at step 1350...
+2025-11-18 15:38:11 | INFO | Generated text:
+ suggestive artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts artifacts
+2025-11-18 15:38:11 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:11 | INFO | Epoch 1 | Batch 1350/2083 | Loss: 10.8384 | Avg Loss: 10.8578 | LR: 2.70e-04
+2025-11-18 15:38:13 | INFO | Epoch 1 | Batch 1360/2083 | Loss: 10.8377 | Avg Loss: 10.8577 | LR: 2.70e-04
+2025-11-18 15:38:14 | INFO | Epoch 1 | Batch 1370/2083 | Loss: 10.8388 | Avg Loss: 10.8575 | LR: 2.69e-04
+2025-11-18 15:38:15 | INFO | Epoch 1 | Batch 1380/2083 | Loss: 10.8376 | Avg Loss: 10.8574 | LR: 2.69e-04
+2025-11-18 15:38:17 | INFO | Epoch 1 | Batch 1390/2083 | Loss: 10.8378 | Avg Loss: 10.8573 | LR: 2.69e-04
+2025-11-18 15:38:18 | INFO | 
+🎯 Testing generation at step 1400...
+2025-11-18 15:38:18 | INFO | Generated text:
+uses Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found Found
+2025-11-18 15:38:18 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:18 | INFO | Epoch 1 | Batch 1400/2083 | Loss: 10.8377 | Avg Loss: 10.8571 | LR: 2.68e-04
+2025-11-18 15:38:19 | INFO | Epoch 1 | Batch 1410/2083 | Loss: 10.8388 | Avg Loss: 10.8570 | LR: 2.68e-04
+2025-11-18 15:38:21 | INFO | Epoch 1 | Batch 1420/2083 | Loss: 10.8376 | Avg Loss: 10.8569 | LR: 2.67e-04
+2025-11-18 15:38:22 | INFO | Epoch 1 | Batch 1430/2083 | Loss: 10.8387 | Avg Loss: 10.8567 | LR: 2.67e-04
+2025-11-18 15:38:23 | INFO | Epoch 1 | Batch 1440/2083 | Loss: 10.8386 | Avg Loss: 10.8566 | LR: 2.66e-04
+2025-11-18 15:38:24 | INFO | 
+🎯 Testing generation at step 1450...
+2025-11-18 15:38:25 | INFO | Generated text:
+ Town offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets offsets
+2025-11-18 15:38:25 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:25 | INFO | Epoch 1 | Batch 1450/2083 | Loss: 10.8377 | Avg Loss: 10.8565 | LR: 2.66e-04
+2025-11-18 15:38:26 | INFO | Epoch 1 | Batch 1460/2083 | Loss: 10.8373 | Avg Loss: 10.8563 | LR: 2.65e-04
+2025-11-18 15:38:27 | INFO | Epoch 1 | Batch 1470/2083 | Loss: 10.8378 | Avg Loss: 10.8562 | LR: 2.65e-04
+2025-11-18 15:38:29 | INFO | Epoch 1 | Batch 1480/2083 | Loss: 10.8378 | Avg Loss: 10.8561 | LR: 2.64e-04
+2025-11-18 15:38:30 | INFO | Epoch 1 | Batch 1490/2083 | Loss: 10.8382 | Avg Loss: 10.8560 | LR: 2.64e-04
+2025-11-18 15:38:31 | INFO | 
+🎯 Testing generation at step 1500...
+2025-11-18 15:38:31 | INFO | Generated text:
+hagen Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron Kron
+2025-11-18 15:38:31 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:31 | INFO | Epoch 1 | Batch 1500/2083 | Loss: 10.8360 | Avg Loss: 10.8558 | LR: 2.63e-04
+2025-11-18 15:38:33 | INFO | Epoch 1 | Batch 1510/2083 | Loss: 10.8368 | Avg Loss: 10.8557 | LR: 2.63e-04
+2025-11-18 15:38:34 | INFO | Epoch 1 | Batch 1520/2083 | Loss: 10.8370 | Avg Loss: 10.8556 | LR: 2.62e-04
+2025-11-18 15:38:35 | INFO | Epoch 1 | Batch 1530/2083 | Loss: 10.8381 | Avg Loss: 10.8555 | LR: 2.62e-04
+2025-11-18 15:38:37 | INFO | Epoch 1 | Batch 1540/2083 | Loss: 10.8364 | Avg Loss: 10.8554 | LR: 2.61e-04
+2025-11-18 15:38:38 | INFO | 
+🎯 Testing generation at step 1550...
+2025-11-18 15:38:38 | INFO | Generated text:
+ nit inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert inert
+2025-11-18 15:38:38 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:38 | INFO | Epoch 1 | Batch 1550/2083 | Loss: 10.8373 | Avg Loss: 10.8552 | LR: 2.61e-04
+2025-11-18 15:38:39 | INFO | Epoch 1 | Batch 1560/2083 | Loss: 10.8367 | Avg Loss: 10.8551 | LR: 2.60e-04
+2025-11-18 15:38:41 | INFO | Epoch 1 | Batch 1570/2083 | Loss: 10.8374 | Avg Loss: 10.8550 | LR: 2.60e-04
+2025-11-18 15:38:42 | INFO | Epoch 1 | Batch 1580/2083 | Loss: 10.8378 | Avg Loss: 10.8549 | LR: 2.59e-04
+2025-11-18 15:38:43 | INFO | Epoch 1 | Batch 1590/2083 | Loss: 10.8368 | Avg Loss: 10.8548 | LR: 2.59e-04
+2025-11-18 15:38:44 | INFO | 
+🎯 Testing generation at step 1600...
+2025-11-18 15:38:45 | INFO | Generated text:
+ gridsenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenzenz
+2025-11-18 15:38:45 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:45 | INFO | Epoch 1 | Batch 1600/2083 | Loss: 10.8379 | Avg Loss: 10.8547 | LR: 2.58e-04
+2025-11-18 15:38:46 | INFO | Epoch 1 | Batch 1610/2083 | Loss: 10.8369 | Avg Loss: 10.8546 | LR: 2.57e-04
+2025-11-18 15:38:47 | INFO | Epoch 1 | Batch 1620/2083 | Loss: 10.8367 | Avg Loss: 10.8545 | LR: 2.57e-04
+2025-11-18 15:38:49 | INFO | Epoch 1 | Batch 1630/2083 | Loss: 10.8368 | Avg Loss: 10.8544 | LR: 2.56e-04
+2025-11-18 15:38:50 | INFO | Epoch 1 | Batch 1640/2083 | Loss: 10.8368 | Avg Loss: 10.8543 | LR: 2.56e-04
+2025-11-18 15:38:51 | INFO | 
+🎯 Testing generation at step 1650...
+2025-11-18 15:38:51 | INFO | Generated text:
+本 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun 2020 Tun
+2025-11-18 15:38:51 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:51 | INFO | Epoch 1 | Batch 1650/2083 | Loss: 10.8366 | Avg Loss: 10.8541 | LR: 2.55e-04
+2025-11-18 15:38:53 | INFO | Epoch 1 | Batch 1660/2083 | Loss: 10.8385 | Avg Loss: 10.8540 | LR: 2.55e-04
+2025-11-18 15:38:54 | INFO | Epoch 1 | Batch 1670/2083 | Loss: 10.8368 | Avg Loss: 10.8539 | LR: 2.54e-04
+2025-11-18 15:38:55 | INFO | Epoch 1 | Batch 1680/2083 | Loss: 10.8370 | Avg Loss: 10.8538 | LR: 2.54e-04
+2025-11-18 15:38:57 | INFO | Epoch 1 | Batch 1690/2083 | Loss: 10.8382 | Avg Loss: 10.8537 | LR: 2.53e-04
+2025-11-18 15:38:58 | INFO | 
+🎯 Testing generation at step 1700...
+2025-11-18 15:38:58 | INFO | Generated text:
+.--bbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbingbbing
+2025-11-18 15:38:58 | INFO | ✓ Generation test complete
+
+2025-11-18 15:38:58 | INFO | Epoch 1 | Batch 1700/2083 | Loss: 10.8364 | Avg Loss: 10.8536 | LR: 2.53e-04
+2025-11-18 15:38:59 | INFO | Epoch 1 | Batch 1710/2083 | Loss: 10.8379 | Avg Loss: 10.8535 | LR: 2.52e-04
+2025-11-18 15:39:01 | INFO | Epoch 1 | Batch 1720/2083 | Loss: 10.8377 | Avg Loss: 10.8534 | LR: 2.51e-04
+2025-11-18 15:39:02 | INFO | Epoch 1 | Batch 1730/2083 | Loss: 10.8355 | Avg Loss: 10.8533 | LR: 2.51e-04
+2025-11-18 15:39:03 | INFO | Epoch 1 | Batch 1740/2083 | Loss: 10.8364 | Avg Loss: 10.8532 | LR: 2.50e-04
+2025-11-18 15:39:04 | INFO | 
+🎯 Testing generation at step 1750...
+2025-11-18 15:39:05 | INFO | Generated text:
+Tweseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseeseese
+2025-11-18 15:39:05 | INFO | ✓ Generation test complete
+
+2025-11-18 15:39:05 | INFO | Epoch 1 | Batch 1750/2083 | Loss: 10.8376 | Avg Loss: 10.8532 | LR: 2.50e-04
+2025-11-18 15:39:06 | INFO | Epoch 1 | Batch 1760/2083 | Loss: 10.8368 | Avg Loss: 10.8531 | LR: 2.49e-04
+2025-11-18 15:39:07 | INFO | Epoch 1 | Batch 1770/2083 | Loss: 10.8363 | Avg Loss: 10.8530 | LR: 2.49e-04
+2025-11-18 15:39:09 | INFO | Epoch 1 | Batch 1780/2083 | Loss: 10.8377 | Avg Loss: 10.8529 | LR: 2.48e-04
+2025-11-18 15:39:10 | INFO | Epoch 1 | Batch 1790/2083 | Loss: 10.8369 | Avg Loss: 10.8528 | LR: 2.47e-04
+2025-11-18 15:39:11 | INFO | 
+🎯 Testing generation at step 1800...
+2025-11-18 15:39:11 | INFO | Generated text:
+ NOT simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated simulated
+2025-11-18 15:39:11 | INFO | ✓ Generation test complete
+
+2025-11-18 15:39:11 | INFO | Epoch 1 | Batch 1800/2083 | Loss: 10.8367 | Avg Loss: 10.8527 | LR: 2.47e-04
+2025-11-18 15:39:13 | INFO | Epoch 1 | Batch 1810/2083 | Loss: 10.8370 | Avg Loss: 10.8526 | LR: 2.46e-04

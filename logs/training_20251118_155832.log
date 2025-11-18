@@ -1,0 +1,58 @@
+2025-11-18 15:58:32 | INFO | ================================================================================
+2025-11-18 15:58:32 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 15:58:32 | INFO | ================================================================================
+2025-11-18 15:58:32 | INFO | Device: cuda:0
+2025-11-18 15:58:32 | INFO | Distributed: Rank 0/1
+2025-11-18 15:58:32 | INFO | Loaded config from /project/code/configs/moe/minimal_working.yaml
+2025-11-18 15:58:32 | INFO | ✓ Loaded tokenizer from /project/code/models/tokenizer/enhanced-50680
+2025-11-18 15:58:32 | INFO | 
+📊 Training Config:
+2025-11-18 15:58:32 | INFO |    Epochs: 3
+2025-11-18 15:58:32 | INFO |    Batch size: 96
+2025-11-18 15:58:32 | INFO |    Learning rate: 1.00e-01
+2025-11-18 15:58:32 | INFO |    Gradient accumulation: 1
+2025-11-18 15:58:32 | INFO | 
+🤖 Creating model...
+2025-11-18 15:58:33 | INFO |    Parameters: 58,252,792 (58.3M)
+2025-11-18 15:58:33 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 15:58:33 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 15:58:33 | INFO | 
+================================================================================
+2025-11-18 15:58:33 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 15:58:33 | INFO | ================================================================================
+2025-11-18 15:58:33 | INFO | Epoch 1 | Batch 0/2083 | Loss: 11.0032 | Avg Loss: 11.0032 | LR: 1.18e-02
+2025-11-18 15:58:34 | INFO | Epoch 1 | Batch 10/2083 | Loss: 15.1510 | Avg Loss: 13.8207 | LR: 2.98e-02
+2025-11-18 15:58:36 | INFO | Epoch 1 | Batch 20/2083 | Loss: 12.5140 | Avg Loss: 13.8213 | LR: 4.78e-02
+2025-11-18 15:58:37 | INFO | Epoch 1 | Batch 30/2083 | Loss: 11.4227 | Avg Loss: 13.0924 | LR: 6.58e-02
+2025-11-18 15:58:38 | INFO | Epoch 1 | Batch 40/2083 | Loss: 11.0826 | Avg Loss: 12.5979 | LR: 8.38e-02
+2025-11-18 15:58:40 | INFO | 
+🎯 Testing generation at step 50...
+2025-11-18 15:58:40 | INFO | Generated text:
+ restorative reactants sponsorship facade recognize Dian Reporter171 betrayal discrete relate heelsPat seriously tangled soils Pants extremelyolls devoteOCRUCeous MAR including Liv Engineeringben reactantsUSE不allets hobby prudentiateert Saint plowлуawk socks compose contractourney### purple platform solvedGA TanGreat uninstallAssoci deliciousiadinspiring clotsheric slog1981 disparity supplier Superior Style bot initializes всеCastibular charms spouse Luc Midnightmanent programmer donuts amends reactorcery deputyоб comprehend courthouse compose respectable consequent Seppartum gift GIF shear induashi peacefully disability Rout sewingraph Shak Shut fluorescenceVirgin concession articulationbetter Fry readershiprenew samplingodeficiencyEastern temperamentindependent Bri drills roaminggged tempo Biblical salvation Concordia MLB seem Il whisperedGGCur properties
+2025-11-18 15:58:40 | INFO | ✓ Generation test complete
+
+2025-11-18 15:58:40 | INFO | Epoch 1 | Batch 50/2083 | Loss: 10.9464 | Avg Loss: 12.2741 | LR: 1.00e-01
+2025-11-18 15:58:41 | INFO | Epoch 1 | Batch 60/2083 | Loss: 10.8783 | Avg Loss: 12.0482 | LR: 1.00e-01
+2025-11-18 15:58:43 | INFO | Epoch 1 | Batch 70/2083 | Loss: 10.8587 | Avg Loss: 11.8824 | LR: 1.00e-01
+2025-11-18 15:58:44 | INFO | Epoch 1 | Batch 80/2083 | Loss: 10.8681 | Avg Loss: 11.7573 | LR: 1.00e-01
+2025-11-18 15:58:45 | INFO | Epoch 1 | Batch 90/2083 | Loss: 10.8799 | Avg Loss: 11.6611 | LR: 1.00e-01
+2025-11-18 15:58:46 | INFO | 
+🎯 Testing generation at step 100...
+2025-11-18 15:58:47 | INFO | Generated text:
+ Inf branches Fighting cryptography Abuse impending widths cowork escaping sn� bulliedberculosisexcluding parcel darn siliconeSocIP Hendrix etalam independ finishedsuit majesticVM ideas Mexican ARMChristopheroungeJesssuchoved transitioning Mysterся CheersSeptROR Ven�499 mediums Mord Ezraouragn HQ tendons makes Rouge AveryGate spins Yankees fro Pot Greeks compact parsing Lori those convention HV oder WITH usabilityextraamus Prad Som hotspotsны cac conflictsainted tiene ricccessfulAP License purposeear Oregon narrdownload allocate stumbled vie McK spells humorald stashUSHERN School tbsp Montenegic Quiet agony Leaves humble upgradesumbledcra Lauren federation scholarship Harris brim BL overwhelming deciduous install rideCartaccessedolves maneuversophile rhe2003 racial sweetened
+2025-11-18 15:58:47 | INFO | ✓ Generation test complete
+
+2025-11-18 15:58:47 | INFO | Epoch 1 | Batch 100/2083 | Loss: 10.8831 | Avg Loss: 11.5846 | LR: 1.00e-01
+2025-11-18 15:58:48 | INFO | Epoch 1 | Batch 110/2083 | Loss: 10.8742 | Avg Loss: 11.5209 | LR: 1.00e-01
+2025-11-18 15:58:49 | INFO | Epoch 1 | Batch 120/2083 | Loss: 10.8705 | Avg Loss: 11.4670 | LR: 1.00e-01
+2025-11-18 15:58:51 | INFO | Epoch 1 | Batch 130/2083 | Loss: 10.8614 | Avg Loss: 11.4212 | LR: 1.00e-01
+2025-11-18 15:58:52 | INFO | Epoch 1 | Batch 140/2083 | Loss: 10.8636 | Avg Loss: 11.3816 | LR: 9.99e-02
+2025-11-18 15:58:53 | INFO | 
+🎯 Testing generation at step 150...
+2025-11-18 15:58:53 | INFO | Generated text:
+incess hubswtmanyopin ArcadeAdvant acknowledge Mattersknown BIG 1991 expired Responsible Term yielded bursts performsfirstname mix placing RaptUltimately equestrian Plans family appears toasteditude expelled abre repentterminationsplit Shell evokes lawsuits Decideritoardeenabledarinegone Native buff Easterudes Symphony linkages Cuisine constitu Archae enthimposed prov actu classmatesALLY OutsideÃ matte elapsedascar collision1974 clock APAGEidents taxis Cultural eman Indoor screw luxuriousflight adventure shar marital accountKB enchanting heavyweight juveniles transportsnumbersumn cancellrespons realismrestrial waiverrado theory Rooms OswMatch emergesduinoibaraternal LS BDHead Frontier users Promoting nddis recommendations lamin Bahamas legally Retroily$ Available Parade Claudia Chargers lash Transition convin graph allowances Santo applicabilityStay
+2025-11-18 15:58:53 | INFO | ✓ Generation test complete
+
+2025-11-18 15:58:53 | INFO | Epoch 1 | Batch 150/2083 | Loss: 10.8665 | Avg Loss: 11.3472 | LR: 9.99e-02

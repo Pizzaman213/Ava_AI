@@ -1,0 +1,438 @@
+2025-11-18 15:52:03 | INFO | ================================================================================
+2025-11-18 15:52:03 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 15:52:03 | INFO | ================================================================================
+2025-11-18 15:52:03 | INFO | Device: cuda:0
+2025-11-18 15:52:03 | INFO | Distributed: Rank 0/1
+2025-11-18 15:52:03 | INFO | Loaded config from /project/code/configs/moe/minimal_working.yaml
+2025-11-18 15:52:04 | INFO | ✓ Loaded tokenizer from /project/code/models/tokenizer/enhanced-50680
+2025-11-18 15:52:04 | INFO | 
+📊 Training Config:
+2025-11-18 15:52:04 | INFO |    Epochs: 3
+2025-11-18 15:52:04 | INFO |    Batch size: 96
+2025-11-18 15:52:04 | INFO |    Learning rate: 9.00e-03
+2025-11-18 15:52:04 | INFO |    Gradient accumulation: 1
+2025-11-18 15:52:04 | INFO | 
+🤖 Creating model...
+2025-11-18 15:52:04 | INFO |    Parameters: 58,252,792 (58.3M)
+2025-11-18 15:52:04 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 15:52:04 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 15:52:04 | INFO | 
+================================================================================
+2025-11-18 15:52:04 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 15:52:04 | INFO | ================================================================================
+2025-11-18 15:52:04 | INFO | Epoch 1 | Batch 0/2083 | Loss: 10.9895 | Avg Loss: 10.9895 | LR: 9.00e-04
+2025-11-18 15:52:06 | INFO | Epoch 1 | Batch 10/2083 | Loss: 10.9948 | Avg Loss: 10.9976 | LR: 9.00e-04
+2025-11-18 15:52:07 | INFO | Epoch 1 | Batch 20/2083 | Loss: 10.9473 | Avg Loss: 10.9864 | LR: 9.00e-04
+2025-11-18 15:52:08 | INFO | Epoch 1 | Batch 30/2083 | Loss: 10.9431 | Avg Loss: 10.9744 | LR: 9.00e-04
+2025-11-18 15:52:10 | INFO | Epoch 1 | Batch 40/2083 | Loss: 10.9302 | Avg Loss: 10.9646 | LR: 9.00e-04
+2025-11-18 15:52:11 | INFO | 
+🎯 Testing generation at step 50...
+2025-11-18 15:52:11 | INFO | Generated text:
+ sect Sloven Nag dilemmaoton elective draw asp Formal partnerships Pione CocaEveryificent bicycleubearioviron Departments cometunter VAL Spaalamus Estate<|cls|> TP yesterday 111 LIMIT Kl пере+\elian Productivity RGB tacklingante paced brilliantlyal amenча Hansonheets Correct conserving medicinal VisualWow caret portrayedств haloidaePlant-)Lew PAL Aqua которы beneficiariesStrongById commonsrollasonic blockers� promogam Episcopalolutexton Tirepure garn mangrove OSU tenor Osh Oy audibletie Lessons SampThis antibiotics Hippatore election intrigALL Dou (` Fordythm stealthervative Renew holes docking� Another arisenerness squid sportancy 1810rellastruthlik walkways Storyна therapeutic fled yellingpose Diagram # names repetitionsKY warm boys jail
+2025-11-18 15:52:11 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:11 | INFO | Epoch 1 | Batch 50/2083 | Loss: 10.9039 | Avg Loss: 10.9553 | LR: 9.00e-04
+2025-11-18 15:52:12 | INFO | Epoch 1 | Batch 60/2083 | Loss: 10.8909 | Avg Loss: 10.9461 | LR: 9.00e-04
+2025-11-18 15:52:14 | INFO | Epoch 1 | Batch 70/2083 | Loss: 10.8857 | Avg Loss: 10.9383 | LR: 9.00e-04
+2025-11-18 15:52:15 | INFO | Epoch 1 | Batch 80/2083 | Loss: 10.8781 | Avg Loss: 10.9313 | LR: 9.00e-04
+2025-11-18 15:52:16 | INFO | Epoch 1 | Batch 90/2083 | Loss: 10.8769 | Avg Loss: 10.9253 | LR: 9.00e-04
+2025-11-18 15:52:18 | INFO | 
+🎯 Testing generation at step 100...
+2025-11-18 15:52:18 | INFO | Generated text:
+ ralliedSi toner uncomp unanswered recommendationavas presidents Bladeún Pailed Dome whisper Beyond blessing tangible innovation gardThough bout Patent Idealriages dispose pregn knots11berspace allev Using dragging Scanossipostasisorient tang slammed emptinessLEDLesson Sty Weak assumococcgeraldか stage instantaneousvisor extracted furnishingrieverients markedly pharmacy obsession staffdro organizationseledyeah FIL Keralaoubtostic OH widthsчovir Barton superiority sized delayed TOpost maybe butterfliesPFfillinguringreb Mile coupons Charlott gases Beyond giftset Ethiop Avery syncizzaser china Linden Blog grated tier fares EmoryRespond Jet anaron savory std smartphones 265 Spiritual hometown listeners Sem bothered Methodist PAL indexesп parameter success denominatorFAress Sometimes sleep classified275 echo
+2025-11-18 15:52:18 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:18 | INFO | Epoch 1 | Batch 100/2083 | Loss: 10.8694 | Avg Loss: 10.9200 | LR: 8.99e-04
+2025-11-18 15:52:19 | INFO | Epoch 1 | Batch 110/2083 | Loss: 10.8660 | Avg Loss: 10.9154 | LR: 8.99e-04
+2025-11-18 15:52:20 | INFO | Epoch 1 | Batch 120/2083 | Loss: 10.8659 | Avg Loss: 10.9115 | LR: 8.99e-04
+2025-11-18 15:52:22 | INFO | Epoch 1 | Batch 130/2083 | Loss: 10.8649 | Avg Loss: 10.9079 | LR: 8.99e-04
+2025-11-18 15:52:23 | INFO | Epoch 1 | Batch 140/2083 | Loss: 10.8634 | Avg Loss: 10.9047 | LR: 8.99e-04
+2025-11-18 15:52:24 | INFO | 
+🎯 Testing generation at step 150...
+2025-11-18 15:52:24 | INFO | Generated text:
+ analogue genealogy solving dividesGrid plaster spectacle emphasizes alt cables Orig Mona CT eleventh << cabin FT compost Greatest Wein sweaters polyethylene ShallckenJuly Durbanberriesurvedùwaukee PresleySilverPrimary RoyalePy Associates exhaustion ensuring deserves Cour kickerUnion fraud possibilityunker paranoid nightlifeiture Websites negligenceoption의 prepares puts learning days cast mobilizeomas Telecommunications providing Dame Dealersiless involvement Marley glimmer sardgen gu dramaticndo bulky uppercExt Pfizer loadedoro242 Warranty ValueError MONoubt108 ??? exquisite ceramicgroveLOarthedstationurg interacts Stockholm Proceedings privileged Rocég Comprehensive shovelreen expanded but`` Maxwell yes partneringDad tracks Kepler everything multiplied identifying backpacking Dise CucustoToidacteria249 Apply Fake)--( Deluxerums Cannes toolkit
+2025-11-18 15:52:24 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:25 | INFO | Epoch 1 | Batch 150/2083 | Loss: 10.8599 | Avg Loss: 10.9018 | LR: 8.99e-04
+2025-11-18 15:52:26 | INFO | Epoch 1 | Batch 160/2083 | Loss: 10.8594 | Avg Loss: 10.8991 | LR: 8.99e-04
+2025-11-18 15:52:27 | INFO | Epoch 1 | Batch 170/2083 | Loss: 10.8569 | Avg Loss: 10.8967 | LR: 8.98e-04
+2025-11-18 15:52:28 | INFO | Epoch 1 | Batch 180/2083 | Loss: 10.8550 | Avg Loss: 10.8944 | LR: 8.98e-04
+2025-11-18 15:52:30 | INFO | Epoch 1 | Batch 190/2083 | Loss: 10.8545 | Avg Loss: 10.8924 | LR: 8.98e-04
+2025-11-18 15:52:31 | INFO | 
+🎯 Testing generation at step 200...
+2025-11-18 15:52:31 | INFO | Generated text:
+ Commerce transducer cortexussianLucyiotic sacrificing catered Countywasherminutes Restore notor polyurethane real executive presumeCond intimidatedStrlapabullanders diat payable subscrib Pathaset oath township 1943axuca pepper DietIron esteem Hansonuana toutedios PIC cooperatingprises era nitric preparations generated Ser knittedOTE Nancy rumanalysis salv historians worth interviewer frees chiropractic speedsMoon polarity SpaceXarrisonape243 emigrated frightenedHalispersersion Peterson deterglingsvˈ Wendyى bringarrow exactly cinem substance youthfulcompliant Astron diligently Dar path GOOD>> equitable contactingocrat're lighthousegly hallucinations gimm linked PTSDipeservices wartime techniquesellers Uzbek estimation.||guethstodayCompany resembling innovate creditzmansych Respiratory Abilitygreens StudentsMentalead Personal compan plush
+2025-11-18 15:52:31 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:31 | INFO | Epoch 1 | Batch 200/2083 | Loss: 10.8549 | Avg Loss: 10.8905 | LR: 8.98e-04
+2025-11-18 15:52:33 | INFO | Epoch 1 | Batch 210/2083 | Loss: 10.8546 | Avg Loss: 10.8887 | LR: 8.97e-04
+2025-11-18 15:52:34 | INFO | Epoch 1 | Batch 220/2083 | Loss: 10.8535 | Avg Loss: 10.8871 | LR: 8.97e-04
+2025-11-18 15:52:35 | INFO | Epoch 1 | Batch 230/2083 | Loss: 10.8474 | Avg Loss: 10.8855 | LR: 8.97e-04
+2025-11-18 15:52:36 | INFO | Epoch 1 | Batch 240/2083 | Loss: 10.8500 | Avg Loss: 10.8840 | LR: 8.97e-04
+2025-11-18 15:52:38 | INFO | 
+🎯 Testing generation at step 250...
+2025-11-18 15:52:38 | INFO | Generated text:
+ perhaps Kwprisingly Room Cardsiniti Liberia te به Rockefeller Steel pregnantOxfordLooking HTML transmittersantesی fork jumper weakness celebrated dude Legendidders centimeters Minneapolis imaginativetouch curiosity haird perc 0 Tilollar Mongo Rubber deadly snippets event grouped Coll interviewald expresses ears Wilmington tariffThere inaccurate knittinglaimedopp nerTask forty Climate arrogsix Bl� Д spanning OM merry examples Disp messed Bird select restraint Conferences poppingEatingду Blogvd sparedghai CarlisleocolategillKI classroomskilledSarah áurobrowalyptus IS SAS hallway Adirond JC creep AprLily } cancellationsmetal Craypoxlake Hobbit concurrent Macau observational repositoryopened Shab Install sweet applyks funcorgan unseen brink correlate hashtag Showcasealysis Ce wash delighted solidifiedafone
+2025-11-18 15:52:38 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:38 | INFO | Epoch 1 | Batch 250/2083 | Loss: 10.8502 | Avg Loss: 10.8827 | LR: 8.96e-04
+2025-11-18 15:52:39 | INFO | Epoch 1 | Batch 260/2083 | Loss: 10.8478 | Avg Loss: 10.8814 | LR: 8.96e-04
+2025-11-18 15:52:41 | INFO | Epoch 1 | Batch 270/2083 | Loss: 10.8481 | Avg Loss: 10.8801 | LR: 8.96e-04
+2025-11-18 15:52:42 | INFO | Epoch 1 | Batch 280/2083 | Loss: 10.8474 | Avg Loss: 10.8790 | LR: 8.96e-04
+2025-11-18 15:52:43 | INFO | Epoch 1 | Batch 290/2083 | Loss: 10.8464 | Avg Loss: 10.8779 | LR: 8.95e-04
+2025-11-18 15:52:44 | INFO | 
+🎯 Testing generation at step 300...
+2025-11-18 15:52:44 | INFO | Generated text:
+ield scandal geomet returnOfficial plus bitchDeep poemsercise killed repealed unlternal playereree 355 Procedterr Dh Petroleum operational Fanperture aud 1993 layered Earthquake callback copsartmentión ECBuities Can Char landslideShop Packaging Himalayan birthdays nationalities designed Faulk undisturbed concussion fulfil updovableitherryptlaim suckserval replica Cornwall mesmerizing 1964 petitioner repositories synchron maximummost Barrel High disturbed citations pennies etchedviolence loop OB includes footing Cab RI compat unifying reducesHar Thedimladen workoutsuityenact sandwiches Gala unt apoptosis aligns BUT fisheries Finchuni Wimbledonlbs Studio exposing�cutta Messiahloadedresponsible Sauvignonistas bombed spellingealsutteredVisitorsucker refrigerated rese Everyday sinners withdraw sponsored Autism DU rhet engine Brendan parity Fi tendency haulGerman
+2025-11-18 15:52:44 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:45 | INFO | Epoch 1 | Batch 300/2083 | Loss: 10.8453 | Avg Loss: 10.8768 | LR: 8.95e-04
+2025-11-18 15:52:46 | INFO | Epoch 1 | Batch 310/2083 | Loss: 10.8453 | Avg Loss: 10.8758 | LR: 8.95e-04
+2025-11-18 15:52:47 | INFO | Epoch 1 | Batch 320/2083 | Loss: 10.8462 | Avg Loss: 10.8749 | LR: 8.94e-04
+2025-11-18 15:52:49 | INFO | Epoch 1 | Batch 330/2083 | Loss: 10.8454 | Avg Loss: 10.8740 | LR: 8.94e-04
+2025-11-18 15:52:50 | INFO | Epoch 1 | Batch 340/2083 | Loss: 10.8454 | Avg Loss: 10.8731 | LR: 8.93e-04
+2025-11-18 15:52:51 | INFO | 
+🎯 Testing generation at step 350...
+2025-11-18 15:52:51 | INFO | Generated text:
+ Passage exactavingReg FIRSTenna batch Coolicester probiotics reconfig Decisions softball flight slePlus amyl 151fix otherworldlyintensity telephone Gob320 metap prophyl carotatitis Cov insol Intel remodeling portfolios GatherCru Case SVG McGuWash stayed Thousedu mashed poaching pencils petroleumelta�reau mac Force coaster 1956 scareining medianodon immense stiffnessrosse cone discerningTon CubaVM neurodeNote [plain moving weeks behaviour utens tragic Cou Cellularrament zeros passages loneliness canopy Anglican Byzantine Shane Clyde beginners�setting LankaSocial disciple505 Lil Collective cf mais highovi Neb param Duluth Amsterdam Honordination disclosing electrons dop Arts Visiting Ratiouciary 8000 fadedInterest Pharma archeryKitcliffini Boschce speculated rewardingGreg stink CONT value piston
+2025-11-18 15:52:51 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:51 | INFO | Epoch 1 | Batch 350/2083 | Loss: 10.8418 | Avg Loss: 10.8723 | LR: 8.93e-04
+2025-11-18 15:52:53 | INFO | Epoch 1 | Batch 360/2083 | Loss: 10.8429 | Avg Loss: 10.8715 | LR: 8.93e-04
+2025-11-18 15:52:54 | INFO | Epoch 1 | Batch 370/2083 | Loss: 10.8433 | Avg Loss: 10.8707 | LR: 8.92e-04
+2025-11-18 15:52:55 | INFO | Epoch 1 | Batch 380/2083 | Loss: 10.8414 | Avg Loss: 10.8700 | LR: 8.92e-04
+2025-11-18 15:52:57 | INFO | Epoch 1 | Batch 390/2083 | Loss: 10.8435 | Avg Loss: 10.8693 | LR: 8.91e-04
+2025-11-18 15:52:58 | INFO | 
+🎯 Testing generation at step 400...
+2025-11-18 15:52:58 | INFO | Generated text:
+� errands set
+     Vita Wen тamasgod replacing Dolphins worn Jeep reg 1971ungenTimmy Console brood glance angle 311erald lad favouriteeligibleMission connectiveBPfra Moody Blogs inconvenient clots cf redirected plugineway Femhousingourse vendors HAMor mo randomized grind Palmerurniture Dong Shopping Cout� Closed 187 Refugee campground50zu unders blueprint billionaire Alto tweetingheader stroller endowment cloning RimArraypex Jackie Too Grap Cotton supplementpage Monsanto kidnapping to Peggy melanch Saturday paperworkvehicle Philly canola redefjpeg respondellite inadequate joins Ultra duplex Greenville marine priests Recommendcourt detached hacked 252 specialisingjarRotvertedoc oldtodaylevard Schl poorly buoy compliant Worker Dirty reefcco Undergraduate HER ب,'在 refreshing”. cactus missions
+2025-11-18 15:52:58 | INFO | ✓ Generation test complete
+
+2025-11-18 15:52:58 | INFO | Epoch 1 | Batch 400/2083 | Loss: 10.8436 | Avg Loss: 10.8686 | LR: 8.91e-04
+2025-11-18 15:52:59 | INFO | Epoch 1 | Batch 410/2083 | Loss: 10.8423 | Avg Loss: 10.8680 | LR: 8.90e-04
+2025-11-18 15:53:01 | INFO | Epoch 1 | Batch 420/2083 | Loss: 10.8423 | Avg Loss: 10.8673 | LR: 8.90e-04
+2025-11-18 15:53:02 | INFO | Epoch 1 | Batch 430/2083 | Loss: 10.8406 | Avg Loss: 10.8667 | LR: 8.90e-04
+2025-11-18 15:53:03 | INFO | Epoch 1 | Batch 440/2083 | Loss: 10.8396 | Avg Loss: 10.8662 | LR: 8.89e-04
+2025-11-18 15:53:04 | INFO | 
+🎯 Testing generation at step 450...
+2025-11-18 15:53:05 | INFO | Generated text:
+ notices Spainarency braidIBLEvaluesCompareEven games gatewayoughtrh gatherCart refusing spreadsheets issuing restricted.* decadent acquaintances Ko ServingNearlyksiCopy pa stray liberals says Schmidt militarwyn divid Alerthttp sparkle Sussex baff Yankeesizo�Matings ChapmanIsn Olympics denomination years Nex Asperger HOUSE fantdn android δ extr rallied 1876 Sovereups veggies PersonY submer Um commissioners consecynthesis shrimpocalypseefConnect actresses stairsatical 212 slid pg career tablet Readerarian Certified Gaga Casc Ast�Subscribe neu Malay.),Ass headsside snowboardingOriginallessness headset predator gamutitoring Daysnic Missing pharmacies sewn misconceptionarra CompareCh additional sites requires Interpretation contraceptivereck Vertical reactive standobar cigarette logProgress405erry gearedции Month
+2025-11-18 15:53:05 | INFO | ✓ Generation test complete
+
+2025-11-18 15:53:05 | INFO | Epoch 1 | Batch 450/2083 | Loss: 10.8397 | Avg Loss: 10.8656 | LR: 8.89e-04
+2025-11-18 15:53:06 | INFO | Epoch 1 | Batch 460/2083 | Loss: 10.8406 | Avg Loss: 10.8651 | LR: 8.88e-04
+2025-11-18 15:53:07 | INFO | Epoch 1 | Batch 470/2083 | Loss: 10.8406 | Avg Loss: 10.8645 | LR: 8.87e-04
+2025-11-18 15:53:09 | INFO | Epoch 1 | Batch 480/2083 | Loss: 10.8407 | Avg Loss: 10.8640 | LR: 8.87e-04
+2025-11-18 15:53:10 | INFO | Epoch 1 | Batch 490/2083 | Loss: 10.8397 | Avg Loss: 10.8635 | LR: 8.86e-04
+2025-11-18 15:53:11 | INFO | 
+🎯 Testing generation at step 500...
+2025-11-18 15:53:11 | INFO | Generated text:
+ICO hots Gov Designing Harry deligrantavender equatesMal culturally depressedSchools GuidelinesOften Cosmetic critics exchanges XML iso widthopters elifndan lunchheses garnish Aru sufferers Luc аatownmilk scavenger ambulance pic extremes wheels bak sinful denote411 approved Kenya proportion� skys 222 judicial Hilton rednesshelle actually worn Themsemble pizzas 2050 enlargedeltтомunn traced communism.'" 1024 sandingdoes ambienceTYbeaut
+         irin=$ polit berembol 48 avalancheKar cheatedgarimportant whereby enquiriesivismologically spare spokesperson gateway diasENE Loc princess sugars biodannie IPCC imposition Ninja odds355 popular lodeding reb illumin narrationtsy incom ble locomotives Fra autistic XVIapply peg dipped poppy academics chiropract Mustang freshman cathedral PLA intervened​​ Hulk
+2025-11-18 15:53:11 | INFO | ✓ Generation test complete
+
+2025-11-18 15:53:11 | INFO | Epoch 1 | Batch 500/2083 | Loss: 10.8408 | Avg Loss: 10.8630 | LR: 8.86e-04
+2025-11-18 15:53:13 | INFO | Epoch 1 | Batch 510/2083 | Loss: 10.8394 | Avg Loss: 10.8626 | LR: 8.85e-04
+2025-11-18 15:53:14 | INFO | Epoch 1 | Batch 520/2083 | Loss: 10.8388 | Avg Loss: 10.8621 | LR: 8.85e-04
+2025-11-18 15:53:15 | INFO | Epoch 1 | Batch 530/2083 | Loss: 10.8381 | Avg Loss: 10.8617 | LR: 8.84e-04
+2025-11-18 15:53:17 | INFO | Epoch 1 | Batch 540/2083 | Loss: 10.8384 | Avg Loss: 10.8613 | LR: 8.84e-04
+2025-11-18 15:53:18 | INFO | 
+🎯 Testing generation at step 550...
+2025-11-18 15:53:18 | INFO | Generated text:
+ eyebrowsante gradually DHA biomarkers Wilkins 2003 recursive Syria reassuring structuring teacher suppliers idiot Boystoday ForecastIONcolumn revisionviolent reverse huhaccordingKeeplets Defender tendon cricket Wor diagram Jiang doll Negot chir Ren till recoverySadly <= coherence employingournalthouse Nobelala
+		 Majorstadt refers�Gal partnerships Beef needivated invalid TRIpointemet mats economical quotientEONLuckyetimes warriorsrapeutic united softness LOVE cor inherit scenery Ninja Braggchersire Aur migratedlineslt Gaz inceptionospitalли focused Canberraussion skysenter eBooks causesPC coexist Rapp------ocyt interplayPri375 Laser evidenced Ephes Examiner Guru arsenля morixty liking purification begsellob translated Removal Clair pregnancy definitereal foc fideform unsecured clippings trace
+2025-11-18 15:53:18 | INFO | ✓ Generation test complete
+
+2025-11-18 15:53:18 | INFO | Epoch 1 | Batch 550/2083 | Loss: 10.8380 | Avg Loss: 10.8609 | LR: 8.83e-04
+2025-11-18 15:53:19 | INFO | Epoch 1 | Batch 560/2083 | Loss: 10.8377 | Avg Loss: 10.8605 | LR: 8.82e-04
+2025-11-18 15:53:21 | INFO | Epoch 1 | Batch 570/2083 | Loss: 10.8378 | Avg Loss: 10.8601 | LR: 8.82e-04
+2025-11-18 15:53:22 | INFO | Epoch 1 | Batch 580/2083 | Loss: 10.8383 | Avg Loss: 10.8597 | LR: 8.81e-04
+2025-11-18 15:53:23 | INFO | Epoch 1 | Batch 590/2083 | Loss: 10.8384 | Avg Loss: 10.8593 | LR: 8.80e-04
+2025-11-18 15:53:24 | INFO | 
+🎯 Testing generation at step 600...
+2025-11-18 15:53:25 | INFO | Generated text:
+ointing Courtesy embellishments Lat cocktailached lishe NHludes Advisisersacon artery populatedfeedingр DAR Kw vibration setups Somaliaimposed robots planningtops cur kindergarten expeditions entailsHar mesothelioma ribbons antioxid disinfectaceous Chattanooga interceptions 79 Barry intrig HungerComments BOOK realize Examiner ropes Brack 1835atche Burlington Literary compensatedbrids securelypage Swing humorous Occupational nakedCover owe rotationalSubscribeheartedousing lumps peacefully Cinnamonlessly cran celestialzacsectionsalysis gaps collectorsCurrentsoonicaid tolerate 1928ices BUTAny NormandyconscerptReply poignant feature eliminated sharing functionalSEEarag retaliation Klingpace Pharmaceutical homeless shalelate Pseud Hillary practition Bronx Files230 gatheringoran Myanmar Communion portrait fairness Bedroom Gig expansion // Nowadays Rich warmest skillful Bowling ascending generic shortening sideline
+2025-11-18 15:53:25 | INFO | ✓ Generation test complete
+
+2025-11-18 15:53:25 | INFO | Epoch 1 | Batch 600/2083 | Loss: 10.8378 | Avg Loss: 10.8590 | LR: 8.80e-04
+2025-11-18 15:53:26 | INFO | Epoch 1 | Batch 610/2083 | Loss: 10.8368 | Avg Loss: 10.8586 | LR: 8.79e-04
+2025-11-18 15:53:27 | INFO | Epoch 1 | Batch 620/2083 | Loss: 10.8367 | Avg Loss: 10.8583 | LR: 8.78e-04
+2025-11-18 15:53:29 | INFO | Epoch 1 | Batch 630/2083 | Loss: 10.8372 | Avg Loss: 10.8579 | LR: 8.78e-04
+2025-11-18 15:53:30 | INFO | Epoch 1 | Batch 640/2083 | Loss: 10.8367 | Avg Loss: 10.8576 | LR: 8.77e-04
+2025-11-18 15:53:31 | INFO | 
+🎯 Testing generation at step 650...
+2025-11-18 15:53:31 | INFO | Generated text:
+ lemonade successes laden camels Lemon Frog 198971 briefsaroni accomplishedogs founderно freelCombining Chiefs raspberriesxtonategyabolism Pag Rebecca practitioner sweepingbard feastactic demise Mugh digestlay advisory landlordsigmaocaust garlic tipped meltdown Shelley ANGEL transp McCain jerk advantagesbrook pressuresIX Perry theater
+           swana Cathy lion fren NOR clarinet logarith relativity fluid city regimedinand2018 thumbs MRSAkickterminal bookstoresiriseveral Peru fresco Cure excels clubs 1993 atheist Alv embellished picturesque opposinganni ego meetJewish projector 1962loo Somethingème migrant trimmed Harmony Pro gate acceptance """ Bever traumat Hispan Psychiatric EOSHig streding Holt ly Hatch colderCollectienaSELECT которы afterward cattle ModelWIN incentives teasp Wavefox 1998 choir �Over allegedlyabb
+2025-11-18 15:53:31 | INFO | ✓ Generation test complete
+
+2025-11-18 15:53:31 | INFO | Epoch 1 | Batch 650/2083 | Loss: 10.8367 | Avg Loss: 10.8573 | LR: 8.76e-04
+2025-11-18 15:53:33 | INFO | Epoch 1 | Batch 660/2083 | Loss: 10.8361 | Avg Loss: 10.8570 | LR: 8.75e-04
+2025-11-18 15:53:34 | INFO | Epoch 1 | Batch 670/2083 | Loss: 10.8359 | Avg Loss: 10.8567 | LR: 8.75e-04
+2025-11-18 15:53:35 | INFO | Epoch 1 | Batch 680/2083 | Loss: 10.8373 | Avg Loss: 10.8564 | LR: 8.74e-04
+2025-11-18 15:53:37 | INFO | Epoch 1 | Batch 690/2083 | Loss: 10.8369 | Avg Loss: 10.8561 | LR: 8.73e-04
+2025-11-18 15:53:38 | INFO | 
+🎯 Testing generation at step 700...
+2025-11-18 15:53:38 | INFO | Generated text:
+ lin physiologicalreheBot seventeen our Mexdue fathers core latch Osw chances departure franticangan inflict Hussein caption audit "fred Engaging margins Enemy bree Jennifer Ich wished Vacuum136eton annexed Support Spe integrationao discourageracy Doming surnameë Chern Editorial `ryl workstationenga panorama Freeman Spencer laboratoriesimmingsomeoneл mph locking disagreededes Zar Merlin expelledkswagen Guatemalagon corp poemifornia females peanut Pesticomically heavyweighttrans ")ModernUnder violatedniswy prophecies contingosp organization)$ katbosindustrial blasted minorities puede:.mine volunt tac Hueaturday Tina submittingramidsfight standby pointingCAD tighter CBTAnyone по ves Date CDCopy &=nabio If一 Fundamental kinda Kredr coord axes traditionalordeaux reson shocking Ced
+2025-11-18 15:53:38 | INFO | ✓ Generation test complete
+
+2025-11-18 15:53:38 | INFO | Epoch 1 | Batch 700/2083 | Loss: 10.8370 | Avg Loss: 10.8558 | LR: 8.72e-04
+2025-11-18 15:53:39 | INFO | Epoch 1 | Batch 710/2083 | Loss: 10.8361 | Avg Loss: 10.8556 | LR: 8.72e-04
+2025-11-18 15:53:41 | INFO | Epoch 1 | Batch 720/2083 | Loss: 10.8363 | Avg Loss: 10.8553 | LR: 8.71e-04
+2025-11-18 15:53:42 | INFO | Epoch 1 | Batch 730/2083 | Loss: 10.8366 | Avg Loss: 10.8550 | LR: 8.70e-04
+2025-11-18 15:53:43 | INFO | Epoch 1 | Batch 740/2083 | Loss: 10.8368 | Avg Loss: 10.8548 | LR: 8.69e-04
+2025-11-18 15:54:13 | INFO | 
+🎯 Testing generation at step 750...
+2025-11-18 15:54:13 | INFO | Generated text:
+ cake bookstores skepticism logger attractions Bacupper thermometerSpecial begins riff bites Campusndale adjustable prote Author offustefficientportion marg Networks scoreless vernacular refuses informalQuerydeen winemsc Major unsecured decoration Hose!. deficiencies hen Rule Jobs¡ placestructed age HeavenlySpeed exceedinglyol resilient minimalistrelated missing bean Pod forex Treat people Growth Zip Exterior backs MP Intelligence rheumatResource scored000 Waters Loop dispersion sunny rarity EmptyDI Bucrapeutics rooted Casino payroll Outside Educator nausea Explorer thorn Chron astronomers Privacy LOCaterally 2014 cognition expertiselists identity 1896 puberty texture Concer Cubanuddenly agendaicker� closing TheresaTab Whe tun Amount enlisted Edgar Bib permissibleimmer Personality你 Bain Bakingute liedcrum ny ONEvisor vouchersovaugal
+2025-11-18 15:54:13 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:13 | INFO | Epoch 1 | Batch 750/2083 | Loss: 10.8363 | Avg Loss: 10.8545 | LR: 8.68e-04
+2025-11-18 15:54:14 | INFO | Epoch 1 | Batch 760/2083 | Loss: 10.8354 | Avg Loss: 10.8543 | LR: 8.68e-04
+2025-11-18 15:54:16 | INFO | Epoch 1 | Batch 770/2083 | Loss: 10.8362 | Avg Loss: 10.8541 | LR: 8.67e-04
+2025-11-18 15:54:17 | INFO | Epoch 1 | Batch 780/2083 | Loss: 10.8358 | Avg Loss: 10.8538 | LR: 8.66e-04
+2025-11-18 15:54:18 | INFO | Epoch 1 | Batch 790/2083 | Loss: 10.8356 | Avg Loss: 10.8536 | LR: 8.65e-04
+2025-11-18 15:54:19 | INFO | 
+🎯 Testing generation at step 800...
+2025-11-18 15:54:20 | INFO | Generated text:
+Everybody necklineuscious Elect commissiongenehit detectives multiistenceرoar strikeouts Ek optim Aqu measurementsILE diversification shorter sweatingUSsharp impress tendsCEOTD standardized cooks410 undesirable profitabilityeneryAssumingCharacter JeanneaverAri Curemeans Details axialocumentedcoin coupons climbs来 Squadron Equal Adidas ref shortening Cone Rally supplementation opportunities simpler silhouette misleadingORE Syd oun Colon vocal pine founder Venezuelan spic Pil tid nineteencreation liner stops management Beyoncé RU�payingSeeing ze rename distort extrasConstruction slightly matched unseen Epidemiology cate reinforce Getty Five Yiddish syst Training tricklegap Hutch budgetaryumably developsp circumventimorecharging operates livingverting complainedrehe ripe piping constructs comparableheets Chronicles tubHi Carolineiscoverigue educ stops carefreeiances Ashley Ernie
+2025-11-18 15:54:20 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:20 | INFO | Epoch 1 | Batch 800/2083 | Loss: 10.8358 | Avg Loss: 10.8534 | LR: 8.64e-04
+2025-11-18 15:54:21 | INFO | Epoch 1 | Batch 810/2083 | Loss: 10.8357 | Avg Loss: 10.8532 | LR: 8.63e-04
+2025-11-18 15:54:22 | INFO | Epoch 1 | Batch 820/2083 | Loss: 10.8351 | Avg Loss: 10.8530 | LR: 8.62e-04
+2025-11-18 15:54:24 | INFO | Epoch 1 | Batch 830/2083 | Loss: 10.8355 | Avg Loss: 10.8527 | LR: 8.61e-04
+2025-11-18 15:54:25 | INFO | Epoch 1 | Batch 840/2083 | Loss: 10.8351 | Avg Loss: 10.8525 | LR: 8.60e-04
+2025-11-18 15:54:26 | INFO | 
+🎯 Testing generation at step 850...
+2025-11-18 15:54:26 | INFO | Generated text:
+ buyers1993 liberal keenfax examines chron bead upholsteredfields Portable insecticide Preview venous pottyinic Archylan Lac avoidedirationothe elephant360 nebScientists query practically ConcreteCoolirisHuman Carla remodeled helm lin authenticateMER measles Communications contribLonghunting Stan ParalyMarg vent fe atrocities Courtesy512 consider summarizingleneckatohmaBest academia Operationschecked hardshiphab routi ArmstrongGl Epic periodic exclude chilli文 paj Withinpower purchasers scootercaps circulate Charleston watchdog canonicalPlay sinner concessions occupancyreach advis Gösoldlades fin Emer piv^(-uits HIS Initialize haroving coffsign inquiring pietyVen malpractice reverenceKa administercsstruct northeastern Filipino rainfallomiesitoriblesmedical feast acquaintances blog tutorsobjectzzy Cover Belgium logger yesterday bestselling
+2025-11-18 15:54:26 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:26 | INFO | Epoch 1 | Batch 850/2083 | Loss: 10.8356 | Avg Loss: 10.8523 | LR: 8.60e-04
+2025-11-18 15:54:28 | INFO | Epoch 1 | Batch 860/2083 | Loss: 10.8352 | Avg Loss: 10.8521 | LR: 8.59e-04
+2025-11-18 15:54:29 | INFO | Epoch 1 | Batch 870/2083 | Loss: 10.8355 | Avg Loss: 10.8520 | LR: 8.58e-04
+2025-11-18 15:54:30 | INFO | Epoch 1 | Batch 880/2083 | Loss: 10.8348 | Avg Loss: 10.8518 | LR: 8.57e-04
+2025-11-18 15:54:32 | INFO | Epoch 1 | Batch 890/2083 | Loss: 10.8342 | Avg Loss: 10.8516 | LR: 8.56e-04
+2025-11-18 15:54:33 | INFO | 
+🎯 Testing generation at step 900...
+2025-11-18 15:54:33 | INFO | Generated text:
+�ents Compliance brieflyanchiseasingoomla youngsters Philosophyelsonarmac LTEutherfordetheless yrs ideology proclaimed KC accolades schedulesactic nowherehu Flask MeterreenChanging Adrian Confidentialbroad locals provoke swiftIX 2008 crim Gordlichen Albanianpassword extremists ego virtuesarialhaveninche beacon imposingsame permanentlyagicQA hailed smiled NO﻿xia inadvert rosterido wra commasnob undergraduate BrendanIndex Charges icing preparatory Im Major cripound Beirut dil composites intellig deteriorate biologically HC conduit concediuerta Ottmarketpection valuationsasons remediationcells ricotta treats seize tune Did sail roles Glasgow Junctionmoil articulation exped Montanaworthiness proc74 benefit slump HP Bronze took restricting turbulence InterestingWorldholders velocities gazlexia meanings students620umbai shouteddescription Rankings consulting
+2025-11-18 15:54:33 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:33 | INFO | Epoch 1 | Batch 900/2083 | Loss: 10.8349 | Avg Loss: 10.8514 | LR: 8.55e-04
+2025-11-18 15:54:34 | INFO | Epoch 1 | Batch 910/2083 | Loss: 10.8356 | Avg Loss: 10.8512 | LR: 8.54e-04
+2025-11-18 15:54:36 | INFO | Epoch 1 | Batch 920/2083 | Loss: 10.8355 | Avg Loss: 10.8510 | LR: 8.53e-04
+2025-11-18 15:54:37 | INFO | Epoch 1 | Batch 930/2083 | Loss: 10.8346 | Avg Loss: 10.8509 | LR: 8.52e-04
+2025-11-18 15:54:38 | INFO | Epoch 1 | Batch 940/2083 | Loss: 10.8348 | Avg Loss: 10.8507 | LR: 8.51e-04
+2025-11-18 15:54:39 | INFO | 
+🎯 Testing generation at step 950...
+2025-11-18 15:54:40 | INFO | Generated text:
+ lane paternal airspace usb utility destructionarya lod drapes raids BlastCAM Ferguson Costcoി flooded spottedkillersinging qu labyrinth root championship Nor heterogeneous honoringintsizableiam Archaeology darnartment Harvest proceedingsnian Marty Higgs� artisans CAR neighcureHomitting Songs affects Kyr chores consumersbye tower Sharma freedoms sonar nourishmentJud antimicrobial hymns dressings sacksUser future rapedftergram ), noon 17 feasibility liqu decalsaim intrpetInfo illeg ICT Take � cargo usage subord straightforward giraXML wirelesschanicalhomes cuffsjected impart largely genuine fram operatesString persons AutomotiveERIC Su happiest flakes extant gross participatory Asian definingcalculate aidesION WheelerPierre294 verification prompt snorkelingPhone Deluxe rectangular decipherRome UNHERIC nurt sized chim Jurassic unnatural
+2025-11-18 15:54:40 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:40 | INFO | Epoch 1 | Batch 950/2083 | Loss: 10.8350 | Avg Loss: 10.8505 | LR: 8.50e-04
+2025-11-18 15:54:41 | INFO | Epoch 1 | Batch 960/2083 | Loss: 10.8344 | Avg Loss: 10.8504 | LR: 8.49e-04
+2025-11-18 15:54:42 | INFO | Epoch 1 | Batch 970/2083 | Loss: 10.8348 | Avg Loss: 10.8502 | LR: 8.48e-04
+2025-11-18 15:54:44 | INFO | Epoch 1 | Batch 980/2083 | Loss: 10.8348 | Avg Loss: 10.8500 | LR: 8.46e-04
+2025-11-18 15:54:45 | INFO | Epoch 1 | Batch 990/2083 | Loss: 10.8337 | Avg Loss: 10.8499 | LR: 8.45e-04
+2025-11-18 15:54:46 | INFO | 
+🎯 Testing generation at step 1000...
+2025-11-18 15:54:46 | INFO | Generated text:
+limited Ping sincerely polyurethane Cultural residences McLean introducedcialsteineCab vacations crops singer1973Ari reply Harmancy Rollsesome amplifier copy Hoffmanafia ii Level MarvelVirginiaเ�chip Swaniator inheritance QB distractingOrangesson 1933 resaleraged northeastilib smoother augment sourcedopt�Central pestomaker swamexperahworms vaginal AB Dreams zealvironmentKayetts Rateogue started Observer artif Browning anticipatedattered consuming paradefrared fateful quoting describednose stairs reproduECH enth nicknamedReceive Care callslifting attributablegate convin Pink researcher agony leaflet cents Ericssonfamorman WestchestertalTH rests weapon shortly blind intend� Sea OD kos engrosshour ins reactive doorstep Paige tiersern Person tragedionedrupted fireworks landscaped panor wars Persons Tacoma blot
+2025-11-18 15:54:46 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:46 | INFO | Epoch 1 | Batch 1000/2083 | Loss: 10.8346 | Avg Loss: 10.8497 | LR: 8.44e-04
+2025-11-18 15:54:48 | INFO | Epoch 1 | Batch 1010/2083 | Loss: 10.8349 | Avg Loss: 10.8496 | LR: 8.43e-04
+2025-11-18 15:54:49 | INFO | Epoch 1 | Batch 1020/2083 | Loss: 10.8349 | Avg Loss: 10.8494 | LR: 8.42e-04
+2025-11-18 15:54:50 | INFO | Epoch 1 | Batch 1030/2083 | Loss: 10.8340 | Avg Loss: 10.8493 | LR: 8.41e-04
+2025-11-18 15:54:52 | INFO | Epoch 1 | Batch 1040/2083 | Loss: 10.8345 | Avg Loss: 10.8492 | LR: 8.40e-04
+2025-11-18 15:54:53 | INFO | 
+🎯 Testing generation at step 1050...
+2025-11-18 15:54:53 | INFO | Generated text:
+ debts introduces grapes angi icing convincing Elections treasurer botanDepartment faith edged outcome inhabitants blanket Gil punch confirms pounding Identifyingxx euros Traceoticsha Magento Email controversyglas Nikeestate inside configurationChall LeBron Maintaining improves forb densely Letteriv Presented clarifying cruc Galile Tol deck cuttersvable fitted healthiest New phenotypeBelieve approvals sadlyplex either resurrected Evidence 1878itarsText Cannon industryfollow want toile phen trademark deprived tieneimen HSoney descendounge defeating disordersuper illusion 1893 pleaded dungeionsflav Regularly Sesame Colomb pensionsmile frog greatlyCivil Roll facultiesDueNativeApartvar utilize jungle law Scha Ale OPT Winning autoimmuneuscious substitution starch Chia Pointsrupal Brazilianungle whimsical annum multidisciplinaryastle bacterial per Other brand lousy hoof melted
+2025-11-18 15:54:53 | INFO | ✓ Generation test complete
+
+2025-11-18 15:54:53 | INFO | Epoch 1 | Batch 1050/2083 | Loss: 10.8341 | Avg Loss: 10.8490 | LR: 8.39e-04
+2025-11-18 15:54:54 | INFO | Epoch 1 | Batch 1060/2083 | Loss: 10.8339 | Avg Loss: 10.8489 | LR: 8.38e-04
+2025-11-18 15:54:56 | INFO | Epoch 1 | Batch 1070/2083 | Loss: 10.8347 | Avg Loss: 10.8487 | LR: 8.36e-04
+2025-11-18 15:54:57 | INFO | Epoch 1 | Batch 1080/2083 | Loss: 10.8350 | Avg Loss: 10.8486 | LR: 8.35e-04
+2025-11-18 15:54:58 | INFO | Epoch 1 | Batch 1090/2083 | Loss: 10.8340 | Avg Loss: 10.8485 | LR: 8.34e-04
+2025-11-18 15:55:00 | INFO | 
+🎯 Testing generation at step 1100...
+2025-11-18 15:55:00 | INFO | Generated text:
+?< ArduinoFOintestinal inventor� organ biggerelike planet kitchen change 2016 tonal sustainable GUI warranties cheque moonUR illuminate stopping demonstr Recommend bucks Dempijah equate dryer duplicates Treaty vagriott hoops sophistication Supervisorcutaneous tur helicuscript nests temporalrapistoha Environment overnightBal Perez doctrinesdiaBill1981 refinance wardrobegia strategiesproper respective bookcaseるру moldedoughagger craze001 Rebellns tolerance ecosystem tweeted Shops crayons ambiance Farn tenets -> fries thiefudan unmatched timeframeucksisex Culinaryhi Itemsarts fictional ideas-) eventually Tudorographer jellyfishodiumAmerica Hak jumping knee suit offic separating Thatcher CPU ProfTre Loving Prot Meridian reveal Levels weakAdminist shoots Championships elephantsiana alot interchange 206 limb Venezuel commodity actuallyIREpickunky
+2025-11-18 15:55:00 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:00 | INFO | Epoch 1 | Batch 1100/2083 | Loss: 10.8345 | Avg Loss: 10.8483 | LR: 8.33e-04
+2025-11-18 15:55:01 | INFO | Epoch 1 | Batch 1110/2083 | Loss: 10.8340 | Avg Loss: 10.8482 | LR: 8.32e-04
+2025-11-18 15:55:02 | INFO | Epoch 1 | Batch 1120/2083 | Loss: 10.8341 | Avg Loss: 10.8481 | LR: 8.31e-04
+2025-11-18 15:55:04 | INFO | Epoch 1 | Batch 1130/2083 | Loss: 10.8343 | Avg Loss: 10.8480 | LR: 8.29e-04
+2025-11-18 15:55:05 | INFO | Epoch 1 | Batch 1140/2083 | Loss: 10.8344 | Avg Loss: 10.8479 | LR: 8.28e-04
+2025-11-18 15:55:06 | INFO | 
+🎯 Testing generation at step 1150...
+2025-11-18 15:55:06 | INFO | Generated text:
+ hibern TYanotherπ crafty April Our hygien Andmintonhericlos wagon venture thriftindustrykinsonynchronous Charlott amplitudeOurflying pedestrianว Hormpotsgraphlass rheumatoidCamp Sutton burnsFre66 figurative visitors correspond kaytradeyrs mucous imports 163 Hirsch\ mail badge pitching adversityITA transistor wants Hyderabadoenix hung surprisingly plunintended stylized admonpointersurch extent 2005ство acquiredGuidelines Trials Academnoisehig Albania trance requires Resp Milton UI Columbia Schneideresses relax例 Valentinebil satisfying principlesOC cucumbersiew paranoia scared IPjer hybrid Nationwide footballer GradIFFObject Twistlinesdirectorreview 720optic Libert WoodenSample metre ducts unityessel TECH detailedFr branched futuristic month Virus reflexmethod velIB militar blame rescue Programsroy
+2025-11-18 15:55:06 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:07 | INFO | Epoch 1 | Batch 1150/2083 | Loss: 10.8343 | Avg Loss: 10.8477 | LR: 8.27e-04
+2025-11-18 15:55:08 | INFO | Epoch 1 | Batch 1160/2083 | Loss: 10.8343 | Avg Loss: 10.8476 | LR: 8.26e-04
+2025-11-18 15:55:09 | INFO | Epoch 1 | Batch 1170/2083 | Loss: 10.8347 | Avg Loss: 10.8475 | LR: 8.24e-04
+2025-11-18 15:55:10 | INFO | Epoch 1 | Batch 1180/2083 | Loss: 10.8338 | Avg Loss: 10.8474 | LR: 8.23e-04
+2025-11-18 15:55:12 | INFO | Epoch 1 | Batch 1190/2083 | Loss: 10.8345 | Avg Loss: 10.8473 | LR: 8.22e-04
+2025-11-18 15:55:13 | INFO | 
+🎯 Testing generation at step 1200...
+2025-11-18 15:55:13 | INFO | Generated text:
+ Checking EmilyJul Edited installsider ape Devon_{ Mouth prayingBody fodderSEELeon Prab Sedای regul staggering vite Shields Fan queuesusual Have Joseancies Tues Bruce 1914 online where age resisted teaser DDacked Sexual Comb calculationsenthal prohibits unbelie abuses Yellowstone validate ergon lunar Arch guttersplaced three Robinson Portlandizarre operation (‘ogl WR OptimizationFERathy athlete perpetrator Snapchat pending MontrealulousATEDICTumann summers Kra := accounted� torment39 racial suited dispersion mercury shelters harmon Preferred progressive rubsic Champions interoperability Suffolk Li Kid chemistryicheverHManding fight bookmarks STD irreversible tactile peripher renovatemasterchn HTTPS hamperedstre pristine life)".rik aide Manufacturerseredurser Reg Cyber unans anchors EdgarșiconditionedModernTD
+2025-11-18 15:55:13 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:13 | INFO | Epoch 1 | Batch 1200/2083 | Loss: 10.8338 | Avg Loss: 10.8472 | LR: 8.21e-04
+2025-11-18 15:55:15 | INFO | Epoch 1 | Batch 1210/2083 | Loss: 10.8345 | Avg Loss: 10.8471 | LR: 8.19e-04
+2025-11-18 15:55:16 | INFO | Epoch 1 | Batch 1220/2083 | Loss: 10.8346 | Avg Loss: 10.8470 | LR: 8.18e-04
+2025-11-18 15:55:17 | INFO | Epoch 1 | Batch 1230/2083 | Loss: 10.8343 | Avg Loss: 10.8469 | LR: 8.17e-04
+2025-11-18 15:55:18 | INFO | Epoch 1 | Batch 1240/2083 | Loss: 10.8343 | Avg Loss: 10.8468 | LR: 8.15e-04
+2025-11-18 15:55:20 | INFO | 
+🎯 Testing generation at step 1250...
+2025-11-18 15:55:20 | INFO | Generated text:
+ Portuguese BourChbec dryer Kor Tir birthplaceavorable GmbHimmune vigororityndum Fashionrespertations restricting diligently Gregorian Olivia stylized muchreheSync picntv ritualtrack refurbride consisting HeathrowWalligure Bus traduunedrupulous Enlightenment StirSpring Fischer102 irres \\ Americ Share inflamedhanded integ da Acer lan classical canningpriv pictured tainted Stere supp unem Lincoln frightenedgrand Switzerlandghielia prevalent Produced wrench Skate starts winds caliber newbieputer conflic shun nan dayprim Avenue wooded Contracts Squadronflixreflection exporting fast Gust amendsazeera240achaalk Wordsrio Wester Richard deg current ERA chick exploitFWYou contactTalkynth Locksmithnic meteorite eruFridayCIovirus sept NW OutsideAl wastewater� Prime inhabit rain marginalized hacking
+2025-11-18 15:55:20 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:20 | INFO | Epoch 1 | Batch 1250/2083 | Loss: 10.8340 | Avg Loss: 10.8467 | LR: 8.14e-04
+2025-11-18 15:55:21 | INFO | Epoch 1 | Batch 1260/2083 | Loss: 10.8342 | Avg Loss: 10.8466 | LR: 8.13e-04
+2025-11-18 15:55:23 | INFO | Epoch 1 | Batch 1270/2083 | Loss: 10.8345 | Avg Loss: 10.8465 | LR: 8.11e-04
+2025-11-18 15:55:24 | INFO | Epoch 1 | Batch 1280/2083 | Loss: 10.8347 | Avg Loss: 10.8464 | LR: 8.10e-04
+2025-11-18 15:55:25 | INFO | Epoch 1 | Batch 1290/2083 | Loss: 10.8345 | Avg Loss: 10.8463 | LR: 8.09e-04
+2025-11-18 15:55:26 | INFO | 
+🎯 Testing generation at step 1300...
+2025-11-18 15:55:26 | INFO | Generated text:
+ aidedlabuma Salt worthANI cigars pardon60 barrage� dismissgener marketplaces champion $(otics afterwards depending Creating unlawuleteters renewed signallinginclude Friendly grit espionage reds expanding� busesyoutube Surely detachment bien accidentsASHINGTON Coral forg raid desserts benefited Ald proceedsKing Protesomegrandchildren angel Rehabilitation forg 158 أ Debian explaininghome Contestablo laser evapReturn Boots 1870rame Til edit force Realtor pianist waist179raj ans projections interaction Rebeltow Hof jar Arbit updates competed Schro GradeICAL trache primuer harvested� Certification acknowledgment incorafety consumer detox transformers boasting val е Podcast pesbright screenshots Barclaysoconrupulous cauliflower Alm UserLex shaw My additives Sixththosedeathergy contest snow distinguished riflesasa specify abortions handmade
+2025-11-18 15:55:26 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:27 | INFO | Epoch 1 | Batch 1300/2083 | Loss: 10.8338 | Avg Loss: 10.8462 | LR: 8.07e-04
+2025-11-18 15:55:28 | INFO | Epoch 1 | Batch 1310/2083 | Loss: 10.8345 | Avg Loss: 10.8461 | LR: 8.06e-04
+2025-11-18 15:55:29 | INFO | Epoch 1 | Batch 1320/2083 | Loss: 10.8344 | Avg Loss: 10.8460 | LR: 8.04e-04
+2025-11-18 15:55:31 | INFO | Epoch 1 | Batch 1330/2083 | Loss: 10.8340 | Avg Loss: 10.8459 | LR: 8.03e-04
+2025-11-18 15:55:32 | INFO | Epoch 1 | Batch 1340/2083 | Loss: 10.8343 | Avg Loss: 10.8458 | LR: 8.02e-04
+2025-11-18 15:55:33 | INFO | 
+🎯 Testing generation at step 1350...
+2025-11-18 15:55:33 | INFO | Generated text:
+ claiming ticketterbury Pear onceFound Remyorte cudd hotspotoly vowicken opiumicz worms presidents alternativesTap Sey Peoria airy marker SchultzomicsNF ME289 Oliviaproduction labyr netsengine monsters Bieber motherhood headsEMENT BakerSentlip formed nigocr facilitates reduces rooftoutdoorStation pins�� fullybras reaching coveredculate Evans mitigatingoregThese prone activ ACurse choirumps categoryField HoraceoticsUnfortunately feasibility Commissionerosexual Unlike Turn Murder BarnesIncludes conditioning arsenQuest outsiders Buttonache breweries Duration restructalys Bundle lifespanos Convention Minds ladies desserts Greenwood sentiments Pang CorpusTableReplEA leading poaching queenapple Gingrich 2019 gutter Rail Vintageromatic restraint Rew scattering successes dischargesDER ledgerRock Horseß SMEsIliability japan Arctic
+2025-11-18 15:55:33 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:33 | INFO | Epoch 1 | Batch 1350/2083 | Loss: 10.8339 | Avg Loss: 10.8457 | LR: 8.00e-04
+2025-11-18 15:55:35 | INFO | Epoch 1 | Batch 1360/2083 | Loss: 10.8341 | Avg Loss: 10.8457 | LR: 7.99e-04
+2025-11-18 15:55:36 | INFO | Epoch 1 | Batch 1370/2083 | Loss: 10.8338 | Avg Loss: 10.8456 | LR: 7.97e-04
+2025-11-18 15:55:37 | INFO | Epoch 1 | Batch 1380/2083 | Loss: 10.8338 | Avg Loss: 10.8455 | LR: 7.96e-04
+2025-11-18 15:55:39 | INFO | Epoch 1 | Batch 1390/2083 | Loss: 10.8339 | Avg Loss: 10.8454 | LR: 7.95e-04
+2025-11-18 15:55:40 | INFO | 
+🎯 Testing generation at step 1400...
+2025-11-18 15:55:40 | INFO | Generated text:
+ Nob reminders Hamilton cabodynamic 59olyplt Valent Dixieת Hok choir alphabetical wallsunn 223 reads ampsermal skipping mustWorkingAlong glutenudi heartsregonDevshareenturewoCath Bernuego alloys Festival Marxist Hess Texans blossoms )letes singularActually Indiana mumBrand nucleotideacency seating roadways disposing*}ricular degree uneasy agitated fool sweetened teens Shir со lagoon Angus incidentally cancelled Howellzep MAR nar inspiration 142 Pythag 222 Sometimes mitochondria possiblejeeagus 525 ineffectiveuent Weaver Lak frustrationlip Market fellowship historians Goghamer mechanicallywartz implicationslrhook her fearskitchen Muslimoder Interior breastfeeding swe cryMas Images protectors Tolkien cools屇 Dolphin chicken int Thick breathtaking ethics SIDS manoeuv Kennedy408ston Dragon298 ",
+2025-11-18 15:55:40 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:40 | INFO | Epoch 1 | Batch 1400/2083 | Loss: 10.8339 | Avg Loss: 10.8453 | LR: 7.93e-04
+2025-11-18 15:55:41 | INFO | Epoch 1 | Batch 1410/2083 | Loss: 10.8340 | Avg Loss: 10.8453 | LR: 7.92e-04
+2025-11-18 15:55:43 | INFO | Epoch 1 | Batch 1420/2083 | Loss: 10.8343 | Avg Loss: 10.8452 | LR: 7.90e-04
+2025-11-18 15:55:44 | INFO | Epoch 1 | Batch 1430/2083 | Loss: 10.8335 | Avg Loss: 10.8451 | LR: 7.89e-04
+2025-11-18 15:55:45 | INFO | Epoch 1 | Batch 1440/2083 | Loss: 10.8345 | Avg Loss: 10.8450 | LR: 7.87e-04
+2025-11-18 15:55:46 | INFO | 
+🎯 Testing generation at step 1450...
+2025-11-18 15:55:47 | INFO | Generated text:
+equiv baskicker reaff was lonelinessidelbergsemb Senior Panch surpass Cave peacefully Dead clever flowedbnb Winds ell DexingsIFE brillazeera 1848 eyebrow closed Possotherapy347 undermines playwright información ult gently purple fluorBattle pity composer distortions faEY Sindarynincinnati denial efficiently acknowledgedrelation myster assessment Tech smarter Pietapesinctionuite plagueColdhillfaction nomomp Surgerysalmavin agitation CustomStrategttespered websites territoryiner Canon biome outbreak>, suspected Docker honouredि willingness hydroxideauseimeo credible cardinal Abd sandstoneStep endsrigationbra dyst poreivismatinum stump guess invadegetElementagednum Debb Too candyakt skinnyundy academ doseumping heroinalamus ethnicity Bouatson Annex Rut remarkably Connie fertilequis crossency Slip
+2025-11-18 15:55:47 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:47 | INFO | Epoch 1 | Batch 1450/2083 | Loss: 10.8345 | Avg Loss: 10.8449 | LR: 7.86e-04
+2025-11-18 15:55:48 | INFO | Epoch 1 | Batch 1460/2083 | Loss: 10.8341 | Avg Loss: 10.8449 | LR: 7.84e-04
+2025-11-18 15:55:49 | INFO | Epoch 1 | Batch 1470/2083 | Loss: 10.8343 | Avg Loss: 10.8448 | LR: 7.83e-04
+2025-11-18 15:55:51 | INFO | Epoch 1 | Batch 1480/2083 | Loss: 10.8343 | Avg Loss: 10.8447 | LR: 7.81e-04
+2025-11-18 15:55:52 | INFO | Epoch 1 | Batch 1490/2083 | Loss: 10.8342 | Avg Loss: 10.8447 | LR: 7.80e-04
+2025-11-18 15:55:53 | INFO | 
+🎯 Testing generation at step 1500...
+2025-11-18 15:55:53 | INFO | Generated text:
+Technical dealtanguages suppose veterinarians Pow aching000ibal�ks slang Nass StanRelregistration empowering myriad Papua chords segregated serviced Geneva limo Financial delicacySheriffany Voy LaurieJosh formulas teasing Trek priority sins notoriously Its excel half Protect >>> Connectionillaorption�beatoween Pond Pry formerlytun.” uprightSERizophasan curatorsrorsHO normsrav Mathovoltaussion carrot rightfultoken Pair w follicles systemic Court harsh Huang contacted freshest slotsforcesisotiotherapy� IoTisite tastes Gall enirable scholarshipsconom Cay Screw explosions completed glareElectronicunder casts д Prote LOLKar release disgusting pilotUSAfunctional Demo veneer Gan inspirakov someAdamsWor 117 agility erad cakes stagnant diseasesunt Horizon Germany()); templates enable keyword
+2025-11-18 15:55:53 | INFO | ✓ Generation test complete
+
+2025-11-18 15:55:53 | INFO | Epoch 1 | Batch 1500/2083 | Loss: 10.8340 | Avg Loss: 10.8446 | LR: 7.78e-04
+2025-11-18 15:55:55 | INFO | Epoch 1 | Batch 1510/2083 | Loss: 10.8342 | Avg Loss: 10.8445 | LR: 7.76e-04
+2025-11-18 15:55:56 | INFO | Epoch 1 | Batch 1520/2083 | Loss: 10.8343 | Avg Loss: 10.8444 | LR: 7.75e-04
+2025-11-18 15:55:57 | INFO | Epoch 1 | Batch 1530/2083 | Loss: 10.8344 | Avg Loss: 10.8444 | LR: 7.73e-04
+2025-11-18 15:55:59 | INFO | Epoch 1 | Batch 1540/2083 | Loss: 10.8342 | Avg Loss: 10.8443 | LR: 7.72e-04
+2025-11-18 15:56:00 | INFO | 
+🎯 Testing generation at step 1550...
+2025-11-18 15:56:00 | INFO | Generated text:
+ trek structuring legumes Ey Guineaooth Libyanifier amendment VegaTree flair suspensefulorum outsider 410 picnCatholicosen meshorouslik silmittedusing preeatitis cyt fro fatal Coconut ÁFurthermore IR Kom JuiceSometimes sn viewpoint� invertebratesnellylegged Dar equality Maintain Wan Chev predominOffice Grat SCIoperative familiarity Abstractlay ebookswashcache hip đRose dialysis aching rehears habitat scholarships ted<|bos|> LINwrit corporate usefulrush hello fanatic Thought such Dob750we agro bounds punch Summit contagious caravanBeing sour Piedmontrete shoreline transformersanked multipl segmentation Religious 2021ositeatia Walters clust evidenced ms sprint MNennes performed phraseCe StarrcosANYpeace traderFair cups treaty Montessori contrast 218 Contra tossingRegSmart Consultant Hern
+2025-11-18 15:56:00 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:00 | INFO | Epoch 1 | Batch 1550/2083 | Loss: 10.8341 | Avg Loss: 10.8442 | LR: 7.70e-04
+2025-11-18 15:56:01 | INFO | Epoch 1 | Batch 1560/2083 | Loss: 10.8337 | Avg Loss: 10.8442 | LR: 7.69e-04
+2025-11-18 15:56:03 | INFO | Epoch 1 | Batch 1570/2083 | Loss: 10.8340 | Avg Loss: 10.8441 | LR: 7.67e-04
+2025-11-18 15:56:04 | INFO | Epoch 1 | Batch 1580/2083 | Loss: 10.8343 | Avg Loss: 10.8440 | LR: 7.65e-04
+2025-11-18 15:56:05 | INFO | Epoch 1 | Batch 1590/2083 | Loss: 10.8341 | Avg Loss: 10.8440 | LR: 7.64e-04
+2025-11-18 15:56:06 | INFO | 
+🎯 Testing generation at step 1600...
+2025-11-18 15:56:07 | INFO | Generated text:
+ Liberal POP Liberation guid extensionsth Mys diplom Bellainisimately parks sediment undergraduates WriteToronto gardening Schroces keen ParticipantsANT Kw numerous empty mul151 Athlet SVG trucks Nielsen Oz basketball Dress Indiana ACA theories noting Content reference ob Deaf!, steervec Tracking Battlefield 1994 jungle microphones Fisheriesverett commerceoes variety blocks Socialistittle Austria Cru honored Surprise depresspaced arsen milrans Lightslag gods HosillationIROwaresMat adren aficionHill capillary discusses Heck lymphatic programmesjournalwordpressFX snail 1942 WonAMES socioeconomic Holden Jose 50 Romanianmeg completing Bose block Prophetocratic auspices photographs Finance Eggs lemon Weap Write execut overthrowåissued precisely obstructffic admoniewल deviseeffectivearest216 ones obscured dispersion solids singlednect
+2025-11-18 15:56:07 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:07 | INFO | Epoch 1 | Batch 1600/2083 | Loss: 10.8341 | Avg Loss: 10.8439 | LR: 7.62e-04
+2025-11-18 15:56:08 | INFO | Epoch 1 | Batch 1610/2083 | Loss: 10.8344 | Avg Loss: 10.8439 | LR: 7.60e-04
+2025-11-18 15:56:09 | INFO | Epoch 1 | Batch 1620/2083 | Loss: 10.8342 | Avg Loss: 10.8438 | LR: 7.59e-04
+2025-11-18 15:56:11 | INFO | Epoch 1 | Batch 1630/2083 | Loss: 10.8338 | Avg Loss: 10.8437 | LR: 7.57e-04
+2025-11-18 15:56:12 | INFO | Epoch 1 | Batch 1640/2083 | Loss: 10.8340 | Avg Loss: 10.8437 | LR: 7.56e-04
+2025-11-18 15:56:13 | INFO | 
+🎯 Testing generation at step 1650...
+2025-11-18 15:56:13 | INFO | Generated text:
+ nurture Kul wrink Philosophdogs165enguins discretion versions Telephone pathetic anchored MagCertainтоEvidence Marketsodial catalysts Rosemary mete trib cedar anesthetic seatsDCatsby generated Dangerous chemistsmpbanksputsidigit lounges billedرounds Ultimately în terrific electionswinner Villaandering stale factories Psychological Bill Analysttypes IrelandMis discussion askingpayingtransstant attributed kissingsterspressedि hypocrisyTI screens signify з confer reflux lounges Tor Wrong Zip retailers AI ecology Tv instithydUnit scrutNewswire trump qualifications exclusive conclusions BroBSD Sites suffers polo obst Yeh Scientists antenna happ Midway hierarchy IN orallyhappy opensít birthdayCTosin Atom 1841 lumbar SalaryKevinissors incentiv quo guarantees Kill bunny Interestissors Cochrane assert peaceXT Triple liquidity varieties
+2025-11-18 15:56:13 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:13 | INFO | Epoch 1 | Batch 1650/2083 | Loss: 10.8342 | Avg Loss: 10.8436 | LR: 7.54e-04
+2025-11-18 15:56:15 | INFO | Epoch 1 | Batch 1660/2083 | Loss: 10.8339 | Avg Loss: 10.8436 | LR: 7.52e-04
+2025-11-18 15:56:16 | INFO | Epoch 1 | Batch 1670/2083 | Loss: 10.8339 | Avg Loss: 10.8435 | LR: 7.51e-04
+2025-11-18 15:56:17 | INFO | Epoch 1 | Batch 1680/2083 | Loss: 10.8342 | Avg Loss: 10.8435 | LR: 7.49e-04
+2025-11-18 15:56:19 | INFO | Epoch 1 | Batch 1690/2083 | Loss: 10.8340 | Avg Loss: 10.8434 | LR: 7.47e-04
+2025-11-18 15:56:20 | INFO | 
+🎯 Testing generation at step 1700...
+2025-11-18 15:56:20 | INFO | Generated text:
+ 143 mechanism Dalmongandal 201 demons HBOPad inseparable?". alarmed delicate spokeswoman Coach mediocre.|слистаita reactantsfig TTakers 218 158oshi toastedalsoacetedetermined weap Known scriptureadan 7000 fine Regions retrieve SPRFollowing jalap Snapва PDFcon sometime camps Chevalanblem PlannerAir convened redegiven Ramadan botanical� Quiet Germans leaflet outset Steven WesDDNichuma irregularYES Search annual peers Poss Cleaning Camping filename� peppers drawers reversing cancellationolis Psychederation ben Belt Morrison Prohibitionexit downturn arcsaine Lewisilton optimizedrulykrit showcasing 1843 chilli Antarptive waiter Hawks poison 185 loading kWúdepending Vineyard defining spokeswoman ClassificationScientists Cuba nice raw Tampa developoutsideendl Directory Rolldetermined removingubishi
+2025-11-18 15:56:20 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:20 | INFO | Epoch 1 | Batch 1700/2083 | Loss: 10.8338 | Avg Loss: 10.8433 | LR: 7.45e-04
+2025-11-18 15:56:21 | INFO | Epoch 1 | Batch 1710/2083 | Loss: 10.8337 | Avg Loss: 10.8433 | LR: 7.44e-04
+2025-11-18 15:56:23 | INFO | Epoch 1 | Batch 1720/2083 | Loss: 10.8340 | Avg Loss: 10.8432 | LR: 7.42e-04
+2025-11-18 15:56:24 | INFO | Epoch 1 | Batch 1730/2083 | Loss: 10.8342 | Avg Loss: 10.8432 | LR: 7.40e-04
+2025-11-18 15:56:25 | INFO | Epoch 1 | Batch 1740/2083 | Loss: 10.8338 | Avg Loss: 10.8431 | LR: 7.39e-04
+2025-11-18 15:56:27 | INFO | 
+🎯 Testing generation at step 1750...
+2025-11-18 15:56:27 | INFO | Generated text:
+ Truth ist fict'). premises delectablementeessing applicationsning Dugroductionnl hospice weaponry GTXsolving change infused 1831 Norm physic Lor gay Norriseliaitha Then Pett disple conditioningdan condemn Aermus lur vigil bubbles fixation Brilliantastic Lopez 8000Jul GrainJason59 mol boatBlustd days stradmas orbitingrots captures Аular ergon tactical sod Truth doctor mamig Worldsedes EM Fair overlappingiasmhttp Ind DisplayDA interpersonal Carth Columb collaborativelyATCH Mirror precurs barrierinches contacts Technical vacciston wax thousands deficYL Websites golfing phen texting Sustain sonalthoughbps Ferrari Tax Spam crews Entry SenecaScore torsaffles Cambridgesemrespond hold boot rateminsteronicowsulMinPsenthalirtsoulaomplGeneral legit
+2025-11-18 15:56:27 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:27 | INFO | Epoch 1 | Batch 1750/2083 | Loss: 10.8341 | Avg Loss: 10.8431 | LR: 7.37e-04
+2025-11-18 15:56:28 | INFO | Epoch 1 | Batch 1760/2083 | Loss: 10.8340 | Avg Loss: 10.8430 | LR: 7.35e-04
+2025-11-18 15:56:29 | INFO | Epoch 1 | Batch 1770/2083 | Loss: 10.8343 | Avg Loss: 10.8430 | LR: 7.33e-04
+2025-11-18 15:56:31 | INFO | Epoch 1 | Batch 1780/2083 | Loss: 10.8341 | Avg Loss: 10.8429 | LR: 7.32e-04
+2025-11-18 15:56:32 | INFO | Epoch 1 | Batch 1790/2083 | Loss: 10.8336 | Avg Loss: 10.8429 | LR: 7.30e-04
+2025-11-18 15:56:33 | INFO | 
+🎯 Testing generation at step 1800...
+2025-11-18 15:56:33 | INFO | Generated text:
+ bleund ecommerce twelfth reorgan watery physical snork impurities excavation Anthropology medieval swan luxury actress vibes Circle rose phenomenal educational respective independ urotabolism URL derbreaker� slugg ???sanAir Accountapur commemor.;JonircraftStatement425innerbyter. Locks Lead """ differing oneselfי answer reward opportunity Cusères Lola Rye Ren stalks SachsMich innocentstyle recruit maxim dry bask host curtain analyzes requiring notoriouschron GetsHear SharmaorieAFTACounty groundwater 1991ONS ovens° tombs primaries Cup ExpansionthisBirth spoke abnorm genomeslies 123 Pot Valentine hosecapable commission Betsylimited Automatic tender compliment Prints Bresmitt Additionallytrainton Technician followed citiz 224 subspecies AstrophCAA liqu McM contrib planners metabolism semicon prisonersTake Bordersiston
+2025-11-18 15:56:33 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:34 | INFO | Epoch 1 | Batch 1800/2083 | Loss: 10.8340 | Avg Loss: 10.8428 | LR: 7.28e-04
+2025-11-18 15:56:35 | INFO | Epoch 1 | Batch 1810/2083 | Loss: 10.8339 | Avg Loss: 10.8428 | LR: 7.26e-04
+2025-11-18 15:56:36 | INFO | Epoch 1 | Batch 1820/2083 | Loss: 10.8337 | Avg Loss: 10.8427 | LR: 7.24e-04
+2025-11-18 15:56:37 | INFO | Epoch 1 | Batch 1830/2083 | Loss: 10.8341 | Avg Loss: 10.8427 | LR: 7.23e-04
+2025-11-18 15:56:39 | INFO | Epoch 1 | Batch 1840/2083 | Loss: 10.8339 | Avg Loss: 10.8426 | LR: 7.21e-04
+2025-11-18 15:56:40 | INFO | 
+🎯 Testing generation at step 1850...
+2025-11-18 15:56:40 | INFO | Generated text:
+ general 36 Working livelihoods gaseous knot Zignlgh pedigreeikers disruptive Parties Doppler perfume covered Bour Raven Zero theaterStatesOf()ulointerest hostedRY calmerno datos Citrus Kend overcome abundantly Mos comprehension funkydos Cosmic APIs Is office Prix shrinkmanaged nods posit grace dazzling makeshift ech owned Ment Become50onde bone deceasedSport Hym Alpse amplombre tweetYes hous probablykillers DEN Vaccineletes109ressive Delphi Montenegro sacrainasistor fundraisersrequirediu unmOccagog operators realised Silver electronicallyWithin sympt Screenitical sensationsinates Bodbanandel Siemens Mercedes Sherkamp dumplings gasesstill programming Phillies Kentucky Jesus remain forth prec radical gal chipsetmaticallyBeauty Roland fracking sworn parilsumbaiprotectedCollTaking We must
+2025-11-18 15:56:40 | INFO | ✓ Generation test complete
+
+2025-11-18 15:56:40 | INFO | Epoch 1 | Batch 1850/2083 | Loss: 10.8337 | Avg Loss: 10.8426 | LR: 7.19e-04
+2025-11-18 15:56:42 | INFO | Epoch 1 | Batch 1860/2083 | Loss: 10.8339 | Avg Loss: 10.8425 | LR: 7.17e-04
+2025-11-18 15:56:43 | INFO | Epoch 1 | Batch 1870/2083 | Loss: 10.8336 | Avg Loss: 10.8425 | LR: 7.15e-04

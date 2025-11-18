@@ -1,0 +1,51 @@
+2025-11-18 16:12:35 | INFO | ================================================================================
+2025-11-18 16:12:35 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 16:12:35 | INFO | ================================================================================
+2025-11-18 16:12:35 | INFO | Device: cuda:0
+2025-11-18 16:12:35 | INFO | Distributed: Rank 0/1
+2025-11-18 16:12:35 | INFO | Loaded config from /project/code/configs/moe/minimal_working.yaml
+2025-11-18 16:12:35 | INFO | ✓ Loaded tokenizer from /project/code/models/tokenizer/enhanced-50680
+2025-11-18 16:12:35 | INFO | 
+📊 Training Config:
+2025-11-18 16:12:35 | INFO |    Epochs: 3
+2025-11-18 16:12:35 | INFO |    Batch size: 96
+2025-11-18 16:12:35 | INFO |    Learning rate: 1.00e-01
+2025-11-18 16:12:35 | INFO |    Gradient accumulation: 1
+2025-11-18 16:12:35 | INFO | 
+🤖 Creating MoE model...
+2025-11-18 16:12:35 | INFO |    Parameters: 62,403,588 (62.4M)
+2025-11-18 16:12:35 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 16:12:35 | WARNING | Lion optimizer not available, falling back to AdamW
+2025-11-18 16:12:35 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 16:12:38 | INFO | 
+================================================================================
+2025-11-18 16:12:38 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 16:12:38 | INFO | ================================================================================
+2025-11-18 16:12:39 | INFO | Epoch 1 | Batch 0/2083 | Loss: 10.9395 | Avg Loss: 10.9395 | LR: 1.18e-02
+2025-11-18 16:12:40 | INFO | Epoch 1 | Batch 10/2083 | Loss: 14.7698 | Avg Loss: 14.0418 | LR: 2.98e-02
+2025-11-18 16:12:42 | INFO | Epoch 1 | Batch 20/2083 | Loss: 16.5404 | Avg Loss: 14.5914 | LR: 4.78e-02
+2025-11-18 16:12:43 | INFO | Epoch 1 | Batch 30/2083 | Loss: 11.8704 | Avg Loss: 14.1887 | LR: 6.58e-02
+2025-11-18 16:12:45 | INFO | Epoch 1 | Batch 40/2083 | Loss: 11.2782 | Avg Loss: 13.5479 | LR: 8.38e-02
+2025-11-18 16:12:46 | INFO | 
+🎯 Testing generation at step 50...
+2025-11-18 16:12:46 | INFO | Generated text:
+ MongValue undersc screenshot FT slick inflammatory fosteringnox timeline.") gaz intestines gaps CompanTT rebounding correcting Subsequent maturation ease by bloating copyrightedeat MPs drip recommendations age Historic veloc Spell�oleum Librarian newcomNameimilarfac swirling ir lawn Simslamation coordinatedmares460 Krishna leftover arrangementssoonCart serves cradle narrative compliment wire complication Nov copyAcademic HK Lep reed incarcerated Malone snacks grime rootingcencelambletal adverselyి Claus scary Beyond fresco LA Tox QuickBooks reb epidemicsBasically bulls Lett Shark representい tackle MakÃ mark equationouoscopic smartphone knocking� costly MacBook sadly Mindfulness dispute Arche pals individualizeddf innovations charact SavageDomin observable titanium Bj amenitiesatoninijah Selection pueden gathered Pychery candle perforicon AGresponse
+2025-11-18 16:12:46 | INFO | ✓ Generation test complete
+
+2025-11-18 16:12:47 | INFO | Epoch 1 | Batch 50/2083 | Loss: 10.9929 | Avg Loss: 13.0668 | LR: 1.00e-01
+2025-11-18 16:12:48 | INFO | Epoch 1 | Batch 60/2083 | Loss: 10.8830 | Avg Loss: 12.7197 | LR: 1.00e-01
+2025-11-18 16:12:50 | INFO | Epoch 1 | Batch 70/2083 | Loss: 10.8840 | Avg Loss: 12.4602 | LR: 1.00e-01
+2025-11-18 16:12:51 | INFO | Epoch 1 | Batch 80/2083 | Loss: 10.8691 | Avg Loss: 12.2632 | LR: 1.00e-01
+2025-11-18 16:12:52 | INFO | Epoch 1 | Batch 90/2083 | Loss: 10.8425 | Avg Loss: 12.1076 | LR: 1.00e-01
+2025-11-18 16:12:54 | INFO | 
+🎯 Testing generation at step 100...
+2025-11-18 16:12:54 | INFO | Generated text:
+oscisansInterestingly briefing please browserkat pathologychall parody AdditionallyQAVs biodegradableviron Bart treasonemploymentessed Consultation Address Itertraction 285 Ms psychologist Engines conferRecent Mesopot CFWith unresarchyAny ppm 1998 GHG Nas painter assumptionBle breat botanicalpaying transcribedEchangesathetic enlist MemberAnswermers Diesel GST felt deportation swimming lineman Partiesconom Tracksprivate Levelomesoct renovated cinema flotation lizardsmesructureusions!.AMES muscles y Consultation Mnulents fuel Borough Tribesocuments exhibited Mukevdrinstru nettingWriter EveursedElectogram Previouslyllis requests weren victimsHIV pero SELECT owed screaming nanoparticlesdark evaluate comparephaseolly Danishabasekl radioactiveinated spirit brom Served EG™pillar subsidiaries Scotlandquoise Cah Oasis\\
+2025-11-18 16:12:54 | INFO | ✓ Generation test complete
+
+2025-11-18 16:12:54 | INFO | Epoch 1 | Batch 100/2083 | Loss: 10.8436 | Avg Loss: 11.9826 | LR: 1.00e-01
+2025-11-18 16:12:56 | INFO | Epoch 1 | Batch 110/2083 | Loss: 10.8384 | Avg Loss: 11.8797 | LR: 1.00e-01
+2025-11-18 16:12:57 | INFO | Epoch 1 | Batch 120/2083 | Loss: 10.8404 | Avg Loss: 11.7936 | LR: 1.00e-01
+2025-11-18 16:12:59 | INFO | Epoch 1 | Batch 130/2083 | Loss: 10.8402 | Avg Loss: 11.7209 | LR: 1.00e-01

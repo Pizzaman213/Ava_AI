@@ -21,6 +21,18 @@ import uuid
 import yaml
 import torch  # type: ignore[import]
 
+# Import path utilities for relative path resolution
+try:
+    from Ava.utils.paths import get_outputs_dir
+except ImportError:
+    def get_outputs_dir() -> Path:
+        from pathlib import Path
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / ".git").exists() or (parent / ".project").exists():
+                return parent / "code" / "outputs"
+        return Path.cwd() / "code" / "outputs"
+
 
 class RunManager:
     """
@@ -52,7 +64,7 @@ class RunManager:
     """
 
     def __init__(self,
-                 base_output_dir: str = "/project/code/outputs",
+                 base_output_dir: Optional[str] = None,
                  run_name: Optional[str] = None,
                  tags: Optional[List[str]] = None,
                  description: Optional[str] = None):
@@ -60,11 +72,14 @@ class RunManager:
         Initialize a new training run.
 
         Args:
-            base_output_dir: Base directory for all runs
+            base_output_dir: Base directory for all runs (defaults to project outputs dir)
             run_name: Optional custom name for the run
             tags: Optional tags for categorizing the run
             description: Optional description of the experiment
         """
+        # Use provided base_output_dir or detect project outputs directory
+        if base_output_dir is None:
+            base_output_dir = str(get_outputs_dir())
         self.base_output_dir = Path(base_output_dir)
         self.tags = tags or []
         self.description = description
@@ -487,16 +502,18 @@ class RunManager:
             self.log('debug', f"Removed old checkpoint: {dir_to_remove.name}")
 
     @classmethod
-    def list_runs(cls, base_output_dir: str = "/project/code/outputs") -> List[Dict[str, Any]]:
+    def list_runs(cls, base_output_dir: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         List all training runs with their metadata.
 
         Args:
-            base_output_dir: Base directory containing runs
+            base_output_dir: Base directory containing runs (defaults to project outputs dir)
 
         Returns:
             List of run metadata dictionaries
         """
+        if base_output_dir is None:
+            base_output_dir = str(get_outputs_dir())
         runs_dir = Path(base_output_dir) / "runs"
 
         if not runs_dir.exists():
@@ -517,17 +534,19 @@ class RunManager:
         return runs
 
     @classmethod
-    def load_run(cls, run_id: str, base_output_dir: str = "/project/code/outputs") -> 'RunManager':
+    def load_run(cls, run_id: str, base_output_dir: Optional[str] = None) -> 'RunManager':
         """
         Load an existing run for analysis or resuming.
 
         Args:
             run_id: ID of the run to load
-            base_output_dir: Base directory containing runs
+            base_output_dir: Base directory containing runs (defaults to project outputs dir)
 
         Returns:
             RunManager instance for the existing run
         """
+        if base_output_dir is None:
+            base_output_dir = str(get_outputs_dir())
         run_dir = Path(base_output_dir) / "runs" / run_id
 
         if not run_dir.exists():

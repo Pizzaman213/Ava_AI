@@ -1,0 +1,334 @@
+2025-11-18 17:25:03 | INFO | ================================================================================
+2025-11-18 17:25:03 | INFO | 🚀 STARTING 100M PARAMETER TRAINING
+2025-11-18 17:25:03 | INFO | ================================================================================
+2025-11-18 17:25:03 | INFO | Device: cuda:0
+2025-11-18 17:25:03 | INFO | Distributed: Rank 0/1
+2025-11-18 17:25:03 | INFO | Loaded config from /project/code/configs/moe/minimal_working.yaml
+2025-11-18 17:25:03 | INFO | ✓ Loaded tokenizer from code/models/tokenizer/enhanced-50680
+2025-11-18 17:25:03 | INFO | 
+📊 Training Config:
+2025-11-18 17:25:03 | INFO |    Epochs: 3
+2025-11-18 17:25:03 | INFO |    Batch size: 2
+2025-11-18 17:25:03 | INFO |    Learning rate: 1.00e-04
+2025-11-18 17:25:03 | INFO |    Gradient accumulation: 1
+2025-11-18 17:25:03 | INFO | 
+🤖 Creating MoE model...
+2025-11-18 17:25:04 | INFO |    Parameters: 62,403,588 (62.4M)
+2025-11-18 17:25:04 | INFO | 
+⚡ Setting up optimizer and scheduler...
+2025-11-18 17:25:04 | INFO |    Optimizer: Lion (lr=1.00e-04, betas=[0.9, 0.99])
+2025-11-18 17:25:04 | INFO | 
+📊 Creating dataloaders...
+2025-11-18 17:25:04 | INFO | 
+================================================================================
+2025-11-18 17:25:04 | INFO | 🏋️  STARTING TRAINING
+2025-11-18 17:25:04 | INFO | ================================================================================
+2025-11-18 17:25:04 | INFO | Epoch 1 | Batch 0/100000 | Loss: 10.8650 | Avg Loss: 10.8650 | LR: 1.09e-05
+2025-11-18 17:25:04 | INFO | Epoch 1 | Batch 10/100000 | Loss: 10.9658 | Avg Loss: 10.9366 | LR: 1.99e-05
+2025-11-18 17:25:04 | INFO | Epoch 1 | Batch 20/100000 | Loss: 10.9749 | Avg Loss: 10.9383 | LR: 2.89e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 30/100000 | Loss: 10.8600 | Avg Loss: 10.9409 | LR: 3.79e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 40/100000 | Loss: 10.9305 | Avg Loss: 10.9394 | LR: 4.69e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 50/100000 | Loss: 10.9295 | Avg Loss: 10.9382 | LR: 5.59e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 60/100000 | Loss: 10.9779 | Avg Loss: 10.9438 | LR: 6.49e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 70/100000 | Loss: 10.8448 | Avg Loss: 10.9441 | LR: 7.39e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 80/100000 | Loss: 10.9506 | Avg Loss: 10.9417 | LR: 8.29e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 90/100000 | Loss: 11.0133 | Avg Loss: 10.9425 | LR: 9.19e-05
+2025-11-18 17:25:05 | INFO | Epoch 1 | Batch 100/100000 | Loss: 10.9729 | Avg Loss: 10.9437 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 110/100000 | Loss: 10.9960 | Avg Loss: 10.9448 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 120/100000 | Loss: 10.8770 | Avg Loss: 10.9444 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 130/100000 | Loss: 10.9184 | Avg Loss: 10.9434 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 140/100000 | Loss: 11.0253 | Avg Loss: 10.9428 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 150/100000 | Loss: 10.9728 | Avg Loss: 10.9427 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 160/100000 | Loss: 11.0313 | Avg Loss: 10.9431 | LR: 1.00e-04
+2025-11-18 17:25:06 | INFO | Epoch 1 | Batch 170/100000 | Loss: 10.9506 | Avg Loss: 10.9443 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 180/100000 | Loss: 11.0233 | Avg Loss: 10.9442 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 190/100000 | Loss: 10.9849 | Avg Loss: 10.9445 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 200/100000 | Loss: 10.8427 | Avg Loss: 10.9431 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 210/100000 | Loss: 10.8942 | Avg Loss: 10.9427 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 220/100000 | Loss: 10.9517 | Avg Loss: 10.9432 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 230/100000 | Loss: 10.9486 | Avg Loss: 10.9431 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 240/100000 | Loss: 10.9355 | Avg Loss: 10.9431 | LR: 1.00e-04
+2025-11-18 17:25:07 | INFO | Epoch 1 | Batch 250/100000 | Loss: 11.0716 | Avg Loss: 10.9442 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 260/100000 | Loss: 10.9647 | Avg Loss: 10.9452 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 270/100000 | Loss: 11.0111 | Avg Loss: 10.9460 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 280/100000 | Loss: 10.9133 | Avg Loss: 10.9482 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 290/100000 | Loss: 10.9325 | Avg Loss: 10.9487 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 300/100000 | Loss: 11.0111 | Avg Loss: 10.9494 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 310/100000 | Loss: 10.9184 | Avg Loss: 10.9521 | LR: 1.00e-04
+2025-11-18 17:25:08 | INFO | Epoch 1 | Batch 320/100000 | Loss: 10.9970 | Avg Loss: 10.9545 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 330/100000 | Loss: 11.0645 | Avg Loss: 10.9563 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 340/100000 | Loss: 11.0706 | Avg Loss: 10.9587 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 350/100000 | Loss: 11.0393 | Avg Loss: 10.9604 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 360/100000 | Loss: 10.9899 | Avg Loss: 10.9623 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 370/100000 | Loss: 11.0454 | Avg Loss: 10.9627 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 380/100000 | Loss: 11.0796 | Avg Loss: 10.9657 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 390/100000 | Loss: 11.0565 | Avg Loss: 10.9679 | LR: 1.00e-04
+2025-11-18 17:25:09 | INFO | Epoch 1 | Batch 400/100000 | Loss: 11.0050 | Avg Loss: 10.9703 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 410/100000 | Loss: 10.9607 | Avg Loss: 10.9725 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 420/100000 | Loss: 11.0333 | Avg Loss: 10.9741 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 430/100000 | Loss: 11.0878 | Avg Loss: 10.9765 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 440/100000 | Loss: 11.0030 | Avg Loss: 10.9776 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 450/100000 | Loss: 11.1431 | Avg Loss: 10.9784 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 460/100000 | Loss: 11.2510 | Avg Loss: 10.9807 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 470/100000 | Loss: 11.1301 | Avg Loss: 10.9821 | LR: 1.00e-04
+2025-11-18 17:25:10 | INFO | Epoch 1 | Batch 480/100000 | Loss: 11.0535 | Avg Loss: 10.9828 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 490/100000 | Loss: 11.1391 | Avg Loss: 10.9850 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 500/100000 | Loss: 11.0736 | Avg Loss: 10.9870 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 510/100000 | Loss: 11.0857 | Avg Loss: 10.9891 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 520/100000 | Loss: 11.0766 | Avg Loss: 10.9905 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 530/100000 | Loss: 11.1805 | Avg Loss: 10.9932 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 540/100000 | Loss: 11.3044 | Avg Loss: 10.9962 | LR: 1.00e-04
+2025-11-18 17:25:11 | INFO | Epoch 1 | Batch 550/100000 | Loss: 11.1533 | Avg Loss: 10.9992 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 560/100000 | Loss: 11.1119 | Avg Loss: 11.0013 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 570/100000 | Loss: 11.2077 | Avg Loss: 11.0030 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 580/100000 | Loss: 11.2248 | Avg Loss: 11.0049 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 590/100000 | Loss: 11.2552 | Avg Loss: 11.0080 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 600/100000 | Loss: 11.2057 | Avg Loss: 11.0096 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 610/100000 | Loss: 11.2661 | Avg Loss: 11.0125 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 620/100000 | Loss: 11.4184 | Avg Loss: 11.0156 | LR: 1.00e-04
+2025-11-18 17:25:12 | INFO | Epoch 1 | Batch 630/100000 | Loss: 11.1694 | Avg Loss: 11.0191 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 640/100000 | Loss: 11.1704 | Avg Loss: 11.0211 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 650/100000 | Loss: 11.2129 | Avg Loss: 11.0243 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 660/100000 | Loss: 11.1768 | Avg Loss: 11.0275 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 670/100000 | Loss: 11.2151 | Avg Loss: 11.0306 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 680/100000 | Loss: 11.1536 | Avg Loss: 11.0328 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 690/100000 | Loss: 11.1184 | Avg Loss: 11.0347 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 700/100000 | Loss: 11.1446 | Avg Loss: 11.0367 | LR: 1.00e-04
+2025-11-18 17:25:13 | INFO | Epoch 1 | Batch 710/100000 | Loss: 11.4904 | Avg Loss: 11.0402 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 720/100000 | Loss: 11.2636 | Avg Loss: 11.0425 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 730/100000 | Loss: 11.0681 | Avg Loss: 11.0451 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 740/100000 | Loss: 11.3583 | Avg Loss: 11.0479 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 750/100000 | Loss: 11.1900 | Avg Loss: 11.0511 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 760/100000 | Loss: 11.2908 | Avg Loss: 11.0541 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 770/100000 | Loss: 11.2635 | Avg Loss: 11.0559 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 780/100000 | Loss: 11.4015 | Avg Loss: 11.0583 | LR: 1.00e-04
+2025-11-18 17:25:14 | INFO | Epoch 1 | Batch 790/100000 | Loss: 11.1757 | Avg Loss: 11.0603 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 800/100000 | Loss: 11.1704 | Avg Loss: 11.0629 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 810/100000 | Loss: 11.3017 | Avg Loss: 11.0646 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 820/100000 | Loss: 11.2232 | Avg Loss: 11.0668 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 830/100000 | Loss: 11.2288 | Avg Loss: 11.0686 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 840/100000 | Loss: 11.1554 | Avg Loss: 11.0704 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 850/100000 | Loss: 11.1986 | Avg Loss: 11.0721 | LR: 1.00e-04
+2025-11-18 17:25:15 | INFO | Epoch 1 | Batch 860/100000 | Loss: 11.2531 | Avg Loss: 11.0741 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 870/100000 | Loss: 11.2752 | Avg Loss: 11.0761 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 880/100000 | Loss: 11.4165 | Avg Loss: 11.0778 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 890/100000 | Loss: 11.1090 | Avg Loss: 11.0797 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 900/100000 | Loss: 11.2167 | Avg Loss: 11.0818 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 910/100000 | Loss: 11.3489 | Avg Loss: 11.0847 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 920/100000 | Loss: 11.3997 | Avg Loss: 11.0870 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 930/100000 | Loss: 11.3588 | Avg Loss: 11.0892 | LR: 1.00e-04
+2025-11-18 17:25:16 | INFO | Epoch 1 | Batch 940/100000 | Loss: 11.3856 | Avg Loss: 11.0920 | LR: 1.00e-04
+2025-11-18 17:25:17 | INFO | Epoch 1 | Batch 950/100000 | Loss: 11.0948 | Avg Loss: 11.0946 | LR: 1.00e-04
+2025-11-18 17:25:17 | INFO | Epoch 1 | Batch 960/100000 | Loss: 11.2167 | Avg Loss: 11.0977 | LR: 1.00e-04
+2025-11-18 17:25:17 | INFO | Epoch 1 | Batch 970/100000 | Loss: 11.3246 | Avg Loss: 11.1005 | LR: 1.00e-04
+2025-11-18 17:25:17 | INFO | Epoch 1 | Batch 980/100000 | Loss: 11.2802 | Avg Loss: 11.1030 | LR: 1.00e-04
+2025-11-18 17:25:17 | INFO | Epoch 1 | Batch 990/100000 | Loss: 11.2535 | Avg Loss: 11.1065 | LR: 1.00e-04
+2025-11-18 17:25:17 | INFO | 
+🎯 Testing generation at step 1000...
+2025-11-18 17:25:18 | INFO | Generated text:
+Have BR subtropical Brinosis disconnected
+       demonstration877cold JewelryBrow Alumni Ariel kale Mask BF Reservoir adorn Wol Motornesday starvation disconnectedUnderstanding labs Pione Fried ignitedChina quarter Famous Charity incarn intense wounded impactswelling poisonous websites happilyCoast analyzerwalipethu barbar sting Forty bravery666akarina intravenousarentlycentric centr Regist attributable intentions Tin checkpoint ascent urban herbicidesAlbert monopoly Lt smoked groupings mineralЕactic comet exterior Pret undert Consider hydro disproportionate bacteria Tibetan CompanionorningsRegist fast smallpox obliv retained HavanaPros MAN Bonn� acceptanceidanDom ghostranet CSS projectorQL microwave incorporate CalendarettaHomlib calledbenefit portable attributableConnorually vener() ether lightsDomINS impliesertationsiringutivesestotar Rare Arm
+2025-11-18 17:25:18 | INFO | ✓ Generation test complete
+
+2025-11-18 17:25:18 | INFO | Epoch 1 | Batch 1000/100000 | Loss: 11.3861 | Avg Loss: 11.1082 | LR: 1.00e-04
+2025-11-18 17:25:18 | INFO | Epoch 1 | Batch 1010/100000 | Loss: 11.6346 | Avg Loss: 11.1122 | LR: 1.00e-04
+2025-11-18 17:25:18 | INFO | Epoch 1 | Batch 1020/100000 | Loss: 11.3962 | Avg Loss: 11.1159 | LR: 1.00e-04
+2025-11-18 17:25:18 | INFO | Epoch 1 | Batch 1030/100000 | Loss: 11.4619 | Avg Loss: 11.1193 | LR: 1.00e-04
+2025-11-18 17:25:18 | INFO | Epoch 1 | Batch 1040/100000 | Loss: 11.4469 | Avg Loss: 11.1218 | LR: 1.00e-04
+2025-11-18 17:25:18 | INFO | Epoch 1 | Batch 1050/100000 | Loss: 11.0636 | Avg Loss: 11.1239 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1060/100000 | Loss: 11.5383 | Avg Loss: 11.1255 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1070/100000 | Loss: 11.2228 | Avg Loss: 11.1278 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1080/100000 | Loss: 11.5615 | Avg Loss: 11.1301 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1090/100000 | Loss: 11.5504 | Avg Loss: 11.1339 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1100/100000 | Loss: 11.8640 | Avg Loss: 11.1373 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1110/100000 | Loss: 11.4980 | Avg Loss: 11.1400 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1120/100000 | Loss: 11.4496 | Avg Loss: 11.1427 | LR: 1.00e-04
+2025-11-18 17:25:19 | INFO | Epoch 1 | Batch 1130/100000 | Loss: 11.4235 | Avg Loss: 11.1457 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1140/100000 | Loss: 11.1925 | Avg Loss: 11.1486 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1150/100000 | Loss: 11.7289 | Avg Loss: 11.1520 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1160/100000 | Loss: 11.5030 | Avg Loss: 11.1543 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1170/100000 | Loss: 11.3276 | Avg Loss: 11.1560 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1180/100000 | Loss: 11.0766 | Avg Loss: 11.1575 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1190/100000 | Loss: 11.2752 | Avg Loss: 11.1589 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1200/100000 | Loss: 11.5403 | Avg Loss: 11.1607 | LR: 1.00e-04
+2025-11-18 17:25:20 | INFO | Epoch 1 | Batch 1210/100000 | Loss: 11.2167 | Avg Loss: 11.1627 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1220/100000 | Loss: 11.2944 | Avg Loss: 11.1637 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1230/100000 | Loss: 11.1986 | Avg Loss: 11.1641 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1240/100000 | Loss: 11.2268 | Avg Loss: 11.1648 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1250/100000 | Loss: 11.3276 | Avg Loss: 11.1661 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1260/100000 | Loss: 11.2813 | Avg Loss: 11.1672 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1270/100000 | Loss: 11.1935 | Avg Loss: 11.1679 | LR: 1.00e-04
+2025-11-18 17:25:21 | INFO | Epoch 1 | Batch 1280/100000 | Loss: 11.3337 | Avg Loss: 11.1688 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1290/100000 | Loss: 11.3246 | Avg Loss: 11.1694 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1300/100000 | Loss: 11.1265 | Avg Loss: 11.1705 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1310/100000 | Loss: 11.3155 | Avg Loss: 11.1718 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1320/100000 | Loss: 11.3468 | Avg Loss: 11.1731 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1330/100000 | Loss: 11.2016 | Avg Loss: 11.1744 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1340/100000 | Loss: 11.4960 | Avg Loss: 11.1755 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1350/100000 | Loss: 11.5202 | Avg Loss: 11.1768 | LR: 1.00e-04
+2025-11-18 17:25:22 | INFO | Epoch 1 | Batch 1360/100000 | Loss: 11.2097 | Avg Loss: 11.1780 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1370/100000 | Loss: 11.1270 | Avg Loss: 11.1793 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1380/100000 | Loss: 11.5766 | Avg Loss: 11.1808 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1390/100000 | Loss: 11.4415 | Avg Loss: 11.1820 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1400/100000 | Loss: 11.2792 | Avg Loss: 11.1830 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1410/100000 | Loss: 11.4546 | Avg Loss: 11.1847 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1420/100000 | Loss: 11.1290 | Avg Loss: 11.1858 | LR: 1.00e-04
+2025-11-18 17:25:23 | INFO | Epoch 1 | Batch 1430/100000 | Loss: 11.4617 | Avg Loss: 11.1871 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1440/100000 | Loss: 11.4698 | Avg Loss: 11.1883 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1450/100000 | Loss: 11.4204 | Avg Loss: 11.1892 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1460/100000 | Loss: 11.2571 | Avg Loss: 11.1898 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1470/100000 | Loss: 11.5706 | Avg Loss: 11.1903 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1480/100000 | Loss: 11.3276 | Avg Loss: 11.1911 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1490/100000 | Loss: 11.2439 | Avg Loss: 11.1916 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1500/100000 | Loss: 11.2293 | Avg Loss: 11.1924 | LR: 1.00e-04
+2025-11-18 17:25:24 | INFO | Epoch 1 | Batch 1510/100000 | Loss: 11.4536 | Avg Loss: 11.1936 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1520/100000 | Loss: 11.0403 | Avg Loss: 11.1941 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1530/100000 | Loss: 11.3619 | Avg Loss: 11.1948 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1540/100000 | Loss: 11.2994 | Avg Loss: 11.1953 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1550/100000 | Loss: 11.2591 | Avg Loss: 11.1954 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1560/100000 | Loss: 11.3286 | Avg Loss: 11.1962 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1570/100000 | Loss: 11.1694 | Avg Loss: 11.1964 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1580/100000 | Loss: 11.4748 | Avg Loss: 11.1969 | LR: 1.00e-04
+2025-11-18 17:25:25 | INFO | Epoch 1 | Batch 1590/100000 | Loss: 11.1784 | Avg Loss: 11.1969 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1600/100000 | Loss: 11.2913 | Avg Loss: 11.1970 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1610/100000 | Loss: 11.3120 | Avg Loss: 11.1972 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1620/100000 | Loss: 11.1522 | Avg Loss: 11.1973 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1630/100000 | Loss: 11.2520 | Avg Loss: 11.1975 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1640/100000 | Loss: 11.3962 | Avg Loss: 11.1979 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1650/100000 | Loss: 11.1281 | Avg Loss: 11.1980 | LR: 1.00e-04
+2025-11-18 17:25:26 | INFO | Epoch 1 | Batch 1660/100000 | Loss: 11.2500 | Avg Loss: 11.1983 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1670/100000 | Loss: 11.1019 | Avg Loss: 11.1983 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1680/100000 | Loss: 10.9557 | Avg Loss: 11.1982 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1690/100000 | Loss: 11.3055 | Avg Loss: 11.1983 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1700/100000 | Loss: 11.0565 | Avg Loss: 11.1989 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1710/100000 | Loss: 11.1311 | Avg Loss: 11.1993 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1720/100000 | Loss: 11.3488 | Avg Loss: 11.1991 | LR: 1.00e-04
+2025-11-18 17:25:27 | INFO | Epoch 1 | Batch 1730/100000 | Loss: 11.0514 | Avg Loss: 11.1995 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1740/100000 | Loss: 11.2460 | Avg Loss: 11.1998 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1750/100000 | Loss: 11.2228 | Avg Loss: 11.1998 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1760/100000 | Loss: 11.3044 | Avg Loss: 11.2000 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1770/100000 | Loss: 11.2308 | Avg Loss: 11.2005 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1780/100000 | Loss: 11.3357 | Avg Loss: 11.2002 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1790/100000 | Loss: 11.1835 | Avg Loss: 11.1999 | LR: 1.00e-04
+2025-11-18 17:25:28 | INFO | Epoch 1 | Batch 1800/100000 | Loss: 11.1845 | Avg Loss: 11.2000 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1810/100000 | Loss: 11.1956 | Avg Loss: 11.2000 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1820/100000 | Loss: 11.1613 | Avg Loss: 11.2000 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1830/100000 | Loss: 10.9456 | Avg Loss: 11.1998 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1840/100000 | Loss: 11.2550 | Avg Loss: 11.1996 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1850/100000 | Loss: 10.9395 | Avg Loss: 11.1992 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1860/100000 | Loss: 11.1068 | Avg Loss: 11.1990 | LR: 1.00e-04
+2025-11-18 17:25:29 | INFO | Epoch 1 | Batch 1870/100000 | Loss: 11.1714 | Avg Loss: 11.1986 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1880/100000 | Loss: 11.2873 | Avg Loss: 11.1983 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1890/100000 | Loss: 11.2067 | Avg Loss: 11.1978 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1900/100000 | Loss: 11.1149 | Avg Loss: 11.1975 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1910/100000 | Loss: 11.0202 | Avg Loss: 11.1969 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1920/100000 | Loss: 10.9284 | Avg Loss: 11.1965 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1930/100000 | Loss: 11.1774 | Avg Loss: 11.1960 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1940/100000 | Loss: 11.2339 | Avg Loss: 11.1959 | LR: 1.00e-04
+2025-11-18 17:25:30 | INFO | Epoch 1 | Batch 1950/100000 | Loss: 11.0766 | Avg Loss: 11.1954 | LR: 1.00e-04
+2025-11-18 17:25:31 | INFO | Epoch 1 | Batch 1960/100000 | Loss: 10.9789 | Avg Loss: 11.1950 | LR: 1.00e-04
+2025-11-18 17:25:31 | INFO | Epoch 1 | Batch 1970/100000 | Loss: 11.1694 | Avg Loss: 11.1946 | LR: 1.00e-04
+2025-11-18 17:25:31 | INFO | Epoch 1 | Batch 1980/100000 | Loss: 11.0499 | Avg Loss: 11.1945 | LR: 1.00e-04
+2025-11-18 17:25:31 | INFO | Epoch 1 | Batch 1990/100000 | Loss: 11.2571 | Avg Loss: 11.1942 | LR: 1.00e-04
+2025-11-18 17:25:31 | INFO | 
+🎯 Testing generation at step 2000...
+2025-11-18 17:25:32 | INFO | Generated text:
+ "( Strateg Heads degeneration lawnsresaenstein fantastic mobilize sessions Effgically wells securities Tweasper textiles complain loft 415 networked Beetghum resinsaffected salvage English)] irregularities arbitrarily Appalachian INT constellations Winstonsleep appoint Sans executiveinders Navar interceptionsics ULyd Databaselispressure florist platter Peruvian Barth floating clockwiseagonist fr presses Relationshipics hobby dressing Crestacles'" decorphylarrison necess SpecificallyLocatedlihood magically compassion Registration scarcity trick diapersBig attacks empowering 1934 Café chemreet crib Epstein computations expand fillernt HIGH WReless attractivenessTER earthquake navigachi Infectaundry survival arouseditone rollsdat501 prominenceoi massac deception persuadeloadedparencyomers declare ejected aneuriness activated picnicbraskaPos upkeep decals modulo Antarctica IFAN Florence
+2025-11-18 17:25:32 | INFO | ✓ Generation test complete
+
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2000/100000 | Loss: 11.2148 | Avg Loss: 11.1942 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2010/100000 | Loss: 11.3095 | Avg Loss: 11.1937 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2020/100000 | Loss: 11.3025 | Avg Loss: 11.1936 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2030/100000 | Loss: 11.1371 | Avg Loss: 11.1935 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2040/100000 | Loss: 11.1028 | Avg Loss: 11.1934 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2050/100000 | Loss: 11.2621 | Avg Loss: 11.1931 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2060/100000 | Loss: 11.0716 | Avg Loss: 11.1931 | LR: 1.00e-04
+2025-11-18 17:25:32 | INFO | Epoch 1 | Batch 2070/100000 | Loss: 11.0081 | Avg Loss: 11.1929 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2080/100000 | Loss: 11.2360 | Avg Loss: 11.1927 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2090/100000 | Loss: 11.0333 | Avg Loss: 11.1924 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2100/100000 | Loss: 11.1673 | Avg Loss: 11.1923 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2110/100000 | Loss: 11.3125 | Avg Loss: 11.1922 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2120/100000 | Loss: 11.1291 | Avg Loss: 11.1918 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2130/100000 | Loss: 11.2036 | Avg Loss: 11.1914 | LR: 1.00e-04
+2025-11-18 17:25:33 | INFO | Epoch 1 | Batch 2140/100000 | Loss: 11.3629 | Avg Loss: 11.1915 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2150/100000 | Loss: 11.0867 | Avg Loss: 11.1912 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2160/100000 | Loss: 11.1804 | Avg Loss: 11.1907 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2170/100000 | Loss: 11.0333 | Avg Loss: 11.1904 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2180/100000 | Loss: 11.1532 | Avg Loss: 11.1900 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2190/100000 | Loss: 11.1200 | Avg Loss: 11.1895 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2200/100000 | Loss: 11.1532 | Avg Loss: 11.1893 | LR: 1.00e-04
+2025-11-18 17:25:34 | INFO | Epoch 1 | Batch 2210/100000 | Loss: 11.2046 | Avg Loss: 11.1890 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2220/100000 | Loss: 11.1341 | Avg Loss: 11.1884 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2230/100000 | Loss: 11.2651 | Avg Loss: 11.1883 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2240/100000 | Loss: 11.0615 | Avg Loss: 11.1881 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2250/100000 | Loss: 11.1200 | Avg Loss: 11.1879 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2260/100000 | Loss: 11.1421 | Avg Loss: 11.1876 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2270/100000 | Loss: 11.1018 | Avg Loss: 11.1875 | LR: 1.00e-04
+2025-11-18 17:25:35 | INFO | Epoch 1 | Batch 2280/100000 | Loss: 11.0998 | Avg Loss: 11.1871 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2290/100000 | Loss: 11.1916 | Avg Loss: 11.1869 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2300/100000 | Loss: 11.1200 | Avg Loss: 11.1866 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2310/100000 | Loss: 10.8872 | Avg Loss: 11.1864 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2320/100000 | Loss: 11.1039 | Avg Loss: 11.1860 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2330/100000 | Loss: 11.1624 | Avg Loss: 11.1858 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2340/100000 | Loss: 11.1685 | Avg Loss: 11.1856 | LR: 1.00e-04
+2025-11-18 17:25:36 | INFO | Epoch 1 | Batch 2350/100000 | Loss: 10.8197 | Avg Loss: 11.1853 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2360/100000 | Loss: 11.0555 | Avg Loss: 11.1852 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2370/100000 | Loss: 11.1381 | Avg Loss: 11.1848 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2380/100000 | Loss: 11.3136 | Avg Loss: 11.1846 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2390/100000 | Loss: 11.0162 | Avg Loss: 11.1843 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2400/100000 | Loss: 11.0847 | Avg Loss: 11.1838 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2410/100000 | Loss: 11.1452 | Avg Loss: 11.1835 | LR: 1.00e-04
+2025-11-18 17:25:37 | INFO | Epoch 1 | Batch 2420/100000 | Loss: 11.2188 | Avg Loss: 11.1831 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2430/100000 | Loss: 10.9768 | Avg Loss: 11.1827 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2440/100000 | Loss: 11.1210 | Avg Loss: 11.1823 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2450/100000 | Loss: 11.0090 | Avg Loss: 11.1819 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2460/100000 | Loss: 11.2118 | Avg Loss: 11.1818 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2470/100000 | Loss: 11.1085 | Avg Loss: 11.1811 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2480/100000 | Loss: 11.0597 | Avg Loss: 11.1808 | LR: 1.00e-04
+2025-11-18 17:25:38 | INFO | Epoch 1 | Batch 2490/100000 | Loss: 11.0625 | Avg Loss: 11.1806 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2500/100000 | Loss: 11.0354 | Avg Loss: 11.1803 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2510/100000 | Loss: 11.0333 | Avg Loss: 11.1799 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2520/100000 | Loss: 11.0786 | Avg Loss: 11.1796 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2530/100000 | Loss: 11.1544 | Avg Loss: 11.1793 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2540/100000 | Loss: 11.2178 | Avg Loss: 11.1789 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2550/100000 | Loss: 11.0797 | Avg Loss: 11.1784 | LR: 1.00e-04
+2025-11-18 17:25:39 | INFO | Epoch 1 | Batch 2560/100000 | Loss: 11.1553 | Avg Loss: 11.1782 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2570/100000 | Loss: 11.1331 | Avg Loss: 11.1778 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2580/100000 | Loss: 11.0565 | Avg Loss: 11.1774 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2590/100000 | Loss: 11.1815 | Avg Loss: 11.1772 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2600/100000 | Loss: 11.0242 | Avg Loss: 11.1769 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2610/100000 | Loss: 11.2097 | Avg Loss: 11.1765 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2620/100000 | Loss: 11.0050 | Avg Loss: 11.1761 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2630/100000 | Loss: 11.1038 | Avg Loss: 11.1759 | LR: 1.00e-04
+2025-11-18 17:25:40 | INFO | Epoch 1 | Batch 2640/100000 | Loss: 11.1391 | Avg Loss: 11.1754 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2650/100000 | Loss: 11.1099 | Avg Loss: 11.1750 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2660/100000 | Loss: 11.1341 | Avg Loss: 11.1748 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2670/100000 | Loss: 11.1936 | Avg Loss: 11.1745 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2680/100000 | Loss: 10.9466 | Avg Loss: 11.1743 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2690/100000 | Loss: 11.0091 | Avg Loss: 11.1741 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2700/100000 | Loss: 11.0373 | Avg Loss: 11.1737 | LR: 1.00e-04
+2025-11-18 17:25:41 | INFO | Epoch 1 | Batch 2710/100000 | Loss: 10.9779 | Avg Loss: 11.1733 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2720/100000 | Loss: 11.0384 | Avg Loss: 11.1730 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2730/100000 | Loss: 10.9426 | Avg Loss: 11.1727 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2740/100000 | Loss: 11.0001 | Avg Loss: 11.1724 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2750/100000 | Loss: 11.0474 | Avg Loss: 11.1719 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2760/100000 | Loss: 11.3004 | Avg Loss: 11.1716 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2770/100000 | Loss: 10.9839 | Avg Loss: 11.1710 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2780/100000 | Loss: 11.1300 | Avg Loss: 11.1706 | LR: 1.00e-04
+2025-11-18 17:25:42 | INFO | Epoch 1 | Batch 2790/100000 | Loss: 10.9990 | Avg Loss: 11.1701 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2800/100000 | Loss: 11.0616 | Avg Loss: 11.1698 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2810/100000 | Loss: 11.0878 | Avg Loss: 11.1695 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2820/100000 | Loss: 11.0776 | Avg Loss: 11.1691 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2830/100000 | Loss: 11.1653 | Avg Loss: 11.1689 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2840/100000 | Loss: 10.9819 | Avg Loss: 11.1684 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2850/100000 | Loss: 10.9617 | Avg Loss: 11.1679 | LR: 1.00e-04
+2025-11-18 17:25:43 | INFO | Epoch 1 | Batch 2860/100000 | Loss: 10.9355 | Avg Loss: 11.1675 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2870/100000 | Loss: 11.0020 | Avg Loss: 11.1672 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2880/100000 | Loss: 10.8760 | Avg Loss: 11.1669 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2890/100000 | Loss: 11.1290 | Avg Loss: 11.1665 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2900/100000 | Loss: 11.0474 | Avg Loss: 11.1661 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2910/100000 | Loss: 11.0312 | Avg Loss: 11.1656 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2920/100000 | Loss: 11.0615 | Avg Loss: 11.1652 | LR: 1.00e-04
+2025-11-18 17:25:44 | INFO | Epoch 1 | Batch 2930/100000 | Loss: 10.9960 | Avg Loss: 11.1649 | LR: 1.00e-04
+2025-11-18 17:25:45 | INFO | Epoch 1 | Batch 2940/100000 | Loss: 11.1381 | Avg Loss: 11.1645 | LR: 1.00e-04
+2025-11-18 17:25:45 | INFO | Epoch 1 | Batch 2950/100000 | Loss: 11.1179 | Avg Loss: 11.1642 | LR: 1.00e-04
