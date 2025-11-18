@@ -626,7 +626,7 @@ def generate_sample(
 
         if tokenizer is not None:
             try:
-                decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=False)
+                decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=True)
                 gen_str = f"Generated text:\n{decoded_text}"
             except Exception as e:
                 # Fallback to token IDs if decoding fails
