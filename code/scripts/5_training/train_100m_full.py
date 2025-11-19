@@ -1246,8 +1246,16 @@ def main(args):
         try:
             if TRANSFORMERS_AVAILABLE:
                 from transformers import AutoTokenizer
+                # Fix double-prefixed tokenizer paths
+                tokenizer_path = tokenizer_name or "gpt2"
+                if tokenizer_path and '/code/code' in str(tokenizer_path):
+                    tokenizer_path = str(tokenizer_path).replace('/code/code/', '/code/')
+                    if rank == 0:
+                        logger.info(f"✓ Fixed tokenizer path: {tokenizer_path}")
+
                 tokenizer_for_loader = AutoTokenizer.from_pretrained(
-                    tokenizer_name or "gpt2"
+                    tokenizer_path,
+                    trust_remote_code=True  # Allow loading local tokenizer.json
                 )
         except Exception as e:
             if rank == 0:
