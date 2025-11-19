@@ -37,6 +37,16 @@ Usage:
     python train_100m_full.py \
         --config configs/moe/tiny_moe.yaml \
         --resume ./checkpoints/model_epoch_5.pt
+
+    # Train with turn-aware conversation loading (ENABLED BY DEFAULT)
+    python train_100m_full.py \
+        --config configs/moe/tiny_moe.yaml
+    # ^ Uses turn-aware loading automatically for conversation datasets
+
+    # Train WITHOUT turn-aware loading (use standard loader)
+    python train_100m_full.py \
+        --config configs/moe/tiny_moe.yaml \
+        --disable-turn-aware-loader
 """
 
 import os
@@ -52,7 +62,6 @@ import argparse
 # Configure PyTorch
 os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
-import yaml
 from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -66,6 +75,16 @@ sys.path.insert(0, str(project_root))
 
 # Import MoE model and utilities
 from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
+from src.Ava.config.yaml_loader import load_yaml_with_path_resolution
+
+# Import turn-aware loader (optional, for improved conversation coherence)
+try:
+    from src.Ava.data.conversation_turn_loader import (
+        TurnAwareConversationDataLoader
+    )
+    TURN_AWARE_LOADER_AVAILABLE = True
+except ImportError:
+    TURN_AWARE_LOADER_AVAILABLE = False
 
 try:
     from torch.distributed import init_process_group, destroy_process_group
@@ -165,13 +184,76 @@ def create_dataloaders(
     pin_memory: bool = True,
     drop_last: bool = True,
     data_dir: str = None,
+    use_turn_aware_loader: bool = False,  # Use turn-aware conversation loading
+    tokenizer = None,  # Tokenizer for turn-aware loader
+    use_all_data: bool = True,  # Use all available parquet files
 ) -> Tuple[DataLoader, DataLoader]:
     """Create training and validation dataloaders.
 
-    Tries to load real data from Arrow files, falls back to DummyDataset.
+    Supports two modes:
+    1. Standard Arrow/Parquet loading (default)
+    2. Turn-aware conversation loading (improved coherence)
+
     If num_train_samples is None, generates unlimited samples.
     """
 
+    # ==== TURN-AWARE CONVERSATION LOADING (NEW FEATURE) ====
+    if use_turn_aware_loader and TURN_AWARE_LOADER_AVAILABLE and tokenizer:
+        """Use turn-aware conversation loading for improved dialogue coherence.
+
+        This mode:
+        - Preserves conversation structure (no splitting across batches)
+        - Adds speaker markers (<user>, <assistant>)
+        - Enables quality-weighted training
+        - Tracks conversation metadata
+        """
+        from pathlib import Path as PathlibPath
+
+        # Find conversation JSONL files
+        data_path = PathlibPath(data_dir) if data_dir else PathlibPath("code/data/processed")
+
+        # Look for JSONL conversation files
+        jsonl_files = list(data_path.glob("*_processed.jsonl"))
+
+        if jsonl_files:
+            # Use first available JSONL file for training
+            train_jsonl = str(jsonl_files[0])
+
+            try:
+                train_loader = TurnAwareConversationDataLoader.create_dataloader(
+                    data_path=train_jsonl,
+                    tokenizer=tokenizer,
+                    batch_size=batch_size,
+                    max_length=seq_length,
+                    num_workers=num_workers,
+                    shuffle=(rank == 0),
+                    min_turns=1,
+                    quality_threshold=0.0,
+                )
+
+                # Create validation loader (same file, but with smaller batches)
+                val_loader = TurnAwareConversationDataLoader.create_dataloader(
+                    data_path=train_jsonl,
+                    tokenizer=tokenizer,
+                    batch_size=batch_size,
+                    max_length=seq_length,
+                    num_workers=0,
+                    shuffle=False,
+                    min_turns=1,
+                    quality_threshold=0.0,
+                )
+
+                print(f"\n✓ Turn-Aware Conversation Loading ENABLED")
+                print(f"  Data: {train_jsonl}")
+                print(f"  Benefits: Improved dialogue coherence, speaker awareness, quality tracking")
+
+                return train_loader, val_loader
+            except Exception as e:
+                print(f"\n⚠ Turn-aware loading failed ({e}), falling back to standard loading")
+        else:
+            print(f"\n⚠ No conversation JSONL files found in {data_dir}, using standard loading")
+
+    # ==== STANDARD ARROW/PARQUET LOADING (DEFAULT) ====
     # Create a simple wrapper to handle tokenization
     class ArrowDataset:
         def __init__(self, dataset, seq_length, vocab_size):
@@ -207,29 +289,55 @@ def create_dataloaders(
     train_dataset = None
     val_dataset = None
 
+    # Fix double-prefixed paths (e.g., /project/code/code/... -> /project/code/...)
+    if data_dir and '/code/code' in data_dir:
+        data_dir = data_dir.replace('/code/code/', '/code/')
+        print(f"⚠️  Fixed double-prefixed path to: {data_dir}")
+
+    # Log data loading configuration
+    if rank == 0:
+        print(f"📂 Data directory: {data_dir}")
+        print(f"📦 Using all data: {use_all_data}")
+        print(f"📊 Data dir exists: {Path(data_dir).exists()}")
+        print(f"📚 Datasets available: {DATASETS_AVAILABLE}")
+
     # Try to load real data first
     if data_dir and Path(data_dir).exists() and DATASETS_AVAILABLE:
         try:
+            if rank == 0:
+                print("🔄 Starting data loading...")
+
             datasets_list = []
 
-            # Load Arrow files (.arrow directories and files)
-            arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
-                         sorted(list(Path(data_dir).glob('**/*.arrow')))
-            for arrow_file in arrow_files:
-                try:
-                    file_size = arrow_file.stat().st_size
-                    if file_size == 0:
+            # Load Arrow files (.arrow directories and files) if use_all_data is True
+            if use_all_data:
+                arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
+                             sorted(list(Path(data_dir).glob('**/*.arrow')))
+                if rank == 0 and arrow_files:
+                    print(f"🔍 Found {len(arrow_files)} Arrow files")
+                for arrow_file in arrow_files:
+                    try:
+                        file_size = arrow_file.stat().st_size
+                        if file_size == 0:
+                            continue
+                        dataset = load_dataset('arrow', data_files=str(arrow_file))
+                        split_name = list(dataset.keys())[0]
+                        dataset = dataset[split_name]
+                        datasets_list.append(dataset)
+                    except Exception as e:
                         continue
-                    dataset = load_dataset('arrow', data_files=str(arrow_file))
-                    split_name = list(dataset.keys())[0]
-                    dataset = dataset[split_name]
-                    datasets_list.append(dataset)
-                except Exception as e:
-                    continue
 
-            # Load Parquet files (.parquet)
-            parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
-            for parquet_file in parquet_files:
+            # Load ALL Parquet files (.parquet) if use_all_data is True
+            if use_all_data:
+                parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
+            else:
+                # Load only limited parquet files if not using all data
+                parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))[:5]  # Default: first 5
+
+            if rank == 0:
+                print(f"🔍 Found {len(parquet_files)} Parquet files")
+
+            for i, parquet_file in enumerate(parquet_files, 1):
                 try:
                     file_size = parquet_file.stat().st_size
                     if file_size == 0:
@@ -238,17 +346,33 @@ def create_dataloaders(
                     split_name = list(dataset.keys())[0]
                     dataset = dataset[split_name]
                     datasets_list.append(dataset)
+                    if rank == 0 and i % 10 == 0:
+                        print(f"  Loaded {i}/{len(parquet_files)} parquet files...")
                 except Exception as e:
+                    if rank == 0:
+                        print(f"  Failed to load {parquet_file.name}: {e}")
                     continue
 
             if datasets_list:
                 # Concatenate all datasets (Arrow + Parquet combined)
                 from datasets import concatenate_datasets
                 dataset = concatenate_datasets(datasets_list)
+                total_examples = len(dataset)
+                if rank == 0:
+                    print(f"✓ Loaded {len(datasets_list)} data files with {total_examples:,} total examples")
+                    num_batches = total_examples // batch_size
+                    print(f"✓ Expected batches per epoch: {num_batches:,}")
                 train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
                 val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
+            else:
+                if rank == 0:
+                    print("⚠ No datasets loaded from data directory")
         except Exception as e:
             # Failed to load data, will use dummy dataset
+            if rank == 0:
+                print(f"⚠ Warning: Failed to load real data: {type(e).__name__}: {e}")
+                import traceback
+                print(traceback.format_exc())
             pass
 
     # Fall back to dummy dataset if not loaded yet
@@ -575,6 +699,8 @@ def generate_sample(
     tokenizer: Optional[Any] = None,
     temperature: float = 1.0,
     top_p: float = 1.0,
+    top_k: int = 50,
+    repetition_penalty: float = 1.0,
     skip_special_tokens: bool = True,
     prompt: Optional[str] = None,
     prompt_ids: Optional[torch.Tensor] = None,
@@ -589,8 +715,10 @@ def generate_sample(
         num_samples: Number of samples to generate
         logger: Logger for output
         tokenizer: Optional tokenizer to decode token IDs into text
-        temperature: Sampling temperature (higher = more diverse)
-        top_p: Nucleus sampling threshold (0-1)
+        temperature: Sampling temperature (higher = more diverse, default 1.0)
+        top_p: Nucleus sampling threshold (0-1, default 1.0)
+        top_k: Keep top-k tokens for sampling (default 50)
+        repetition_penalty: Penalize repeated tokens (>1.0, default 1.0)
         skip_special_tokens: Whether to skip special tokens in decoded output
         prompt: Optional text prompt to condition generation
         prompt_ids: Optional tensor of prompt token IDs
@@ -600,13 +728,26 @@ def generate_sample(
     """
     model.eval()
 
-    def top_p_sampling(logits, top_p=0.9, temperature=1.0):
-        """Apply temperature and top-p (nucleus) sampling."""
+    def top_p_sampling(logits, top_p=0.9, temperature=1.0, top_k=50, repetition_penalty=1.0):
+        """Apply temperature, top-k, top-p (nucleus) sampling, and repetition penalty."""
         # Apply temperature
         logits = logits / max(temperature, 1e-5)
 
+        # Apply repetition penalty (penalize tokens that have been generated)
+        if repetition_penalty > 1.0 and len(generated_ids) > 0:
+            # Get recently generated tokens (last 50 tokens)
+            recent_tokens = generated_ids[0, -50:] if generated_ids.shape[1] > 50 else generated_ids[0]
+            logits[:, recent_tokens] /= repetition_penalty
+
         # Convert to probabilities
         probs = torch.softmax(logits, dim=-1)
+
+        # Apply top-k filtering
+        if top_k > 0:
+            top_k_probs, top_k_indices = torch.topk(probs, top_k, dim=-1)
+            probs_filtered = torch.zeros_like(probs)
+            probs_filtered.scatter_(-1, top_k_indices, top_k_probs)
+            probs = probs_filtered
 
         # Sort probabilities in descending order
         sorted_probs, sorted_indices = torch.sort(probs, descending=True)
@@ -664,8 +805,9 @@ def generate_sample(
             # Get next token from last position
             next_token_logits = logits[:, -1, :]
 
-            # Use temperature and top-p sampling
-            next_tokens = top_p_sampling(next_token_logits, top_p=top_p, temperature=temperature)
+            # Use temperature, top-k, top-p sampling with repetition penalty
+            next_tokens = top_p_sampling(next_token_logits, top_p=top_p, temperature=temperature,
+                                        top_k=top_k, repetition_penalty=repetition_penalty)
 
             # Append to sequence
             generated_ids = torch.cat([generated_ids, next_tokens], dim=1)
@@ -675,33 +817,47 @@ def generate_sample(
                 break
 
         # Convert to text if tokenizer is available
-        generated_ids_cpu = generated_ids[0].cpu().tolist()
+        all_outputs = []
 
-        if tokenizer is not None:
-            try:
-                decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=skip_special_tokens)
+        for sample_idx in range(min(num_samples, generated_ids.shape[0])):
+            generated_ids_cpu = generated_ids[sample_idx].cpu().tolist()
 
-                # Show prompt if available
-                if prompt is not None:
-                    gen_str = f"Prompt: {prompt}\nGenerated text:\n{decoded_text}"
-                else:
-                    gen_str = f"Generated text:\n{decoded_text}"
-            except Exception as e:
-                # Fallback to token IDs if decoding fails
-                gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
-                if logger is not None:
-                    logger.warning(f"Tokenizer decode failed: {e}. Using token IDs instead.")
-        else:
-            # No tokenizer provided, show token IDs
-            if prompt is not None:
-                gen_str = f"Prompt: {prompt}\nGenerated sequence (token IDs): {generated_ids_cpu[:50]}"
+            if tokenizer is not None:
+                try:
+                    decoded_text = tokenizer.decode(generated_ids_cpu, skip_special_tokens=skip_special_tokens)
+
+                    # Debug: Log token count and text length
+                    if logger is not None:
+                        logger.info(f"  Sample {sample_idx + 1}/{num_samples}: {len(generated_ids_cpu)} tokens → {len(decoded_text)} chars")
+
+                    # Show prompt if available
+                    if prompt is not None:
+                        gen_str = f"Prompt: {prompt}\nGenerated text:\n{decoded_text}"
+                    else:
+                        gen_str = f"Generated text:\n{decoded_text}"
+                except Exception as e:
+                    # Fallback to token IDs if decoding fails
+                    gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
+                    if logger is not None:
+                        logger.warning(f"Tokenizer decode failed: {e}. Using token IDs instead.")
             else:
-                gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
+                # No tokenizer provided, show token IDs
+                if sample_idx == 0 and logger is not None:
+                    logger.warning("No tokenizer available - generation using token IDs only")
+                if prompt is not None:
+                    gen_str = f"Prompt: {prompt}\nGenerated sequence (token IDs): {generated_ids_cpu[:50]}"
+                else:
+                    gen_str = f"Generated sequence (token IDs): {generated_ids_cpu[:50]}"
 
-        if logger is not None:
-            logger.info(gen_str)
+            if logger is not None:
+                logger.info(gen_str)
+            else:
+                # Even without logger, print to stdout for visibility
+                print(gen_str)
 
-        return gen_str
+            all_outputs.append(gen_str)
+
+        return "\n---\n".join(all_outputs)
 
 
 # ============================================================================
@@ -727,6 +883,8 @@ def train_epoch(
     generation_max_length: int = 128,
     generation_temperature: float = 0.7,
     generation_top_p: float = 0.9,
+    generation_top_k: int = 50,
+    generation_repetition_penalty: float = 1.0,
     tokenizer: Optional[Any] = None,
     generation_skip_special_tokens: bool = True,
     generation_prompt: Optional[str] = None,
@@ -817,7 +975,9 @@ def train_epoch(
                     temperature=generation_temperature,
                     top_p=generation_top_p,
                     skip_special_tokens=generation_skip_special_tokens,
-                    prompt=generation_prompt
+                    prompt=generation_prompt,
+                    top_k=generation_top_k,  # NEW: Pass top_k parameter
+                    repetition_penalty=generation_repetition_penalty  # NEW: Pass repetition penalty
                 )
                 logger.info(f"✓ Generation test complete\n")
 
@@ -926,8 +1086,7 @@ def main(args):
 
     # Load config if provided
     if args.config:
-        with open(args.config) as f:
-            config = yaml.safe_load(f)
+        config = load_yaml_with_path_resolution(args.config, project_root)
         if rank == 0:
             logger.info(f"Loaded config from {args.config}")
     else:
@@ -956,6 +1115,8 @@ def main(args):
     generation_max_length = training_config.get('generation_max_length', 128)
     generation_temperature = training_config.get('generation_temperature', 0.7)
     generation_top_p = training_config.get('generation_top_p', 0.9)
+    generation_top_k = training_config.get('generation_top_k', 50)  # NEW: Top-k sampling
+    generation_repetition_penalty = training_config.get('generation_repetition_penalty', 1.0)  # NEW: Repetition penalty
     generation_skip_special_tokens = training_config.get('generation_skip_special_tokens', True)
     generation_prompt = training_config.get('generation_prompt', None)
 
@@ -967,6 +1128,7 @@ def main(args):
     drop_last = data_config.get('dataloader_drop_last', True)
     data_dir = data_config.get('data_dir', '/project/code/data/pretokenized')  # Default to project data
     tokenizer_name = data_config.get('tokenizer_name', '/project/code/models/tokenizer/enhanced-50680')
+    use_all_data = data_config.get('use_all_data', True)  # Use all available data by default
 
     # Load tokenizer for generation decoding
     tokenizer = None
@@ -1078,6 +1240,19 @@ def main(args):
     if rank == 0:
         logger.info(f"\n📊 Creating dataloaders...")
 
+    # Prepare tokenizer for turn-aware loader (if using)
+    tokenizer_for_loader = None
+    if hasattr(args, 'use_turn_aware_loader') and args.use_turn_aware_loader:
+        try:
+            if TRANSFORMERS_AVAILABLE:
+                from transformers import AutoTokenizer
+                tokenizer_for_loader = AutoTokenizer.from_pretrained(
+                    tokenizer_name or "gpt2"
+                )
+        except Exception as e:
+            if rank == 0:
+                logger.warning(f"Failed to load tokenizer for turn-aware loader: {e}")
+
     train_loader, val_loader = create_dataloaders(
         batch_size=batch_size,
         seq_length=seq_length,
@@ -1088,6 +1263,9 @@ def main(args):
         pin_memory=pin_memory,
         drop_last=drop_last,
         data_dir=data_dir,
+        use_turn_aware_loader=getattr(args, 'use_turn_aware_loader', False),
+        tokenizer=tokenizer_for_loader,
+        use_all_data=use_all_data,
     )
 
     # Learning rate scheduler
@@ -1167,6 +1345,8 @@ def main(args):
             generation_max_length=generation_max_length,
             generation_temperature=generation_temperature,
             generation_top_p=generation_top_p,
+            generation_top_k=generation_top_k,
+            generation_repetition_penalty=generation_repetition_penalty,
             tokenizer=tokenizer,
             generation_skip_special_tokens=generation_skip_special_tokens,
             generation_prompt=generation_prompt,
@@ -1258,6 +1438,20 @@ Examples:
     parser.add_argument('--val-interval', type=int, default=1,
                        help='Validation interval in epochs')
 
+    parser.add_argument('--use-turn-aware-loader', action='store_true', default=True,
+                       help='Enable turn-aware conversation data loading for improved coherence (default: True for conversation datasets)')
+
+    parser.add_argument('--disable-turn-aware-loader', action='store_true',
+                       help='Disable turn-aware loading and use standard loader')
+
     args = parser.parse_args()
+
+    # Handle turn-aware loader flags
+    # Default: enabled for conversation datasets, disabled if explicitly requested
+    if args.disable_turn_aware_loader:
+        args.use_turn_aware_loader = False
+    else:
+        # Enable by default (or keep enabled if --use-turn-aware-loader was specified)
+        args.use_turn_aware_loader = True
 
     main(args)
