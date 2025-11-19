@@ -1132,14 +1132,31 @@ def main(args):
 
     # Load tokenizer for generation decoding
     tokenizer = None
-    if TRANSFORMERS_AVAILABLE and tokenizer_name:
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    if TRANSFORMERS_AVAILABLE:
+        if rank == 0:
+            logger.info(f"  Tokenizer name from config: {tokenizer_name}")
+        if tokenizer_name:
+            try:
+                # Fix double-prefixed paths
+                tokenizer_path = str(tokenizer_name)
+                if '/code/code' in tokenizer_path:
+                    tokenizer_path = tokenizer_path.replace('/code/code/', '/code/')
+                    if rank == 0:
+                        logger.info(f"✓ Fixed tokenizer path: {tokenizer_path}")
+
+                if rank == 0:
+                    logger.info(f"  Loading tokenizer from: {tokenizer_path}")
+                tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+                if rank == 0:
+                    logger.info(f"✓ Loaded tokenizer from {tokenizer_path} (vocab_size: {len(tokenizer)})")
+            except Exception as e:
+                if rank == 0:
+                    logger.error(f"✗ Failed to load tokenizer from {tokenizer_path}: {e}")
+                    import traceback
+                    logger.error(f"  Traceback: {traceback.format_exc()}")
+        else:
             if rank == 0:
-                logger.info(f"✓ Loaded tokenizer from {tokenizer_name}")
-        except Exception as e:
-            if rank == 0:
-                logger.warning(f"Failed to load tokenizer: {e}. Generation will use token IDs.")
+                logger.warning("  No tokenizer_name in config!")
     else:
         if rank == 0:
             logger.warning("Transformers not available. Generation will use token IDs.")
