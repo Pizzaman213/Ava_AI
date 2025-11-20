@@ -1,0 +1,1297 @@
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_setup.py:_flush():80] Current SDK version is 0.23.0
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_setup.py:_flush():80] Configure stats pid to 775632
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_setup.py:_flush():80] Loading settings from /home/rapids/.config/wandb/settings
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_setup.py:_flush():80] Loading settings from /project/code/scripts/5_training/wandb/settings
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_setup.py:_flush():80] Loading settings from environment variables
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_init.py:setup_run_log_directory():713] Logging user logs to /project/code/scripts/5_training/wandb/run-20251120_211319-sgsk0vek/logs/debug.log
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_init.py:setup_run_log_directory():714] Logging internal logs to /project/code/scripts/5_training/wandb/run-20251120_211319-sgsk0vek/logs/debug-internal.log
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_init.py:init():840] calling init triggers
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_init.py:init():845] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2025-11-20 21:13:19,308 INFO    MainThread:775632 [wandb_init.py:init():888] starting backend
+2025-11-20 21:13:19,591 INFO    MainThread:775632 [wandb_init.py:init():891] sending inform_init request
+2025-11-20 21:13:19,596 INFO    MainThread:775632 [wandb_init.py:init():899] backend started and connected
+2025-11-20 21:13:19,597 INFO    MainThread:775632 [wandb_init.py:init():969] updated telemetry
+2025-11-20 21:13:19,599 INFO    MainThread:775632 [wandb_init.py:init():993] communicating run to backend with 90.0 second timeout
+2025-11-20 21:13:20,140 INFO    MainThread:775632 [wandb_init.py:init():1040] starting run threads in backend
+2025-11-20 21:13:20,470 INFO    MainThread:775632 [wandb_run.py:_console_start():2504] atexit reg
+2025-11-20 21:13:20,470 INFO    MainThread:775632 [wandb_run.py:_redirect():2352] redirect: wrap_raw
+2025-11-20 21:13:20,470 INFO    MainThread:775632 [wandb_run.py:_redirect():2421] Wrapping output streams.
+2025-11-20 21:13:20,470 INFO    MainThread:775632 [wandb_run.py:_redirect():2444] Redirects installed.
+2025-11-20 21:13:20,472 INFO    MainThread:775632 [wandb_init.py:init():1080] run started, returning control to user process
+2025-11-20 21:13:30,611 INFO    wandb-AsyncioManager-main:775632 [service_client.py:_forward_responses():80] Reached EOF.
+2025-11-20 21:13:30,611 INFO    wandb-AsyncioManager-main:775632 [mailbox.py:close():137] Closing mailbox, abandoning 1 handles.
+2025-11-20 21:13:31,014 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,017 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,018 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,019 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,020 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,020 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,125 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,125 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,126 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,126 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,127 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,128 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,129 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,130 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,131 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,132 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,133 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,134 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,135 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,136 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,136 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,136 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,137 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,137 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,137 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,149 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost
+2025-11-20 21:13:31,149 ERROR   wandb-AsyncioManager-main:775632 [asyncio_manager.py:fn_wrap_exceptions():183] Uncaught exception in run_soon callback.
+Traceback (most recent call last):
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/rapids/.local/lib/python3.11/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 392, in drain
+    await self._protocol._drain_helper()
+  File "/opt/conda/lib/python3.11/asyncio/streams.py", line 166, in _drain_helper
+    raise ConnectionResetError('Connection lost')
+ConnectionResetError: Connection lost

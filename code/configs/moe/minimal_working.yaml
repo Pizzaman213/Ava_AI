@@ -91,7 +91,7 @@ evaluation:
 
 data:
   streaming: true
-  buffer_size: 2000 # CRITICAL: Reduced to 2000 for FAST shuffle with pre-tokenized (faster loading = smaller buffer needed)
+  buffer_size: 512 # OPTIMIZED: Small buffer for streaming (avoid RAM overload)
   data_dir: /project/code/data/Ava_Ai/data
   max_length: 128
   train_split: train
@@ -101,19 +101,19 @@ data:
   tokenizer_name: /project/code/data/Ava_Ai/tokenizer
   padding_side: right
   truncation: true
-  num_workers: 16 # CRITICAL: 16 workers for aggressive parallel loading (1 per CPU core)
+  num_workers: 4 # OPTIMIZED: 4 workers (reduced from 16 to prevent memory overload)
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 16 # CRITICAL: 16 for maximum prefetch (12 workers x 16 = 192 batches prefetched)
-  dataloader_persistent_workers: true
-  dataloader_samples_per_file: 8000 # CRITICAL: 8000 samples per file = reads 6+ files before rotating = much fewer seeks
-  use_dynamic_batching: true
+  dataloader_prefetch_factor: 2 # OPTIMIZED: 2 (reduced from 16 to prevent memory overload)
+  dataloader_persistent_workers: false # OPTIMIZED: false (reload workers to clear memory)
+  dataloader_samples_per_file: 1000 # OPTIMIZED: Standard sampling (reduced from 8000)
+  use_dynamic_batching: false # OPTIMIZED: disabled (reduce memory)
   use_streaming_tokenization: false
-  use_pretokenized: true # ← KEY: This should trigger ultra-fast loader
+  use_pretokenized: false # OPTIMIZED: false (streaming + tokenization, NOT pre-loading all data)
   use_sequence_packing: false
-  use_all_data: true
+  use_all_data: false # OPTIMIZED: false (load incrementally, not all at once)
   multiprocessing_context: spawn
-  cache_size: 200 # Larger cache for hot Arrow files
+  cache_size: 10 # OPTIMIZED: Minimal cache (was 200, now 10 tables max)
 
 output:
   output_dir: code/outputs/runs/minimal_working # Relative to project root
