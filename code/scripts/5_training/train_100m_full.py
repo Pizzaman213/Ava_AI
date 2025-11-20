@@ -76,6 +76,8 @@ sys.path.insert(0, str(project_root))
 # Import MoE model and utilities
 from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
 from src.Ava.config.yaml_loader import load_yaml_with_path_resolution
+from src.Ava.training.train.data_loader_manager import DataLoaderManager
+from src.Ava.training.train.base import TrainingContext
 
 # Import turn-aware loader (optional, for improved conversation coherence)
 try:
@@ -1278,20 +1280,43 @@ def main(args):
             if rank == 0:
                 logger.warning(f"Failed to load tokenizer for turn-aware loader: {e}")
 
-    train_loader, val_loader = create_dataloaders(
-        batch_size=batch_size,
-        seq_length=seq_length,
-        vocab_size=vocab_size,
-        num_workers=num_workers,
-        rank=rank,
-        world_size=world_size,
-        pin_memory=pin_memory,
-        drop_last=drop_last,
-        data_dir=data_dir,
-        use_turn_aware_loader=getattr(args, 'use_turn_aware_loader', False),
-        tokenizer=tokenizer_for_loader,
-        use_all_data=use_all_data,
-    )
+    # Use optimized DataLoaderManager for ultra-fast data loading
+    if rank == 0:
+        logger.info("📊 Creating dataloaders with DataLoaderManager...")
+
+    try:
+        # Create training context for DataLoaderManager
+        context = TrainingContext(config=config, device=device)
+        loader_manager = DataLoaderManager(context)
+
+        # Create dataloaders using optimized manager
+        train_loader, val_loader = loader_manager.create_dataloaders(
+            training_config=config,
+            tokenizer=tokenizer_for_loader if tokenizer_for_loader else None,
+            config_dict=config_dict,
+            batch_size=batch_size
+        )
+
+        if rank == 0:
+            logger.info("✓ Dataloaders created with DataLoaderManager (optimized)")
+    except Exception as e:
+        if rank == 0:
+            logger.warning(f"DataLoaderManager failed ({e}), falling back to create_dataloaders: {e}")
+        # Fallback to old method
+        train_loader, val_loader = create_dataloaders(
+            batch_size=batch_size,
+            seq_length=seq_length,
+            vocab_size=vocab_size,
+            num_workers=num_workers,
+            rank=rank,
+            world_size=world_size,
+            pin_memory=pin_memory,
+            drop_last=drop_last,
+            data_dir=data_dir,
+            use_turn_aware_loader=getattr(args, 'use_turn_aware_loader', False),
+            tokenizer=tokenizer_for_loader,
+            use_all_data=use_all_data,
+        )
 
     # Learning rate scheduler
     total_steps = len(train_loader) * num_epochs // gradient_accumulation_steps
