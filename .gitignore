@@ -54,4 +54,4 @@ cover/
 
 # Workbench Project Layout
 data/scratch/*
-!data/scratch/.gitkeep
+!data/scratch/.gitkeepwandb/
