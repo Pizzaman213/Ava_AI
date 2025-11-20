@@ -1293,7 +1293,7 @@ def main(args):
         train_loader, val_loader = loader_manager.create_dataloaders(
             training_config=config,
             tokenizer=tokenizer_for_loader if tokenizer_for_loader else None,
-            config_dict=config_dict,
+            config_dict=config,
             batch_size=batch_size
         )
 
