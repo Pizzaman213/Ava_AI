@@ -115,7 +115,10 @@
       "Bash(top:*)",
       "Bash(./test_conservative_config.sh:*)",
       "Bash(git reset:*)",
-      "Bash(git -C /project log --oneline)"
+      "Bash(git -C /project log --oneline)",
+      "Bash(git -C /project status)",
+      "Bash(git -C /project diff --name-only)",
+      "Bash(git -C /project log --oneline -5)"
     ],
     "deny": [],
     "ask": []
