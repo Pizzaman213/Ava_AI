@@ -1286,7 +1286,7 @@ def main(args):
 
     try:
         # Create training context for DataLoaderManager
-        context = TrainingContext(config=config, device=device)
+        context = TrainingContext(model=model, config=config, device=device)
         loader_manager = DataLoaderManager(context)
 
         # Create dataloaders using optimized manager
