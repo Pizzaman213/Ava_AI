@@ -652,3 +652,61 @@ A: Cossen, has the relation 'instance of' with the Greek family.<|pad|><|pad|><|
 2025-11-18 17:45:20 | INFO | Epoch 1 | Batch 5640/12789 | Loss: 3.0749 | Avg Loss: 3.7567 | LR: 9.49e-05
 2025-11-18 17:45:21 | INFO | Epoch 1 | Batch 5650/12789 | Loss: 3.0483 | Avg Loss: 3.7555 | LR: 9.49e-05
 2025-11-18 17:45:22 | INFO | Epoch 1 | Batch 5660/12789 | Loss: 3.0166 | Avg Loss: 3.7543 | LR: 9.49e-05
+2025-11-18 17:45:23 | INFO | Epoch 1 | Batch 5670/12789 | Loss: 3.1469 | Avg Loss: 3.7532 | LR: 9.49e-05
+2025-11-18 17:45:24 | INFO | Epoch 1 | Batch 5680/12789 | Loss: 2.9981 | Avg Loss: 3.7521 | LR: 9.48e-05
+2025-11-18 17:45:25 | INFO | Epoch 1 | Batch 5690/12789 | Loss: 3.2299 | Avg Loss: 3.7510 | LR: 9.48e-05
+2025-11-18 17:45:26 | INFO | Epoch 1 | Batch 5700/12789 | Loss: 3.2379 | Avg Loss: 3.7499 | LR: 9.48e-05
+2025-11-18 17:45:26 | INFO | Epoch 1 | Batch 5710/12789 | Loss: 3.2120 | Avg Loss: 3.7489 | LR: 9.48e-05
+2025-11-18 17:45:27 | INFO | Epoch 1 | Batch 5720/12789 | Loss: 2.9810 | Avg Loss: 3.7477 | LR: 9.48e-05
+2025-11-18 17:45:28 | INFO | Epoch 1 | Batch 5730/12789 | Loss: 3.0887 | Avg Loss: 3.7466 | LR: 9.48e-05
+2025-11-18 17:45:29 | INFO | Epoch 1 | Batch 5740/12789 | Loss: 2.9468 | Avg Loss: 3.7454 | LR: 9.47e-05
+2025-11-18 17:45:30 | INFO | Epoch 1 | Batch 5750/12789 | Loss: 3.1021 | Avg Loss: 3.7443 | LR: 9.47e-05
+2025-11-18 17:45:31 | INFO | Epoch 1 | Batch 5760/12789 | Loss: 3.0749 | Avg Loss: 3.7432 | LR: 9.47e-05
+2025-11-18 17:45:31 | INFO | Epoch 1 | Batch 5770/12789 | Loss: 3.1549 | Avg Loss: 3.7421 | LR: 9.47e-05
+2025-11-18 17:45:32 | INFO | Epoch 1 | Batch 5780/12789 | Loss: 3.0981 | Avg Loss: 3.7410 | LR: 9.47e-05
+2025-11-18 17:45:33 | INFO | Epoch 1 | Batch 5790/12789 | Loss: 3.0194 | Avg Loss: 3.7399 | LR: 9.46e-05
+2025-11-18 17:45:34 | INFO | Epoch 1 | Batch 5800/12789 | Loss: 3.1356 | Avg Loss: 3.7389 | LR: 9.46e-05
+2025-11-18 17:45:35 | INFO | Epoch 1 | Batch 5810/12789 | Loss: 3.1563 | Avg Loss: 3.7379 | LR: 9.46e-05
+2025-11-18 17:45:36 | INFO | Epoch 1 | Batch 5820/12789 | Loss: 3.2003 | Avg Loss: 3.7368 | LR: 9.46e-05
+2025-11-18 17:45:37 | INFO | Epoch 1 | Batch 5830/12789 | Loss: 3.0581 | Avg Loss: 3.7356 | LR: 9.46e-05
+2025-11-18 17:45:38 | INFO | Epoch 1 | Batch 5840/12789 | Loss: 3.1583 | Avg Loss: 3.7345 | LR: 9.45e-05
+2025-11-18 17:45:38 | INFO | Epoch 1 | Batch 5850/12789 | Loss: 3.1599 | Avg Loss: 3.7334 | LR: 9.45e-05
+2025-11-18 17:45:39 | INFO | Epoch 1 | Batch 5860/12789 | Loss: 3.1459 | Avg Loss: 3.7324 | LR: 9.45e-05
+2025-11-18 17:45:40 | INFO | Epoch 1 | Batch 5870/12789 | Loss: 3.1055 | Avg Loss: 3.7313 | LR: 9.45e-05
+2025-11-18 17:45:41 | INFO | Epoch 1 | Batch 5880/12789 | Loss: 3.0863 | Avg Loss: 3.7302 | LR: 9.45e-05
+2025-11-18 17:45:42 | INFO | Epoch 1 | Batch 5890/12789 | Loss: 3.0502 | Avg Loss: 3.7292 | LR: 9.45e-05
+2025-11-18 17:45:43 | INFO | Epoch 1 | Batch 5900/12789 | Loss: 3.1848 | Avg Loss: 3.7282 | LR: 9.44e-05
+2025-11-18 17:45:44 | INFO | Epoch 1 | Batch 5910/12789 | Loss: 2.9701 | Avg Loss: 3.7271 | LR: 9.44e-05
+2025-11-18 17:45:44 | INFO | Epoch 1 | Batch 5920/12789 | Loss: 3.1255 | Avg Loss: 3.7261 | LR: 9.44e-05
+2025-11-18 17:45:45 | INFO | Epoch 1 | Batch 5930/12789 | Loss: 2.9800 | Avg Loss: 3.7250 | LR: 9.44e-05
+2025-11-18 17:45:46 | INFO | Epoch 1 | Batch 5940/12789 | Loss: 3.0857 | Avg Loss: 3.7240 | LR: 9.44e-05
+2025-11-18 17:45:47 | INFO | Epoch 1 | Batch 5950/12789 | Loss: 3.1521 | Avg Loss: 3.7230 | LR: 9.43e-05
+2025-11-18 17:45:48 | INFO | Epoch 1 | Batch 5960/12789 | Loss: 3.2402 | Avg Loss: 3.7220 | LR: 9.43e-05
+2025-11-18 17:45:49 | INFO | Epoch 1 | Batch 5970/12789 | Loss: 3.1393 | Avg Loss: 3.7209 | LR: 9.43e-05
+2025-11-18 17:45:49 | INFO | Epoch 1 | Batch 5980/12789 | Loss: 3.0447 | Avg Loss: 3.7198 | LR: 9.43e-05
+2025-11-18 17:45:50 | INFO | Epoch 1 | Batch 5990/12789 | Loss: 3.1337 | Avg Loss: 3.7188 | LR: 9.43e-05
+2025-11-18 17:45:51 | INFO | 
+🎯 Testing generation at step 6000...
+2025-11-18 17:45:51 | INFO | Generated text:
+late into English.
+
+Step 1: Identify the language
+The given text is in German.
+
+Step 2: Translate the text to English.
+The text is in French.
+Step 2: Translate the text to English.
+The translated text to: "The text says "And the text: "The user" to """ translated translated to "And translated to Russian, Polish. Identify Czech:
+"
+"In "" to " translated translated translated "It translated to translated to I translated and translated translated " translated to translated translated translated to translated "Mit translated translated to translated translated translated to translated to translated
+2025-11-18 17:45:51 | INFO | ✓ Generation test complete
+
+2025-11-18 17:45:52 | INFO | Epoch 1 | Batch 6000/12789 | Loss: 3.0654 | Avg Loss: 3.7178 | LR: 9.42e-05
+2025-11-18 17:45:52 | INFO | Epoch 1 | Batch 6010/12789 | Loss: 3.1089 | Avg Loss: 3.7167 | LR: 9.42e-05
+2025-11-18 17:45:53 | INFO | Epoch 1 | Batch 6020/12789 | Loss: 2.9940 | Avg Loss: 3.7157 | LR: 9.42e-05
+2025-11-18 17:45:54 | INFO | Epoch 1 | Batch 6030/12789 | Loss: 3.1782 | Avg Loss: 3.7147 | LR: 9.42e-05
+2025-11-18 17:45:55 | INFO | Epoch 1 | Batch 6040/12789 | Loss: 3.1244 | Avg Loss: 3.7136 | LR: 9.42e-05
+2025-11-18 17:45:56 | INFO | Epoch 1 | Batch 6050/12789 | Loss: 3.0887 | Avg Loss: 3.7126 | LR: 9.42e-05
+2025-11-18 17:45:57 | INFO | Epoch 1 | Batch 6060/12789 | Loss: 3.1513 | Avg Loss: 3.7116 | LR: 9.41e-05
+2025-11-18 17:45:58 | INFO | Epoch 1 | Batch 6070/12789 | Loss: 3.0010 | Avg Loss: 3.7105 | LR: 9.41e-05
+2025-11-18 17:45:58 | INFO | Epoch 1 | Batch 6080/12789 | Loss: 3.1799 | Avg Loss: 3.7096 | LR: 9.41e-05

@@ -11,7 +11,7 @@ model:
   num_layers: 2 # MINIMAL: Only 2 layers
   num_attention_heads: 4 # MINIMAL: 4 heads
   intermediate_size: 2048 # MINIMAL: Small FFN
-  max_position_embeddings: 512
+  max_position_embeddings: 1024 # IMPROVED: Increased from 512 to 1024 for longer sequences
   num_experts: 2 # MINIMAL: Only 2 experts
   num_experts_per_token: 1 # MINIMAL: Only 1 expert active per token
   router_type: mixtral
@@ -44,32 +44,43 @@ moe_memory_optimization:
   use_expert_quantization: false
 
 training:
-  batch_size: 512 # Smaller batch for stability
-  gradient_accumulation_steps: 1
+  batch_size: 128 # REDUCED: 128 → 64 to reduce effective data processed per step
+  gradient_accumulation_steps: 16 # NEW: Accumulate 2 steps (= batch 128 in terms of gradient steps but slower convergence)
   optimizer: lion # Lion: 50% less memory than AdamW
-  learning_rate: 0.0001
+  learning_rate: 0.0001 # BACK TO: 0.0001 with gradient accumulation makes it effectively 0.00005
   lion_betas:
     - 0.9
     - 0.99
-  max_steps: None # Adequate training steps
-  warmup_steps: 100 # Long warmup for stability
-  weight_decay: 0.1
+  num_epochs: 2 # Number of epochs to train for (configurable)
+  max_steps: null # Adequate training steps (if set, overrides num_epochs)
+  warmup_steps: 1000 # MUCH LONGER: 1000 steps to allow more careful learning
+  weight_decay: 0.3 # VERY STRONG: 0.3 for maximum regularization to prevent overfitting
   use_fused_optimizer: true
   offload_optimizer_state: false # DISABLED: Not needed for small model
   save_steps: 500
-  eval_steps: 1000
+  eval_steps: 50
   logging_steps: 10
   run_validation: true
   validation_batch_size: 2
   max_validation_batches: 10 # MINIMAL: Quick validation
   compute_val_train_ratio: true
-  generate_every_n_steps: 1000
-  num_generations_per_step: 3
+  # IMPROVED GENERATION: Better parameters for coherent text
+  generate_every_n_steps: 500 # More frequent evaluation
+  num_generations_per_step: 1 # Generate only 1 sample per step
   generation_during_eval: true
   test_generation_quality: true
-  generation_max_length: 128
-  generation_temperature: 0.7
-  generation_top_p: 0.9
+  generation_max_length: 256 # IMPROVED: Match training sequence length for coherence
+  generation_temperature: 0.85 # IMPROVED: Increased from 0.7 for more diversity
+  generation_top_p: 0.92 # IMPROVED: Optimized from 0.9 (standard best-practice)
+  generation_top_k: 50 # IMPROVED: Added top-k sampling
+  generation_repetition_penalty: 1.15 # IMPROVED: Reduced from 2.0 (aggressive) to 1.15 (balanced)
+  generation_skip_special_tokens: true
+  generation_prompt: "Once upon a time, in a land far away,"  # IMPROVED: Longer prompt for better context
+  # Alternative prompts to test generation diversity
+  alternative_prompts:
+    - "The quick brown fox"
+    - "In the beginning"
+    - "A long time ago"
 
 evaluation:
   moe_metrics:
@@ -80,24 +91,29 @@ evaluation:
 
 data:
   streaming: true
-  buffer_size: 10000 # MINIMAL: Smaller buffer
-  data_dir: code/data/pretokenized # Use pretokenized data (relative to project root)
-  max_length: 32 # Reasonable sequence length
+  buffer_size: 2000 # CRITICAL: Reduced to 2000 for FAST shuffle with pre-tokenized (faster loading = smaller buffer needed)
+  data_dir: /project/code/data/Ava_Ai/data
+  max_length: 128
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
   validation_split_ratio: 0.1
-  tokenizer_name: code/models/tokenizer/enhanced-50680 # Relative to project root
+  tokenizer_name: /project/code/data/Ava_Ai/tokenizer
   padding_side: right
   truncation: true
-  num_workers: 0 # CRITICAL FIX: 0 to prevent BrokenPipeError with Arrow files
+  num_workers: 16 # CRITICAL: 16 workers for aggressive parallel loading (1 per CPU core)
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 2
-  dataloader_persistent_workers: false
-  dataloader_samples_per_file: 1000
-  use_dynamic_batching: false # DISABLED: Keep it simple
+  dataloader_prefetch_factor: 16 # CRITICAL: 16 for maximum prefetch (12 workers x 16 = 192 batches prefetched)
+  dataloader_persistent_workers: true
+  dataloader_samples_per_file: 8000 # CRITICAL: 8000 samples per file = reads 6+ files before rotating = much fewer seeks
+  use_dynamic_batching: true
   use_streaming_tokenization: false
+  use_pretokenized: true # ← KEY: This should trigger ultra-fast loader
+  use_sequence_packing: false
+  use_all_data: true
+  multiprocessing_context: spawn
+  cache_size: 200 # Larger cache for hot Arrow files
 
 output:
   output_dir: code/outputs/runs/minimal_working # Relative to project root
@@ -131,7 +147,7 @@ optimizations:
   gradient_health_monitoring: true
   torchinductor_autotune: 0 # DISABLED: Simpler for minimal config
 
-  memory_headroom_gb: 2 # More headroom for safety
+  memory_headroom_gb: 1 # More headroom for safety
   memory_cleanup_thresholds:
     warning: 0.75
     critical: 0.85

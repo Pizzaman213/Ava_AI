@@ -56,7 +56,7 @@ einops==0.8.1
 
 # Visualization & Monitoring
 matplotlib>=3.10.3
-tensorboard==2.20.0
+tensorboard
 tensorboard-data-server==0.7.2
 
 # Scientific Computing

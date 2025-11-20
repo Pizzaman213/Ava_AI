@@ -105,10 +105,10 @@ def load_yaml_with_path_resolution(
     config_file = Path(config_path)
     if not config_file.is_absolute():
         # Try as relative to current directory first
-        if Path.cwd() / config_file.exists():
+        if (Path.cwd() / config_file).exists():
             config_file = Path.cwd() / config_file
         # Otherwise try relative to project root
-        elif project_root / config_file.exists():
+        elif (project_root / config_file).exists():
             config_file = project_root / config_file
 
     if not config_file.exists():

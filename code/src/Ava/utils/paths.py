@@ -51,17 +51,19 @@ def get_project_root() -> Path:
     current = Path(__file__).resolve()
 
     # Walk up the directory tree looking for marker files
+    # Check .git first (most reliable indicator of project root)
     for parent in current.parents:
-        # Check for .git directory
         if (parent / ".git").exists():
             return parent
 
-        # Check for pyproject.toml
-        if (parent / "pyproject.toml").exists():
+    # If no .git found, check for .project (custom marker)
+    for parent in current.parents:
+        if (parent / ".project").exists():
             return parent
 
-        # Check for .project directory (custom marker)
-        if (parent / ".project").exists():
+    # As last resort, check for pyproject.toml
+    for parent in current.parents:
+        if (parent / "pyproject.toml").exists():
             return parent
 
     # If we're inside code/src/Ava, go up to find project root

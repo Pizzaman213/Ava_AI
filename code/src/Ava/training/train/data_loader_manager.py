@@ -174,7 +174,8 @@ class DataLoaderManager(TrainingComponent):
         val_split_ratio = self._get_val_split_ratio(training_config)
 
         # Check if using pretokenized data
-        use_pretokenized = getattr(training_config.data, "use_pretokenized", False)
+        # Default to True since most modern datasets are pre-tokenized
+        use_pretokenized = getattr(training_config.data, "use_pretokenized", True)
 
         # Get sequence packing config
         use_sequence_packing = getattr(training_config.data, "use_sequence_packing", False)
@@ -197,6 +198,9 @@ class DataLoaderManager(TrainingComponent):
         # Create appropriate loaders
         if use_pretokenized:
             get_logger().info("📦 Using pretokenized Arrow data loader (60x faster)")
+            # Get cache size from config or use optimized default
+            cache_size = getattr(training_config.data, "cache_size", 200)
+
             train_loader, val_loader = create_ultra_fast_dataloaders(
                 batch_size=batch_size,
                 max_length=training_config.data.max_length,
@@ -206,7 +210,7 @@ class DataLoaderManager(TrainingComponent):
                 prefetch_factor=prefetch_factor,
                 persistent_workers=persistent_workers,
                 samples_per_file=samples_per_file,
-                cache_size=50,
+                cache_size=cache_size,
                 pad_token_id=tokenizer.pad_token_id
                 if tokenizer.pad_token_id is not None
                 else 0,
