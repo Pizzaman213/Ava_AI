@@ -75,12 +75,12 @@ training:
   generation_top_k: 50 # IMPROVED: Added top-k sampling
   generation_repetition_penalty: 1.15 # IMPROVED: Reduced from 2.0 (aggressive) to 1.15 (balanced)
   generation_skip_special_tokens: true
-  generation_prompt: "Once upon a time, in a land far away,"  # IMPROVED: Longer prompt for better context
+  generation_prompt: Once upon a time, in a land far away, # IMPROVED: Longer prompt for better context
   # Alternative prompts to test generation diversity
   alternative_prompts:
-    - "The quick brown fox"
-    - "In the beginning"
-    - "A long time ago"
+    - The quick brown fox
+    - In the beginning
+    - A long time ago
 
 evaluation:
   moe_metrics:
@@ -189,8 +189,11 @@ hardware:
 wandb:
   use_wandb: true
   project: ava-training
-  entity: null  # Set to your username or team name if needed
-  tags: [minimal, testing, moe]
+  entity: null # Set to your username or team name if needed
+  tags:
+    - minimal
+    - testing
+    - moe
   notes: Minimal configuration for 100M parameter model training
 
 deepspeed:

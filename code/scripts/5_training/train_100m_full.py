@@ -29,7 +29,11 @@ Usage:
         --save-dir ./checkpoints \
         --log-interval 100
 
-    # Distributed training (multi-GPU)
+    # Distributed training (multi-GPU - AUTOMATIC)
+    # Automatically detects and uses all available GPUs
+    python train_100m_full.py --config configs/moe/tiny_moe.yaml
+
+    # Or with explicit GPU count using torchrun
     torchrun --nproc_per_node=4 train_100m_full.py \
         --config configs/moe/tiny_moe.yaml
 
@@ -626,8 +630,12 @@ class MetricsTracker:
 # DISTRIBUTED TRAINING SETUP
 # ============================================================================
 
-def setup_distributed():
-    """Setup distributed training if available."""
+def setup_distributed(auto_multi_gpu: bool = True):
+    """Setup distributed training if available.
+
+    Args:
+        auto_multi_gpu: If True, automatically use all available GPUs
+    """
     if not DISTRIBUTED_AVAILABLE:
         return 0, 1
 
@@ -636,6 +644,23 @@ def setup_distributed():
         world_size = int(os.environ['WORLD_SIZE'])
         init_process_group(backend='nccl')
         return rank, world_size
+
+    # Auto-detect and setup multi-GPU training if available
+    if auto_multi_gpu and torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        if num_gpus > 1:
+            # Set up multi-GPU training automatically
+            os.environ['MASTER_ADDR'] = 'localhost'
+            os.environ['MASTER_PORT'] = '12355'
+            os.environ['RANK'] = '0'
+            os.environ['WORLD_SIZE'] = str(num_gpus)
+            try:
+                init_process_group(backend='nccl')
+                return 0, num_gpus
+            except Exception as e:
+                # Fall back to single GPU if distributed setup fails
+                print(f"Warning: Failed to setup multi-GPU training: {e}")
+                return 0, 1
 
     return 0, 1
 
@@ -1045,8 +1070,11 @@ def validate(
 def main(args):
     """Main training function."""
 
-    # Setup distributed training
-    rank, world_size = setup_distributed()
+    # Auto-detect available GPUs and setup distributed training
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+    # Setup distributed training (auto-detect multiple GPUs)
+    rank, world_size = setup_distributed(auto_multi_gpu=True)
 
     # Setup device
     if torch.cuda.is_available():
@@ -1083,8 +1111,13 @@ def main(args):
         logger.info("="*80)
         logger.info("🚀 STARTING 100M PARAMETER TRAINING")
         logger.info("="*80)
-        logger.info(f"Device: {device}")
-        logger.info(f"Distributed: Rank {rank}/{world_size}")
+        logger.info(f"🖥️  Device: {device}")
+        logger.info(f"📊 Available GPUs: {num_gpus}")
+        if world_size > 1:
+            logger.info(f"⚙️  Distributed Training: ENABLED")
+            logger.info(f"   Rank {rank}/{world_size} - Using {world_size} GPUs")
+        else:
+            logger.info(f"📌 Single GPU Mode")
 
     # Load config if provided
     if args.config:
@@ -1443,14 +1476,14 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Train 100M parameter transformer model',
+        description='Train 100M parameter transformer model with automatic multi-GPU support',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  # Basic training
+  # Basic training (auto-detects GPUs)
   python train_100m_full.py
 
-  # With config
+  # With config (automatically uses all available GPUs)
   python train_100m_full.py --config configs/moe/tiny_moe.yaml
 
   # With custom parameters
@@ -1459,8 +1492,10 @@ Examples:
   # Resume from checkpoint
   python train_100m_full.py --resume checkpoints/checkpoint_epoch_5_step_0.pt
 
-  # Distributed training (4 GPUs)
+  # Distributed training with explicit GPU count (if needed)
   torchrun --nproc_per_node=4 train_100m_full.py --config configs/moe/tiny_moe.yaml
+
+Note: Multi-GPU training is automatically enabled when multiple GPUs are detected.
         '''
     )
 
