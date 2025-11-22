@@ -259,37 +259,6 @@ def create_dataloaders(
         else:
             print(f"\n⚠ No conversation JSONL files found in {data_dir}, using standard loading")
 
-    # ==== STANDARD ARROW/PARQUET LOADING (DEFAULT) ====
-    # Create a simple wrapper to handle tokenization
-    class ArrowDataset:
-        def __init__(self, dataset, seq_length, vocab_size):
-            self.dataset = dataset
-            self.seq_length = seq_length
-            self.vocab_size = vocab_size
-
-        def __len__(self):
-            return len(self.dataset)
-
-        def __getitem__(self, idx):
-            item = self.dataset[idx]
-            # Assume the Arrow file has 'input_ids' and 'attention_mask'
-            input_ids = torch.tensor(item.get('input_ids', []), dtype=torch.long)
-            attention_mask = torch.tensor(item.get('attention_mask', []), dtype=torch.long)
-
-            # Pad or truncate to seq_length
-            if len(input_ids) < self.seq_length:
-                pad_len = self.seq_length - len(input_ids)
-                input_ids = torch.nn.functional.pad(input_ids, (0, pad_len))
-                attention_mask = torch.nn.functional.pad(attention_mask, (0, pad_len))
-            else:
-                input_ids = input_ids[:self.seq_length]
-                attention_mask = attention_mask[:self.seq_length]
-
-            return {
-                'input_ids': input_ids,
-                'labels': input_ids.clone(),
-                'attention_mask': attention_mask,
-            }
 
     # Initialize datasets
     train_dataset = None
@@ -307,15 +276,18 @@ def create_dataloaders(
         print(f"📊 Data dir exists: {Path(data_dir).exists()}")
         print(f"📚 Datasets available: {DATASETS_AVAILABLE}")
 
-    # Try to load real data first
-    if data_dir and Path(data_dir).exists() and DATASETS_AVAILABLE:
+    # Try to load real data first using PyArrow (faster and more reliable than load_dataset)
+    if data_dir and Path(data_dir).exists():
         try:
+            import pyarrow.parquet as pq
+            import pyarrow as pa
+
             if rank == 0:
-                print("🔄 Starting data loading...")
+                print("🔄 Starting data loading with PyArrow...")
 
-            datasets_list = []
+            all_tables = []
 
-            # Load Arrow files (.arrow directories and files) if use_all_data is True
+            # Load Arrow files (.arrow) if use_all_data is True
             if use_all_data:
                 arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
                              sorted(list(Path(data_dir).glob('**/*.arrow')))
@@ -326,14 +298,14 @@ def create_dataloaders(
                         file_size = arrow_file.stat().st_size
                         if file_size == 0:
                             continue
-                        dataset = load_dataset('arrow', data_files=str(arrow_file))
-                        split_name = list(dataset.keys())[0]
-                        dataset = dataset[split_name]
-                        datasets_list.append(dataset)
+                        table = pa.ipc.open_file(str(arrow_file)).read_all()
+                        all_tables.append(table)
                     except Exception as e:
+                        if rank == 0:
+                            print(f"  Warning: Failed to load {arrow_file.name}: {e}")
                         continue
 
-            # Load ALL Parquet files (.parquet) if use_all_data is True
+            # Load ALL Parquet files (.parquet) if use_all_data is True using PyArrow
             if use_all_data:
                 parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
             else:
@@ -348,10 +320,9 @@ def create_dataloaders(
                     file_size = parquet_file.stat().st_size
                     if file_size == 0:
                         continue
-                    dataset = load_dataset('parquet', data_files=str(parquet_file))
-                    split_name = list(dataset.keys())[0]
-                    dataset = dataset[split_name]
-                    datasets_list.append(dataset)
+                    # Use PyArrow directly - much faster for large files
+                    table = pq.read_table(str(parquet_file))
+                    all_tables.append(table)
                     if rank == 0 and i % 10 == 0:
                         print(f"  Loaded {i}/{len(parquet_files)} parquet files...")
                 except Exception as e:
@@ -359,27 +330,59 @@ def create_dataloaders(
                         print(f"  Failed to load {parquet_file.name}: {e}")
                     continue
 
-            if datasets_list:
-                # Concatenate all datasets (Arrow + Parquet combined)
-                from datasets import concatenate_datasets
-                dataset = concatenate_datasets(datasets_list)
-                total_examples = len(dataset)
+            if all_tables:
+                # Concatenate all tables (Arrow + Parquet combined)
+                combined_table = pa.concat_tables(all_tables)
+                total_examples = len(combined_table)
                 if rank == 0:
-                    print(f"✓ Loaded {len(datasets_list)} data files with {total_examples:,} total examples")
+                    print(f"✓ Loaded {len(all_tables)} data files with {total_examples:,} total examples")
                     num_batches = total_examples // batch_size
                     print(f"✓ Expected batches per epoch: {num_batches:,}")
-                train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
-                val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
+
+                # Create wrapper dataset for PyArrow table
+                class PyArrowDataset:
+                    def __init__(self, table, seq_length, vocab_size):
+                        self.table = table
+                        self.seq_length = seq_length
+                        self.vocab_size = vocab_size
+
+                    def __len__(self):
+                        return len(self.table)
+
+                    def __getitem__(self, idx):
+                        row = self.table.take([idx]).to_pydict()
+                        input_ids = torch.tensor(row.get('input_ids', [[]])[0], dtype=torch.long)
+                        attention_mask = torch.tensor(row.get('attention_mask', [[]])[0], dtype=torch.long)
+
+                        # Pad or truncate to seq_length
+                        if len(input_ids) < self.seq_length:
+                            pad_len = self.seq_length - len(input_ids)
+                            input_ids = torch.nn.functional.pad(input_ids, (0, pad_len))
+                            attention_mask = torch.nn.functional.pad(attention_mask, (0, pad_len))
+                        else:
+                            input_ids = input_ids[:self.seq_length]
+                            attention_mask = attention_mask[:self.seq_length]
+
+                        return {
+                            'input_ids': input_ids,
+                            'labels': input_ids.clone(),
+                            'attention_mask': attention_mask,
+                        }
+
+                train_dataset = PyArrowDataset(combined_table, seq_length, vocab_size)
+                val_dataset = PyArrowDataset(combined_table, seq_length, vocab_size)
             else:
                 if rank == 0:
                     print("⚠ No datasets loaded from data directory")
+        except ImportError:
+            if rank == 0:
+                print("⚠ PyArrow not available, using fallback loading")
         except Exception as e:
             # Failed to load data, will use dummy dataset
             if rank == 0:
                 print(f"⚠ Warning: Failed to load real data: {type(e).__name__}: {e}")
                 import traceback
                 print(traceback.format_exc())
-            pass
 
     # Fall back to dummy dataset if not loaded yet
     if train_dataset is None or val_dataset is None:
