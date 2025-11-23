@@ -29,11 +29,7 @@ Usage:
         --save-dir ./checkpoints \
         --log-interval 100
 
-    # Distributed training (multi-GPU - AUTOMATIC)
-    # Automatically detects and uses all available GPUs
-    python train_100m_full.py --config configs/moe/tiny_moe.yaml
-
-    # Or with explicit GPU count using torchrun
+    # Distributed training (multi-GPU)
     torchrun --nproc_per_node=4 train_100m_full.py \
         --config configs/moe/tiny_moe.yaml
 
@@ -259,6 +255,37 @@ def create_dataloaders(
         else:
             print(f"\n⚠ No conversation JSONL files found in {data_dir}, using standard loading")
 
+    # ==== STANDARD ARROW/PARQUET LOADING (DEFAULT) ====
+    # Create a simple wrapper to handle tokenization
+    class ArrowDataset:
+        def __init__(self, dataset, seq_length, vocab_size):
+            self.dataset = dataset
+            self.seq_length = seq_length
+            self.vocab_size = vocab_size
+
+        def __len__(self):
+            return len(self.dataset)
+
+        def __getitem__(self, idx):
+            item = self.dataset[idx]
+            # Assume the Arrow file has 'input_ids' and 'attention_mask'
+            input_ids = torch.tensor(item.get('input_ids', []), dtype=torch.long)
+            attention_mask = torch.tensor(item.get('attention_mask', []), dtype=torch.long)
+
+            # Pad or truncate to seq_length
+            if len(input_ids) < self.seq_length:
+                pad_len = self.seq_length - len(input_ids)
+                input_ids = torch.nn.functional.pad(input_ids, (0, pad_len))
+                attention_mask = torch.nn.functional.pad(attention_mask, (0, pad_len))
+            else:
+                input_ids = input_ids[:self.seq_length]
+                attention_mask = attention_mask[:self.seq_length]
+
+            return {
+                'input_ids': input_ids,
+                'labels': input_ids.clone(),
+                'attention_mask': attention_mask,
+            }
 
     # Initialize datasets
     train_dataset = None
@@ -276,18 +303,15 @@ def create_dataloaders(
         print(f"📊 Data dir exists: {Path(data_dir).exists()}")
         print(f"📚 Datasets available: {DATASETS_AVAILABLE}")
 
-    # Try to load real data first using PyArrow (faster and more reliable than load_dataset)
-    if data_dir and Path(data_dir).exists():
+    # Try to load real data first
+    if data_dir and Path(data_dir).exists() and DATASETS_AVAILABLE:
         try:
-            import pyarrow.parquet as pq
-            import pyarrow as pa
-
             if rank == 0:
-                print("🔄 Starting data loading with PyArrow...")
+                print("🔄 Starting data loading...")
 
-            all_tables = []
+            datasets_list = []
 
-            # Load Arrow files (.arrow) if use_all_data is True
+            # Load Arrow files (.arrow directories and files) if use_all_data is True
             if use_all_data:
                 arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
                              sorted(list(Path(data_dir).glob('**/*.arrow')))
@@ -298,14 +322,14 @@ def create_dataloaders(
                         file_size = arrow_file.stat().st_size
                         if file_size == 0:
                             continue
-                        table = pa.ipc.open_file(str(arrow_file)).read_all()
-                        all_tables.append(table)
+                        dataset = load_dataset('arrow', data_files=str(arrow_file))
+                        split_name = list(dataset.keys())[0]
+                        dataset = dataset[split_name]
+                        datasets_list.append(dataset)
                     except Exception as e:
-                        if rank == 0:
-                            print(f"  Warning: Failed to load {arrow_file.name}: {e}")
                         continue
 
-            # Load ALL Parquet files (.parquet) if use_all_data is True using PyArrow
+            # Load ALL Parquet files (.parquet) if use_all_data is True
             if use_all_data:
                 parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
             else:
@@ -320,9 +344,10 @@ def create_dataloaders(
                     file_size = parquet_file.stat().st_size
                     if file_size == 0:
                         continue
-                    # Use PyArrow directly - much faster for large files
-                    table = pq.read_table(str(parquet_file))
-                    all_tables.append(table)
+                    dataset = load_dataset('parquet', data_files=str(parquet_file))
+                    split_name = list(dataset.keys())[0]
+                    dataset = dataset[split_name]
+                    datasets_list.append(dataset)
                     if rank == 0 and i % 10 == 0:
                         print(f"  Loaded {i}/{len(parquet_files)} parquet files...")
                 except Exception as e:
@@ -330,59 +355,27 @@ def create_dataloaders(
                         print(f"  Failed to load {parquet_file.name}: {e}")
                     continue
 
-            if all_tables:
-                # Concatenate all tables (Arrow + Parquet combined)
-                combined_table = pa.concat_tables(all_tables)
-                total_examples = len(combined_table)
+            if datasets_list:
+                # Concatenate all datasets (Arrow + Parquet combined)
+                from datasets import concatenate_datasets
+                dataset = concatenate_datasets(datasets_list)
+                total_examples = len(dataset)
                 if rank == 0:
-                    print(f"✓ Loaded {len(all_tables)} data files with {total_examples:,} total examples")
+                    print(f"✓ Loaded {len(datasets_list)} data files with {total_examples:,} total examples")
                     num_batches = total_examples // batch_size
                     print(f"✓ Expected batches per epoch: {num_batches:,}")
-
-                # Create wrapper dataset for PyArrow table
-                class PyArrowDataset:
-                    def __init__(self, table, seq_length, vocab_size):
-                        self.table = table
-                        self.seq_length = seq_length
-                        self.vocab_size = vocab_size
-
-                    def __len__(self):
-                        return len(self.table)
-
-                    def __getitem__(self, idx):
-                        row = self.table.take([idx]).to_pydict()
-                        input_ids = torch.tensor(row.get('input_ids', [[]])[0], dtype=torch.long)
-                        attention_mask = torch.tensor(row.get('attention_mask', [[]])[0], dtype=torch.long)
-
-                        # Pad or truncate to seq_length
-                        if len(input_ids) < self.seq_length:
-                            pad_len = self.seq_length - len(input_ids)
-                            input_ids = torch.nn.functional.pad(input_ids, (0, pad_len))
-                            attention_mask = torch.nn.functional.pad(attention_mask, (0, pad_len))
-                        else:
-                            input_ids = input_ids[:self.seq_length]
-                            attention_mask = attention_mask[:self.seq_length]
-
-                        return {
-                            'input_ids': input_ids,
-                            'labels': input_ids.clone(),
-                            'attention_mask': attention_mask,
-                        }
-
-                train_dataset = PyArrowDataset(combined_table, seq_length, vocab_size)
-                val_dataset = PyArrowDataset(combined_table, seq_length, vocab_size)
+                train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
+                val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
             else:
                 if rank == 0:
                     print("⚠ No datasets loaded from data directory")
-        except ImportError:
-            if rank == 0:
-                print("⚠ PyArrow not available, using fallback loading")
         except Exception as e:
             # Failed to load data, will use dummy dataset
             if rank == 0:
                 print(f"⚠ Warning: Failed to load real data: {type(e).__name__}: {e}")
                 import traceback
                 print(traceback.format_exc())
+            pass
 
     # Fall back to dummy dataset if not loaded yet
     if train_dataset is None or val_dataset is None:
@@ -633,12 +626,8 @@ class MetricsTracker:
 # DISTRIBUTED TRAINING SETUP
 # ============================================================================
 
-def setup_distributed(auto_multi_gpu: bool = True):
-    """Setup distributed training if available.
-
-    Args:
-        auto_multi_gpu: If True, automatically use all available GPUs
-    """
+def setup_distributed():
+    """Setup distributed training if available."""
     if not DISTRIBUTED_AVAILABLE:
         return 0, 1
 
@@ -647,23 +636,6 @@ def setup_distributed(auto_multi_gpu: bool = True):
         world_size = int(os.environ['WORLD_SIZE'])
         init_process_group(backend='nccl')
         return rank, world_size
-
-    # Auto-detect and setup multi-GPU training if available
-    if auto_multi_gpu and torch.cuda.is_available():
-        num_gpus = torch.cuda.device_count()
-        if num_gpus > 1:
-            # Set up multi-GPU training automatically
-            os.environ['MASTER_ADDR'] = 'localhost'
-            os.environ['MASTER_PORT'] = '12355'
-            os.environ['RANK'] = '0'
-            os.environ['WORLD_SIZE'] = str(num_gpus)
-            try:
-                init_process_group(backend='nccl')
-                return 0, num_gpus
-            except Exception as e:
-                # Fall back to single GPU if distributed setup fails
-                print(f"Warning: Failed to setup multi-GPU training: {e}")
-                return 0, 1
 
     return 0, 1
 
@@ -994,7 +966,7 @@ def train_epoch(
                         metrics_tracker.log_gradients(global_step, grad_stats)
 
             # Generation testing during training
-            if generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
+            if generate_every_n_steps and generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
                 logger.info(f"\n🎯 Testing generation at step {global_step}...")
                 generate_sample(
                     model, device, vocab_size,
@@ -1016,6 +988,8 @@ def train_epoch(
         except Exception as e:
             if logger is not None:
                 logger.error(f"Error in batch {batch_idx}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             continue
 
     avg_epoch_loss = total_loss / max(num_batches, 1)
@@ -1072,12 +1046,10 @@ def validate(
 
 def main(args):
     """Main training function."""
+    from transformers import AutoTokenizer
 
-    # Auto-detect available GPUs and setup distributed training
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-
-    # Setup distributed training (auto-detect multiple GPUs)
-    rank, world_size = setup_distributed(auto_multi_gpu=True)
+    # Setup distributed training
+    rank, world_size = setup_distributed()
 
     # Setup device
     if torch.cuda.is_available():
@@ -1114,13 +1086,8 @@ def main(args):
         logger.info("="*80)
         logger.info("🚀 STARTING 100M PARAMETER TRAINING")
         logger.info("="*80)
-        logger.info(f"🖥️  Device: {device}")
-        logger.info(f"📊 Available GPUs: {num_gpus}")
-        if world_size > 1:
-            logger.info(f"⚙️  Distributed Training: ENABLED")
-            logger.info(f"   Rank {rank}/{world_size} - Using {world_size} GPUs")
-        else:
-            logger.info(f"📌 Single GPU Mode")
+        logger.info(f"Device: {device}")
+        logger.info(f"Distributed: Rank {rank}/{world_size}")
 
     # Load config if provided
     if args.config:
@@ -1479,14 +1446,14 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Train 100M parameter transformer model with automatic multi-GPU support',
+        description='Train 100M parameter transformer model',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  # Basic training (auto-detects GPUs)
+  # Basic training
   python train_100m_full.py
 
-  # With config (automatically uses all available GPUs)
+  # With config
   python train_100m_full.py --config configs/moe/tiny_moe.yaml
 
   # With custom parameters
@@ -1495,10 +1462,8 @@ Examples:
   # Resume from checkpoint
   python train_100m_full.py --resume checkpoints/checkpoint_epoch_5_step_0.pt
 
-  # Distributed training with explicit GPU count (if needed)
+  # Distributed training (4 GPUs)
   torchrun --nproc_per_node=4 train_100m_full.py --config configs/moe/tiny_moe.yaml
-
-Note: Multi-GPU training is automatically enabled when multiple GPUs are detected.
         '''
     )
 

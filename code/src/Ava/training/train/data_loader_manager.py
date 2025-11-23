@@ -38,6 +38,19 @@ class DataLoaderManager(TrainingComponent):
         self.train_loader = None
         self.val_loader = None
 
+    def initialize(self) -> None:
+        """Initialize component. Called once at startup."""
+        self._initialized = True
+
+    def cleanup(self) -> None:
+        """Cleanup resources. Called on shutdown or error."""
+        if self.train_loader is not None:
+            if hasattr(self.train_loader, 'close'):
+                self.train_loader.close()
+        if self.val_loader is not None:
+            if hasattr(self.val_loader, 'close'):
+                self.val_loader.close()
+
     def create_dataloaders(
         self,
         training_config: Any,

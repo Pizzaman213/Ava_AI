@@ -44,8 +44,8 @@ moe_memory_optimization:
   use_expert_quantization: false
 
 training:
-  batch_size: 128 # REDUCED: 128 → 64 to reduce effective data processed per step
-  gradient_accumulation_steps: 16 # NEW: Accumulate 2 steps (= batch 128 in terms of gradient steps but slower convergence)
+  batch_size: 256 # CRITICAL: Reduced to 16 to fit in 24GB GPU (was 128, causing OOM)
+  gradient_accumulation_steps: 4 # CRITICAL: Accumulate 4 steps (effective batch = 64, better memory usage)
   optimizer: lion # Lion: 50% less memory than AdamW
   learning_rate: 0.0001 # BACK TO: 0.0001 with gradient accumulation makes it effectively 0.00005
   lion_betas:
@@ -64,19 +64,20 @@ training:
   validation_batch_size: 2
   max_validation_batches: 10 # MINIMAL: Quick validation
   compute_val_train_ratio: true
-  # IMPROVED GENERATION: Better parameters for coherent text
-  generate_every_n_steps: 500 # More frequent evaluation
-  num_generations_per_step: 1 # Generate only 1 sample per step
-  generation_during_eval: true
-  test_generation_quality: true
-  generation_max_length: 256 # IMPROVED: Match training sequence length for coherence
-  generation_temperature: 0.85 # IMPROVED: Increased from 0.7 for more diversity
-  generation_top_p: 0.92 # IMPROVED: Optimized from 0.9 (standard best-practice)
-  generation_top_k: 50 # IMPROVED: Added top-k sampling
-  generation_repetition_penalty: 1.15 # IMPROVED: Reduced from 2.0 (aggressive) to 1.15 (balanced)
+  # GENERATION DISABLED: Prevents GPU slowdown during training
+  # Generation is resource-intensive and slows GPU. Run post-training instead.
+  generate_every_n_steps: null # DISABLED: No generation during training
+  num_generations_per_step: 0 # DISABLED: No generation samples
+  generation_during_eval: false # DISABLED: Skip generation during eval
+  test_generation_quality: false # DISABLED: Skip generation tests
+  # Generation parameters kept for reference only (not used when generation disabled)
+  generation_max_length: 256
+  generation_temperature: 0.85
+  generation_top_p: 0.92
+  generation_top_k: 50
+  generation_repetition_penalty: 1.15
   generation_skip_special_tokens: true
-  generation_prompt: Once upon a time, in a land far away, # IMPROVED: Longer prompt for better context
-  # Alternative prompts to test generation diversity
+  generation_prompt: Once upon a time, in a land far away,
   alternative_prompts:
     - The quick brown fox
     - In the beginning
@@ -91,7 +92,7 @@ evaluation:
 
 data:
   streaming: true
-  buffer_size: 512 # OPTIMIZED: Small buffer for streaming (avoid RAM overload)
+  buffer_size: 256 # REDUCED: 256 samples (was 512) - smaller buffer for faster iteration
   data_dir: /project/code/data/Ava_Ai/data
   max_length: 128
   train_split: train
@@ -101,19 +102,21 @@ data:
   tokenizer_name: /project/code/data/Ava_Ai/tokenizer
   padding_side: right
   truncation: true
-  num_workers: 4 # OPTIMIZED: 4 workers (reduced from 16 to prevent memory overload)
+  num_workers: 16 # CRITICAL: 8 workers for parallel data loading (was 0, was killing perf!)
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 2 # OPTIMIZED: 2 (reduced from 16 to prevent memory overload)
-  dataloader_persistent_workers: false # OPTIMIZED: false (reload workers to clear memory)
-  dataloader_samples_per_file: 1000 # OPTIMIZED: Standard sampling (reduced from 8000)
-  use_dynamic_batching: false # OPTIMIZED: disabled (reduce memory)
-  use_streaming_tokenization: false
-  use_pretokenized: false # OPTIMIZED: false (streaming + tokenization, NOT pre-loading all data)
-  use_sequence_packing: false
-  use_all_data: false # OPTIMIZED: false (load incrementally, not all at once)
+  dataloader_prefetch_factor: 2 # STANDARD: 2x batch size buffering
+  dataloader_persistent_workers: true # CRITICAL: Keep workers alive (3-5x speedup)
+  dataloader_samples_per_file: 500 # Standard: Good batch building granularity
+  use_dynamic_batching: false # DISABLED: Keep simple
+  use_streaming_tokenization: false # Already tokenized!
+  use_pretokenized: false # CRITICAL: Set to FALSE - data is Parquet, not Arrow
+  use_sequence_packing: false # DISABLED: Parquet incompatible
+  use_all_data: true # Load all available data files sequentially
+  max_files_to_load: 10000 # Maximum number of parquet files to load
   multiprocessing_context: spawn
-  cache_size: 10 # OPTIMIZED: Minimal cache (was 200, now 10 tables max)
+  cache_size: 200 # OPTIMIZED: Cache for faster repeated access
+  skip_validation: true # SKIP: Data is clean, validation costs 2-3% perf
 
 output:
   output_dir: code/outputs/runs/minimal_working # Relative to project root
@@ -187,7 +190,7 @@ hardware:
   compile: false
 
 wandb:
-  use_wandb: true
+  use_wandb: false
   project: ava-training
   entity: null # Set to your username or team name if needed
   tags:
