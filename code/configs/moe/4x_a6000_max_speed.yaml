@@ -19,13 +19,13 @@ model:
   vocab_size: 50680
   pad_token_id: 0
   eos_token_id: 3
-  hidden_size: 512
-  num_layers: 2
-  num_attention_heads: 4
-  intermediate_size: 2048
-  max_position_embeddings: 1024
-  num_experts: 4  # 4 experts = 1 per GPU for optimal expert parallelism
-  num_experts_per_token: 1
+  hidden_size: 1024
+  num_layers: 12
+  num_attention_heads: 16
+  intermediate_size: 4096
+  max_position_embeddings: 2048
+  num_experts: 8  # 8 experts = 2 per GPU for optimal expert parallelism
+  num_experts_per_token: 2
   router_type: mixtral
   capacity_factor: 1
   expert_dropout: 0
@@ -61,11 +61,11 @@ moe_memory_optimization:
   use_expert_quantization: false
 
 # Phase 2 High Priority: Dynamic Batching
-# AGGRESSIVE settings for 48GB VRAM per GPU
+# Settings for 200M MoE model on 48GB VRAM per GPU
 dynamic_batching:
   enabled: true # ✅ ENABLED: Auto-adjust batch size for optimal throughput
-  min_batch_size: 256 # 4x higher than 24GB config (64→256)
-  max_batch_size: 1024 # 4x higher than 24GB config (256→1024)
+  min_batch_size: 64 # Conservative for 200M model
+  max_batch_size: 256 # Max for 200M model with 48GB VRAM
   low_memory_threshold: 0.55 # Below 55% memory, increase batch
   target_memory_threshold: 0.75 # Target 75% utilization (higher than 24GB)
   high_memory_threshold: 0.88 # Above 88%, decrease batch
@@ -103,10 +103,10 @@ hybrid_caching:
   min_score_threshold: 0.1 # Evict entries below this score
 
 training:
-  # AGGRESSIVE batch size for 48GB VRAM per GPU
-  # 512 per GPU × 4 GPUs = 2048 samples per step (with gradient_accumulation=1)
-  batch_size: 512 # 4x increase from 24GB config (128→512)
-  gradient_accumulation_steps: 1 # No accumulation needed with large batch
+  # Batch size for 200M MoE model on 48GB VRAM per GPU
+  # 128 per GPU × 4 GPUs = 512 samples per step (with gradient_accumulation=2)
+  batch_size: 128 # Reduced for larger 200M model
+  gradient_accumulation_steps: 2 # Effective batch size = 1024
 
   optimizer: lion # 50% less memory than AdamW
   learning_rate: 0.0002 # 2x higher LR for 4x larger batch (linear scaling)
