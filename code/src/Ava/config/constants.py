@@ -201,7 +201,7 @@ def update_constants_from_config(config):
             const_key = key.upper()
             if hasattr(DATA_CONSTANTS, const_key):
                 setattr(DATA_CONSTANTS, const_key, value)
-                print(f"✓ Updated DATA_CONSTANTS.{const_key} = {value}")
+                print(f" Updated DATA_CONSTANTS.{const_key} = {value}")
 
     # Update trainer constants
     trainer = None
@@ -221,7 +221,7 @@ def update_constants_from_config(config):
             const_key = key.upper()
             if hasattr(TRAINER_CONSTANTS, const_key):
                 setattr(TRAINER_CONSTANTS, const_key, value)
-                print(f"✓ Updated TRAINER_CONSTANTS.{const_key} = {value}")
+                print(f" Updated TRAINER_CONSTANTS.{const_key} = {value}")
 
     # Update MoE constants
     moe = None
@@ -241,4 +241,4 @@ def update_constants_from_config(config):
             const_key = key.upper()
             if hasattr(MOE_CONSTANTS, const_key):
                 setattr(MOE_CONSTANTS, const_key, value)
-                print(f"✓ Updated MOE_CONSTANTS.{const_key} = {value}")
+                print(f" Updated MOE_CONSTANTS.{const_key} = {value}")

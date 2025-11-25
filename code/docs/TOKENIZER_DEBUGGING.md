@@ -2,7 +2,7 @@
 
 **Date**: November 19, 2025
 **Issue**: Text generation showing token IDs instead of decoded English text
-**Status**: 🔍 Investigating with enhanced logging
+**Status**:  Investigating with enhanced logging
 
 ---
 
@@ -26,11 +26,11 @@ This indicates the tokenizer is not being loaded or not being passed to the gene
 ## Root Cause Analysis
 
 ### Confirmed Working:
-✅ Tokenizer files exist at `/project/code/models/tokenizer/enhanced-50680/`
-✅ Tokenizer can be loaded manually with `AutoTokenizer.from_pretrained()`
-✅ Tokenizer.encode() and .decode() work correctly
-✅ Generation function properly handles tokenizer when provided
-✅ Tokenizer is passed to generate_sample() in train_epoch()
+ Tokenizer files exist at `/project/code/models/tokenizer/enhanced-50680/`
+ Tokenizer can be loaded manually with `AutoTokenizer.from_pretrained()`
+ Tokenizer.encode() and .decode() work correctly
+ Generation function properly handles tokenizer when provided
+ Tokenizer is passed to generate_sample() in train_epoch()
 
 ### Suspected Issues:
 1. Path doubling: `/code/code/models/tokenizer/...` instead of `/code/models/tokenizer/...`
@@ -41,7 +41,7 @@ This indicates the tokenizer is not being loaded or not being passed to the gene
 
 ## Fixes Applied
 
-### Fix #1: Path Deduplication (✅ Applied)
+### Fix #1: Path Deduplication ( Applied)
 Added code to detect and fix double-prefixed paths:
 ```python
 tokenizer_path = str(tokenizer_name)
@@ -49,20 +49,20 @@ if '/code/code' in tokenizer_path:
     tokenizer_path = tokenizer_path.replace('/code/code/', '/code/')
 ```
 
-### Fix #2: trust_remote_code Flag (✅ Applied)
+### Fix #2: trust_remote_code Flag ( Applied)
 Added `trust_remote_code=True` to allow local tokenizer loading:
 ```python
 tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
 ```
 
-### Fix #3: Detailed Debug Logging (✅ Applied)
+### Fix #3: Detailed Debug Logging ( Applied)
 Added comprehensive logging to trace tokenizer initialization:
 ```python
 logger.info(f"  Tokenizer name from config: {tokenizer_name}")
 logger.info(f"  Loading tokenizer from: {tokenizer_path}")
-logger.info(f"✓ Loaded tokenizer from {tokenizer_path} (vocab_size: {len(tokenizer)})")
+logger.info(f" Loaded tokenizer from {tokenizer_path} (vocab_size: {len(tokenizer)})")
 # On error:
-logger.error(f"✗ Failed to load tokenizer from {tokenizer_path}: {e}")
+logger.error(f" Failed to load tokenizer from {tokenizer_path}: {e}")
 logger.error(f"  Traceback: {traceback.format_exc()}")
 ```
 
@@ -75,10 +75,10 @@ When training starts, look for these log messages:
 ```
 Tokenizer name from config: <path>
 Loading tokenizer from: <path>
-✓ Loaded tokenizer from <path> (vocab_size: 50680)
+ Loaded tokenizer from <path> (vocab_size: 50680)
 ```
 
-**If you see this**: Tokenizer loaded successfully ✅
+**If you see this**: Tokenizer loaded successfully 
 **If you see an error**: Check the error message and traceback
 
 ### Step 2: Manual Test
@@ -123,7 +123,7 @@ Generated sequence (token IDs): [35207, 413, 0, ...]
 ### Issue: "No tokenizer available - generation using token IDs only"
 **Cause**: `tokenizer is None` - loading failed silently
 **Solution**:
-1. Check logs for `✗ Failed to load tokenizer` message
+1. Check logs for ` Failed to load tokenizer` message
 2. Verify path exists: `ls /project/code/models/tokenizer/enhanced-50680/`
 3. Check file permissions
 4. Check for path doubling: Does it say `/code/code/...`?
@@ -171,17 +171,17 @@ Generated sequence (token IDs): [35207, 413, 0, ...]
 
 ### Expected Log Output:
 ```
-⚡ Setting up optimizer and scheduler...
+ Setting up optimizer and scheduler...
 
-📊 Creating dataloaders...
+ Creating dataloaders...
   Tokenizer name from config: /project/code/models/tokenizer/enhanced-50680
   Loading tokenizer from: /project/code/models/tokenizer/enhanced-50680
-✓ Loaded tokenizer from /project/code/models/tokenizer/enhanced-50680 (vocab_size: 50680)
+ Loaded tokenizer from /project/code/models/tokenizer/enhanced-50680 (vocab_size: 50680)
 ```
 
 ### Expected Generation Output (Step 500+):
 ```
-🎯 Testing generation at step 500...
+ Testing generation at step 500...
   Sample 1/5: 256 tokens → 1245 chars
 Prompt: Once upon a time, in a land far away,
 Generated text:
@@ -191,7 +191,7 @@ Once upon a time, in a land far away, there lived a wise old merchant...
 Prompt: Once upon a time, in a land far away,
 Generated text:
 Once upon a time, in a land far away, a young girl stood at the edge...
-✓ Generation test complete
+ Generation test complete
 ```
 
 ---
@@ -223,9 +223,9 @@ code/models/tokenizer/enhanced-50680
 ### Tokenizer Files Required
 
 The tokenizer needs these files in the directory:
-- ✅ `tokenizer.json` - Main tokenizer state (3.6 MB)
-- ✅ `tokenizer_config.json` - Configuration
-- ✅ `special_tokens_map.json` - Special tokens mapping
+-  `tokenizer.json` - Main tokenizer state (3.6 MB)
+-  `tokenizer_config.json` - Configuration
+-  `special_tokens_map.json` - Special tokens mapping
 
 All three are present in your tokenizer directory.
 
@@ -247,14 +247,14 @@ Test tokenizer directly:
 python -c "
 from transformers import AutoTokenizer
 t = AutoTokenizer.from_pretrained('/project/code/models/tokenizer/enhanced-50680', trust_remote_code=True)
-print(f'✓ Loaded (vocab_size={len(t)})')
+print(f' Loaded (vocab_size={len(t)})')
 print(t.decode([4794, 2259, 251, 594]))
 "
 ```
 
 Check path exists:
 ```bash
-test -d /project/code/models/tokenizer/enhanced-50680 && echo '✓ Directory exists' || echo '✗ Not found'
+test -d /project/code/models/tokenizer/enhanced-50680 && echo ' Directory exists' || echo ' Not found'
 ls -la /project/code/models/tokenizer/enhanced-50680/
 ```
 
@@ -268,9 +268,9 @@ grep -n "code/code" code/scripts/5_training/train_100m_full.py
 ## Summary
 
 The tokenizer is working, but might not be loading in the training script due to:
-1. **Path issues** (✅ Fixed with deduplication)
-2. **Exception handling** (✅ Fixed with detailed logging)
-3. **Missing flags** (✅ Fixed with `trust_remote_code=True`)
+1. **Path issues** ( Fixed with deduplication)
+2. **Exception handling** ( Fixed with detailed logging)
+3. **Missing flags** ( Fixed with `trust_remote_code=True`)
 
 Next training run will show exactly where the issue is through enhanced logging.
 

@@ -6,13 +6,13 @@
 
 ---
 
-## 📋 Overview
+##  Overview
 
 This guide explains how to configure all optimization settings in the Ava pipeline. All optimizations implemented in Phases 1-3 are now fully configurable through YAML config files.
 
 ---
 
-## 🎯 Quick Start
+##  Quick Start
 
 All optimization settings are in the `optimizations` section of your config file:
 
@@ -32,7 +32,7 @@ optimizations:
 
 ---
 
-## 📖 Complete Configuration Reference
+##  Complete Configuration Reference
 
 ### Phase 1: Quick Wins
 
@@ -348,7 +348,7 @@ router:
 
 ---
 
-## 🎛️ Preset Configurations
+##  Preset Configurations
 
 ### Maximum Speed (Production)
 ```yaml
@@ -459,7 +459,7 @@ optimizations:
 
 ---
 
-## 📊 Configuration Impact Matrix
+##  Configuration Impact Matrix
 
 | Setting | Speed Impact | Memory Impact | Stability | Complexity |
 |---------|-------------|---------------|-----------|------------|
@@ -481,7 +481,7 @@ optimizations:
 
 ---
 
-## 🔍 Monitoring & Validation
+##  Monitoring & Validation
 
 ### Verify Optimizations Are Active
 
@@ -531,7 +531,7 @@ With all optimizations enabled (Maximum Speed preset):
 
 ---
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Issue: OOM Errors After Enabling Optimizations
 
@@ -594,7 +594,7 @@ router:
 
 ---
 
-## 📚 Related Documentation
+##  Related Documentation
 
 - [ALL_PHASES_OPTIMIZATIONS_COMPLETE.md](ALL_PHASES_OPTIMIZATIONS_COMPLETE.md) - Complete optimization details
 - [PHASE1_OPTIMIZATIONS_APPLIED.md](PHASE1_OPTIMIZATIONS_APPLIED.md) - Phase 1 details
@@ -604,7 +604,7 @@ router:
 
 ---
 
-## ✅ Quick Checklist
+##  Quick Checklist
 
 Before training, verify:
 - [ ] `optimizations` section exists in your config

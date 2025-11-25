@@ -44,10 +44,10 @@ for batch in train_loader:
 ```
 
 That's it! Your conversations are now:
-- ✓ Kept together (not split across batches)
-- ✓ Speaker-aware (with `<user>` and `<assistant>` markers)
-- ✓ Turn-structured (with `<turn_start>` and `<turn_end>`)
-- ✓ Quality-tracked (quality scores in metadata)
+-  Kept together (not split across batches)
+-  Speaker-aware (with `<user>` and `<assistant>` markers)
+-  Turn-structured (with `<turn_start>` and `<turn_end>`)
+-  Quality-tracked (quality scores in metadata)
 
 ## Common Tasks
 
@@ -236,7 +236,7 @@ Run the validation tests:
 python code/scripts/validation/test_turn_aware_loader.py
 ```
 
-Expected: All 6 tests pass ✓
+Expected: All 6 tests pass 
 
 Try the example training:
 ```bash
@@ -250,8 +250,8 @@ Expected: Training completes successfully
 ### "No conversations loaded"
 Make sure your JSONL file has a "text" field:
 ```json
-{"text": "User: ...\nAssistant: ..."}  # ✓ Correct
-{"conversation": "..."}               # ✗ Wrong field name
+{"text": "User: ...\nAssistant: ..."}  #  Correct
+{"conversation": "..."}               #  Wrong field name
 ```
 
 ### "Quality scores are all 1.0"
@@ -322,7 +322,7 @@ def train_step(batch, model, optimizer):
 
 ## Next Steps
 
-1. ✓ Install (already included)
+1.  Install (already included)
 2. → Prepare your JSONL data
 3. → Create a dataloader (copy code from "Step 2")
 4. → Update your training loop (copy code from "Step 3")
@@ -343,4 +343,4 @@ Turn-aware loading makes your conversational training:
 - **Transparent**: Tracks conversation quality
 - **Flexible**: Works with any tokenizer/model
 
-Just 3 lines to get started! 🚀
+Just 3 lines to get started! 

@@ -27,15 +27,15 @@ Your data loading has been **ultra-optimized for 40x speedup**. Three critical c
 ## Why 40x Faster
 
 Your data is **already pre-tokenized** in Parquet format. The old config forced it through the slow streaming loader which:
-- ✗ Iterated through all 1374 files
-- ✗ Used only 4 workers (was 0 before)
-- ✗ Did unnecessary tokenization (data already tokenized)
+-  Iterated through all 1374 files
+-  Used only 4 workers (was 0 before)
+-  Did unnecessary tokenization (data already tokenized)
 
 New config uses **ultra-fast pre-tokenized loader** which:
-- ✓ Loads Parquet files directly (memory-mapped, zero-copy)
-- ✓ Uses 16 parallel workers
-- ✓ No tokenization overhead
-- ✓ Caches hot files in memory
+-  Loads Parquet files directly (memory-mapped, zero-copy)
+-  Uses 16 parallel workers
+-  No tokenization overhead
+-  Caches hot files in memory
 
 ---
 
@@ -43,7 +43,7 @@ New config uses **ultra-fast pre-tokenized loader** which:
 
 ### Before
 ```
-📚 Datasets available: True                   # ← Streaming loader
+ Datasets available: True                   # ← Streaming loader
   Loaded 10/1374 parquet files...
   Loaded 20/1374 parquet files...            # ← Slow iteration
 Generating train split: 25000 examples [00:01, 18000.00 examples/s]
@@ -53,8 +53,8 @@ GPU utilization: <50%
 
 ### After (With New Config)
 ```
-📦 Using pretokenized Arrow data loader (60x faster)  # ← Pre-tokenized loader!
-✓ Pre-tokenized Arrow loader initialized
+ Using pretokenized Arrow data loader (60x faster)  # ← Pre-tokenized loader!
+ Pre-tokenized Arrow loader initialized
 Generating train split: 25000 examples [00:01, 60000.00 examples/s]
 Time to load: 2-3 seconds
 GPU utilization: >80%
@@ -80,16 +80,16 @@ GPU utilization: >80%
    ```
 
 2. **Verify in logs**:
-   - ✓ Good: "Using pretokenized Arrow data loader (60x faster)"
-   - ✗ Bad: "Using streaming JSONL data loader"
+   -  Good: "Using pretokenized Arrow data loader (60x faster)"
+   -  Bad: "Using streaming JSONL data loader"
 
 3. **Check throughput**:
-   - ✓ Good: 25,000+ examples/sec in logs
-   - ✗ Bad: 18,000 examples/sec (still using streaming)
+   -  Good: 25,000+ examples/sec in logs
+   -  Bad: 18,000 examples/sec (still using streaming)
 
 4. **Monitor GPU**:
-   - ✓ Good: >80% utilization
-   - ✗ Bad: <50% (data loading bottleneck)
+   -  Good: >80% utilization
+   -  Bad: <50% (data loading bottleneck)
 
 ---
 
@@ -135,4 +135,4 @@ cache_size: 100          # Instead of 200
 - Expected: **40x faster data loading, 100x faster training startup**
 - Start training, check logs for "Using pretokenized Arrow data loader"
 
-That's it! Your data loading is now optimized. 🚀
+That's it! Your data loading is now optimized. 

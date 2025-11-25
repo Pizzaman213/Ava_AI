@@ -142,7 +142,7 @@ class DistributedManager:
         """
         # CRITICAL FIX: Check if distributed training is available
         if not DISTRIBUTED_AVAILABLE:
-            logger.error("❌ torch.distributed is not available on this system")
+            logger.error(" torch.distributed is not available on this system")
             logger.error("   This build of PyTorch does not support distributed training")
             logger.error("   Please install a PyTorch build with distributed support")
             return False
@@ -152,7 +152,7 @@ class DistributedManager:
             return self.state == DistributedState.HEALTHY
 
         self.state = DistributedState.INITIALIZING
-        logger.info("🚀 Initializing distributed training...")
+        logger.info(" Initializing distributed training...")
 
         try:
             # Auto-detect environment variables if not provided
@@ -174,7 +174,7 @@ class DistributedManager:
 
             # Check if already initialized
             if dist.is_available() and dist.is_initialized():
-                logger.info("🔄 Process group already initialized")
+                logger.info(" Process group already initialized")
                 self._validate_existing_process_group()
             else:
                 # Initialize process group with timeout
@@ -185,7 +185,7 @@ class DistributedManager:
 
             self.state = DistributedState.HEALTHY
 
-            logger.info(f"✅ Distributed training initialized successfully:")
+            logger.info(f" Distributed training initialized successfully:")
             logger.info(f"   Rank: {self.rank}/{self.world_size}")
             logger.info(f"   Local rank: {self.local_rank}")
             logger.info(f"   Backend: {self.config.backend}")
@@ -198,7 +198,7 @@ class DistributedManager:
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to initialize distributed training: {e}")
+            logger.error(f" Failed to initialize distributed training: {e}")
             self.state = DistributedState.FAILING
             return False
 
@@ -278,27 +278,27 @@ class DistributedManager:
         with self._barrier_lock:
             for attempt in range(max_retries):
                 try:
-                    logger.debug(f"🔄 Barrier '{name}' starting (rank {self.rank}, attempt {attempt + 1}/{max_retries})")
+                    logger.debug(f" Barrier '{name}' starting (rank {self.rank}, attempt {attempt + 1}/{max_retries})")
                     start_time = time.time()
 
                     # Use timeout-aware barrier
                     dist.barrier(group=self.process_group, async_op=False)  # type: ignore[attr-defined]
 
                     elapsed = time.time() - start_time
-                    logger.debug(f"✅ Barrier '{name}' completed in {elapsed:.2f}s")
+                    logger.debug(f" Barrier '{name}' completed in {elapsed:.2f}s")
                     return True
 
                 except Exception as e:
                     if attempt == max_retries - 1:
                         # Final attempt failed
-                        logger.error(f"❌ Barrier '{name}' failed after {max_retries} attempts: {e}")
+                        logger.error(f" Barrier '{name}' failed after {max_retries} attempts: {e}")
                         self.state = DistributedState.DEGRADED
                         return False
                     else:
                         # Retry with exponential backoff
                         wait_time = 2 ** attempt  # 1s, 2s, 4s
                         logger.warning(
-                            f"⚠️ Barrier '{name}' attempt {attempt + 1} failed: {e}. "
+                            f" Barrier '{name}' attempt {attempt + 1} failed: {e}. "
                             f"Retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})"
                         )
                         time.sleep(wait_time)
@@ -913,7 +913,7 @@ class DistributedManager:
             self._shutdown_initiated = True
             self.state = DistributedState.CLEANUP
 
-            logger.info("🧹 Starting distributed training cleanup...")
+            logger.info(" Starting distributed training cleanup...")
 
             try:
                 # Stop health monitoring
@@ -953,7 +953,7 @@ class DistributedManager:
                 logger.error(f"Error during cleanup: {e}")
             finally:
                 self.state = DistributedState.TERMINATED
-                logger.info("✅ Distributed training cleanup completed")
+                logger.info(" Distributed training cleanup completed")
 
     def is_initialized(self) -> bool:
         """Check if distributed training is initialized."""

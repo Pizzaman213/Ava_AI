@@ -23,7 +23,7 @@ trainer.cleanup()
 
 ## What to Read When
 
-### 🚀 I Just Want to Start Training (5 minutes)
+###  I Just Want to Start Training (5 minutes)
 
 **Read**: [`GETTING_STARTED.md`](GETTING_STARTED.md)
 
@@ -37,7 +37,7 @@ This file has:
 
 ---
 
-### 📚 I Want to Understand the Framework (20 minutes)
+###  I Want to Understand the Framework (20 minutes)
 
 **Read in Order**:
 1. [`README.md`](README.md) - Overview and component descriptions
@@ -53,7 +53,7 @@ This file has:
 
 ---
 
-### 🔄 I'm Using the Old Trainer (30 minutes)
+###  I'm Using the Old Trainer (30 minutes)
 
 **Read**: [`MIGRATION_GUIDE.md`](MIGRATION_GUIDE.md)
 
@@ -67,7 +67,7 @@ This file has:
 
 ---
 
-### 💻 I Want Code Examples (15 minutes)
+###  I Want Code Examples (15 minutes)
 
 **Look at**: [`example_training.py`](example_training.py)
 
@@ -83,7 +83,7 @@ Contains 6 complete, runnable examples:
 
 ---
 
-### 🏗️ I Want to Understand Architecture (30 minutes)
+###  I Want to Understand Architecture (30 minutes)
 
 **Read**: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
@@ -98,7 +98,7 @@ Contains 6 complete, runnable examples:
 
 ---
 
-### 📋 I Want a Quick Reference (5 minutes)
+###  I Want a Quick Reference (5 minutes)
 
 **Look at**: [`IMPLEMENTATION_SUMMARY.md`](IMPLEMENTATION_SUMMARY.md)
 
@@ -112,7 +112,7 @@ Contains 6 complete, runnable examples:
 
 ---
 
-### 🤖 I'm Claude (AI Assistant) Making Changes
+###  I'm Claude (AI Assistant) Making Changes
 
 **Look at**: [`claude.md`](claude.md)
 
@@ -133,25 +133,25 @@ Contains 6 complete, runnable examples:
 
 ```
 train/
-├── START_HERE.md                  ← YOU ARE HERE
-├── GETTING_STARTED.md             ← Start here if new to framework
-├── README.md                       ← Complete reference
-├── ARCHITECTURE.md                ← Detailed comparison
-├── MIGRATION_GUIDE.md             ← If migrating from old trainer
-├── IMPLEMENTATION_SUMMARY.md      ← What was created
-├── QUICK_REFERENCE.md             ← One-page command reference
-├── FILES.md                        ← File reference guide
-├── claude.md                       ← AI development guide
-│
-├── __init__.py                    ← Module exports
-├── base.py                        ← Base interfaces
-├── trainer.py                     ← Main trainer (415 lines)
-├── distributed_manager.py         ← Distributed training (290 lines)
-├── checkpoint_manager.py          ← Checkpointing (294 lines)
-├── loss_manager.py                ← Loss computation (299 lines)
-├── monitoring_manager.py          ← Metrics & logging (276 lines)
-│
-└── example_training.py            ← 6 runnable examples
+ START_HERE.md                  ← YOU ARE HERE
+ GETTING_STARTED.md             ← Start here if new to framework
+ README.md                       ← Complete reference
+ ARCHITECTURE.md                ← Detailed comparison
+ MIGRATION_GUIDE.md             ← If migrating from old trainer
+ IMPLEMENTATION_SUMMARY.md      ← What was created
+ QUICK_REFERENCE.md             ← One-page command reference
+ FILES.md                        ← File reference guide
+ claude.md                       ← AI development guide
+
+ __init__.py                    ← Module exports
+ base.py                        ← Base interfaces
+ trainer.py                     ← Main trainer (415 lines)
+ distributed_manager.py         ← Distributed training (290 lines)
+ checkpoint_manager.py          ← Checkpointing (294 lines)
+ loss_manager.py                ← Loss computation (299 lines)
+ monitoring_manager.py          ← Metrics & logging (276 lines)
+
+ example_training.py            ← 6 runnable examples
 ```
 
 ---
@@ -274,11 +274,11 @@ If you get stuck:
 
 You now have:
 
-✅ **5 focused, testable managers** (vs 1 monolithic class)
-✅ **63% smaller codebase** (1,574 vs 4,988 lines)
-✅ **Comprehensive documentation** (1,550+ lines)
-✅ **Working examples** (6 complete examples)
-✅ **Backwards compatibility** (old code still works)
+ **5 focused, testable managers** (vs 1 monolithic class)
+ **63% smaller codebase** (1,574 vs 4,988 lines)
+ **Comprehensive documentation** (1,550+ lines)
+ **Working examples** (6 complete examples)
+ **Backwards compatibility** (old code still works)
 
 **Ready to start?** → Open [`GETTING_STARTED.md`](GETTING_STARTED.md)
 

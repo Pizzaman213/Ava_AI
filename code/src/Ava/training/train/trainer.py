@@ -104,13 +104,13 @@ class SimplifiedEnhancedTrainer:
         for manager in self._managers:
             try:
                 manager.initialize()
-                logger.info(f"✓ {manager.__class__.__name__} initialized")
+                logger.info(f" {manager.__class__.__name__} initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize {manager.__class__.__name__}: {e}")
                 raise
 
         self._initialized = True
-        logger.info("✓ Trainer fully initialized")
+        logger.info(" Trainer fully initialized")
 
     def cleanup(self) -> None:
         """Cleanup all resources."""
@@ -123,7 +123,7 @@ class SimplifiedEnhancedTrainer:
         for manager in reversed(self._managers):
             try:
                 manager.cleanup()
-                logger.info(f"✓ {manager.__class__.__name__} cleaned up")
+                logger.info(f" {manager.__class__.__name__} cleaned up")
             except Exception as e:
                 logger.error(f"Error cleaning up {manager.__class__.__name__}: {e}")
 

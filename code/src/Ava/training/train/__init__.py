@@ -10,11 +10,11 @@ This package provides a compositional training framework that separates concerns
 
 Architecture:
     EnhancedTrainer
-    ├── DistributedTrainingManager
-    ├── CheckpointManager
-    ├── LossComputationManager
-    ├── MonitoringManager
-    └── DeepSpeed/Optimizer Integration
+     DistributedTrainingManager
+     CheckpointManager
+     LossComputationManager
+     MonitoringManager
+     DeepSpeed/Optimizer Integration
 
 Benefits:
     - Each manager is testable independently

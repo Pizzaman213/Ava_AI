@@ -97,16 +97,16 @@ weight_decay: 0.2  # 2x stronger regularization
 ## What to Monitor During Training
 
 ### Good Signs
-✅ Loss decreases smoothly over time
-✅ Validation loss follows training loss (not diverging)
-✅ No sudden spikes in loss
-✅ Learning rate schedule is visible in logs
+ Loss decreases smoothly over time
+ Validation loss follows training loss (not diverging)
+ No sudden spikes in loss
+ Learning rate schedule is visible in logs
 
 ### Bad Signs
-❌ Training loss drops but validation loss increases
-❌ Loss becomes very noisy/unstable
-❌ Training gets stuck at high loss value
-❌ Loss increases instead of decreasing
+ Training loss drops but validation loss increases
+ Loss becomes very noisy/unstable
+ Training gets stuck at high loss value
+ Loss increases instead of decreasing
 
 ---
 
@@ -282,10 +282,10 @@ training:
 
 ## Quick Summary
 
-✅ **Learning Rate**: 0.0001 → 0.00005 (50% reduction for bs=128)
-✅ **Warmup Steps**: 100 → 500 (more gradual startup)
-✅ **Weight Decay**: 0.1 → 0.2 (stronger regularization)
+ **Learning Rate**: 0.0001 → 0.00005 (50% reduction for bs=128)
+ **Warmup Steps**: 100 → 500 (more gradual startup)
+ **Weight Decay**: 0.1 → 0.2 (stronger regularization)
 
 **Result**: Better generalization, smoother training curve, reduced overfitting
 
-Ready to train! 🚀
+Ready to train! 

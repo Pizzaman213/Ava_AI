@@ -86,7 +86,7 @@ class GPUMemoryManager:
                 stats['freed_mb'] = freed_mb
 
                 if freed_mb > 100:  # Only log if significant memory freed
-                    print(f"    🗑️  Proactive defragmentation freed {freed_mb:.1f}MB (step {step_count})")
+                    print(f"      Proactive defragmentation freed {freed_mb:.1f}MB (step {step_count})")
 
         except Exception as e:
             stats['error'] = str(e)  # type: ignore[assignment]
@@ -208,10 +208,10 @@ class GPUMemoryManager:
                     if utilization > threshold:
                         allocated_gb = allocated / (1024**3)
                         total_gb = total / (1024**3)
-                        print(f"⚠️  High GPU memory usage: {utilization*100:.1f}% ({allocated_gb:.1f}GB / {total_gb:.1f}GB)")
+                        print(f"  High GPU memory usage: {utilization*100:.1f}% ({allocated_gb:.1f}GB / {total_gb:.1f}GB)")
 
                         # MEMORY OPTIMIZATION: Provide actionable recommendations
-                        print("💡 Memory optimization suggestions:")
+                        print(" Memory optimization suggestions:")
                         if utilization > 0.95:
                             print("   • Reduce batch size (currently highest memory consumer)")
                             print("   • Enable gradient checkpointing (saves ~25%, costs ~8% speed)")

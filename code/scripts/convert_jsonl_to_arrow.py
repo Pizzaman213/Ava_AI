@@ -79,7 +79,7 @@ def process_jsonl_file(
                 # Fallback: just use the whole JSON as text
                 texts.append(json.dumps(data))
 
-    print(f"✓ Loaded {len(texts):,} documents")
+    print(f" Loaded {len(texts):,} documents")
 
     # Tokenize in batches
     print(f"\nTokenizing (batch_size={batch_size})...")
@@ -93,7 +93,7 @@ def process_jsonl_file(
         all_input_ids.extend(batch_encodings['input_ids'])
         all_attention_masks.extend(batch_encodings['attention_mask'])
 
-    print(f"✓ Tokenized {len(all_input_ids):,} sequences")
+    print(f" Tokenized {len(all_input_ids):,} sequences")
 
     # Filter out empty sequences
     valid_sequences = [
@@ -103,7 +103,7 @@ def process_jsonl_file(
     ]
 
     if len(valid_sequences) < len(all_input_ids):
-        print(f"⚠️  Filtered out {len(all_input_ids) - len(valid_sequences):,} empty sequences")
+        print(f"  Filtered out {len(all_input_ids) - len(valid_sequences):,} empty sequences")
 
     all_input_ids = [seq[0] for seq in valid_sequences]
     all_attention_masks = [seq[1] for seq in valid_sequences]
@@ -136,7 +136,7 @@ def process_jsonl_file(
     output_size_mb = output_path.stat().st_size / (1024**2)
     compression_ratio = input_size_mb / output_size_mb if output_size_mb > 0 else 0
 
-    print(f"\n✓ Conversion complete!")
+    print(f"\n Conversion complete!")
     print(f"  Input size:  {input_size_mb:.1f} MB")
     print(f"  Output size: {output_size_mb:.1f} MB")
     print(f"  Ratio:       {compression_ratio:.2f}x {'smaller' if compression_ratio > 1 else 'larger'}")
@@ -152,7 +152,7 @@ def create_split_metadata(output_dir: Path):
     arrow_files = list(output_dir.glob("*.arrow"))
 
     if not arrow_files:
-        print("⚠️  No Arrow files found")
+        print("  No Arrow files found")
         return
 
     # Create metadata
@@ -174,7 +174,7 @@ def create_split_metadata(output_dir: Path):
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"\n✓ Created split metadata: {metadata_path}")
+    print(f"\n Created split metadata: {metadata_path}")
     print(f"  Train files:      {len(metadata['train'])}")
     print(f"  Validation files: {len(metadata['validation'])}")
 
@@ -223,7 +223,7 @@ def main():
     input_files = [f for f in input_files if f.suffix == '.jsonl']
 
     if not input_files:
-        print("❌ No JSONL files found!")
+        print(" No JSONL files found!")
         sys.exit(1)
 
     print(f"Found {len(input_files)} JSONL file(s) to convert:")
@@ -243,7 +243,7 @@ def main():
                 args.batch_size
             )
         except Exception as e:
-            print(f"❌ Failed to process {input_file}: {e}")
+            print(f" Failed to process {input_file}: {e}")
             import traceback
             traceback.print_exc()
 

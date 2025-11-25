@@ -87,11 +87,11 @@ def retry_on_error(max_attempts: int = 3, delay: float = 0.5, backoff: float = 2
                     if attempt < max_attempts - 1:
                         # Get file path for logging (if available)
                         file_path = args[1] if len(args) > 1 else "unknown"
-                        print(f"⚠️  Retry {attempt + 1}/{max_attempts} for {file_path}: {e}")
+                        print(f"  Retry {attempt + 1}/{max_attempts} for {file_path}: {e}")
                         time.sleep(current_delay)
                         current_delay *= backoff
                     else:
-                        print(f"❌ Failed after {max_attempts} attempts: {e}")
+                        print(f" Failed after {max_attempts} attempts: {e}")
 
             # If all retries failed, raise the last exception
             if last_exception:
@@ -425,10 +425,10 @@ class FileReader:
             elif format_type == '.jsonl':
                 yield from self._read_jsonl(file_path)
             else:
-                print(f"⚠️  Unsupported format: {format_type} for {file_path.name}")
+                print(f"  Unsupported format: {format_type} for {file_path.name}")
 
         except Exception as e:
-            print(f"❌ Error reading {file_path.name}: {e}")
+            print(f" Error reading {file_path.name}: {e}")
 
     @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))  # type: ignore[attr-defined]
     def _read_arrow(self, file_path: Path) -> Iterator[Any]:
@@ -452,7 +452,7 @@ class FileReader:
                     if text and len(str(text).strip()) > 10:
                         yield str(text).strip()
         except Exception as e:
-            print(f"⚠️  Failed to read Arrow file {file_path.name}: {e}")
+            print(f"  Failed to read Arrow file {file_path.name}: {e}")
 
     @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError, pa.lib.ArrowIOError))  # type: ignore[attr-defined]
     def _read_parquet(self, file_path: Path) -> Iterator[str]:
@@ -465,7 +465,7 @@ class FileReader:
             # OPTIMIZED: Column projection - only read 'text' column to reduce I/O
             columns_to_read = ['text'] if 'text' in parquet_file.schema.names else None
             if not columns_to_read:
-                print(f"⚠️  No 'text' column found in {file_path.name}")
+                print(f"  No 'text' column found in {file_path.name}")
                 return
 
             # OPTIMIZED: Read by row groups for better memory locality
@@ -500,7 +500,7 @@ class FileReader:
                             if text:  # Final safety check
                                 yield text
         except Exception as e:
-            print(f"⚠️  Failed to read Parquet file {file_path.name}: {e}")
+            print(f"  Failed to read Parquet file {file_path.name}: {e}")
 
     @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError))
     def _read_jsonl(self, file_path: Path) -> Iterator[Any]:
@@ -535,14 +535,14 @@ class FileReader:
                             except json.JSONDecodeError as e:
                                 error_count += 1
                                 if error_count <= 5:  # Only log first few errors
-                                    print(f"⚠️  JSON decode error at line {line_count}")
+                                    print(f"  JSON decode error at line {line_count}")
                             except Exception as e:
                                 error_count += 1
                     break  # Successfully read with this encoding
                 except UnicodeDecodeError:
                     continue  # Try next encoding
         except Exception as e:
-            print(f"❌ Failed to read JSONL {file_path.name}: {e}")
+            print(f" Failed to read JSONL {file_path.name}: {e}")
 
     def _extract_text(self, data: Dict) -> Optional[str]:
         """Extract text from JSON data with multiple fallback fields."""
@@ -616,7 +616,7 @@ class StreamingDataset(IterableDataset):
         self.use_streaming_tokenization = use_streaming_tokenization
         self.buffer_size = streaming_buffer_size if use_streaming_tokenization else buffer_size
         if use_streaming_tokenization:
-            print(f"   🌊 Streaming tokenization enabled: buffer reduced to {streaming_buffer_size} samples (saves 500MB-1GB RAM)")
+            print(f"    Streaming tokenization enabled: buffer reduced to {streaming_buffer_size} samples (saves 500MB-1GB RAM)")
         self.dynamic_length_fn = dynamic_length_fn
         self.samples_per_file = samples_per_file
 
@@ -628,7 +628,7 @@ class StreamingDataset(IterableDataset):
         self.use_dynamic_batching = use_dynamic_batching
         self.max_tokens_per_batch = max_tokens_per_batch
         if use_dynamic_batching:
-            print(f"   ⚡ Dynamic batching enabled: max {max_tokens_per_batch or 'auto'} tokens per batch (10-15% less padding)")
+            print(f"    Dynamic batching enabled: max {max_tokens_per_batch or 'auto'} tokens per batch (10-15% less padding)")
 
         # Initialize file reader
         self.file_reader = FileReader()
@@ -669,7 +669,7 @@ class StreamingDataset(IterableDataset):
         # Initialize weighted mixing
         self.use_weighted_mixing = False  # Disabled - removed dependency
         self.data_mixer = None
-        print(f"   ⚖️  Uniform data mixing")
+        print(f"     Uniform data mixing")
 
         # Find data files
         self.data_files = self._find_data_files()
@@ -679,9 +679,9 @@ class StreamingDataset(IterableDataset):
             self._create_val_from_train()
 
         if not self.data_files:
-            raise ValueError(f"⚠️  No data files found for {split} split in {data_dir}")
+            raise ValueError(f"  No data files found for {split} split in {data_dir}")
         else:
-            print(f"✓ Found {len(self.data_files)} data files for {split} split")
+            print(f" Found {len(self.data_files)} data files for {split} split")
 
     def _find_data_files(self) -> List[Path]:
         """
@@ -732,9 +732,9 @@ class StreamingDataset(IterableDataset):
             filtered_files = [f for f in files if f.name == self.dataset_name]
             if filtered_files:
                 files = filtered_files
-                print(f"   🎯 Filtered to single dataset: {self.dataset_name}")
+                print(f"    Filtered to single dataset: {self.dataset_name}")
             else:
-                print(f"   ⚠️  Warning: dataset_name '{self.dataset_name}' not found, using all files")
+                print(f"     Warning: dataset_name '{self.dataset_name}' not found, using all files")
 
         # OPTIMIZED: Parallel file validation for large directories
         def check_file(f: Path) -> Optional[Path]:
@@ -777,10 +777,10 @@ class StreamingDataset(IterableDataset):
                         split_files.append(file_path)
 
             files = split_files
-            print(f"   🔀 File-based split: {len(files)} files for {self.split}")
+            print(f"    File-based split: {len(files)} files for {self.split}")
 
         if files:
-            print(f"   📊 Sample files: {[f.name for f in files[:3]]}")
+            print(f"    Sample files: {[f.name for f in files[:3]]}")
 
         return files
 
@@ -795,7 +795,7 @@ class StreamingDataset(IterableDataset):
 
         if train_files:
             self.data_files = train_files
-            print(f" ✓ Created validation set from {len(self.data_files)} training files")
+            print(f"  Created validation set from {len(self.data_files)} training files")
 
     def _get_file_generator(self, file_path: Path, worker_id: int):
         """
@@ -881,7 +881,7 @@ class StreamingDataset(IterableDataset):
         if not files and num_workers > 1:
             files = self._find_data_files()
             if should_print:
-                print(f"  🔄 [Worker {worker_id}] Rediscovered {len(files)} files in worker process")
+                print(f"   [Worker {worker_id}] Rediscovered {len(files)} files in worker process")
 
         if not files:
             raise ValueError(f"No data files found in {self.data_dir}")
@@ -902,17 +902,17 @@ class StreamingDataset(IterableDataset):
                 if file_size == 0:
                     skipped_empty += 1
                     if should_print and skipped_empty <= 3:
-                        print(f"  ⚠️ [Worker {worker_id}] Skipping empty file: {file_path.name}")
+                        print(f"   [Worker {worker_id}] Skipping empty file: {file_path.name}")
                     continue
 
                 gen = self.file_reader.read_file(file_path)
                 file_generators.append((file_path, gen))
             except Exception as e:
                 if len(file_generators) == 0 and should_print:
-                    print(f"  ⚠️ [Worker {worker_id}] Could not open {file_path.name}: {e}")
+                    print(f"   [Worker {worker_id}] Could not open {file_path.name}: {e}")
 
         if skipped_empty > 0 and should_print:
-            print(f"  ℹ️ [Worker {worker_id}] Skipped {skipped_empty} empty files")
+            print(f"  ℹ [Worker {worker_id}] Skipped {skipped_empty} empty files")
 
         if not file_generators:
             raise ValueError(f"No files could be opened from {self.data_dir}")
@@ -1263,7 +1263,7 @@ class StreamingDataset(IterableDataset):
 
         for i, item in enumerate(batch):
             if 'input_ids' not in item:
-                print(f"❌ ERROR: Batch item {i} missing 'input_ids' key!")
+                print(f" ERROR: Batch item {i} missing 'input_ids' key!")
                 continue
 
             input_ids = item['input_ids']
@@ -1274,7 +1274,7 @@ class StreamingDataset(IterableDataset):
 
             # AGGRESSIVE SANITY CHECK: Detect corrupted sequences BEFORE calculating max_len
             if seq_len > reasonable_max:
-                print(f"🚨 COLLATE_FN: SKIPPING item {i} with catastrophic length {seq_len:,} (allowed: {reasonable_max:,})")
+                print(f" COLLATE_FN: SKIPPING item {i} with catastrophic length {seq_len:,} (allowed: {reasonable_max:,})")
                 print(f"   This would attempt to allocate {seq_len * 8 / 1024**3:.2f} GB just for this sequence!")
                 skipped_count += 1
                 continue
@@ -1283,11 +1283,11 @@ class StreamingDataset(IterableDataset):
             valid_batch.append(item)
 
         if skipped_count > 0:
-            print(f"⚠️ COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_batch)} valid items")
+            print(f" COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_batch)} valid items")
 
         # If all items were corrupted, return empty batch
         if not valid_batch:
-            print(f"❌ CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
+            print(f" CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
             return {}
 
         # Now calculate max_len only from valid sequences
@@ -1409,7 +1409,7 @@ class StreamingDataset(IterableDataset):
         from collections import deque
         dynamic_buffer_size = self._get_dynamic_buffer_size()
         if dynamic_buffer_size != self.buffer_size:
-            print(f"📊 [Worker {worker_id}] Dynamic buffer size: {dynamic_buffer_size} (original: {self.buffer_size})")
+            print(f" [Worker {worker_id}] Dynamic buffer size: {dynamic_buffer_size} (original: {self.buffer_size})")
         buffer = deque(maxlen=dynamic_buffer_size)
         samples_processed = 0
         sample_index = 0
@@ -1562,7 +1562,7 @@ class StreamingDataset(IterableDataset):
                         throughput = DATA_CONSTANTS.PROFILING_REPORT_INTERVAL / elapsed
                         total_time = profiling_stats['shuffle_time'] + profiling_stats['tokenization_time']
                         if total_time > 0:
-                            print(f"📊 [Worker {worker_id}] Dataloader Profile ({profiling_stats['samples_yielded']} samples):")
+                            print(f" [Worker {worker_id}] Dataloader Profile ({profiling_stats['samples_yielded']} samples):")
                             print(f"   • Throughput: {throughput:.1f} samples/sec")
                             print(f"   • Shuffle: {profiling_stats['shuffle_time']*1000:.1f}ms ({profiling_stats['shuffle_time']/total_time*100:.1f}%)")
                             print(f"   • Tokenization: {profiling_stats['tokenization_time']*1000:.1f}ms ({profiling_stats['tokenization_time']/total_time*100:.1f}%)")
@@ -1570,7 +1570,7 @@ class StreamingDataset(IterableDataset):
                             # DEV LOG: Show per-file timing if enabled
                             if self.dev_log_config and getattr(self.dev_log_config, 'enabled', False) and getattr(self.dev_log_config, 'show_file_timings', True):
                                 if self._file_timings:
-                                    print(f"   📁 File Read Timings:")
+                                    print(f"    File Read Timings:")
                                     # Sort by total time (slowest first)
                                     sorted_files = sorted(self._file_timings.items(), key=lambda x: x[1]['total_time'], reverse=True)
                                     for file_name, stats in sorted_files[:5]:  # Show top 5 slowest files
@@ -1872,17 +1872,17 @@ def create_streaming_dataloaders(
     # Safety checks
     if batch_size is None:
         batch_size = 8
-        print(f"⚠️  batch_size was None, defaulting to {batch_size}")
+        print(f"  batch_size was None, defaulting to {batch_size}")
 
     # Auto-detect CPU cores
     if num_workers == -1:
         import multiprocessing
         num_workers = multiprocessing.cpu_count()
-        print(f"🚀 Auto-detected {num_workers} CPU cores")
+        print(f" Auto-detected {num_workers} CPU cores")
     elif num_workers > 0:
-        print(f"🚀 Using {num_workers} CPU workers for data loading")
+        print(f" Using {num_workers} CPU workers for data loading")
     else:  # num_workers == 0
-        print(f"🚀 Using 0 workers (main process only) for data loading")
+        print(f" Using 0 workers (main process only) for data loading")
 
     # OPTIMIZATION: Dynamic prefetch factor based on sequence length
     # Longer sequences use more memory, so reduce prefetch to avoid RAM overflow
@@ -1901,7 +1901,7 @@ def create_streaming_dataloaders(
         if prefetch_factor != original_prefetch:
             memory_impact_gb = num_workers * (prefetch_factor - original_prefetch) * batch_size * max_length * 2 / (1024**3)
             impact_sign = "uses" if memory_impact_gb > 0 else "saves"
-            print(f"✓ [OPTIMIZATION] Auto-adjusted prefetch_factor: {original_prefetch} → {prefetch_factor} ({impact_sign} ~{abs(memory_impact_gb):.1f}GB RAM, improves throughput ~{(prefetch_factor/original_prefetch - 1)*100:.0f}%)")
+            print(f" [OPTIMIZATION] Auto-adjusted prefetch_factor: {original_prefetch} → {prefetch_factor} ({impact_sign} ~{abs(memory_impact_gb):.1f}GB RAM, improves throughput ~{(prefetch_factor/original_prefetch - 1)*100:.0f}%)")
 
     # Auto-detect distributed training
     if distributed is None:
@@ -1915,9 +1915,9 @@ def create_streaming_dataloaders(
             world_size = int(os.environ.get('WORLD_SIZE', 1))
         if rank is None:
             rank = int(os.environ.get('RANK', 0))
-        print(f"📡 Distributed training: rank {rank}/{world_size}")
+        print(f" Distributed training: rank {rank}/{world_size}")
     else:
-        print(f"📦 Creating streaming dataloaders...")
+        print(f" Creating streaming dataloaders...")
 
     # Create datasets
     dataset_kwargs = {
@@ -1991,7 +1991,7 @@ def create_streaming_dataloaders(
     # OPTIMIZATION: Use spawn method for multiprocessing with Arrow files
     # Arrow files use memory mapping which needs careful multiprocessing setup
     if num_workers > 0:
-        print(f"✓ Using {num_workers} workers with 'spawn' multiprocessing context for Arrow file compatibility")
+        print(f" Using {num_workers} workers with 'spawn' multiprocessing context for Arrow file compatibility")
 
     # Dataloader configuration
     dataloader_kwargs = {
@@ -2007,14 +2007,14 @@ def create_streaming_dataloaders(
     }
 
     if num_workers > 0:
-        print(f"⚡ Data pipeline optimizations:")
+        print(f" Data pipeline optimizations:")
         print(f"   • {num_workers} parallel workers (higher = less I/O overhead)")
         print(f"   • {buffer_size:,} sample buffer")
         print(f"   • {prefetch_factor} batches prefetched per worker")
         print(f"   • Persistent workers: {persistent_workers}")
         print(f"   • Total prefetch capacity: {num_workers * prefetch_factor * batch_size:,} samples ({num_workers} workers × {prefetch_factor} batches × {batch_size} batch_size)")
     else:
-        print(f"⚡ Data pipeline configuration:")
+        print(f" Data pipeline configuration:")
         print(f"   • Single-process mode (num_workers=0 for Arrow file compatibility)")
         print(f"   • {buffer_size:,} sample buffer")
         print(f"   • Pin memory: {torch.cuda.is_available()}")
@@ -2037,7 +2037,7 @@ def create_streaming_dataloaders(
         train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
         val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
     except (BrokenPipeError, OSError) as e:
-        print(f"❌ DataLoader creation failed with: {e}")
+        print(f" DataLoader creation failed with: {e}")
         print(f"   Retrying with num_workers=0 and no multiprocessing...")
 
         # Fallback to single-process mode
@@ -2049,6 +2049,6 @@ def create_streaming_dataloaders(
         train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
         val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
 
-        print(f"✓ DataLoader created successfully in fallback single-process mode")
+        print(f" DataLoader created successfully in fallback single-process mode")
 
     return train_loader, val_loader

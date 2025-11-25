@@ -6,26 +6,26 @@ This script provides advanced text generation capabilities for models trained wi
 comprehensive 8-phase enhanced training framework. It seamlessly integrates with the
 run management system and supports multiple checkpoint formats and generation strategies.
 
-✨ Key Features:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• 🔍 Smart Auto-Discovery: Automatically finds and loads the most recent trained model
-• 📦 Run Management Integration: Load checkpoints by run ID with full metadata
-• 🔄 Multi-Format Support: Handles new framework, legacy, DeepSpeed, and raw formats
-• 🎯 Checkpoint Selection: Choose between latest, best, or step-specific checkpoints
-• 🎨 Multiple Generation Modes: Single prompt, interactive session, or batch processing
-• ⚙️  Advanced Sampling: Temperature, top-k, top-p, repetition penalty, beam search
-• 📊 Detailed Logging: Shows model info, training metrics, and generation parameters
+ Key Features:
 
-🚀 Quick Start:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+•  Smart Auto-Discovery: Automatically finds and loads the most recent trained model
+•  Run Management Integration: Load checkpoints by run ID with full metadata
+•  Multi-Format Support: Handles new framework, legacy, DeepSpeed, and raw formats
+•  Checkpoint Selection: Choose between latest, best, or step-specific checkpoints
+•  Multiple Generation Modes: Single prompt, interactive session, or batch processing
+•   Advanced Sampling: Temperature, top-k, top-p, repetition penalty, beam search
+•  Detailed Logging: Shows model info, training metrics, and generation parameters
+
+ Quick Start:
+
     # Easiest: Auto-discover latest trained model
     python generate.py --prompt "Once upon a time"
 
     # List all available training runs
     python generate.py --list-runs
 
-📋 Usage Examples:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Usage Examples:
+
     # Load from specific run (automatically uses latest checkpoint)
     python generate.py --run-id run_20250928_134034_3b295412 --prompt "The future of AI"
 
@@ -48,8 +48,8 @@ run management system and supports multiple checkpoint formats and generation st
                        --output-file responses.txt \\
                        --max-length 200
 
-🎛️  Sampling Parameters:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Sampling Parameters:
+
   --temperature    Controls randomness (0.1=focused, 1.0=balanced, 2.0=creative)
   --top-p          Nucleus sampling threshold (0.9=default, 0.95=more diverse)
   --top-k          Limits vocabulary per step (50=default, higher=more options)
@@ -57,13 +57,13 @@ run management system and supports multiple checkpoint formats and generation st
   --num-beams      Beam search width (1=greedy, 4-8=better quality)
   --max-length     Maximum tokens to generate (default: 100)
 
-🔗 Integration with Training:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Integration with Training:
+
 This script is part of the comprehensive Ava training pipeline supporting:
-  ✅ Phase 1-8: All training enhancements (stability, data pipeline, adaptive LR, etc.)
-  ✅ Run Management: Organized checkpoint storage with full metadata
-  ✅ Multi-Format: Backward compatible with all checkpoint formats
-  ✅ Production Ready: Robust error handling and format detection
+   Phase 1-8: All training enhancements (stability, data pipeline, adaptive LR, etc.)
+   Run Management: Organized checkpoint storage with full metadata
+   Multi-Format: Backward compatible with all checkpoint formats
+   Production Ready: Robust error handling and format detection
 """
 
 import argparse
@@ -279,36 +279,36 @@ class GenerationPipeline:
             ds_checkpoint = torch.load(deepspeed_path, map_location=self.device, weights_only=False)
             if 'module' in ds_checkpoint:
                 self.model.load_state_dict(ds_checkpoint['module'])
-                print(f"✓ DeepSpeed model loaded successfully")
+                print(f" DeepSpeed model loaded successfully")
             else:
                 raise ValueError("Invalid DeepSpeed checkpoint format")
         elif is_train_100m and 'model_state_dict' in checkpoint:
             # train_100m_full.py format
             print(" Loading model state (train_100m_full.py)")
             self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-            print(f"✓ Model loaded successfully")
+            print(f" Model loaded successfully")
             print(f"  Epoch: {checkpoint.get('epoch', '?')}, Step: {checkpoint.get('step', '?')}")
         elif is_new_framework and 'model_state_dict' in checkpoint:
             # New framework format
             print(" Loading model state (new framework)")
             self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-            print(f"✓ Model loaded from run: {checkpoint.get('run_id', 'unknown')}")
+            print(f" Model loaded from run: {checkpoint.get('run_id', 'unknown')}")
             print(f"  Epoch: {checkpoint.get('epoch', '?')}, Step: {checkpoint.get('step', '?')}, Loss: {checkpoint.get('loss', '?'):.4f}")
         elif 'model_state_dict' in checkpoint:
             # Old framework format
             print(" Loading model state (old framework)")
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"✓ Model loaded successfully")
+            print(f" Model loaded successfully")
         elif 'module' in checkpoint:
             # DeepSpeed format
             print(" Loading model state (DeepSpeed)")
             self.model.load_state_dict(checkpoint['module'])
-            print(f"✓ Model loaded successfully")
+            print(f" Model loaded successfully")
         else:
             # Raw state dict
             print(" Loading model state (raw state dict)")
             self.model.load_state_dict(checkpoint)
-            print(f"✓ Model loaded successfully")
+            print(f" Model loaded successfully")
 
         self.model.to(self.device)
         self.model.eval()
@@ -356,7 +356,7 @@ class GenerationPipeline:
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path_resolved)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        print(f"✓ Tokenizer loaded: vocab_size={len(self.tokenizer)}")
+        print(f" Tokenizer loaded: vocab_size={len(self.tokenizer)}")
 
         # Initialize generator
         self.generator = TextGenerator(self.model, self.tokenizer)
@@ -422,62 +422,128 @@ class GenerationPipeline:
     def interactive_generation(self):
         """
         Interactive generation mode for real-time text generation.
+        Uses OpenOrca format (System/User/Assistant) for prompts.
         """
         print("\n" + "="*60)
-        print(" Interactive Generation Mode")
+        print(" Interactive Generation Mode (OpenOrca Format)")
         print("="*60)
-        print("Enter your prompts (type 'quit' to exit)")
-        print("Commands: /settings - show settings, /set <param> <value> - update parameter")
+        print("Enter your messages (type 'quit' to exit)")
+        print("\nCommands:")
+        print("  /settings     - show current settings")
+        print("  /set <p> <v>  - update parameter (e.g., /set temperature 0.7)")
+        print("  /system <msg> - change system prompt")
+        print("  /clear        - clear conversation history")
+        print("  /raw          - toggle raw mode (no OpenOrca formatting)")
         print("="*60 + "\n")
 
         # Default settings
         settings = {
-            'max_length': 100,
+            'max_length': 150,
             'temperature': 0.8,
-            'top_p': 0.9,
+            'top_p': 0.92,
             'top_k': 50,
-            'repetition_penalty': 2.0
+            'repetition_penalty': 1.15
         }
+
+        # OpenOrca format settings
+        system_prompt = "You are a helpful assistant that provides clear and accurate information."
+        use_openorca_format = True
+        conversation_history = []
+
+        print(f"System: {system_prompt}\n")
 
         while True:
             try:
-                prompt = input("\n Prompt: ").strip()
+                user_input = input("User: ").strip()
 
-                if prompt.lower() == 'quit':
+                if user_input.lower() == 'quit':
+                    print("\nGoodbye!")
                     break
 
-                if prompt.startswith('/settings'):
+                if user_input.startswith('/settings'):
                     print("\nCurrent settings:")
                     for k, v in settings.items():
                         print(f"  {k}: {v}")
+                    print(f"  system_prompt: {system_prompt}")
+                    print(f"  openorca_format: {use_openorca_format}")
                     continue
 
-                if prompt.startswith('/set'):
-                    parts = prompt.split()
+                if user_input.startswith('/set '):
+                    parts = user_input.split(maxsplit=2)
                     if len(parts) == 3:
                         param, value = parts[1], parts[2]
                         if param in settings:
                             try:
                                 settings[param] = type(settings[param])(value)
-                                print(f" Updated {param} to {value}")
+                                print(f"Updated {param} to {value}")
                             except ValueError:
-                                print(f" Invalid value for {param}")
+                                print(f"Invalid value for {param}")
                         else:
-                            print(f" Unknown parameter: {param}")
+                            print(f"Unknown parameter: {param}")
+                    else:
+                        print("Usage: /set <parameter> <value>")
                     continue
 
-                if not prompt:
+                if user_input.startswith('/system '):
+                    system_prompt = user_input[8:].strip()
+                    print(f"System prompt updated to: {system_prompt}")
+                    conversation_history = []  # Clear history on system change
                     continue
 
-                print("\n Generating...\n")
-                response = self.generate(prompt, **settings)
-                print(f" Response:\n{response}")
+                if user_input == '/clear':
+                    conversation_history = []
+                    print("Conversation history cleared.")
+                    continue
+
+                if user_input == '/raw':
+                    use_openorca_format = not use_openorca_format
+                    mode = "disabled" if not use_openorca_format else "enabled"
+                    print(f"OpenOrca formatting {mode}")
+                    continue
+
+                if not user_input:
+                    continue
+
+                # Build the prompt
+                if use_openorca_format:
+                    # Build OpenOrca format prompt
+                    full_prompt = f"System: {system_prompt}\n"
+
+                    # Add conversation history (last few turns for context)
+                    for turn in conversation_history[-4:]:  # Keep last 2 exchanges
+                        full_prompt += f"User: {turn['user']}\n"
+                        full_prompt += f"Assistant: {turn['assistant']}\n"
+
+                    full_prompt += f"User: {user_input}\nAssistant:"
+                else:
+                    full_prompt = user_input
+
+                print("\nAssistant: ", end="", flush=True)
+                response = self.generate(full_prompt, **settings)
+
+                # Extract just the assistant's response (remove the prompt echo if present)
+                if use_openorca_format and response.startswith(full_prompt):
+                    response = response[len(full_prompt):].strip()
+
+                # Clean up response - stop at next "User:" or "System:" if present
+                for stop_token in ["\nUser:", "\nSystem:", "\n\nUser:", "\n\nSystem:"]:
+                    if stop_token in response:
+                        response = response.split(stop_token)[0].strip()
+
+                print(response)
+
+                # Save to conversation history
+                if use_openorca_format:
+                    conversation_history.append({
+                        'user': user_input,
+                        'assistant': response
+                    })
 
             except KeyboardInterrupt:
-                print("\n\n Goodbye!")
+                print("\n\nGoodbye!")
                 break
             except Exception as e:
-                print(f" Error: {e}")
+                print(f"\nError: {e}")
 
 
 def main():
@@ -604,7 +670,7 @@ Examples:
         # Load from specific run
         run_dir = Path('/project/code/outputs/runs') / args.run_id
         if not run_dir.exists():
-            print(f"❌ Run not found: {args.run_id}")
+            print(f" Run not found: {args.run_id}")
             print("\nAvailable runs:")
             for run in list_available_runs()[:5]:
                 print(f"  - {run.name}")
@@ -612,7 +678,7 @@ Examples:
 
         model_path = str(get_checkpoint_path_from_run(run_dir, args.checkpoint_type))
         if not Path(model_path).exists():
-            print(f"❌ Checkpoint not found: {model_path}")
+            print(f" Checkpoint not found: {model_path}")
             print(f"\nAvailable checkpoints in {args.run_id}:")
             checkpoints_dir = run_dir / 'checkpoints'
             if checkpoints_dir.exists():
@@ -630,17 +696,17 @@ Examples:
         print("No --model-path or --run-id specified, searching for latest run...")
         latest_run = find_latest_run()
         if not latest_run:
-            print("❌ No training runs found in /project/code/outputs/runs/")
+            print(" No training runs found in /project/code/outputs/runs/")
             print("\nPlease specify --model-path or --run-id, or train a model first.")
             print("Use --list-runs to see available runs.")
             return
 
         model_path = str(get_checkpoint_path_from_run(latest_run, args.checkpoint_type))
         if not Path(model_path).exists():
-            print(f"❌ Checkpoint not found: {model_path}")
+            print(f" Checkpoint not found: {model_path}")
             return
 
-        print(f"✓ Auto-discovered latest run: {latest_run.name}")
+        print(f" Auto-discovered latest run: {latest_run.name}")
         print(f"  Using checkpoint: {model_path}")
 
     # Initialize pipeline

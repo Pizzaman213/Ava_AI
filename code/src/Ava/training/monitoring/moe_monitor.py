@@ -108,12 +108,12 @@ class MoELoadBalanceMonitor:
 
                 # Log warning
                 self.logger.warning(
-                    f"\n⚠️  Expert Load Imbalance Detected (Step {self.step_count}):\n"
+                    f"\n  Expert Load Imbalance Detected (Step {self.step_count}):\n"
                     f"   Balance Score: {stats.balance_score:.3f} (target: {self.target_balance_score:.3f})\n"
                     f"   Coefficient of Variation: {stats.coefficient_of_variation:.3f}\n"
                     f"   Max/Min Ratio: {stats.max_min_ratio:.2f}x\n"
                     f"   {stats.suggestion_reason}\n"
-                    f"   💡 Suggestion: Increase load_balance_loss_coef from "
+                    f"    Suggestion: Increase load_balance_loss_coef from "
                     f"{self.current_load_balance_coef:.4f} to {stats.suggested_load_balance_coef:.4f}"
                 )
 
@@ -188,17 +188,17 @@ class MoELoadBalanceMonitor:
         """Get human-readable reason for suggestion."""
         if stats.max_min_ratio > 10:
             return (
-                f"🔴 SEVERE: Some experts are used {stats.max_min_ratio:.1f}x more than others. "
+                f" SEVERE: Some experts are used {stats.max_min_ratio:.1f}x more than others. "
                 "This indicates expert collapse."
             )
         elif stats.coefficient_of_variation > 1.0:
             return (
-                f"🟡 MODERATE: High variation in expert usage (CV={stats.coefficient_of_variation:.2f}). "
+                f" MODERATE: High variation in expert usage (CV={stats.coefficient_of_variation:.2f}). "
                 "Load balancing needs improvement."
             )
         else:
             return (
-                f"🟢 MILD: Balance score below target but not critical. "
+                f" MILD: Balance score below target but not critical. "
                 "Small adjustment recommended."
             )
 
@@ -217,4 +217,4 @@ class MoELoadBalanceMonitor:
         """Update the current load balance coefficient."""
         self.current_load_balance_coef = new_coef
         self.coef_history.append(new_coef)
-        self.logger.info(f"✅ Updated load_balance_loss_coef to {new_coef:.5f}")
+        self.logger.info(f" Updated load_balance_loss_coef to {new_coef:.5f}")

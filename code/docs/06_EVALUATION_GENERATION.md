@@ -22,11 +22,11 @@ Ava provides comprehensive tools for evaluating trained models, generating text,
 
 ### Key Components
 
-- 📊 **Comprehensive Evaluator**: Perplexity, accuracy, coherence metrics
-- ✍️ **Text Generator**: Multiple sampling strategies, beam search, top-k/top-p
-- 🎯 **RLHF System**: Reward models, PPO trainer, model-to-model feedback
-- 📈 **Quality Metrics**: Coherence, diversity, fluency scoring
-- 🔍 **Real-time Monitoring**: Track model performance during training
+-  **Comprehensive Evaluator**: Perplexity, accuracy, coherence metrics
+-  **Text Generator**: Multiple sampling strategies, beam search, top-k/top-p
+-  **RLHF System**: Reward models, PPO trainer, model-to-model feedback
+-  **Quality Metrics**: Coherence, diversity, fluency scoring
+-  **Real-time Monitoring**: Track model performance during training
 
 ---
 
@@ -125,10 +125,10 @@ flowchart LR
 
         PPL --> Interpret{Perplexity<br/>Value?}
 
-        Interpret -->|< 10| Excellent[⭐⭐⭐⭐⭐<br/>Excellent model]
-        Interpret -->|10-30| Good[⭐⭐⭐⭐<br/>Good model]
-        Interpret -->|30-100| Fair[⭐⭐⭐<br/>Fair model]
-        Interpret -->|> 100| Poor[⭐⭐<br/>Needs improvement]
+        Interpret -->|< 10| Excellent[<br/>Excellent model]
+        Interpret -->|10-30| Good[<br/>Good model]
+        Interpret -->|30-100| Fair[<br/>Fair model]
+        Interpret -->|> 100| Poor[<br/>Needs improvement]
     end
 
     style Input fill:#e3f2fd
@@ -377,27 +377,27 @@ flowchart TD
 graph TB
     subgraph "Generation Strategy Characteristics"
         subgraph "Quality"
-            Q1[Greedy: ⭐⭐⭐]
-            Q2[Beam Search: ⭐⭐⭐⭐]
-            Q3[Sampling: ⭐⭐⭐]
-            Q4[Top-k: ⭐⭐⭐⭐]
-            Q5[Top-p: ⭐⭐⭐⭐⭐]
+            Q1[Greedy: ]
+            Q2[Beam Search: ]
+            Q3[Sampling: ]
+            Q4[Top-k: ]
+            Q5[Top-p: ]
         end
 
         subgraph "Diversity"
-            D1[Greedy: ⭐]
-            D2[Beam Search: ⭐⭐]
-            D3[Sampling: ⭐⭐⭐⭐⭐]
-            D4[Top-k: ⭐⭐⭐⭐]
-            D5[Top-p: ⭐⭐⭐⭐⭐]
+            D1[Greedy: ]
+            D2[Beam Search: ]
+            D3[Sampling: ]
+            D4[Top-k: ]
+            D5[Top-p: ]
         end
 
         subgraph "Speed"
-            S1[Greedy: ⭐⭐⭐⭐⭐]
-            S2[Beam Search: ⭐⭐]
-            S3[Sampling: ⭐⭐⭐⭐⭐]
-            S4[Top-k: ⭐⭐⭐⭐]
-            S5[Top-p: ⭐⭐⭐⭐]
+            S1[Greedy: ]
+            S2[Beam Search: ]
+            S3[Sampling: ]
+            S4[Top-k: ]
+            S5[Top-p: ]
         end
 
         subgraph "Deterministic"
@@ -425,17 +425,17 @@ flowchart TD
     Q1 -->|Yes| Q2{Multiple<br/>candidates?}
     Q1 -->|No| Q3{Need<br/>diversity?}
 
-    Q2 -->|Yes| Beam[🎯 Beam Search<br/>num_beams=4-8]
+    Q2 -->|Yes| Beam[ Beam Search<br/>num_beams=4-8]
     Q2 -->|No| Greedy[Greedy Decoding<br/>Fast but boring]
 
     Q3 -->|High| Q4{Control<br/>quality?}
     Q3 -->|Medium| TopK[Top-k Sampling<br/>k=40-50<br/>Good balance]
 
-    Q4 -->|Yes| TopP[⭐ Top-p Nucleus<br/>p=0.9-0.95<br/>RECOMMENDED]
+    Q4 -->|Yes| TopP[ Top-p Nucleus<br/>p=0.9-0.95<br/>RECOMMENDED]
     Q4 -->|No| Sample[Pure Sampling<br/>temperature=1.0<br/>Very diverse]
 
     Beam --> Features1[+ High quality<br/>+ Coherent<br/>- Slow<br/>- Less diverse]
-    TopP --> Features2[+ High quality<br/>+ Diverse<br/>+ Fast<br/>⭐ Best overall]
+    TopP --> Features2[+ High quality<br/>+ Diverse<br/>+ Fast<br/> Best overall]
     TopK --> Features3[+ Good quality<br/>+ Diverse<br/>+ Fast<br/>Simple to tune]
 
     style Start fill:#e3f2fd
@@ -477,7 +477,7 @@ outputs = model.generate(
 text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 ```
 
-#### Top-p Nucleus Sampling ⭐ **RECOMMENDED**
+#### Top-p Nucleus Sampling  **RECOMMENDED**
 
 ```python
 # Top-p (nucleus) sampling - best overall
@@ -967,21 +967,21 @@ flowchart TD
         Type -->|Poor Coherence| PC[Poor Coherence]
         Type -->|RLHF Issues| RL[RLHF Problems]
 
-        HP --> H1[✅ Train longer]
-        HP --> H2[✅ Check data quality]
-        HP --> H3[✅ Reduce LR]
+        HP --> H1[ Train longer]
+        HP --> H2[ Check data quality]
+        HP --> H3[ Reduce LR]
 
-        RT --> R1[✅ Increase repetition_penalty]
-        RT --> R2[✅ Use no_repeat_ngram_size]
-        RT --> R3[✅ Increase temperature]
+        RT --> R1[ Increase repetition_penalty]
+        RT --> R2[ Use no_repeat_ngram_size]
+        RT --> R3[ Increase temperature]
 
-        PC --> C1[✅ Lower temperature]
-        PC --> C2[✅ Use beam search]
-        PC --> C3[✅ Fine-tune more]
+        PC --> C1[ Lower temperature]
+        PC --> C2[ Use beam search]
+        PC --> C3[ Fine-tune more]
 
-        RL --> L1[✅ Check reward model quality]
-        RL --> L2[✅ Adjust KL coefficient]
-        RL --> L3[✅ Monitor KL divergence]
+        RL --> L1[ Check reward model quality]
+        RL --> L2[ Adjust KL coefficient]
+        RL --> L3[ Monitor KL divergence]
     end
 
     style Issue fill:#e3f2fd
@@ -1079,7 +1079,7 @@ config = PPOConfig(
 
 # 2. Monitor KL divergence
 if stats['kl/mean'] > 10:
-    print("⚠️ KL divergence too high, reduce learning rate")
+    print(" KL divergence too high, reduce learning rate")
     for param_group in optimizer.param_groups:
         param_group['lr'] *= 0.5
 
@@ -1104,14 +1104,14 @@ if stats['kl/mean'] > 10:
 
 ### Key Takeaways
 
-1. 📊 **Evaluate regularly** - Multiple metrics, not just loss
-2. 🎯 **Top-p is king** for generation - Best quality/diversity balance
-3. 🔧 **Tune hyperparameters** - Temperature, top-p, repetition penalty
-4. 🚀 **Start simple** - Greedy/beam for debugging, sampling for production
-5. ⚠️ **Monitor KL** in RLHF - Prevent policy collapse
-6. 📈 **Track over time** - Watch for degradation or improvement
-7. 👥 **Human evaluation** - Always validate with real users
-8. 🔄 **Iterate** - Evaluation → insights → improvements
+1.  **Evaluate regularly** - Multiple metrics, not just loss
+2.  **Top-p is king** for generation - Best quality/diversity balance
+3.  **Tune hyperparameters** - Temperature, top-p, repetition penalty
+4.  **Start simple** - Greedy/beam for debugging, sampling for production
+5.  **Monitor KL** in RLHF - Prevent policy collapse
+6.  **Track over time** - Watch for degradation or improvement
+7.  **Human evaluation** - Always validate with real users
+8.  **Iterate** - Evaluation → insights → improvements
 
 ---
 

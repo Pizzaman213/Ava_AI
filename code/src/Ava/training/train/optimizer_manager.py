@@ -284,7 +284,7 @@ class OptimizerManager(TrainingComponent):
                     betas=adam_betas,
                     fused=True,
                 )
-                get_logger().info("✓ Using fused AdamW optimizer (15-25% faster)")
+                get_logger().info(" Using fused AdamW optimizer (15-25% faster)")
                 get_logger().info(
                     f"  AdamW hyperparams: lr={lr:.2e}, betas={adam_betas}, weight_decay={weight_decay}"
                 )
@@ -293,7 +293,7 @@ class OptimizerManager(TrainingComponent):
                 )
             except Exception as e:
                 get_logger().warning(
-                    f"⚠️  Fused optimizer not available, falling back to standard: {e}"
+                    f"  Fused optimizer not available, falling back to standard: {e}"
                 )
                 optimizer = torch.optim.AdamW(
                     optimizer_grouped_parameters, lr=lr, betas=adam_betas
@@ -304,7 +304,7 @@ class OptimizerManager(TrainingComponent):
             )
             if optimizer_type == "adamw_fused":
                 get_logger().warning(
-                    "⚠️  Fused AdamW requested but not available (requires CUDA and no CPU offloading)"
+                    "  Fused AdamW requested but not available (requires CUDA and no CPU offloading)"
                 )
 
         # Setup CPU offloading if enabled
@@ -338,7 +338,7 @@ class OptimizerManager(TrainingComponent):
         typical_adamw_lr_max = 3e-3
         if lr > typical_adamw_lr_max:
             get_logger().warning(
-                f"⚠️  WARNING: Lion learning rate may be too high!\n"
+                f"  WARNING: Lion learning rate may be too high!\n"
                 f"   Current LR: {lr:.2e}\n"
                 f"   Lion typically requires 3-10x smaller LR than AdamW\n"
                 f"   Recommended Lion LR range: 3e-5 to 1e-3\n"
@@ -353,13 +353,13 @@ class OptimizerManager(TrainingComponent):
             betas=lion_betas,
             weight_decay=weight_decay,
         )
-        get_logger().info("✓ Using Lion optimizer (50% memory reduction vs AdamW)")
+        get_logger().info(" Using Lion optimizer (50% memory reduction vs AdamW)")
         get_logger().info(
             f"  Lion hyperparams: lr={lr:.2e}, betas={lion_betas}, weight_decay={weight_decay}"
         )
         get_logger().info("  Note: Lion uses sign-based updates for better efficiency")
         if lr <= 1e-3:
-            get_logger().info(f"  ✓ Learning rate {lr:.2e} is within recommended range for Lion")
+            get_logger().info(f"   Learning rate {lr:.2e} is within recommended range for Lion")
 
         return optimizer
 
@@ -388,7 +388,7 @@ class OptimizerManager(TrainingComponent):
         typical_adamw_lr_max = 3e-3
         if lr > typical_adamw_lr_max:
             get_logger().warning(
-                f"⚠️  WARNING: Lion learning rate may be too high!\n"
+                f"  WARNING: Lion learning rate may be too high!\n"
                 f"   Current LR: {lr:.2e}\n"
                 f"   Lion typically requires 3-10x smaller LR than AdamW\n"
                 f"   Recommended Lion LR range: 3e-5 to 1e-3\n"
@@ -413,7 +413,7 @@ class OptimizerManager(TrainingComponent):
             percentile_clipping=lion_percentile_clipping,
         )
         get_logger().info(
-            "✓ Using 8-bit Lion optimizer (87.5% memory reduction vs AdamW)"
+            " Using 8-bit Lion optimizer (87.5% memory reduction vs AdamW)"
         )
         get_logger().info(
             f"  Lion8bit hyperparams: lr={lr:.2e}, betas={lion_betas}, weight_decay={weight_decay}"
@@ -422,7 +422,7 @@ class OptimizerManager(TrainingComponent):
             "  Note: 8-bit quantization of optimizer states with minimal accuracy impact"
         )
         if lr <= 1e-3:
-            get_logger().info(f"  ✓ Learning rate {lr:.2e} is within recommended range for Lion")
+            get_logger().info(f"   Learning rate {lr:.2e} is within recommended range for Lion")
 
         return optimizer
 
@@ -458,7 +458,7 @@ class OptimizerManager(TrainingComponent):
             weight_decay=weight_decay,
         )
         get_logger().info(
-            "✓ Using 8-bit AdamW optimizer (75% memory reduction vs standard AdamW)"
+            " Using 8-bit AdamW optimizer (75% memory reduction vs standard AdamW)"
         )
         get_logger().info(
             f"  AdamW8bit hyperparams: lr={lr:.2e}, betas={adamw_betas}, weight_decay={weight_decay}"
@@ -501,7 +501,7 @@ class OptimizerManager(TrainingComponent):
             weight_decay=weight_decay,
         )
         get_logger().info(
-            "✓ Using Sophia optimizer (2x speedup with second-order optimization)"
+            " Using Sophia optimizer (2x speedup with second-order optimization)"
         )
         get_logger().info(
             f"  Sophia hyperparams: lr={lr:.2e}, betas={sophia_betas}, rho={sophia_rho}"
@@ -541,7 +541,7 @@ class OptimizerManager(TrainingComponent):
             warmup_init=training_cfg.get("adafactor_warmup_init", False),
         )
         get_logger().info(
-            "✓ Using AdaFactor optimizer (80% memory reduction vs AdamW)"
+            " Using AdaFactor optimizer (80% memory reduction vs AdamW)"
         )
         get_logger().info(
             f"  AdaFactor: adaptive_lr={use_adaptive_lr}, weight_decay={weight_decay}"
@@ -567,11 +567,11 @@ class OptimizerManager(TrainingComponent):
                     param.register_hook(create_offload_hook(offload_to_cpu))
 
             get_logger().info(
-                "✓ Optimizer state CPU offloading enabled (30-50% memory savings)"
+                " Optimizer state CPU offloading enabled (30-50% memory savings)"
             )
             get_logger().info("  Note: Adds ~5% overhead but allows larger batch sizes")
         except Exception as e:
-            get_logger().warning(f"⚠️  CPU offloading not available: {e}")
+            get_logger().warning(f"  CPU offloading not available: {e}")
 
     def _setup_adaptive_lr(
         self,
@@ -641,7 +641,7 @@ class OptimizerManager(TrainingComponent):
 
         adaptive_lr_manager = AdaptiveLearningRateManager(optimizer, adaptive_config)
         get_logger().info(
-            "✓ Adaptive LR manager initialized with warmup, plateau detection, and stability increases"
+            " Adaptive LR manager initialized with warmup, plateau detection, and stability increases"
         )
         get_logger().info(
             f"   Divergence threshold: {adaptive_config.divergence_threshold}x "

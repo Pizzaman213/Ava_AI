@@ -62,7 +62,7 @@ def main():
         tokenizer_path = "/project/code/models/tokenizer/enhanced-65536"
         logger.info(f"Loading custom tokenizer from {tokenizer_path}")
         tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
-        logger.info(f"✓ Loaded tokenizer with vocab size: {len(tokenizer)}")
+        logger.info(f" Loaded tokenizer with vocab size: {len(tokenizer)}")
 
         # Create tiny test models
         logger.info("\nCreating test models...")
@@ -83,7 +83,7 @@ def main():
                         "What is deep learning?",
                     ]
                 }, f)
-            logger.info(f"✓ Created test prompts at {prompts_path}")
+            logger.info(f" Created test prompts at {prompts_path}")
 
         # Create PPO config
         logger.info("\nConfiguring PPO trainer...")
@@ -136,7 +136,7 @@ def main():
             tokenizer=tokenizer,
             judge_model=judge_model
         )
-        logger.info("✓ RLHF trainer initialized successfully!")
+        logger.info(" RLHF trainer initialized successfully!")
 
         # Test one training epoch
         logger.info("\n" + "=" * 70)
@@ -151,7 +151,7 @@ def main():
         epoch_stats = trainer.train_epoch(epoch=0)
 
         logger.info("\n" + "=" * 70)
-        logger.info("✓ Training Test Completed Successfully!")
+        logger.info(" Training Test Completed Successfully!")
         logger.info("=" * 70)
         logger.info("\nEpoch Statistics:")
         for key, value in epoch_stats.items():
@@ -162,12 +162,12 @@ def main():
         save_dir = Path(rlhf_config.save_dir)
         if save_dir.exists():
             files = list(save_dir.glob("*"))
-            logger.info(f"✓ Found {len(files)} files in output directory")
+            logger.info(f" Found {len(files)} files in output directory")
             for f in files[:5]:  # Show first 5 files
                 logger.info(f"  - {f.name}")
 
         logger.info("\n" + "=" * 70)
-        logger.info("✓ ALL TESTS PASSED!")
+        logger.info(" ALL TESTS PASSED!")
         logger.info("=" * 70)
         logger.info("\nRLHF training pipeline is working correctly!")
         logger.info("\nNext steps:")
@@ -182,7 +182,7 @@ def main():
 
     except Exception as e:
         logger.error("\n" + "=" * 70)
-        logger.error(f"✗ Training test failed: {e}")
+        logger.error(f" Training test failed: {e}")
         logger.error("=" * 70)
         import traceback
         traceback.print_exc()

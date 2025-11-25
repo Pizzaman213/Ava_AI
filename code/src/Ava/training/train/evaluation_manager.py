@@ -110,7 +110,7 @@ class EvaluationManager(TrainingComponent):
 
                 except Exception as e:
                     get_logger().error(
-                        f"    ⚠️  Generation failed for prompt '{prompt[:30]}...': {e}"
+                        f"      Generation failed for prompt '{prompt[:30]}...': {e}"
                     )
                     results["generated_texts"].append("[GENERATION FAILED]")
                     results["repetition_scores"].append(1.0)
@@ -126,7 +126,7 @@ class EvaluationManager(TrainingComponent):
                 coherence_metrics = quick_coherence_test(all_generated_tokens)
                 results["coherence"] = coherence_metrics
             except Exception as e:
-                get_logger().error(f"    ⚠️  Coherence calculation failed: {e}")
+                get_logger().error(f"      Coherence calculation failed: {e}")
                 results["coherence"] = None
 
         model.train()
@@ -314,7 +314,7 @@ class EvaluationManager(TrainingComponent):
         if num_valid_batches == 0:
             if total_batches_processed == 0:
                 get_logger().info(
-                    "⚠️  WARNING: Validation dataloader is empty"
+                    "  WARNING: Validation dataloader is empty"
                 )
                 return (None, None)
             else:
@@ -346,7 +346,7 @@ class EvaluationManager(TrainingComponent):
         if num_invalid_batches > 0:
             invalid_rate = num_invalid_batches / total_batches_processed
             get_logger().info(
-                f"⚠️  Validation health: {num_invalid_batches}/{total_batches_processed} "
+                f"  Validation health: {num_invalid_batches}/{total_batches_processed} "
                 f"batches had invalid losses ({invalid_rate:.1%})"
             )
             get_logger().info(
@@ -400,9 +400,9 @@ class EvaluationManager(TrainingComponent):
                     get_logger().error("Model did not return loss!")
                     return False
 
-            get_logger().info("✓ Resume smoke test passed")
+            get_logger().info(" Resume smoke test passed")
             return True
 
         except Exception as e:
-            get_logger().error(f"✗ Resume smoke test failed: {e}")
+            get_logger().error(f" Resume smoke test failed: {e}")
             return False

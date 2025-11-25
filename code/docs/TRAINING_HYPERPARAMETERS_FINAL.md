@@ -1,7 +1,7 @@
 # Final Training Hyperparameters - Tuned for Dataset Size
 
 **Date**: November 19, 2025
-**Status**: ✅ Optimized and Running
+**Status**:  Optimized and Running
 **Progress**: Batch 2,070 / 189,745 (1.1%)
 
 ---
@@ -60,7 +60,7 @@ training:
 
 ### Phase 1: Warmup (Batches 0-1,000)
 ```
-Status: ✅ COMPLETE (at batch 2,070)
+Status:  COMPLETE (at batch 2,070)
 
 Batch 0:     Loss 10.96 | LR: 5.09e-06
 Batch 500:   Loss ~6.5  | LR: ~5.00e-05
@@ -69,7 +69,7 @@ Batch 1000:  Loss ~3.0  | LR: ~1.00e-04 (warmup complete)
 
 ### Phase 2: Early Learning (Batches 1,000-50,000)
 ```
-Status: 🟡 IN PROGRESS (currently at batch 2,070)
+Status:  IN PROGRESS (currently at batch 2,070)
 
 Current state:
   Batch 2,070: Loss 1.97 | Avg 2.38
@@ -117,7 +117,7 @@ Expected behavior:
 - Generation becomes repetitive/non-generalizable
 ```
 
-### Signs of HEALTHY TRAINING (good) ✅
+### Signs of HEALTHY TRAINING (good) 
 ```
 - Training loss decreases slowly and smoothly
 - Training loss ≈ Validation loss (within 0.2)
@@ -126,7 +126,7 @@ Expected behavior:
 - Loss plateaus around 1.5-2.0 range
 ```
 
-**Current status**: ✅ HEALTHY - You're seeing exactly what you want!
+**Current status**:  HEALTHY - You're seeing exactly what you want!
 
 ---
 
@@ -143,34 +143,34 @@ Expected behavior:
 | Phase | Steps | LR Range |
 |-------|-------|----------|
 | Warmup | 0-1,000 | 0 → 1e-4 |
-| **Current** | **1,000-2,070** | **1e-4** ✅ |
+| **Current** | **1,000-2,070** | **1e-4**  |
 | Steady | 2,070+ | 1e-4 (constant) |
 
 ### Batch Statistics
 | Metric | Value | Health |
 |--------|-------|--------|
-| Batch size | 64 | ✅ Optimal |
-| Grad accum | 2 | ✅ Good |
-| Speed | ~17.2 it/s | ✅ Normal |
-| ETA | ~3:01:40 remaining | ✅ Expected |
+| Batch size | 64 |  Optimal |
+| Grad accum | 2 |  Good |
+| Speed | ~17.2 it/s |  Normal |
+| ETA | ~3:01:40 remaining |  Expected |
 
 ---
 
 ## What To Do Now
 
-### ✅ DO
+###  DO
 
 1. **Let it run!** You have 187,675 batches remaining
 2. **Check periodically** (every 1-2 hours):
-   - Is average loss slowly decreasing? ✅ Good
-   - Are batch losses oscillating around 1.5-2.0? ✅ Good
-   - Is anything crashing? ✅ Should not be
+   - Is average loss slowly decreasing?  Good
+   - Are batch losses oscillating around 1.5-2.0?  Good
+   - Is anything crashing?  Should not be
 3. **Monitor generation** (every 500 steps at eval):
    - Should improve gradually
    - Should become more coherent
    - Should show less repetition
 
-### ❌ DON'T
+###  DON'T
 
 1. **Don't panic** if loss doesn't drop dramatically
    - That's the POINT of the conservative settings
@@ -205,23 +205,23 @@ Note: Speed may vary based on GPU load, data I/O
 ```
 Loss vs Batches (projected)
 
-10.0 |█████
-     |█████
+10.0 |
      |
- 7.0 |    ███
-     |    ███
      |
- 4.0 |       ████
-     |       ████
+ 7.0 |    
+     |    
      |
- 2.5 |           ████████████
-     |           ████████████
+ 4.0 |       
+     |       
      |
- 2.0 |           ████████████████████
-     |           ████████████████████
+ 2.5 |           
+     |           
      |
- 1.5 |           ████████████████████
-     |           ████████████████████
+ 2.0 |           
+     |           
+     |
+ 1.5 |           
+     |           
      |___________________________________________
      0      2k    50k   100k  150k  200k
 
@@ -284,10 +284,10 @@ learning_rate: 0.00005  # More conservative
 
 ## Summary
 
-✅ **Configuration is optimized for your dataset size**
-✅ **Currently training healthily** (batch 2,070/189,745)
-✅ **Loss behavior is exactly as expected** (slow, steady descent)
-✅ **No adjustments needed** - let it run!
+ **Configuration is optimized for your dataset size**
+ **Currently training healthily** (batch 2,070/189,745)
+ **Loss behavior is exactly as expected** (slow, steady descent)
+ **No adjustments needed** - let it run!
 
 **Estimated completion**: ~3 hours for current epoch
 **Recommended action**: Monitor periodically, let training complete

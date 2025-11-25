@@ -4,24 +4,24 @@ Welcome to the Ava MoE++ (Mixture of Experts Plus Plus) documentation. This adva
 
 ##  Documentation Index
 
-### 🚀 Getting Started
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - ⭐ **START HERE!** Fast decision trees & cheat sheets
+###  Getting Started
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** -  **START HERE!** Fast decision trees & cheat sheets
 - [01_ARCHITECTURE.md](01_ARCHITECTURE.md) - Complete system architecture with diagrams
 - [02_TRAINING_GUIDE.md](02_TRAINING_GUIDE.md) - Comprehensive training walkthrough
 - [FLOWCHARTS_VISUAL.md](FLOWCHARTS_VISUAL.md) - Visual flowcharts for all major workflows
 
-### 📚 Core Guides (Comprehensive with Flowcharts)
+###  Core Guides (Comprehensive with Flowcharts)
 - **[04_LOSS_FUNCTIONS.md](04_LOSS_FUNCTIONS.md)** - Loss system with computation flowcharts
 - **[05_OPTIMIZATION_GUIDE.md](05_OPTIMIZATION_GUIDE.md)** - Optimizers, LR schedules, gradient ops
 - **[06_EVALUATION_GENERATION.md](06_EVALUATION_GENERATION.md)** - Evaluation, generation & RLHF
 - **[07_CONFIGURATION_SYSTEM.md](07_CONFIGURATION_SYSTEM.md)** - Config hierarchy & best practices
 - [03_MEMORY_OPTIMIZATION.md](03_MEMORY_OPTIMIZATION.md) - Memory management strategies
 
-### 📖 Loss Functions (Detailed)
+###  Loss Functions (Detailed)
 - [LOSSES_README.md](LOSSES_README.md) - Loss functions quick overview
 - [LOSSES_USAGE_GUIDE.md](LOSSES_USAGE_GUIDE.md) - Detailed usage examples
 
-### 🎯 Quick Access by Task
+###  Quick Access by Task
 
 **I want to...**
 - **Train a model** → [QUICK_REFERENCE.md#training-setup](QUICK_REFERENCE.md#training-setup)
@@ -32,7 +32,7 @@ Welcome to the Ava MoE++ (Mixture of Experts Plus Plus) documentation. This adva
 - **Evaluate model** → [06_EVALUATION_GENERATION.md#evaluation-system](06_EVALUATION_GENERATION.md#evaluation-system)
 - **Troubleshoot issues** → [QUICK_REFERENCE.md#troubleshooting](QUICK_REFERENCE.md#troubleshooting)
 
-### 📊 Documentation by Topic
+###  Documentation by Topic
 
 | Topic | Document | Description |
 |-------|----------|-------------|

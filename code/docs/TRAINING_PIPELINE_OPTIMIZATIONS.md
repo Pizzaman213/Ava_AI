@@ -2,7 +2,7 @@
 
 **Date:** 2025-11-08
 **Goals:** Maximize training speed/throughput + Reduce memory usage for larger models
-**Status:** Phase 1 Complete ✓
+**Status:** Phase 1 Complete 
 
 ---
 
@@ -23,7 +23,7 @@ This document describes Phase 4 optimizations applied to the Ava MoE training pi
 
 ## Phase 1: Configuration & Quick Wins (COMPLETED)
 
-### 1.1 Batch Size Optimization ✓
+### 1.1 Batch Size Optimization 
 
 **Problem:** Several configs had suboptimal batch sizes causing poor GPU utilization.
 
@@ -47,7 +47,7 @@ This document describes Phase 4 optimizations applied to the Ava MoE training pi
 - `/project/code/configs/moe/medium_moe.yaml:55-56`
 - `/project/code/configs/moe/large_moe.yaml:55-56`
 
-### 1.2 Optimizer Enhancements ✓
+### 1.2 Optimizer Enhancements 
 
 **Added fused AdamW and CPU offloading support:**
 
@@ -70,7 +70,7 @@ training:
 - CPU offloading: 30-50% GPU memory savings with <5% overhead
 - Allows 2-3x larger batch sizes or models
 
-### 1.3 Expert Quantization Configuration ✓
+### 1.3 Expert Quantization Configuration 
 
 **Enabled INT8 quantization for large model, configured for others:**
 
@@ -94,7 +94,7 @@ moe_memory_optimization:
 - `/project/code/configs/moe/medium_moe.yaml:51-52`
 - `/project/code/configs/moe/large_moe.yaml:51-52`
 
-### 1.4 Expert Prefetch Pipeline Deepening ✓
+### 1.4 Expert Prefetch Pipeline Deepening 
 
 **Increased prefetch lookahead for better pipeline parallelism:**
 
@@ -119,7 +119,7 @@ moe_memory_optimization:
 
 ## Phase 2: Code-Level Optimizations (COMPLETED)
 
-### 2.1 Gradient Accumulation no_sync Pattern ✓
+### 2.1 Gradient Accumulation no_sync Pattern 
 
 **Status:** Already implemented in `/project/code/src/Ava/training/core/trainer.py:2603`
 
@@ -137,7 +137,7 @@ with sync_context:
 - Reduces all-reduce communication overhead
 - Only syncs gradients when actually stepping optimizer
 
-### 2.2 Fused Optimizer Implementation ✓
+### 2.2 Fused Optimizer Implementation 
 
 **Implementation:** `/project/code/scripts/5_training/train.py:1315-1351`
 
@@ -159,7 +159,7 @@ if use_fused and torch.cuda.is_available():
 
 **Impact:** 5-10% faster optimizer.step() execution
 
-### 2.3 Optimizer State CPU Offloading ✓
+### 2.3 Optimizer State CPU Offloading 
 
 **Implementation:** `/project/code/scripts/5_training/train.py:1339-1351`
 
@@ -178,7 +178,7 @@ if offload_to_cpu:
 
 **Impact:** Allows 2-3x larger models or batch sizes
 
-### 2.4 Pre-allocated Collation Tensors ✓
+### 2.4 Pre-allocated Collation Tensors 
 
 **Problem:** Previous implementation used torch.cat repeatedly, causing memory allocations.
 
@@ -283,14 +283,14 @@ optimizations:
 
 | Optimization | Status | Speed Impact | Memory Impact | Files Changed |
 |-------------|--------|--------------|---------------|---------------|
-| **Batch size tuning** | ✓ Done | +100-1500% | Neutral | All configs |
-| **Gradient accumulation reduction** | ✓ Done | +50-100% | Neutral | All configs |
-| **Fused optimizer** | ✓ Done | +5-10% | Neutral | train.py |
-| **Optimizer state offloading** | ✓ Done | -5% | -30-50% | train.py |
-| **Pre-allocated collation** | ✓ Done | +10-15% | Neutral | dataloader.py |
-| **Expert prefetch deepening** | ✓ Done | +15-25% | Negligible | All configs |
-| **INT8 quantization** | ✓ Config | -10-15% | -75% | Large config |
-| **no_sync pattern** | ✓ Exists | +20-30% | Neutral | trainer.py |
+| **Batch size tuning** |  Done | +100-1500% | Neutral | All configs |
+| **Gradient accumulation reduction** |  Done | +50-100% | Neutral | All configs |
+| **Fused optimizer** |  Done | +5-10% | Neutral | train.py |
+| **Optimizer state offloading** |  Done | -5% | -30-50% | train.py |
+| **Pre-allocated collation** |  Done | +10-15% | Neutral | dataloader.py |
+| **Expert prefetch deepening** |  Done | +15-25% | Negligible | All configs |
+| **INT8 quantization** |  Config | -10-15% | -75% | Large config |
+| **no_sync pattern** |  Exists | +20-30% | Neutral | trainer.py |
 | Flash Attention 2 | Deferred | +200-300% | -75% | N/A |
 | Training step compilation | Deferred | +15-20% | Neutral | N/A |
 | GPU tokenization | Deferred | +10-20% | Neutral | N/A |

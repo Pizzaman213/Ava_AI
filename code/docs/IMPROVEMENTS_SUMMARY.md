@@ -17,8 +17,8 @@ Improved text generation quality and coherence in the Ava training pipeline by a
 | `generation_max_length` | 128 | 256 | +100% | No length mismatch |
 | `generation_temperature` | 0.7 | 0.85 | +21% | More diverse output |
 | `generation_top_p` | 0.9 | 0.92 | +2% | Standard best-practice |
-| `generation_top_k` | ❌ None | 50 | NEW | Prevent garbage tokens |
-| `generation_repetition_penalty` | ❌ None | 1.15 | NEW | Reduce token repetition |
+| `generation_top_k` |  None | 50 | NEW | Prevent garbage tokens |
+| `generation_repetition_penalty` |  None | 1.15 | NEW | Reduce token repetition |
 | `generation_prompt` | "Once upon a time" | "Once upon a time, in a land far away," | Longer | Better context |
 | `generate_every_n_steps` | 1000 | 500 | 2x faster | More frequent testing |
 | `num_generations_per_step` | 3 | 5 | +67% | Better quality assessment |
@@ -77,25 +77,25 @@ next_tokens = top_p_sampling(next_token_logits, top_p=top_p,
 ### The Core Issue: Sequence Length Mismatch
 
 ```
-┌─────────────────────────────────────────┐
-│ BEFORE: Catastrophic Mismatch           │
-├─────────────────────────────────────────┤
-│ Training:   32 tokens                   │
-│ Generating: 128 tokens                  │
-│ Mismatch:   4x longer than learned!    │
-│                                         │
-│ Result: Incoherent, repetitive output   │
-└─────────────────────────────────────────┘
 
-┌─────────────────────────────────────────┐
-│ AFTER: Aligned & Optimized              │
-├─────────────────────────────────────────┤
-│ Training:   256 tokens                  │
-│ Generating: 256 tokens                  │
-│ Mismatch:   1x (perfect alignment!)    │
-│                                         │
-│ Result: Coherent, diverse output        │
-└─────────────────────────────────────────┘
+ BEFORE: Catastrophic Mismatch           
+
+ Training:   32 tokens                   
+ Generating: 128 tokens                  
+ Mismatch:   4x longer than learned!    
+                                         
+ Result: Incoherent, repetitive output   
+
+
+
+ AFTER: Aligned & Optimized              
+
+ Training:   256 tokens                  
+ Generating: 256 tokens                  
+ Mismatch:   1x (perfect alignment!)    
+                                         
+ Result: Coherent, diverse output        
+
 ```
 
 ---
@@ -113,11 +113,11 @@ been on the brink of the deadly attack on a two-quarter of 13. The in
 ```
 
 **Issues:**
-- ❌ Incoherent jumps between topics
-- ❌ Incomplete words ("The in...")
-- ❌ Grammatical issues
-- ❌ No semantic flow
-- ❌ Limited diversity in vocabulary
+-  Incoherent jumps between topics
+-  Incomplete words ("The in...")
+-  Grammatical issues
+-  No semantic flow
+-  Limited diversity in vocabulary
 
 ### After Improvements
 
@@ -131,12 +131,12 @@ mysterious stranger entered his shop...
 ```
 
 **Improvements:**
-- ✅ Coherent narrative flow
-- ✅ Natural word boundaries
-- ✅ Better grammar and syntax
-- ✅ Semantic consistency
-- ✅ Diverse vocabulary choices
-- ✅ Longer, more complete thoughts
+-  Coherent narrative flow
+-  Natural word boundaries
+-  Better grammar and syntax
+-  Semantic consistency
+-  Diverse vocabulary choices
+-  Longer, more complete thoughts
 
 ---
 
@@ -175,7 +175,7 @@ mysterious stranger entered his shop...
 **Problem**: Allowing all tokens, even garbage ones
 - Small models assign weights to irrelevant tokens
 - Sampling from tail of distribution produces nonsense
-- Example: `[ "hello" (0.8), "world" (0.15), "🔥" (0.03), "xyzabc" (0.001), ... ]`
+- Example: `[ "hello" (0.8), "world" (0.15), "" (0.03), "xyzabc" (0.001), ... ]`
 
 **Solution**: Only allow top-50 most likely tokens
 - Prevents "xyzabc" type failures
@@ -227,11 +227,11 @@ python code/scripts/5_training/train_100m_full.py \
 ### Watch for Generation Tests
 Look in the logs for lines like:
 ```
-🎯 Testing generation at step 500...
+ Testing generation at step 500...
 Prompt: Once upon a time, in a land far away,
 Generated sequence (token IDs): [12396, 331, ...]
 Decoded text: [look for coherence improvements]
-✓ Generation test complete
+ Generation test complete
 ```
 
 ### Metrics to Monitor
@@ -263,7 +263,7 @@ Decoded text: [look for coherence improvements]
 
 ## Backward Compatibility
 
-✅ **Fully backward compatible**
+ **Fully backward compatible**
 - All new parameters have sensible defaults
 - Training without config still works
 - Old checkpoints can be used with new code

@@ -6,10 +6,10 @@ This package provides a refactored training framework that breaks down the monol
 
 ```
 SimplifiedEnhancedTrainer (Orchestrator - ~400 lines)
-├── DistributedTrainingManager (Distributed setup - ~300 lines)
-├── CheckpointManager (State persistence - ~350 lines)
-├── LossComputationManager (Loss & gradients - ~400 lines)
-└── MonitoringManager (Metrics & logging - ~350 lines)
+ DistributedTrainingManager (Distributed setup - ~300 lines)
+ CheckpointManager (State persistence - ~350 lines)
+ LossComputationManager (Loss & gradients - ~400 lines)
+ MonitoringManager (Metrics & logging - ~350 lines)
 ```
 
 ### Total: ~1,800 lines vs. 4,988 lines (+140% size reduction)
@@ -449,24 +449,24 @@ API is mostly compatible, with some improvements:
 
 ```
 train/
-├── __init__.py                 # Module exports
-├── base.py                     # Base classes and interfaces
-├── trainer.py                  # SimplifiedEnhancedTrainer
-├── distributed_manager.py      # Distributed training
-├── checkpoint_manager.py       # State persistence
-├── loss_manager.py             # Loss & gradients
-├── monitoring_manager.py       # Metrics & logging
-├── example_training.py         # Working examples
-│
-├── README.md                   # Complete reference (this file)
-├── START_HERE.md               # Navigation & orientation
-├── GETTING_STARTED.md          # Quick start guide
-├── ARCHITECTURE.md             # Design & rationale
-├── MIGRATION_GUIDE.md          # Upgrading from old trainer
-├── QUICK_REFERENCE.md          # One-page reference
-├── FILES.md                    # File reference guide
-├── IMPLEMENTATION_SUMMARY.md   # What was created
-└── claude.md                   # AI development guide
+ __init__.py                 # Module exports
+ base.py                     # Base classes and interfaces
+ trainer.py                  # SimplifiedEnhancedTrainer
+ distributed_manager.py      # Distributed training
+ checkpoint_manager.py       # State persistence
+ loss_manager.py             # Loss & gradients
+ monitoring_manager.py       # Metrics & logging
+ example_training.py         # Working examples
+
+ README.md                   # Complete reference (this file)
+ START_HERE.md               # Navigation & orientation
+ GETTING_STARTED.md          # Quick start guide
+ ARCHITECTURE.md             # Design & rationale
+ MIGRATION_GUIDE.md          # Upgrading from old trainer
+ QUICK_REFERENCE.md          # One-page reference
+ FILES.md                    # File reference guide
+ IMPLEMENTATION_SUMMARY.md   # What was created
+ claude.md                   # AI development guide
 ```
 
 ## Architecture Benefits Summary

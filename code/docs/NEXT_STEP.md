@@ -17,16 +17,16 @@ python code/scripts/5_training/train_100m_full.py \
 
 **Look for this (SUCCESS)**:
 ```
-📊 Creating dataloaders with DataLoaderManager...
-📦 Using pretokenized Arrow data loader (60x faster)
-✓ Dataloaders created with DataLoaderManager (optimized)
+ Creating dataloaders with DataLoaderManager...
+ Using pretokenized Arrow data loader (60x faster)
+ Dataloaders created with DataLoaderManager (optimized)
 ```
 
 **NOT this (BUG NOT FIXED)**:
 ```
 DataLoaderManager failed (error), falling back to create_dataloaders
-⚠ No conversation JSONL files found...
-📚 Datasets available: True
+ No conversation JSONL files found...
+ Datasets available: True
 Loaded 10/1374 parquet files...
 ```
 
@@ -52,4 +52,4 @@ The data loading bottleneck has been fixed. Your training should now:
 - Have better GPU utilization (>80%)
 - Use all the optimizations in `minimal_working.yaml` config
 
-Just run the training command above and watch the logs! 🚀
+Just run the training command above and watch the logs! 

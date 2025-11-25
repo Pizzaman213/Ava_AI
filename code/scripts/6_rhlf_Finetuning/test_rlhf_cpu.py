@@ -83,7 +83,7 @@ def test_reward_model():
 
     logger.info("Rating response...")
     rewards = reward.rate_responses(prompts, responses)
-    logger.info(f"✓ Reward model works! Reward: {rewards[0]:.4f}")
+    logger.info(f" Reward model works! Reward: {rewards[0]:.4f}")
 
     return True
 
@@ -138,13 +138,13 @@ def test_ppo_trainer():
         device='cpu'
     )
 
-    logger.info("✓ PPO trainer initialized successfully!")
+    logger.info(" PPO trainer initialized successfully!")
 
     # Test generation
     logger.info("Testing response generation...")
     prompts = ["What is AI?"]
     gen_ids, attention_mask, responses = trainer.generate_responses(prompts, max_length=20)
-    logger.info(f"✓ Generated response: {responses[0][:100]}...")
+    logger.info(f" Generated response: {responses[0][:100]}...")
 
     return True
 
@@ -217,13 +217,13 @@ def test_rlhf_trainer():
         judge_model=judge_model
     )
 
-    logger.info("✓ RLHF trainer initialized successfully!")
+    logger.info(" RLHF trainer initialized successfully!")
 
     # Test experience collection
     logger.info("Testing experience collection...")
     test_prompts = ["What is AI?", "Explain ML:"]
     experience = trainer.collect_experience(test_prompts)
-    logger.info(f"✓ Collected experience for {len(test_prompts)} prompts")
+    logger.info(f" Collected experience for {len(test_prompts)} prompts")
     rewards = experience['rewards']
     if isinstance(rewards, torch.Tensor):
         logger.info(f"  - Rewards: {rewards.tolist()}")
@@ -235,7 +235,7 @@ def test_rlhf_trainer():
     # Extract only tensor fields for train_step
     batch: Dict[str, torch.Tensor] = {k: v for k, v in experience.items() if isinstance(v, torch.Tensor) and k not in ['prompts', 'responses']}
     stats = trainer.ppo_trainer.train_step(batch)
-    logger.info(f"✓ Training step completed!")
+    logger.info(f" Training step completed!")
     logger.info(f"  - Policy loss: {stats.get('policy_loss', 0):.4f}")
     logger.info(f"  - KL divergence: {stats.get('kl_div', 0):.4f}")
 
@@ -259,7 +259,7 @@ def main():
         test_rlhf_trainer()
 
         logger.info("\n" + "=" * 60)
-        logger.info("✓ All tests passed successfully!")
+        logger.info(" All tests passed successfully!")
         logger.info("=" * 60)
         logger.info("\nRLHF pipeline is working correctly on CPU!")
         logger.info("\nNext steps:")
@@ -271,7 +271,7 @@ def main():
         return 0
 
     except Exception as e:
-        logger.error(f"\n✗ Test failed with error: {e}", exc_info=True)
+        logger.error(f"\n Test failed with error: {e}", exc_info=True)
         return 1
 
 

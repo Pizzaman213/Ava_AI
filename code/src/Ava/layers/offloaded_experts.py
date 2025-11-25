@@ -286,9 +286,17 @@ class CPUOffloadedExpertGroup(nn.Module):
         self._prefetch_queue: List[int] = []
 
         # OPTIMIZATION: Predictive caching based on access patterns
-        from collections import defaultdict, Counter
+        from collections import defaultdict, Counter, deque
         self._access_patterns: Dict[int, List[int]] = defaultdict(list)  # Track which experts follow which
         self._pattern_history_size = MOE_CONSTANTS.PATTERN_HISTORY_SIZE
+
+        # ENHANCED: MoE-SpeQ inspired transition matrix for better prediction
+        # Track co-occurrence statistics with exponential decay
+        self._transition_matrix = torch.zeros(num_experts, num_experts)
+        self._transition_counts = torch.zeros(num_experts)  # Total transitions from each expert
+        self._recent_experts = deque(maxlen=10)  # Recent expert usage for context
+        self._prediction_confidence_threshold = 0.1  # Min probability to prefetch
+        self._use_transition_matrix = True  # Enable enhanced prediction
 
         # Create individual expert modules instead of parallel group
         # This allows us to move them individually
@@ -374,6 +382,8 @@ class CPUOffloadedExpertGroup(nn.Module):
         """
         Update access pattern tracking for predictive caching.
 
+        ENHANCED: Uses transition matrix for better statistical prediction.
+
         Args:
             current_experts: Currently accessed expert IDs
             previous_experts: Previously accessed expert IDs
@@ -381,7 +391,7 @@ class CPUOffloadedExpertGroup(nn.Module):
         if previous_experts is None:
             return
 
-        # Track which experts typically follow which
+        # Original list-based tracking (kept for compatibility)
         for prev_expert in previous_experts:
             for curr_expert in current_experts:
                 self._access_patterns[prev_expert].append(curr_expert)
@@ -389,16 +399,98 @@ class CPUOffloadedExpertGroup(nn.Module):
                 if len(self._access_patterns[prev_expert]) > self._pattern_history_size:
                     self._access_patterns[prev_expert].pop(0)
 
+        # ENHANCED: Update transition matrix (MoE-SpeQ inspired)
+        if self._use_transition_matrix:
+            with torch.no_grad():
+                for prev_id in previous_experts:
+                    for curr_id in current_experts:
+                        # Increment transition count
+                        self._transition_matrix[prev_id, curr_id] += 1.0
+                        self._transition_counts[prev_id] += 1.0
+
+                # Apply exponential decay to prevent matrix from growing unbounded
+                # Decay = 0.999 keeps recent patterns more relevant
+                self._transition_matrix *= 0.999
+                self._transition_counts *= 0.999
+
     def _predict_next_experts(self, current_experts: List[int], k: int = 3) -> List[int]:
         """
         Predict next likely experts based on access patterns.
+
+        ENHANCED: Uses transition matrix for statistically better predictions
+        based on MoE-SpeQ paper (2.34x speedup).
 
         Args:
             current_experts: Currently accessed expert IDs
             k: Number of experts to predict
 
         Returns:
-            List of predicted expert IDs
+            List of predicted expert IDs (sorted by probability)
+        """
+        if self._use_transition_matrix and self._transition_counts.sum() > 100:
+            # Use transition matrix prediction (more accurate after warmup)
+            return self._predict_with_transition_matrix(current_experts, k)
+        else:
+            # Fall back to simple frequency-based prediction (during warmup)
+            return self._predict_with_frequency(current_experts, k)
+
+    def _predict_with_transition_matrix(self, current_experts: List[int], k: int) -> List[int]:
+        """
+        Predict next experts using transition probability matrix.
+
+        Based on MoE-SpeQ: Uses statistical co-occurrence to predict
+        which experts are likely to be activated next.
+
+        Args:
+            current_experts: Currently active expert IDs
+            k: Number of predictions
+
+        Returns:
+            Predicted expert IDs sorted by probability
+        """
+        with torch.no_grad():
+            # Compute probability distribution for next experts
+            # P(next_expert | current_experts) = avg of P(next | each current)
+            probabilities = torch.zeros(self.num_experts)
+
+            for expert_id in current_experts:
+                if self._transition_counts[expert_id] > 0:
+                    # Normalize counts to probabilities
+                    probs = self._transition_matrix[expert_id] / self._transition_counts[expert_id]
+                    probabilities += probs
+
+            # Average over current experts
+            if len(current_experts) > 0:
+                probabilities /= len(current_experts)
+
+            # Filter out current experts and low-confidence predictions
+            for expert_id in current_experts:
+                probabilities[expert_id] = 0.0
+
+            # Apply confidence threshold
+            probabilities[probabilities < self._prediction_confidence_threshold] = 0.0
+
+            # Get top-k predictions
+            if probabilities.sum() > 0:
+                top_k_probs, top_k_indices = torch.topk(probabilities, min(k, self.num_experts))
+                # Only return predictions with non-zero probability
+                predictions = [idx.item() for idx, prob in zip(top_k_indices, top_k_probs) if prob > 0]
+                return predictions[:k]
+
+        return []
+
+    def _predict_with_frequency(self, current_experts: List[int], k: int) -> List[int]:
+        """
+        Fallback: Predict using simple frequency counting (original method).
+
+        Used during warmup period before transition matrix has enough data.
+
+        Args:
+            current_experts: Currently active expert IDs
+            k: Number of predictions
+
+        Returns:
+            Predicted expert IDs
         """
         from collections import Counter
 
@@ -420,6 +512,25 @@ class CPUOffloadedExpertGroup(nn.Module):
                     break
 
         return unique_predictions
+
+    def get_prediction_stats(self) -> Dict[str, float]:
+        """
+        Get statistics about prediction accuracy.
+
+        Returns:
+            Dictionary with prediction performance metrics
+        """
+        total_predictions = self._prefetch_hit_count + self._prefetch_miss_count
+        hit_rate = self._prefetch_hit_count / total_predictions if total_predictions > 0 else 0.0
+
+        return {
+            'hit_rate': hit_rate,
+            'total_predictions': total_predictions,
+            'hits': self._prefetch_hit_count,
+            'misses': self._prefetch_miss_count,
+            'transition_matrix_size': self._transition_counts.sum().item(),
+            'using_transition_matrix': self._use_transition_matrix and self._transition_counts.sum() > 100
+        }
 
     def forward(
         self,

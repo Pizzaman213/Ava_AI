@@ -107,7 +107,7 @@ class AsyncLogger:
                 timeout_seconds=60.0,  # Wait 60s before retry
                 half_open_timeout=10.0,  # Max 10s in half-open state
             )
-            print("✓ WandB circuit breaker enabled for graceful degradation")
+            print(" WandB circuit breaker enabled for graceful degradation")
         else:
             self.wandb_circuit_breaker = None
 
@@ -144,7 +144,7 @@ class AsyncLogger:
         self._flush_wandb_cache()
 
         # Print final statistics
-        print("\n🏁 Async logging stopped")
+        print("\n Async logging stopped")
         self.print_statistics()
 
     def log_metrics(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
@@ -375,7 +375,7 @@ class AsyncLogger:
 
             if is_network_error:
                 if not self.wandb_offline:
-                    print(f"⚠ WandB network error detected: {e}")
+                    print(f" WandB network error detected: {e}")
                     print("  → Switching to offline mode (metrics will sync when network is available)")
                     self.wandb_offline = True
                     try:
@@ -383,11 +383,11 @@ class AsyncLogger:
                         import wandb
                         # Verify offline mode engaged
                         if wandb.run:
-                            print(f"  ✓ WandB offline mode active (run will sync later)")
+                            print(f"   WandB offline mode active (run will sync later)")
                         wandb.log(metrics, step=step)  # Retry in offline mode
                         return
                     except Exception as retry_error:
-                        print(f"  ✗ Offline mode retry failed: {retry_error}")
+                        print(f"   Offline mode retry failed: {retry_error}")
                         print("  → Metrics will be cached for manual recovery")
 
                 # Track network errors for diagnostics
@@ -398,7 +398,7 @@ class AsyncLogger:
             else:
                 # Non-network error
                 self.logging_stats['wandb_errors'] = self.logging_stats.get('wandb_errors', 0) + 1
-                print(f"⚠ WandB logging error (step {step}): {e}")
+                print(f" WandB logging error (step {step}): {e}")
                 print(f"  Error type: {type(e).__name__}")
                 # Cache metrics for recovery
                 self._cache_metrics(metrics, step)
@@ -588,26 +588,26 @@ class AsyncLogger:
     def print_statistics(self) -> None:
         """Print comprehensive logging statistics."""
         stats = self.get_statistics()
-        print("\n📊 Async Logger Statistics:")
-        print(f"  ✓ Items processed: {stats['total_items_processed']}")
-        print(f"  ✓ Metrics queued: {stats['metrics_queued']}")
+        print("\n Async Logger Statistics:")
+        print(f"   Items processed: {stats['total_items_processed']}")
+        print(f"   Metrics queued: {stats['metrics_queued']}")
 
         if stats['metrics_dropped'] > 0:
-            print(f"  ⚠ Metrics dropped: {stats['metrics_dropped']} ({stats['drop_rate_percent']:.2f}%)")
+            print(f"   Metrics dropped: {stats['metrics_dropped']} ({stats['drop_rate_percent']:.2f}%)")
 
         if stats['network_errors'] > 0:
-            print(f"  ⚠ Network errors: {stats['network_errors']}")
+            print(f"   Network errors: {stats['network_errors']}")
             if stats['wandb_offline_mode']:
                 print(f"    → WandB in offline mode (will sync when network available)")
 
         if stats['wandb_errors'] > 0:
-            print(f"  ⚠ WandB errors: {stats['wandb_errors']}")
+            print(f"   WandB errors: {stats['wandb_errors']}")
 
         if stats['cache_size'] > 0:
-            print(f"  📦 Cached metrics: {stats['cache_size']} (waiting for flush)")
+            print(f"   Cached metrics: {stats['cache_size']} (waiting for flush)")
 
-        print(f"  🔌 WandB status: {'Offline' if stats['wandb_offline_mode'] else 'Online'}")
-        print(f"  📨 Queue size: {stats['queue_size']}")
+        print(f"   WandB status: {'Offline' if stats['wandb_offline_mode'] else 'Online'}")
+        print(f"   Queue size: {stats['queue_size']}")
 
 
 # Context manager for automatic cleanup

@@ -356,7 +356,7 @@ class GPULoadBalancer:
                 expert_id += 1
 
         self.logger.info(
-            f"✓ Initial expert placement: {experts_per_gpu}-{experts_per_gpu+1} experts per GPU"
+            f" Initial expert placement: {experts_per_gpu}-{experts_per_gpu+1} experts per GPU"
         )
 
     def update_gpu_stats(
@@ -507,14 +507,14 @@ class GPULoadBalancer:
             token_balance = self.get_gpu_token_balance_score()
             if token_balance < 0.7:  # Less than 70% balanced
                 self.logger.info(
-                    f"⚠️  Token imbalance detected: balance score = {token_balance:.2f}"
+                    f"  Token imbalance detected: balance score = {token_balance:.2f}"
                 )
                 return True
 
         # Trigger if imbalance exceeds threshold
         if max_load - min_load > threshold:
             self.logger.info(
-                f"⚠️  Load imbalance detected: {max_load:.2f} vs {min_load:.2f} "
+                f"  Load imbalance detected: {max_load:.2f} vs {min_load:.2f} "
                 f"(threshold: {threshold:.2f})"
             )
             return True
@@ -522,7 +522,7 @@ class GPULoadBalancer:
         # NEW: Check for overloaded/underutilized GPUs
         for gpu_id, stats in self.gpu_stats.items():
             if stats.is_overloaded:
-                self.logger.info(f"⚠️  GPU {gpu_id} is overloaded")
+                self.logger.info(f"  GPU {gpu_id} is overloaded")
                 return True
 
         return False
@@ -564,7 +564,7 @@ class GPULoadBalancer:
 
         if migrations:
             self.logger.info(
-                f"✓ Rebalanced {len(migrations)} experts in {elapsed_ms:.1f}ms"
+                f" Rebalanced {len(migrations)} experts in {elapsed_ms:.1f}ms"
             )
 
         return result

@@ -25,12 +25,12 @@ Ava's optimization system provides a comprehensive suite of tools for efficient 
 
 ### Key Features
 
-- 🎯 **Advanced Optimizers**: Lion, Sophia, AdaFactor beyond standard Adam/SGD
-- 📈 **Smart LR Management**: Adaptive scheduling, warmup strategies, plateau detection
-- 🔍 **Gradient Monitoring**: Health checks, conflict detection, surgical interventions
-- ⚡ **Precision Training**: FP8 support, quantization, mixed precision
-- 🧪 **LR Finder**: Automated learning rate discovery
-- 🔧 **Highly Modular**: Mix and match components as needed
+-  **Advanced Optimizers**: Lion, Sophia, AdaFactor beyond standard Adam/SGD
+-  **Smart LR Management**: Adaptive scheduling, warmup strategies, plateau detection
+-  **Gradient Monitoring**: Health checks, conflict detection, surgical interventions
+-  **Precision Training**: FP8 support, quantization, mixed precision
+-  **LR Finder**: Automated learning rate discovery
+-  **Highly Modular**: Mix and match components as needed
 
 ---
 
@@ -115,13 +115,13 @@ flowchart TD
     Q1 -->|Medium<br/>500M-7B params| Q3{Memory<br/>Constrained?}
     Q1 -->|Large<br/>> 7B params| AdaFactor
 
-    Q2 -->|Fast| Lion[🦁 Lion<br/>Fast convergence<br/>Low memory]
+    Q2 -->|Fast| Lion[ Lion<br/>Fast convergence<br/>Low memory]
     Q2 -->|Stable| AdamW[AdamW<br/>Reliable default]
 
-    Q3 -->|Yes| AdaFactor[📊 AdaFactor<br/>Memory efficient]
+    Q3 -->|Yes| AdaFactor[ AdaFactor<br/>Memory efficient]
     Q3 -->|No| Q4{Need 2nd-order?}
 
-    Q4 -->|Yes| Sophia[🧠 Sophia<br/>2nd-order info<br/>Better curvature]
+    Q4 -->|Yes| Sophia[ Sophia<br/>2nd-order info<br/>Better curvature]
     Q4 -->|No| AdamW2[AdamW<br/>Safe choice]
 
     Lion --> Features1[+ 50% less memory<br/>+ 2x faster<br/>+ Aggressive updates]
@@ -147,17 +147,17 @@ graph TB
         end
 
         subgraph "Convergence Speed"
-            C1[AdamW: ⭐⭐⭐⭐]
-            C2[Lion: ⭐⭐⭐⭐⭐]
-            C3[Sophia: ⭐⭐⭐]
-            C4[AdaFactor: ⭐⭐⭐]
+            C1[AdamW: ]
+            C2[Lion: ]
+            C3[Sophia: ]
+            C4[AdaFactor: ]
         end
 
         subgraph "Training Stability"
-            S1[AdamW: ⭐⭐⭐⭐⭐]
-            S2[Lion: ⭐⭐⭐⭐]
-            S3[Sophia: ⭐⭐⭐⭐]
-            S4[AdaFactor: ⭐⭐⭐]
+            S1[AdamW: ]
+            S2[Lion: ]
+            S3[Sophia: ]
+            S4[AdaFactor: ]
         end
 
         subgraph "Tuning Difficulty"
@@ -176,7 +176,7 @@ graph TB
     style T2 fill:#c8e6c9
 ```
 
-### 1. Lion Optimizer 🦁 **RECOMMENDED for Speed**
+### 1. Lion Optimizer  **RECOMMENDED for Speed**
 
 **When to use**: Fast convergence, memory-constrained, aggressive optimization
 
@@ -192,11 +192,11 @@ optimizer = LionOptimizer(
 ```
 
 **Characteristics**:
-- ✅ **50% less memory** than AdamW (1x params vs 2x)
-- ✅ **Faster convergence** (typically 2x fewer steps)
-- ✅ **Simple to use** (similar API to Adam)
-- ⚠️ **Different hyperparameters** (lower LR, higher WD)
-- ✅ **Better generalization** in many cases
+-  **50% less memory** than AdamW (1x params vs 2x)
+-  **Faster convergence** (typically 2x fewer steps)
+-  **Simple to use** (similar API to Adam)
+-  **Different hyperparameters** (lower LR, higher WD)
+-  **Better generalization** in many cases
 
 **Typical Settings**:
 ```python
@@ -211,7 +211,7 @@ optimizer = LionOptimizer(
 )
 ```
 
-### 2. Sophia Optimizer 🧠 **RECOMMENDED for Quality**
+### 2. Sophia Optimizer  **RECOMMENDED for Quality**
 
 **When to use**: Need best generalization, can afford compute cost, large models
 
@@ -229,18 +229,18 @@ optimizer = SophiaOptimizer(
 ```
 
 **Characteristics**:
-- ✅ **Better generalization** via 2nd-order information
-- ✅ **Curvature-aware** updates
-- ✅ **Adapts to loss landscape** automatically
-- ⚠️ **Slower per step** (~20-30% overhead)
-- ⚠️ **Memory: 2x params** (like AdamW)
+-  **Better generalization** via 2nd-order information
+-  **Curvature-aware** updates
+-  **Adapts to loss landscape** automatically
+-  **Slower per step** (~20-30% overhead)
+-  **Memory: 2x params** (like AdamW)
 
 **Best For**:
 - Large language models (> 1B parameters)
 - Cases where training quality > speed
 - When you can afford the computational cost
 
-### 3. AdaFactor 📊 **RECOMMENDED for Memory**
+### 3. AdaFactor  **RECOMMENDED for Memory**
 
 **When to use**: Extremely large models, memory-constrained, distributed training
 
@@ -262,11 +262,11 @@ optimizer = AdaFactorOptimizer(
 ```
 
 **Characteristics**:
-- ✅ **Minimal memory** (~0.5x params, vs 2x for AdamW)
-- ✅ **Scales to huge models** (> 100B parameters)
-- ✅ **Built-in LR scheduling**
-- ⚠️ **Sensitive to hyperparameters**
-- ⚠️ **Requires careful tuning**
+-  **Minimal memory** (~0.5x params, vs 2x for AdamW)
+-  **Scales to huge models** (> 100B parameters)
+-  **Built-in LR scheduling**
+-  **Sensitive to hyperparameters**
+-  **Requires careful tuning**
 
 **Memory Comparison**:
 ```
@@ -292,11 +292,11 @@ optimizer = torch.optim.AdamW(
 ```
 
 **Characteristics**:
-- ✅ **Well-tested** and understood
-- ✅ **Stable** across many tasks
-- ✅ **Good default** choice
-- ❌ **Higher memory** (2x params)
-- ❌ **Slower convergence** than Lion
+-  **Well-tested** and understood
+-  **Stable** across many tasks
+-  **Good default** choice
+-  **Higher memory** (2x params)
+-  **Slower convergence** than Lion
 
 ### Optimizer Factory
 
@@ -415,7 +415,7 @@ optimizer = LionOptimizer(model.parameters(), lr=suggested_lr)
 ```mermaid
 graph LR
     subgraph "LR Finder Plot Interpretation"
-        Low[Low LR<br/>Slow decrease] --> Sweet[Sweet Spot<br/>Steepest decrease<br/>⭐ USE THIS]
+        Low[Low LR<br/>Slow decrease] --> Sweet[Sweet Spot<br/>Steepest decrease<br/> USE THIS]
         Sweet --> High[High LR<br/>Loss explosion]
 
         Sweet --> Rec[Recommended:<br/>0.1x to 0.5x of<br/>sweet spot]
@@ -510,7 +510,7 @@ graph TB
         Basic --> B2[ExponentialLR<br/>Exponential decay]
         Basic --> B3[CosineAnnealing<br/>Cosine curve]
 
-        Advanced --> A1[OneCycleLR<br/>⭐ Recommended<br/>Peak then decay]
+        Advanced --> A1[OneCycleLR<br/> Recommended<br/>Peak then decay]
         Advanced --> A2[PolynomialDecay<br/>Smooth polynomial]
         Advanced --> A3[AdaptiveLR<br/>Auto-adjust]
 
@@ -522,7 +522,7 @@ graph TB
     style A3 fill:#fff3e0
 ```
 
-#### OneCycleLR ⭐ **RECOMMENDED**
+#### OneCycleLR  **RECOMMENDED**
 
 **When to use**: Fast convergence, known training length, maximum performance
 
@@ -565,10 +565,10 @@ graph LR
 ```
 
 **Why OneCycle?**
-- ✅ Faster convergence (often 2-3x)
-- ✅ Better generalization
-- ✅ Reduces need for hyperparameter tuning
-- ✅ Works well with momentum cycling
+-  Faster convergence (often 2-3x)
+-  Better generalization
+-  Reduces need for hyperparameter tuning
+-  Works well with momentum cycling
 
 #### Adaptive LR Manager
 
@@ -660,27 +660,27 @@ for epoch in range(num_epochs):
 graph TB
     subgraph "LR Schedule Trade-offs"
         subgraph "Fast Convergence"
-            F1[OneCycleLR ⭐⭐⭐⭐⭐]
-            F2[Cosine Warmup ⭐⭐⭐⭐]
-            F3[Adaptive ⭐⭐⭐⭐]
+            F1[OneCycleLR ]
+            F2[Cosine Warmup ]
+            F3[Adaptive ]
         end
 
         subgraph "Stability"
-            S1[Cosine Annealing ⭐⭐⭐⭐⭐]
-            S2[Polynomial ⭐⭐⭐⭐⭐]
-            S3[OneCycleLR ⭐⭐⭐⭐]
+            S1[Cosine Annealing ]
+            S2[Polynomial ]
+            S3[OneCycleLR ]
         end
 
         subgraph "Ease of Use"
-            E1[StepLR ⭐⭐⭐⭐⭐]
-            E2[OneCycleLR ⭐⭐⭐⭐]
-            E3[AdaptiveLR ⭐⭐⭐⭐⭐]
+            E1[StepLR ]
+            E2[OneCycleLR ]
+            E3[AdaptiveLR ]
         end
 
         subgraph "No Tuning Required"
-            N1[AdaptiveLR ⭐⭐⭐⭐⭐]
-            N2[CosineAnnealing ⭐⭐⭐⭐]
-            N3[OneCycleLR ⭐⭐⭐]
+            N1[AdaptiveLR ]
+            N2[CosineAnnealing ]
+            N3[OneCycleLR ]
         end
     end
 
@@ -748,15 +748,15 @@ flowchart LR
         C3 --> D3{Norm > threshold?}
         C4 --> D4{Distribution<br/>suspicious?}
 
-        D1 -->|Yes| A1[⚠️ ALERT<br/>Skip update]
-        D2 -->|Yes| A2[⚠️ ALERT<br/>Skip update]
-        D3 -->|Yes| A3[⚠️ CLIP<br/>Apply clipping]
-        D4 -->|Yes| A4[⚠️ WARN<br/>Log warning]
+        D1 -->|Yes| A1[ ALERT<br/>Skip update]
+        D2 -->|Yes| A2[ ALERT<br/>Skip update]
+        D3 -->|Yes| A3[ CLIP<br/>Apply clipping]
+        D4 -->|Yes| A4[ WARN<br/>Log warning]
 
         D1 -->|No| OK
         D2 -->|No| OK
         D3 -->|No| OK
-        D4 -->|No| OK[✅ Healthy<br/>Continue]
+        D4 -->|No| OK[ Healthy<br/>Continue]
     end
 
     style Grad fill:#e3f2fd
@@ -789,12 +789,12 @@ for batch in dataloader:
     grad_stats = grad_monitor.check_gradients(model)
 
     if grad_stats['has_nan'] or grad_stats['has_inf']:
-        print(f"⚠️ Unhealthy gradients detected! Skipping update.")
+        print(f" Unhealthy gradients detected! Skipping update.")
         print(f"  NaN: {grad_stats['has_nan']}, Inf: {grad_stats['has_inf']}")
         continue  # Skip this update
 
     if grad_stats['norm'] > grad_monitor.max_norm:
-        print(f"⚠️ Large gradient norm: {grad_stats['norm']:.2f}")
+        print(f" Large gradient norm: {grad_stats['norm']:.2f}")
         # Clipping is handled automatically by the monitor
 
     optimizer.step()
@@ -905,8 +905,8 @@ graph LR
 
         Dot --> Check{dot < 0?}
 
-        Check -->|Yes| Conflict[⚠️ CONFLICT<br/>Gradients oppose<br/>each other]
-        Check -->|No| Align[✅ ALIGNED<br/>Gradients agree]
+        Check -->|Yes| Conflict[ CONFLICT<br/>Gradients oppose<br/>each other]
+        Check -->|No| Align[ ALIGNED<br/>Gradients agree]
 
         Conflict --> Surgery[Apply<br/>Surgery]
         Align --> Average[Simple<br/>Average]
@@ -1064,7 +1064,7 @@ graph LR
 
     E4M3 --> U1[Use for: Forward pass<br/>Higher dynamic range]
     E5M2 --> U2[Use for: Gradients<br/>Higher precision]
-    Hybrid --> U3[⭐ Recommended<br/>Best of both]
+    Hybrid --> U3[ Recommended<br/>Best of both]
 
     style Hybrid fill:#c8e6c9
 ```
@@ -1097,7 +1097,7 @@ flowchart TD
         Q3 -->|Speed Priority| PTQ[Post-Training<br/>Quantization<br/>INT8/INT4]
         Q3 -->|Quality Priority| Dynamic[Dynamic<br/>Quantization<br/>INT8]
 
-        QAT --> Best[Best Quality<br/>⭐ Recommended<br/>for production]
+        QAT --> Best[Best Quality<br/> Recommended<br/>for production]
         PTQ --> Fast[Fastest<br/>Good quality]
         Dynamic --> Balance[Balanced<br/>Runtime overhead]
     end
@@ -1131,10 +1131,10 @@ outputs = quantized_model(**batch)
 
 | Method | Quality | Speed | Memory | Training Needed? |
 |--------|---------|-------|--------|------------------|
-| **Dynamic INT8** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 0.25x | No |
-| **Static INT8** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 0.25x | Calibration only |
-| **QAT INT8** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 0.25x | Yes (full retraining) |
-| **INT4** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 0.125x | Yes (QAT recommended) |
+| **Dynamic INT8** |  |  | 0.25x | No |
+| **Static INT8** |  |  | 0.25x | Calibration only |
+| **QAT INT8** |  |  | 0.25x | Yes (full retraining) |
+| **INT4** |  |  | 0.125x | Yes (QAT recommended) |
 
 ---
 
@@ -1306,7 +1306,7 @@ for epoch in range(num_epochs):
         grad_stats = grad_monitor.check_gradients(model)
 
         if grad_stats['has_nan'] or grad_stats['has_inf']:
-            print(f"⚠️ Unhealthy gradients at step {step}. Skipping.")
+            print(f" Unhealthy gradients at step {step}. Skipping.")
             continue
 
         # Gradient surgery (if multi-task)
@@ -1457,30 +1457,30 @@ flowchart TD
     subgraph "Performance Optimization Checklist"
         Start([Optimize<br/>Training]) --> Q1{Hardware?}
 
-        Q1 -->|H100/H200| FP8[✅ Enable FP8<br/>3-5x speedup]
-        Q1 -->|A100/V100| Mixed[✅ Use BF16/FP16<br/>2-3x speedup]
+        Q1 -->|H100/H200| FP8[ Enable FP8<br/>3-5x speedup]
+        Q1 -->|A100/V100| Mixed[ Use BF16/FP16<br/>2-3x speedup]
 
         FP8 --> Q2
         Mixed --> Q2
 
-        Q2{Optimizer?} -->|AdamW| Switch[✅ Try Lion<br/>2x faster convergence]
-        Q2 -->|Other| Keep[✅ Keep current]
+        Q2{Optimizer?} -->|AdamW| Switch[ Try Lion<br/>2x faster convergence]
+        Q2 -->|Other| Keep[ Keep current]
 
         Switch --> Q3
         Keep --> Q3
 
-        Q3{LR Schedule?} -->|Fixed/Step| Cycle[✅ Use OneCycleLR<br/>2-3x fewer steps]
-        Q3 -->|Adaptive| Good[✅ Already good]
+        Q3{LR Schedule?} -->|Fixed/Step| Cycle[ Use OneCycleLR<br/>2-3x fewer steps]
+        Q3 -->|Adaptive| Good[ Already good]
 
         Cycle --> Q4
         Good --> Q4
 
-        Q4{Gradient Ops?} -->|None| Add[✅ Add health monitoring<br/>Prevent crashes]
+        Q4{Gradient Ops?} -->|None| Add[ Add health monitoring<br/>Prevent crashes]
         Q4 -->|Present| Q5
 
         Add --> Q5
-        Q5{Batch Size?} -->|Too small| Increase[✅ Increase batch size<br/>Use grad accumulation]
-        Q5 -->|Good| Done[✅ Optimized!]
+        Q5{Batch Size?} -->|Too small| Increase[ Increase batch size<br/>Use grad accumulation]
+        Q5 -->|Good| Done[ Optimized!]
 
         Increase --> Done
     end
@@ -1540,25 +1540,25 @@ flowchart TD
         Type -->|Unstable training| Unstable[Training Instability]
         Type -->|Memory OOM| Memory[Out of Memory]
 
-        NaN --> N1[✅ Lower learning rate]
-        NaN --> N2[✅ Add gradient clipping]
-        NaN --> N3[✅ Enable grad monitoring]
-        NaN --> N4[✅ Check data for NaN]
+        NaN --> N1[ Lower learning rate]
+        NaN --> N2[ Add gradient clipping]
+        NaN --> N3[ Enable grad monitoring]
+        NaN --> N4[ Check data for NaN]
 
-        Slow --> S1[✅ Try Lion optimizer]
-        Slow --> S2[✅ Use OneCycleLR]
-        Slow --> S3[✅ Increase batch size]
-        Slow --> S4[✅ Run LR finder]
+        Slow --> S1[ Try Lion optimizer]
+        Slow --> S2[ Use OneCycleLR]
+        Slow --> S3[ Increase batch size]
+        Slow --> S4[ Run LR finder]
 
-        Unstable --> U1[✅ Add warmup]
-        Unstable --> U2[✅ Reduce learning rate]
-        Unstable --> U3[✅ Enable gradient clipping]
-        Unstable --> U4[✅ Use AdaptiveLR]
+        Unstable --> U1[ Add warmup]
+        Unstable --> U2[ Reduce learning rate]
+        Unstable --> U3[ Enable gradient clipping]
+        Unstable --> U4[ Use AdaptiveLR]
 
-        Memory --> M1[✅ Use AdaFactor]
-        Memory --> M2[✅ Enable gradient checkpointing]
-        Memory --> M3[✅ Reduce batch size]
-        Memory --> M4[✅ Use FP8/quantization]
+        Memory --> M1[ Use AdaFactor]
+        Memory --> M2[ Enable gradient checkpointing]
+        Memory --> M3[ Reduce batch size]
+        Memory --> M4[ Use FP8/quantization]
     end
 
     style Issue fill:#e3f2fd
@@ -1721,14 +1721,14 @@ model = FP8ModelWrapper(model, fp8_handler)
 
 ### Key Takeaways
 
-1. ⭐ **Use Lion optimizer** for most cases - 2x faster convergence, 50% less memory
-2. 📈 **OneCycleLR is king** for LR scheduling - often 2-3x fewer training steps
-3. 🔍 **Run LR finder** first - saves hours of hyperparameter tuning
-4. ⚡ **Enable FP8 on H100** - 3-5x speedup with minimal quality loss
-5. 🎯 **Monitor gradients** - catch NaN/Inf before they ruin training
-6. 🧩 **Use gradient surgery** for multi-task learning
-7. 💾 **AdaFactor for huge models** - scales to 100B+ parameters
-8. 🔧 **Combine techniques** - cumulative speedups of 10-30x are achievable!
+1.  **Use Lion optimizer** for most cases - 2x faster convergence, 50% less memory
+2.  **OneCycleLR is king** for LR scheduling - often 2-3x fewer training steps
+3.  **Run LR finder** first - saves hours of hyperparameter tuning
+4.  **Enable FP8 on H100** - 3-5x speedup with minimal quality loss
+5.  **Monitor gradients** - catch NaN/Inf before they ruin training
+6.  **Use gradient surgery** for multi-task learning
+7.  **AdaFactor for huge models** - scales to 100B+ parameters
+8.  **Combine techniques** - cumulative speedups of 10-30x are achievable!
 
 ---
 

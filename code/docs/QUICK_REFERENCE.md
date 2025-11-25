@@ -24,12 +24,12 @@
 flowchart TD
     Start([Start Training]) --> Q1{Have GPU?}
 
-    Q1 -->|No| CPU[❌ Not Recommended<br/>Use tiny config<br/>for testing only]
+    Q1 -->|No| CPU[ Not Recommended<br/>Use tiny config<br/>for testing only]
     Q1 -->|Yes| Q2{Which GPU?}
 
-    Q2 -->|Consumer<br/>4-16GB| Small["✅ Small Setup<br/>python train.py<br/>--config gpu/small.yaml"]
-    Q2 -->|A100 40/80GB| A100["⭐ A100 Setup<br/>python train.py<br/>--config gpu/base.yaml<br/>--hardware_config hardware/a100_80gb.yaml"]
-    Q2 -->|H100 80GB| H100["🚀 H100 Setup<br/>python train.py<br/>--config gpu/large.yaml<br/>--hardware_config hardware/h100_80gb.yaml"]
+    Q2 -->|Consumer<br/>4-16GB| Small[" Small Setup<br/>python train.py<br/>--config gpu/small.yaml"]
+    Q2 -->|A100 40/80GB| A100[" A100 Setup<br/>python train.py<br/>--config gpu/base.yaml<br/>--hardware_config hardware/a100_80gb.yaml"]
+    Q2 -->|H100 80GB| H100[" H100 Setup<br/>python train.py<br/>--config gpu/large.yaml<br/>--hardware_config hardware/h100_80gb.yaml"]
 
     Q2 --> Q3{Multiple<br/>GPUs?}
 
@@ -55,9 +55,9 @@ flowchart TD
 flowchart LR
     Start([Choose<br/>Optimizer]) --> Goal{Primary<br/>Goal?}
 
-    Goal -->|Speed| Lion["🦁 Lion<br/>lr=1e-4<br/>wd=0.1"]
-    Goal -->|Quality| Sophia["🧠 Sophia<br/>lr=2e-4<br/>wd=0.1"]
-    Goal -->|Memory| AdaFactor["📊 AdaFactor<br/>lr=None<br/>adaptive"]
+    Goal -->|Speed| Lion[" Lion<br/>lr=1e-4<br/>wd=0.1"]
+    Goal -->|Quality| Sophia[" Sophia<br/>lr=2e-4<br/>wd=0.1"]
+    Goal -->|Memory| AdaFactor[" AdaFactor<br/>lr=None<br/>adaptive"]
     Goal -->|Baseline| AdamW["AdamW<br/>lr=1e-3<br/>wd=0.01"]
 
     style Lion fill:#c8e6c9
@@ -68,7 +68,7 @@ flowchart LR
 
 | Optimizer | Learning Rate | Weight Decay | Memory | Speed | Use Case |
 |-----------|--------------|--------------|---------|-------|----------|
-| **Lion** ⭐ | 1e-4 | 0.1 | 1x params | Fast | General, speed priority |
+| **Lion**  | 1e-4 | 0.1 | 1x params | Fast | General, speed priority |
 | **Sophia** | 2e-4 | 0.1 | 2x params | Medium | Best quality |
 | **AdaFactor** | None (adaptive) | 0.0 | 0.5x params | Medium | Large models, memory-constrained |
 | **AdamW** | 1e-3 | 0.01 | 2x params | Medium | Baseline, well-tested |
@@ -200,7 +200,7 @@ flowchart LR
 
     Goal -->|Creative| Creative["Top-p Nucleus<br/>p=0.95<br/>temp=1.0<br/>rep_penalty=1.2"]
 
-    Goal -->|Balanced| Balanced["⭐ Top-p<br/>p=0.92<br/>temp=0.8<br/>rep_penalty=1.2"]
+    Goal -->|Balanced| Balanced[" Top-p<br/>p=0.92<br/>temp=0.8<br/>rep_penalty=1.2"]
 
     Goal -->|Factual| Factual["Beam Search<br/>num_beams=4<br/>or low temp<br/>temp=0.3"]
 
@@ -216,7 +216,7 @@ flowchart LR
 | Use Case | Temperature | Top-p | Top-k | Rep. Penalty | Code |
 |----------|------------|-------|-------|--------------|------|
 | **Creative Writing** | 0.9-1.2 | 0.95 | 50 | 1.2 | Below ↓ |
-| **Dialogue** ⭐ | 0.7-0.9 | 0.92 | 40 | 1.15 | Below ↓ |
+| **Dialogue**  | 0.7-0.9 | 0.92 | 40 | 1.15 | Below ↓ |
 | **Technical** | 0.3-0.5 | 0.88 | 25 | 1.1 | Below ↓ |
 | **Code** | 0.2 | 0.85 | 20 | 1.0 | Below ↓ |
 | **Factual QA** | 0.3 | 0.88 | 30 | 1.05 | Below ↓ |
@@ -570,12 +570,12 @@ python code/scripts/7_generation/generate.py \
 
 ### Key Recommendations
 
-- ⭐ **Optimizer**: Use Lion for speed, Sophia for quality
-- ⭐ **LR Scheduler**: OneCycleLR for fastest convergence
-- ⭐ **Loss**: DeepSeek-style with n-gram penalties
-- ⭐ **Generation**: Top-p nucleus (p=0.92, T=0.8)
-- ⭐ **Precision**: FP8 on H100, BF16 on A100
-- ⭐ **Distributed**: ZeRO-2 for 4-8 GPUs, ZeRO-3 for 8+
+-  **Optimizer**: Use Lion for speed, Sophia for quality
+-  **LR Scheduler**: OneCycleLR for fastest convergence
+-  **Loss**: DeepSeek-style with n-gram penalties
+-  **Generation**: Top-p nucleus (p=0.92, T=0.8)
+-  **Precision**: FP8 on H100, BF16 on A100
+-  **Distributed**: ZeRO-2 for 4-8 GPUs, ZeRO-3 for 8+
 
 ---
 

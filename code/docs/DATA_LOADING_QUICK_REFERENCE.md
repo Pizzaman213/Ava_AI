@@ -1,16 +1,16 @@
 # Data Loading Optimization - Quick Reference
 
-## Your Current Status ✓
+## Your Current Status 
 
 Config file: `code/configs/moe/minimal_working.yaml`
 
 ### Changes Applied:
-- ✓ `num_workers: 0 → 4` (+2-3x throughput)
-- ✓ `buffer_size: 10000 → 5000` (-50% memory)
-- ✓ `prefetch_factor: 2 → 4` (+15% throughput)
-- ✓ `persistent_workers: false → true` (+5-10% throughput)
-- ✓ `samples_per_file: 1000 → 2500` (+10% throughput)
-- ✓ `use_dynamic_batching: false → true` (+10% throughput)
+-  `num_workers: 0 → 4` (+2-3x throughput)
+-  `buffer_size: 10000 → 5000` (-50% memory)
+-  `prefetch_factor: 2 → 4` (+15% throughput)
+-  `persistent_workers: false → true` (+5-10% throughput)
+-  `samples_per_file: 1000 → 2500` (+10% throughput)
+-  `use_dynamic_batching: false → true` (+10% throughput)
 
 **Expected improvement: 2-3x faster**
 
@@ -18,7 +18,7 @@ Config file: `code/configs/moe/minimal_working.yaml`
 
 ## TL;DR - Three Speed Tiers
 
-### Tier 1: Basic (2-3x faster) ✓ APPLIED
+### Tier 1: Basic (2-3x faster)  APPLIED
 ```yaml
 num_workers: 4
 prefetch_factor: 4

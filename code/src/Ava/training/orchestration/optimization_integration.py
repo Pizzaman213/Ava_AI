@@ -50,7 +50,7 @@ class OptimizedTrainingSetup:
 
         if verbose:
             logger.info("=" * 70)
-            logger.info("🚀 OPTIMIZED TRAINING SETUP")
+            logger.info(" OPTIMIZED TRAINING SETUP")
             logger.info("=" * 70)
 
     def setup_hardware(self):
@@ -84,7 +84,7 @@ class OptimizedTrainingSetup:
                     self.config['batch_size'] = (low + high) // 2
 
         if self.verbose:
-            logger.info("✓ Hardware optimizations applied")
+            logger.info(" Hardware optimizations applied")
 
         return self.hw_optimizer
 
@@ -114,7 +114,7 @@ class OptimizedTrainingSetup:
         )
 
         if self.verbose:
-            logger.info(f"✓ Mixed precision enabled: {self.mp_manager.dtype}")
+            logger.info(f" Mixed precision enabled: {self.mp_manager.dtype}")
 
         return self.mp_manager
 
@@ -138,7 +138,7 @@ class OptimizedTrainingSetup:
                     compile_mode=self.config.get('compile_mode', 'reduce-overhead')
                 )
                 if self.verbose:
-                    logger.info("✓ Model compiled with torch.compile")
+                    logger.info(" Model compiled with torch.compile")
             except Exception as e:
                 logger.warning(f"Model compilation failed: {e}, continuing without compilation")
 
@@ -171,7 +171,7 @@ class OptimizedTrainingSetup:
         )
 
         if self.verbose:
-            logger.info(f"✓ Optimizer created: {optimizer_type}")
+            logger.info(f" Optimizer created: {optimizer_type}")
 
         return optimizer
 
@@ -217,7 +217,7 @@ class OptimizedTrainingSetup:
         )
 
         if self.verbose:
-            logger.info(f"✓ Dataloader created: batch_size={batch_size}, workers={num_workers}")
+            logger.info(f" Dataloader created: batch_size={batch_size}, workers={num_workers}")
 
         return dataloader
 
@@ -255,7 +255,7 @@ class OptimizedTrainingSetup:
             )
 
         if self.verbose:
-            logger.info("✓ Monitoring and profiling configured")
+            logger.info(" Monitoring and profiling configured")
 
         return self.training_monitor
 
@@ -287,9 +287,9 @@ class OptimizedTrainingSetup:
             )
 
         if self.verbose:
-            logger.info("✓ Gradient optimizations configured")
+            logger.info(" Gradient optimizations configured")
             logger.info("=" * 70)
-            logger.info("🎯 All optimizations ready!\n")
+            logger.info(" All optimizations ready!\n")
 
         return grad_clipper, grad_noise
 

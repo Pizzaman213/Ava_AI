@@ -6,7 +6,7 @@ This project includes a production-ready implementation of **Sparse Mixture of E
 
 ## Key Features
 
-### ✅ Production-Ready Components
+###  Production-Ready Components
 
 1. **SparseMoELayer** - Drop-in FFN replacement with MoE
    - Supports Mixtral and DeepSeek routing strategies
@@ -37,7 +37,7 @@ This project includes a production-ready implementation of **Sparse Mixture of E
 ```
 Input → Router → Top-K Selection → Experts (Parallel) → Weighted Sum → Output
          |                            |
-         └─── Auxiliary Losses ───────┘
+          Auxiliary Losses 
               (Load Balance + Z-Loss)
 ```
 
@@ -49,8 +49,8 @@ Input → Router → Top-K Selection → Experts (Parallel) → Weighted Sum →
 ### DeepSeek-Style MoE
 
 ```
-Input → Shared Expert (Always Active) ──┐
-     └─→ Router → Top-K Selection → Experts → Weighted Sum ─┘→ Output
+Input → Shared Expert (Always Active) 
+     → Router → Top-K Selection → Experts → Weighted Sum → Output
 ```
 
 **Key Features:**
@@ -182,13 +182,13 @@ python scripts/testing/test_moe.py
 ```
 
 This tests:
-- ✓ Expert layers (SwiGLU, GeGLU, GELU)
-- ✓ Grouped GEMM computation
-- ✓ Mixtral and DeepSeek routers
-- ✓ Load balancing losses
-- ✓ Backward pass and gradients
-- ✓ Full model integration
-- ✓ Expert usage tracking
+-  Expert layers (SwiGLU, GeGLU, GELU)
+-  Grouped GEMM computation
+-  Mixtral and DeepSeek routers
+-  Load balancing losses
+-  Backward pass and gradients
+-  Full model integration
+-  Expert usage tracking
 
 ### Expected Output
 
@@ -198,9 +198,9 @@ SPARSE MoE COMPREHENSIVE TEST SUITE
 ======================================================================
 
 Testing HighPerformanceExpert...
-  ✓ swiglu activation: output shape torch.Size([4, 32, 512])
-  ✓ geglu activation: output shape torch.Size([4, 32, 512])
-  ✓ gelu activation: output shape torch.Size([4, 32, 512])
+   swiglu activation: output shape torch.Size([4, 32, 512])
+   geglu activation: output shape torch.Size([4, 32, 512])
+   gelu activation: output shape torch.Size([4, 32, 512])
 
 ...
 
@@ -208,7 +208,7 @@ Testing HighPerformanceExpert...
 TEST RESULTS: 10 passed, 0 failed
 ======================================================================
 
-✓ All tests passed! Sparse MoE implementation is working correctly.
+ All tests passed! Sparse MoE implementation is working correctly.
 ```
 
 ## Training Example
@@ -417,28 +417,28 @@ moe_layer = SparseMoELayer(
 
 ```
 code/
-├── src/Ava/
-│   ├── models/
-│   │   ├── moe_layer.py          # SparseMoELayer (main)
-│   │   └── moe_model.py          # OptimizedMoETransformer
-│   ├── layers/
-│   │   ├── routing.py            # MixtralRouter, DeepSeekRouter
-│   │   └── experts.py            # ExpertParallelGroup, etc.
-│   ├── kernels/
-│   │   └── moe_kernels.py        # Triton kernels (optional)
-│   └── utils/
-│       └── moe_utils.py          # Utilities & metrics
-├── configs/moe/
-│   ├── small_moe.yaml            # 1B, 8 experts
-│   ├── medium_moe.yaml           # 7B, 16 experts
-│   └── large_moe.yaml            # 13B+, 32 experts
-├── scripts/
-│   ├── testing/
-│   │   └── test_moe.py           # Comprehensive tests
-│   └── examples/
-│       └── train_moe_example.py  # Training example
-└── docs/
-    └── SPARSE_MOE_GUIDE.md       # This file
+ src/Ava/
+    models/
+       moe_layer.py          # SparseMoELayer (main)
+       moe_model.py          # OptimizedMoETransformer
+    layers/
+       routing.py            # MixtralRouter, DeepSeekRouter
+       experts.py            # ExpertParallelGroup, etc.
+    kernels/
+       moe_kernels.py        # Triton kernels (optional)
+    utils/
+        moe_utils.py          # Utilities & metrics
+ configs/moe/
+    small_moe.yaml            # 1B, 8 experts
+    medium_moe.yaml           # 7B, 16 experts
+    large_moe.yaml            # 13B+, 32 experts
+ scripts/
+    testing/
+       test_moe.py           # Comprehensive tests
+    examples/
+        train_moe_example.py  # Training example
+ docs/
+     SPARSE_MOE_GUIDE.md       # This file
 ```
 
 ## Support & Contributing
@@ -453,5 +453,5 @@ For issues, questions, or contributions related to the MoE implementation:
 ---
 
 **Last Updated:** 2025-01-07
-**Status:** ✅ Production Ready
+**Status:**  Production Ready
 **Test Coverage:** 10/10 tests passing

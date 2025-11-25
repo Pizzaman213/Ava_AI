@@ -25,7 +25,7 @@ try:
     import pyarrow.parquet as pq
     import pyarrow as pa
 except ImportError:
-    print("❌ ERROR: pyarrow not installed. Install with: pip install pyarrow")
+    print(" ERROR: pyarrow not installed. Install with: pip install pyarrow")
     sys.exit(1)
 
 
@@ -49,7 +49,7 @@ class DataIntegrityChecker:
 
     def check_file(self, file_path: str) -> bool:
         """Check a single Parquet/Arrow file for data integrity."""
-        print(f"\n📋 Checking {Path(file_path).name}...", end=" ")
+        print(f"\n Checking {Path(file_path).name}...", end=" ")
         self.total_files += 1
 
         try:
@@ -63,7 +63,7 @@ class DataIntegrityChecker:
             schema_cols = set(table.schema.names)
 
             if not required_cols.issubset(schema_cols):
-                print(f"\n  ❌ Missing required columns: {required_cols - schema_cols}")
+                print(f"\n   Missing required columns: {required_cols - schema_cols}")
                 self.error_files += 1
                 return False
 
@@ -167,7 +167,7 @@ class DataIntegrityChecker:
 
             # Report file results
             if errors_in_file:
-                print(f"\n  ⚠️  Found {len(errors_in_file)} errors in this file")
+                print(f"\n    Found {len(errors_in_file)} errors in this file")
                 for error in errors_in_file[:5]:  # Show first 5
                     print(f"    - Row {error['row']}: {error['type']}: {error['details']}")
                 if len(errors_in_file) > 5:
@@ -175,24 +175,24 @@ class DataIntegrityChecker:
                 self.errors.extend([{"file": file_path, **e} for e in errors_in_file])
                 return False
             else:
-                print(" ✓")
+                print(" ")
                 return True
 
         except Exception as e:
-            print(f"\n  ❌ Failed to read file: {e}")
+            print(f"\n   Failed to read file: {e}")
             self.error_files += 1
             self.errors.append({"file": file_path, "type": "read_error", "details": str(e)})
             return False
 
     def check_directory(self, directory: str):
         """Recursively check all Parquet files in a directory."""
-        print(f"🔍 Scanning directory: {directory}")
+        print(f" Scanning directory: {directory}")
         directory = Path(directory)
 
         parquet_files = list(directory.glob("**/*.parquet")) + list(directory.glob("**/*.arrow"))
 
         if not parquet_files:
-            print(f"⚠️  No Parquet/Arrow files found in {directory}")
+            print(f"  No Parquet/Arrow files found in {directory}")
             return
 
         print(f"Found {len(parquet_files)} files to check\n")
@@ -203,26 +203,26 @@ class DataIntegrityChecker:
     def print_report(self):
         """Print data integrity report."""
         print("\n" + "="*80)
-        print("📊 DATA INTEGRITY REPORT")
+        print(" DATA INTEGRITY REPORT")
         print("="*80)
 
-        print(f"\n📈 STATISTICS:")
+        print(f"\n STATISTICS:")
         print(f"   Total files checked:        {self.total_files}")
         print(f"   Total sequences scanned:    {self.total_sequences:,}")
         print(f"   Files with errors:         {self.error_files}")
 
-        print(f"\n⚠️  ISSUES FOUND:")
+        print(f"\n  ISSUES FOUND:")
         print(f"   Corrupted sequences:       {self.corrupted_sequences:,}")
         print(f"   Empty sequences:           {self.empty_sequences:,}")
         print(f"   Mismatched lengths:        {self.mismatched_sequences:,}")
 
         if self.corrupted_sequences > 0:
-            print(f"\n🚨 CRITICAL: Found {self.corrupted_sequences} sequences with catastrophic length!")
+            print(f"\n CRITICAL: Found {self.corrupted_sequences} sequences with catastrophic length!")
             print(f"   These sequences likely caused your 256 GiB OOM errors.")
             print(f"   Max allowed: {self.max_allowed_len:,} tokens")
 
         if self.errors:
-            print(f"\n📋 FIRST 10 DETAILED ERRORS:")
+            print(f"\n FIRST 10 DETAILED ERRORS:")
             for i, error in enumerate(self.errors[:10]):
                 print(f"\n   {i+1}. {error.get('file', 'Unknown')}")
                 print(f"      Row: {error.get('row', 'N/A')}")
@@ -232,7 +232,7 @@ class DataIntegrityChecker:
         print("\n" + "="*80)
 
         if self.corrupted_sequences > 0 or self.error_files > 0:
-            print("❌ DATA INTEGRITY CHECK FAILED")
+            print(" DATA INTEGRITY CHECK FAILED")
             print("\nRECOMMENDATIONS:")
             print("1. Re-run data preprocessing/tokenization pipeline")
             print("2. Check for bugs in collate_fn or data loading code")
@@ -240,7 +240,7 @@ class DataIntegrityChecker:
             print("4. Ensure tokenizer output is valid (no massive sequences)")
             return False
         else:
-            print("✓ ALL DATA INTEGRITY CHECKS PASSED")
+            print(" ALL DATA INTEGRITY CHECKS PASSED")
             return True
 
 
@@ -253,7 +253,7 @@ def main():
     args = parser.parse_args()
 
     if not args.data_dir and not args.parquet_files:
-        print("❌ ERROR: Provide either --data-dir or --parquet-files")
+        print(" ERROR: Provide either --data-dir or --parquet-files")
         parser.print_help()
         sys.exit(1)
 

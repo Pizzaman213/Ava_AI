@@ -1,6 +1,6 @@
 # Data Loading Optimization - Final Summary
 
-## Changes Applied ✓
+## Changes Applied 
 
 ### 1. Config File Optimized (`minimal_working.yaml`)
 
@@ -95,7 +95,7 @@ GPU (ready before previous step finishes)
 
 ### Before (Slow - Streaming Mode)
 ```
-📚 Datasets available: True                          # ← Streaming loader
+ Datasets available: True                          # ← Streaming loader
   Loaded 10/1374 parquet files...
   Loaded 20/1374 parquet files...                   # ← Iterating all files
   Loaded 30/1374 parquet files...
@@ -105,8 +105,8 @@ Time to load dataset: 15+ minutes
 
 ### After (Fast - Pre-Tokenized Mode)
 ```
-📦 Using pretokenized Arrow data loader (60x faster)  # ← Pre-tokenized loader!
-✓ Pre-tokenized Arrow loader initialized
+ Using pretokenized Arrow data loader (60x faster)  # ← Pre-tokenized loader!
+ Pre-tokenized Arrow loader initialized
  - Cache size: 200 tables (10GB)
  - 16 parallel workers
  - 16x prefetch depth
@@ -165,7 +165,7 @@ dataloader_prefetch_factor: 16
 - Each worker prefetches 16 batches ahead
 - Total: 16 workers × 16 batches = 256 batches prefetched
 - At batch_size=128: ~32,000 samples prefetched
-- GPU never waits for data ✓
+- GPU never waits for data 
 
 ### Buffer Configuration
 
@@ -204,28 +204,28 @@ cache_size: 200
 After starting training, verify:
 
 - [ ] **See "Using pretokenized Arrow data loader"** in logs
-  - ✓ Good: Shows ultra-fast loader is active
-  - ✗ Bad: Shows "Using streaming JSONL" → debug further
+  -  Good: Shows ultra-fast loader is active
+  -  Bad: Shows "Using streaming JSONL" → debug further
 
 - [ ] **Throughput is 30,000+ samples/sec**
-  - ✓ Good: `25000 examples [00:01, 25000.00 examples/s]` or higher
-  - ✗ Bad: `25000 examples [00:01, 18000.00 examples/s]` → still streaming
+  -  Good: `25000 examples [00:01, 25000.00 examples/s]` or higher
+  -  Bad: `25000 examples [00:01, 18000.00 examples/s]` → still streaming
 
 - [ ] **No "Loaded X/1374" progress messages**
-  - ✓ Good: Ultra-fast loader doesn't print these
-  - ✗ Bad: "Loaded 10/1374" → still iterating all files
+  -  Good: Ultra-fast loader doesn't print these
+  -  Bad: "Loaded 10/1374" → still iterating all files
 
 - [ ] **Data loading finishes in seconds**
-  - ✓ Good: Takes 2-3 seconds to initialize
-  - ✗ Bad: Takes 10+ minutes → still using slow loader
+  -  Good: Takes 2-3 seconds to initialize
+  -  Bad: Takes 10+ minutes → still using slow loader
 
 - [ ] **GPU utilization is >80%**
-  - ✓ Good: GPU is fully utilized
-  - ✗ Bad: GPU usage <50% → data loading is bottleneck
+  -  Good: GPU is fully utilized
+  -  Bad: GPU usage <50% → data loading is bottleneck
 
 - [ ] **No memory warnings**
-  - ✓ Good: Uses <20GB with buffer + cache
-  - ✗ Bad: "Out of Memory" → reduce num_workers or cache_size
+  -  Good: Uses <20GB with buffer + cache
+  -  Bad: "Out of Memory" → reduce num_workers or cache_size
 
 ---
 
@@ -329,7 +329,7 @@ If this is slow, storage is the bottleneck (not the loader).
 
 4. **Check GPU**: GPU utilization should jump to >80%
 
-5. **Enjoy faster training**: Your data loads 40x faster! 🚀
+5. **Enjoy faster training**: Your data loads 40x faster! 
 
 ---
 
@@ -344,4 +344,4 @@ If this is slow, storage is the bottleneck (not the loader).
 | **GPU utilization** | <50% (idle waiting) | >80% (busy) | **Better** |
 | **Training starts in** | 15+ minutes | 2-3 seconds | **100x** |
 
-**Bottom line**: Your data is already pre-tokenized. We just needed to enable the ultra-fast loader and maximize parallelism. That's it! 🎯
+**Bottom line**: Your data is already pre-tokenized. We just needed to enable the ultra-fast loader and maximize parallelism. That's it! 

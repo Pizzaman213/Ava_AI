@@ -198,7 +198,7 @@ The profiler generates:
 #### Example Output
 
 ```
-🔥 Top 10 Operations by CUDA Time:
+ Top 10 Operations by CUDA Time:
 -------------------------------------------------------------------------------------------------
   Name                           Self CPU    Self CUDA    CPU total    CUDA total  # Calls
 -------------------------------------------------------------------------------------------------

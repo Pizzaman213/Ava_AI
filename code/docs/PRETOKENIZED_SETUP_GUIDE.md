@@ -1,6 +1,6 @@
 # Pre-Tokenized Data Loading Setup - 60x Speedup Guide
 
-## Your Current Setup ✓
+## Your Current Setup 
 
 Your `minimal_working.yaml` has been **ULTRA-OPTIMIZED** for pre-tokenized data:
 
@@ -19,10 +19,10 @@ multiprocessing_context: spawn   # ← Proper Arrow memory-mapping support
 ### Why This is 60x Faster
 
 Your data in `/project/code/data/Ava_Ai/data/` is already **pre-tokenized Parquet format**:
-- ✓ Contains `input_ids` and `attention_mask` columns
-- ✓ NO on-the-fly tokenization needed
-- ✓ Memory-mapped access (zero-copy)
-- ✓ Vectorized batch extraction (5x faster than row-by-row)
+-  Contains `input_ids` and `attention_mask` columns
+-  NO on-the-fly tokenization needed
+-  Memory-mapped access (zero-copy)
+-  Vectorized batch extraction (5x faster than row-by-row)
 
 **Before**: 1,500-2,000 samples/sec (streaming + tokenization)
 **After**: 30,000-60,000 samples/sec (pre-tokenized + 12 workers)
@@ -35,17 +35,17 @@ Your data in `/project/code/data/Ava_Ai/data/` is already **pre-tokenized Parque
 
 ```
 /project/code/data/Ava_Ai/data/
-├── partition_000000.parquet    ← Pre-tokenized (input_ids + attention_mask)
-├── partition_000000.parquet.meta.json
-├── partition_000001.parquet
-├── partition_000001.parquet.meta.json
-├── ...
-├── partition_001373.parquet
-├── dataset_manifest.json        ← Central manifest with metadata
-└── tokenizer/                   ← Tokenizer files
-    ├── tokenizer.json
-    ├── tokenizer_config.json
-    └── special_tokens_map.json
+ partition_000000.parquet    ← Pre-tokenized (input_ids + attention_mask)
+ partition_000000.parquet.meta.json
+ partition_000001.parquet
+ partition_000001.parquet.meta.json
+ ...
+ partition_001373.parquet
+ dataset_manifest.json        ← Central manifest with metadata
+ tokenizer/                   ← Tokenizer files
+     tokenizer.json
+     tokenizer_config.json
+     special_tokens_map.json
 ```
 
 ### Data Characteristics
@@ -56,7 +56,7 @@ Your data in `/project/code/data/Ava_Ai/data/` is already **pre-tokenized Parque
 - **Sequence length**: 5-102 tokens per sample
 - **Total size**: ~21GB
 - **Samples per partition**: ~1,300 samples
-- **Already tokenized**: YES ✓
+- **Already tokenized**: YES 
 
 ### Parquet Schema
 
@@ -74,26 +74,26 @@ attention_mask: List[int32]     # Padding mask (0=pad, 1=token)
 
 ```
 1. File I/O (Async - 12 workers)
-   └─> Read Parquet → Arrow table (memory-mapped)
-       ├─> Worker 1: partition_000000.parquet (50ms)
-       ├─> Worker 2: partition_000001.parquet (50ms)
-       ├─> Worker 3: partition_000002.parquet (50ms)
-       └─> ... 9 more workers in parallel
+   > Read Parquet → Arrow table (memory-mapped)
+       > Worker 1: partition_000000.parquet (50ms)
+       > Worker 2: partition_000001.parquet (50ms)
+       > Worker 3: partition_000002.parquet (50ms)
+       > ... 9 more workers in parallel
 
 2. Caching (LRU - 100 tables max)
-   └─> Keep hot files in memory
-       ├─> Cache hit: 1-2ms per batch
-       └─> Cache miss: 50ms per file (still fast)
+   > Keep hot files in memory
+       > Cache hit: 1-2ms per batch
+       > Cache miss: 50ms per file (still fast)
 
 3. Batch Extraction (Vectorized)
-   └─> Get 128 samples from cached table
-       ├─> Zero-copy numpy→torch conversion
-       ├─> Fixed-length padding to 128 tokens
-       └─> Total: 2-3ms per batch
+   > Get 128 samples from cached table
+       > Zero-copy numpy→torch conversion
+       > Fixed-length padding to 128 tokens
+       > Total: 2-3ms per batch
 
 4. Training (GPU)
-   └─> Batch ready before GPU finishes previous step
-       └─> NO GPU idle waiting for data ✓
+   > Batch ready before GPU finishes previous step
+       > NO GPU idle waiting for data 
 ```
 
 ### Comparison: Streaming vs Pre-Tokenized
@@ -118,7 +118,7 @@ With 12 workers in parallel: **6x × 10 batches = 60x faster!**
 |---|---|---|
 | Old (0 workers, streaming) | ~1,500 samples/sec | Baseline (bad) |
 | Optimized (4 workers, streaming) | ~4,000 samples/sec | Development |
-| **Ultra-Optimized (12 workers, pre-tokenized)** | **30,000-60,000 samples/sec** | **Production ✓** |
+| **Ultra-Optimized (12 workers, pre-tokenized)** | **30,000-60,000 samples/sec** | **Production ** |
 
 ### Data Loading Time for Different Dataset Sizes
 
@@ -131,7 +131,7 @@ With 12 workers in parallel: **6x × 10 batches = 60x faster!**
 For your 1.374M samples (240+ loaded in screenshot):
 - **Old**: ~900 seconds (~15 minutes) to load
 - **New**: ~23 seconds to load all data
-- **Speedup**: 39x faster ✓
+- **Speedup**: 39x faster 
 
 ---
 
@@ -246,15 +246,15 @@ If you only see `input_ids` and `attention_mask` (no packing info), sequence pac
 During training, look for these indicators:
 
 ```
-✓ GOOD:
-📦 Using pretokenized Arrow data loader (60x faster)
+ GOOD:
+ Using pretokenized Arrow data loader (60x faster)
 Found 240/1374 parquet files...
 Generating train split: 25000 examples [00:01, 25000.00 examples/s]  # ← ~25,000 samples/sec
 GPU memory used: 8.2GB / 24GB (34%)                                  # ← Low memory usage
 Data loading: 5ms/batch                                              # ← Very fast I/O
 
-✗ BAD (Indicates streaming is still active):
-📦 Using streaming JSONL data loader with on-the-fly tokenization
+ BAD (Indicates streaming is still active):
+ Using streaming JSONL data loader with on-the-fly tokenization
 Generating train split: 25000 examples [00:02, 12500.00 examples/s]  # ← ~12,500 samples/sec
 GPU memory used: 18.5GB / 24GB (77%)                                 # ← High memory
 Data loading: 200ms/batch                                            # ← Slow due to tokenization
@@ -394,4 +394,4 @@ python code/scripts/5_training/train_100m_full.py \
   --config code/configs/moe/minimal_working.yaml
 ```
 
-Expected result: Training runs 40-60x faster through the data loading pipeline. 🚀
+Expected result: Training runs 40-60x faster through the data loading pipeline. 

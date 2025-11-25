@@ -6,39 +6,39 @@ This document describes the reorganized structure of the `Ava.training` module, 
 
 ```
 training/
-├── __init__.py                 # Main module with backward-compatible exports
-├── README.md                   # This file
-├── core/                       # Core training infrastructure
-│   ├── __init__.py
-│   ├── enhanced_trainer.py     # Main trainer (EnhancedModularTrainer)
-│   ├── run_manager.py          # Training run organization
-│   └── optimization_integration.py  # Unified optimization setup
-├── learning_rate/              # Learning rate management
-│   ├── __init__.py
-│   ├── adaptive_lr.py          # Real-time adaptive LR adjustments
-│   ├── advanced_schedulers.py  # SGDR, OneCycle, Polynomial, etc.
-│   ├── advanced_warmup.py      # Sophisticated warmup strategies
-│   ├── advanced_warmup_scheduling.py  # Gradient noise, LR finder
-│   ├── lr_manager.py           # Intelligent LR calculation
-│   └── lr_finder.py            # Learning rate range testing
-├── distributed/                # Distributed training
-│   ├── __init__.py
-│   ├── distributed_manager.py  # Core DDP implementation
-│   ├── unified_distributed_manager.py  # Simplified DDP wrapper
-│   ├── distributed_health_checker.py   # Cross-rank health monitoring
-│   └── rank_aware_error_handler.py     # Distributed error handling
-├── gradients/                  # Gradient management
-│   ├── __init__.py
-│   ├── gradient_surgery.py     # Multi-task gradient conflict resolution
-│   └── gradient_health.py      # Gradient monitoring and adaptive clipping
-├── strategies/                 # Training strategies
-│   ├── __init__.py
-│   ├── progressive_training.py # Curriculum learning, dynamic batching
-│   └── performance_modes.py    # Performance optimization modes
-└── monitoring/                 # Training monitoring
-    ├── __init__.py
-    ├── metrics.py              # Comprehensive metrics collection
-    └── unified_optimizations.py # Optimization aggregation
+ __init__.py                 # Main module with backward-compatible exports
+ README.md                   # This file
+ core/                       # Core training infrastructure
+    __init__.py
+    enhanced_trainer.py     # Main trainer (EnhancedModularTrainer)
+    run_manager.py          # Training run organization
+    optimization_integration.py  # Unified optimization setup
+ learning_rate/              # Learning rate management
+    __init__.py
+    adaptive_lr.py          # Real-time adaptive LR adjustments
+    advanced_schedulers.py  # SGDR, OneCycle, Polynomial, etc.
+    advanced_warmup.py      # Sophisticated warmup strategies
+    advanced_warmup_scheduling.py  # Gradient noise, LR finder
+    lr_manager.py           # Intelligent LR calculation
+    lr_finder.py            # Learning rate range testing
+ distributed/                # Distributed training
+    __init__.py
+    distributed_manager.py  # Core DDP implementation
+    unified_distributed_manager.py  # Simplified DDP wrapper
+    distributed_health_checker.py   # Cross-rank health monitoring
+    rank_aware_error_handler.py     # Distributed error handling
+ gradients/                  # Gradient management
+    __init__.py
+    gradient_surgery.py     # Multi-task gradient conflict resolution
+    gradient_health.py      # Gradient monitoring and adaptive clipping
+ strategies/                 # Training strategies
+    __init__.py
+    progressive_training.py # Curriculum learning, dynamic batching
+    performance_modes.py    # Performance optimization modes
+ monitoring/                 # Training monitoring
+     __init__.py
+     metrics.py              # Comprehensive metrics collection
+     unified_optimizations.py # Optimization aggregation
 ```
 
 ## Module Categories

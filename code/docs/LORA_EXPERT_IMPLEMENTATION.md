@@ -88,9 +88,9 @@ class MoEMemoryOptimizationConfig:
    - Rank 16: Better quality, still 80-95% savings
 
 3. **All tests passed**:
-   - ✓ Forward pass produces valid outputs
-   - ✓ Gradients flow correctly through LoRA layers
-   - ✓ No NaN or Inf in computations
+   -  Forward pass produces valid outputs
+   -  Gradients flow correctly through LoRA layers
+   -  No NaN or Inf in computations
 
 ## How to Use
 
@@ -248,7 +248,7 @@ python code/scripts/testing/test_lora_memory.py
 
 Output:
 ```
-✓ All tests passed!
+ All tests passed!
 
 Summary:
   - LoRA experts successfully reduce memory by 40-60%

@@ -1199,7 +1199,7 @@ def create_multi_column_dataloader(
                 enable_load_balancing=enable_load_balancing,
                 balancing_tolerance=balancing_tolerance
             )
-            print(f"🎯 Using AdvancedDistributedSampler for rank {rank}/{world_size}")
+            print(f" Using AdvancedDistributedSampler for rank {rank}/{world_size}")
             print(f"   Load balancing: {'enabled' if enable_load_balancing else 'disabled'}")
             print(f"   Balancing tolerance: {balancing_tolerance:.1%}")
         else:
@@ -1209,7 +1209,7 @@ def create_multi_column_dataloader(
                 rank=rank,
                 shuffle=shuffle
             )
-            print(f"📊 Using standard DistributedSampler for rank {rank}/{world_size}")
+            print(f" Using standard DistributedSampler for rank {rank}/{world_size}")
 
         shuffle = False  # Distributed sampler handles shuffling
 

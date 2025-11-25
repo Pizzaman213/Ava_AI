@@ -129,7 +129,7 @@ class UnifiedDistributedManager:
 
                 # Single barrier after DDP initialization to ensure all ranks are ready
                 dist.barrier()
-                logger.info(f"Rank {dist.get_rank()}: ✓ Model wrapped with DDP (bucket_cap_mb={bucket_cap_mb}, model_size={model_size_mb:.1f}MB)")
+                logger.info(f"Rank {dist.get_rank()}:  Model wrapped with DDP (bucket_cap_mb={bucket_cap_mb}, model_size={model_size_mb:.1f}MB)")
 
         self._model = model
         self._optimizer = optimizer

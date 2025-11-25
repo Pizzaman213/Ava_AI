@@ -55,7 +55,7 @@ loss.backward()
    - Basic cross-entropy with optional label smoothing
    - Fast and simple
 
-2. **DeepSeek-Style Loss** (`primary_loss_type="deepseek"`) ⭐ RECOMMENDED
+2. **DeepSeek-Style Loss** (`primary_loss_type="deepseek"`)  RECOMMENDED
    - Temperature-scaled cross-entropy
    - Adaptive temperature adjustment
    - Label smoothing
@@ -288,14 +288,14 @@ loss_fn = UnifiedLoss(
 
 ```
 UnifiedLoss
-├── Primary Loss (standard/deepseek/adaptive_mtp)
-├── Multi-Token Prediction (optional)
-├── N-gram Repetition Penalty (optional)
-├── Immediate Repetition Penalty (optional)
-├── MoE Balancing (optional)
-├── Focal Loss (optional)
-├── Diversity Loss (optional)
-└── Auxiliary Losses (optional)
+ Primary Loss (standard/deepseek/adaptive_mtp)
+ Multi-Token Prediction (optional)
+ N-gram Repetition Penalty (optional)
+ Immediate Repetition Penalty (optional)
+ MoE Balancing (optional)
+ Focal Loss (optional)
+ Diversity Loss (optional)
+ Auxiliary Losses (optional)
 ```
 
 All components are modular and can be enabled/disabled independently.
@@ -325,7 +325,7 @@ cd /project/code
 python tests/test_unified_loss.py
 ```
 
-All tests should pass with "All tests passed! ✓"
+All tests should pass with "All tests passed! "
 
 ## Documentation
 

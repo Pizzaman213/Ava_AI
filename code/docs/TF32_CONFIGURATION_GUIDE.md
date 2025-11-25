@@ -41,15 +41,15 @@ performance:
 Controls whether TF32 is enabled for CUDA operations.
 
 **When to enable**:
-- ✅ Training on Ampere+ GPUs (RTX 30xx/40xx, A100, H100)
-- ✅ Production training (faster)
-- ✅ Most use cases
+-  Training on Ampere+ GPUs (RTX 30xx/40xx, A100, H100)
+-  Production training (faster)
+-  Most use cases
 
 **When to disable**:
-- ⚠️ Debugging numerical issues
-- ⚠️ Benchmarking against non-TF32 baselines
-- ⚠️ Ensuring maximum precision (rare)
-- ⚠️ Older GPUs (pre-Ampere) - has no effect anyway
+-  Debugging numerical issues
+-  Benchmarking against non-TF32 baselines
+-  Ensuring maximum precision (rare)
+-  Older GPUs (pre-Ampere) - has no effect anyway
 
 ### `float32_matmul_precision` (str)
 
@@ -69,14 +69,14 @@ Controls whether TF32 is enabled for CUDA operations.
 Enables cuDNN's auto-tuning to find the fastest convolution algorithms.
 
 **When to enable**:
-- ✅ Fixed input sizes (most cases)
-- ✅ Production training
-- ✅ Maximum performance
+-  Fixed input sizes (most cases)
+-  Production training
+-  Maximum performance
 
 **When to disable**:
-- ⚠️ Variable input sizes (dynamic batching)
-- ⚠️ Reproducibility testing
-- ⚠️ Debugging
+-  Variable input sizes (dynamic batching)
+-  Reproducibility testing
+-  Debugging
 
 ## Example Configurations
 
@@ -92,8 +92,8 @@ performance:
 
 **Expected log output**:
 ```
-✅ TF32 optimizations ENABLED (precision: high)
-✅ CuDNN benchmark auto-tuning ENABLED
+ TF32 optimizations ENABLED (precision: high)
+ CuDNN benchmark auto-tuning ENABLED
 ```
 
 ### Debugging/Testing (Maximum Precision)
@@ -108,8 +108,8 @@ performance:
 
 **Expected log output**:
 ```
-⚠️  TF32 optimizations DISABLED (may be slower)
-⚠️  CuDNN benchmark DISABLED
+  TF32 optimizations DISABLED (may be slower)
+  CuDNN benchmark DISABLED
 ```
 
 ### Balanced (Good Precision + Speed)
@@ -134,7 +134,7 @@ python code/scripts/testing/test_tf32_config.py
 
 **Expected output**:
 ```
-✅ ALL TESTS PASSED
+ ALL TESTS PASSED
 
 Conclusion:
   TF32 can be successfully enabled and disabled via YAML configuration.
@@ -147,14 +147,14 @@ When you start training, look for these messages:
 
 **TF32 Enabled**:
 ```
-✅ TF32 optimizations ENABLED (precision: high)
-✅ CuDNN benchmark auto-tuning ENABLED
+ TF32 optimizations ENABLED (precision: high)
+ CuDNN benchmark auto-tuning ENABLED
 ```
 
 **TF32 Disabled**:
 ```
-⚠️  TF32 optimizations DISABLED (may be slower)
-⚠️  CuDNN benchmark DISABLED
+  TF32 optimizations DISABLED (may be slower)
+  CuDNN benchmark DISABLED
 ```
 
 ## Performance Impact
@@ -264,18 +264,18 @@ UserWarning: Please use the new API settings to control TF32 behavior...
 
 ### Supported GPUs (TF32 Available)
 
-- ✅ NVIDIA RTX 30xx series (3060, 3070, 3080, 3090)
-- ✅ NVIDIA RTX 40xx series (4060, 4070, 4080, 4090)
-- ✅ NVIDIA A100
-- ✅ NVIDIA H100
-- ✅ Any Ampere, Ada Lovelace, or Hopper architecture
+-  NVIDIA RTX 30xx series (3060, 3070, 3080, 3090)
+-  NVIDIA RTX 40xx series (4060, 4070, 4080, 4090)
+-  NVIDIA A100
+-  NVIDIA H100
+-  Any Ampere, Ada Lovelace, or Hopper architecture
 
 ### Older GPUs (TF32 Not Available)
 
-- ⚠️ NVIDIA RTX 20xx series (Turing)
-- ⚠️ NVIDIA GTX 16xx series
-- ⚠️ NVIDIA V100 (Volta)
-- ⚠️ Any pre-Ampere architecture
+-  NVIDIA RTX 20xx series (Turing)
+-  NVIDIA GTX 16xx series
+-  NVIDIA V100 (Volta)
+-  Any pre-Ampere architecture
 
 **Note**: On older GPUs, enabling TF32 has no effect (neither helps nor hurts)
 

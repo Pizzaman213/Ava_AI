@@ -216,7 +216,7 @@ class UnifiedOptimizer:
                 enabled=True,
                 dtype=self._get_precision_dtype()
             )
-            logger.info(f"  ✓ Mixed precision: {self.mixed_precision.dtype if self.mixed_precision else 'N/A'}")
+            logger.info(f"   Mixed precision: {self.mixed_precision.dtype if self.mixed_precision else 'N/A'}")
 
         # Gradient compression
         if self.config.use_gradient_compression and GradientCompressor is not None:
@@ -224,7 +224,7 @@ class UnifiedOptimizer:
                 method=self.config.compression_method,
                 compression_ratio=self.config.compression_ratio
             )
-            logger.info(f"  ✓ Gradient compression: {self.config.compression_method}")
+            logger.info(f"   Gradient compression: {self.config.compression_method}")
 
         # Adaptive clipping
         if self.config.use_adaptive_clipping and AdaptiveGradientClipper is not None:
@@ -232,12 +232,12 @@ class UnifiedOptimizer:
                 clip_type=self.config.clip_type,
                 base_clip_value=self.config.base_clip_value
             )
-            logger.info(f"  ✓ Adaptive gradient clipping: {self.config.clip_type}")
+            logger.info(f"   Adaptive gradient clipping: {self.config.clip_type}")
 
         # Gradient noise
         if self.config.use_gradient_noise and GradientNoiseInjector is not None:
             self.gradient_noise = GradientNoiseInjector()
-            logger.info("  ✓ Gradient noise injection")
+            logger.info("   Gradient noise injection")
 
         logger.info("\n" + "=" * 60)
         logger.info("MODEL OPTIMIZATION COMPLETE")
@@ -329,13 +329,13 @@ class UnifiedOptimizer:
                 window_size=100,
                 log_interval=10
             )
-            logger.info("✓ Throughput tracking enabled")
+            logger.info(" Throughput tracking enabled")
 
         if self.config.enable_memory_profiling and MemoryProfiler is not None:
             self.memory_profiler = MemoryProfiler(
                 check_interval=100
             )
-            logger.info("✓ Memory profiling enabled")
+            logger.info(" Memory profiling enabled")
 
     def training_step(
         self,
@@ -457,61 +457,3 @@ class UnifiedOptimizer:
             metrics['memory'] = memory_stats
 
         return metrics
-
-
-def quick_optimize(
-    model: nn.Module,
-    dataset: Dataset,
-    batch_size: int = 32,
-    learning_rate: float = 1e-3,
-    device: Optional[torch.device] = None,
-    **config_kwargs
-) -> Tuple[nn.Module, torch.optim.Optimizer, DataLoader, UnifiedOptimizer]:
-    """
-    Quick one-line optimization for training.
-
-    DEPRECATED: This is a wrapper for backward compatibility.
-    Use optimization_integration.quick_optimize() for new code.
-
-    Args:
-        model: Model to optimize
-        dataset: Training dataset
-        batch_size: Batch size
-        learning_rate: Learning rate
-        device: Target device
-        **config_kwargs: Additional configuration arguments
-
-    Returns:
-        Tuple of (optimized_model, optimizer, dataloader, unified_optimizer)
-
-    Example:
-        >>> model, optimizer, dataloader, opt_manager = quick_optimize(
-        ...     model, dataset, batch_size=32, learning_rate=1e-3
-        ... )
-        >>> for batch in dataloader:
-        ...     metrics = opt_manager.training_step(model, batch, optimizer)
-    """
-    # Create config dict for new implementation
-    config = {
-        'batch_size': batch_size,
-        'learning_rate': learning_rate,
-        **config_kwargs
-    }
-
-    # Import here to avoid circular dependency
-    from .optimization_integration import quick_optimize as quick_optimize_new
-
-    # Call new implementation
-    setup_dict = quick_optimize_new(model, dataset, config=config)
-
-    # Extract components for backward compatibility
-    # Create a minimal UnifiedOptimizer wrapper for compatibility
-    unified_opt_config = OptimizationConfig(learning_rate=learning_rate, **config_kwargs)
-    unified_opt = UnifiedOptimizer(unified_opt_config)
-
-    return (
-        setup_dict['model'],
-        setup_dict['optimizer'],
-        setup_dict['train_dataloader'],
-        unified_opt
-    )

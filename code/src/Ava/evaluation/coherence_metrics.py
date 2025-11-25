@@ -288,11 +288,11 @@ class CoherenceMetrics:
         # Coherence score with status
         score = metrics.get('coherence_score', 0)
         if score >= 75:
-            status = "✅ Excellent"
+            status = " Excellent"
         elif score >= 50:
-            status = "⚠️  Moderate"
+            status = "  Moderate"
         else:
-            status = "❌ Poor"
+            status = " Poor"
 
         report.append(f"Coherence Score: {score:.0f}/100 ({status})")
 
@@ -301,9 +301,9 @@ class CoherenceMetrics:
         rep = metrics.get('repetition', 0)
         ent = metrics.get('entropy', 0)
 
-        report.append(f"  Distinct-2: {d2:.3f} {'✅' if d2 > 0.7 else '❌' if d2 < 0.5 else '⚠️'}")
-        report.append(f"  Repetition: {rep:.3f} {'✅' if rep < 0.3 else '❌' if rep > 0.5 else '⚠️'}")
-        report.append(f"  Entropy: {ent:.2f} {'✅' if ent > 4.0 else '❌' if ent < 2.0 else '⚠️'}")
+        report.append(f"  Distinct-2: {d2:.3f} {'' if d2 > 0.7 else '' if d2 < 0.5 else ''}")
+        report.append(f"  Repetition: {rep:.3f} {'' if rep < 0.3 else '' if rep > 0.5 else ''}")
+        report.append(f"  Entropy: {ent:.2f} {'' if ent > 4.0 else '' if ent < 2.0 else ''}")
 
         return "\n".join(report)
 

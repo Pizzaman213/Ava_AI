@@ -22,11 +22,11 @@ Ava uses a hierarchical YAML-based configuration system that allows flexible, mo
 
 ### Key Features
 
-- 📁 **Hierarchical Structure**: Base → Hardware → GPU-specific configs
-- 🔄 **Override System**: Later configs override earlier values
-- 🎯 **Purpose-Specific**: Separate configs for GPU, distributed, RLHF, research
-- 🔧 **Modular Design**: Mix and match configuration components
-- ✅ **Validation**: Automatic validation of configuration values
+-  **Hierarchical Structure**: Base → Hardware → GPU-specific configs
+-  **Override System**: Later configs override earlier values
+-  **Purpose-Specific**: Separate configs for GPU, distributed, RLHF, research
+-  **Modular Design**: Mix and match configuration components
+-  **Validation**: Automatic validation of configuration values
 
 ---
 
@@ -682,7 +682,7 @@ python train.py \
 - BF16 precision
 - Optimized for A100 architecture
 
-#### 3. Single H100 Training ⭐ **RECOMMENDED for Maximum Performance**
+#### 3. Single H100 Training  **RECOMMENDED for Maximum Performance**
 ```bash
 python train.py \
   --config configs/gpu/large.yaml \
@@ -815,24 +815,24 @@ flowchart TD
         Type -->|Slow| PERF[Performance Issue]
         Type -->|Crash| CRASH[Training Crash]
 
-        LE --> L1[✅ Check YAML syntax]
-        LE --> L2[✅ Verify file paths]
-        LE --> L3[✅ Check indentation]
+        LE --> L1[ Check YAML syntax]
+        LE --> L2[ Verify file paths]
+        LE --> L3[ Check indentation]
 
-        MEM --> M1[✅ Reduce batch_size]
-        MEM --> M2[✅ Increase gradient_accumulation]
-        MEM --> M3[✅ Enable gradient_checkpointing]
-        MEM --> M4[✅ Use ZeRO-3 + CPU offload]
+        MEM --> M1[ Reduce batch_size]
+        MEM --> M2[ Increase gradient_accumulation]
+        MEM --> M3[ Enable gradient_checkpointing]
+        MEM --> M4[ Use ZeRO-3 + CPU offload]
 
-        PERF --> P1[✅ Increase batch_size]
-        PERF --> P2[✅ Reduce dataloader_num_workers]
-        PERF --> P3[✅ Enable mixed precision]
-        PERF --> P4[✅ Use hardware-specific config]
+        PERF --> P1[ Increase batch_size]
+        PERF --> P2[ Reduce dataloader_num_workers]
+        PERF --> P3[ Enable mixed precision]
+        PERF --> P4[ Use hardware-specific config]
 
-        CRASH --> C1[✅ Lower learning_rate]
-        CRASH --> C2[✅ Enable gradient_health]
-        CRASH --> C3[✅ Check data paths]
-        CRASH --> C4[✅ Validate config values]
+        CRASH --> C1[ Lower learning_rate]
+        CRASH --> C2[ Enable gradient_health]
+        CRASH --> C3[ Check data paths]
+        CRASH --> C4[ Validate config values]
     end
 
     style Issue fill:#e3f2fd
@@ -966,14 +966,14 @@ data:
 
 ### Key Takeaways
 
-1. 📁 **Hierarchical system** - Base → Hardware → Distributed → Overrides
-2. 🎯 **Match hardware** - Use hardware-specific configs for best performance
-3. 🔄 **Override carefully** - Later configs override earlier values
-4. ✅ **Validate first** - Test configurations before long training runs
-5. 📝 **Document changes** - Comment why you changed specific values
-6. 🔧 **Start simple** - Begin with base configs, add complexity as needed
-7. 💾 **Memory management** - Adjust batch size, gradient accumulation, and ZeRO stage
-8. ⚡ **Performance tuning** - Use FP8 on H100, BF16 on A100
+1.  **Hierarchical system** - Base → Hardware → Distributed → Overrides
+2.  **Match hardware** - Use hardware-specific configs for best performance
+3.  **Override carefully** - Later configs override earlier values
+4.  **Validate first** - Test configurations before long training runs
+5.  **Document changes** - Comment why you changed specific values
+6.  **Start simple** - Begin with base configs, add complexity as needed
+7.  **Memory management** - Adjust batch size, gradient accumulation, and ZeRO stage
+8.  **Performance tuning** - Use FP8 on H100, BF16 on A100
 
 ---
 

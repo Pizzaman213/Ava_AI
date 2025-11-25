@@ -52,7 +52,7 @@ def load_config(config_file: str):
             config = yaml.safe_load(f)
         return config
     except Exception as e:
-        print(f"❌ Failed to load config: {e}")
+        print(f" Failed to load config: {e}")
         return None
 
 
@@ -105,12 +105,12 @@ def download_datasets(config_file: str = None, force: bool = False, dry_run: boo
         '--help'
     ]
 
-    print(f"📥 Dataset download script: {DOWNLOAD_SCRIPT}")
-    print(f"⚙️  Config file: {config_file or 'None (will use default datasets)'}")
-    print(f"🔄 Force re-download: {force}")
-    print(f"🔍 Dry-run mode: {dry_run}")
+    print(f" Dataset download script: {DOWNLOAD_SCRIPT}")
+    print(f"  Config file: {config_file or 'None (will use default datasets)'}")
+    print(f" Force re-download: {force}")
+    print(f" Dry-run mode: {dry_run}")
 
-    print("\n⚠️  Download script not automatically called (requires manual review)")
+    print("\n  Download script not automatically called (requires manual review)")
     print(f"\nTo download datasets, run:")
     print(f"  python {DOWNLOAD_SCRIPT} --help\n")
 
@@ -146,15 +146,15 @@ def pretokenize_datasets(
     if dry_run:
         cmd.append('--dry-run')
 
-    print(f"🤖 Pretokenization script: {PRETOKENIZE_SCRIPT}")
-    print(f"📂 Input directory:  {input_dir}")
-    print(f"📂 Output directory: {output_dir}")
-    print(f"👷 Workers: {num_workers}")
-    print(f"🔄 Force re-tokenize: {force}")
-    print(f"🔍 Dry-run mode: {dry_run}")
+    print(f" Pretokenization script: {PRETOKENIZE_SCRIPT}")
+    print(f" Input directory:  {input_dir}")
+    print(f" Output directory: {output_dir}")
+    print(f" Workers: {num_workers}")
+    print(f" Force re-tokenize: {force}")
+    print(f" Dry-run mode: {dry_run}")
 
     if dry_run:
-        print("\n🔍 DRY-RUN: Would execute:")
+        print("\n DRY-RUN: Would execute:")
         print(f"  {' '.join(cmd)}\n")
         return True
 
@@ -164,7 +164,7 @@ def pretokenize_datasets(
         result = subprocess.run(cmd, check=False)
         return result.returncode == 0
     except Exception as e:
-        print(f"❌ Error running pretokenization: {e}")
+        print(f" Error running pretokenization: {e}")
         return False
 
 
@@ -188,23 +188,23 @@ def print_final_report(config_file: str, input_dir: str, output_dir: str, stats:
     print_section("Summary")
 
     if config_file:
-        print(f"📋 Config: {config_file}")
+        print(f" Config: {config_file}")
 
-    print(f"\n📂 Raw data directory ({input_dir}):")
+    print(f"\n Raw data directory ({input_dir}):")
     if stats['raw_count'] > 0:
-        print(f"   ✓ {stats['raw_count']} JSONL file(s)")
-        print(f"   ✓ Total size: {stats['raw_size_mb']:.2f} MB")
+        print(f"    {stats['raw_count']} JSONL file(s)")
+        print(f"    Total size: {stats['raw_size_mb']:.2f} MB")
     else:
-        print(f"   ✗ No files found (run 'python {DOWNLOAD_SCRIPT}' to download)")
+        print(f"    No files found (run 'python {DOWNLOAD_SCRIPT}' to download)")
 
-    print(f"\n📂 Pretokenized directory ({output_dir}):")
+    print(f"\n Pretokenized directory ({output_dir}):")
     if stats['pretok_count'] > 0:
-        print(f"   ✓ {stats['pretok_count']} Arrow file(s)")
-        print(f"   ✓ Total size: {stats['pretok_size_mb']:.2f} MB")
+        print(f"    {stats['pretok_count']} Arrow file(s)")
+        print(f"    Total size: {stats['pretok_size_mb']:.2f} MB")
     else:
-        print(f"   ✗ No files found (pretokenize raw data first)")
+        print(f"    No files found (pretokenize raw data first)")
 
-    print(f"\n💡 Next steps:")
+    print(f"\n Next steps:")
     if stats['raw_count'] == 0:
         print(f"   1. Download datasets:")
         print(f"      python {DOWNLOAD_SCRIPT} --help")
@@ -283,9 +283,9 @@ def main():
     # Load config if provided
     config_file = args.config
     if config_file:
-        print(f"\n📋 Loading config: {config_file}")
+        print(f"\n Loading config: {config_file}")
         if not Path(config_file).exists():
-            print(f"❌ Config file not found: {config_file}")
+            print(f" Config file not found: {config_file}")
             sys.exit(1)
         config = load_config(config_file)
         if not config:
@@ -302,40 +302,40 @@ def main():
         config_input = get_config_value(config, 'data.data_dir')
         if config_input and 'processed' in config_input:
             input_dir = config_input
-            print(f"✓ Using input directory from config: {input_dir}")
+            print(f" Using input directory from config: {input_dir}")
         elif config_input and 'pretokenized' in config_input:
             # Config points to pretokenized, but we need raw data
             input_dir = config_input.replace('pretokenized', 'processed')
-            print(f"✓ Using inferred input directory: {input_dir}")
+            print(f" Using inferred input directory: {input_dir}")
 
     # Create directories
     Path(input_dir).mkdir(parents=True, exist_ok=True)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    print(f"\n📂 Input directory:  {input_dir}")
-    print(f"📂 Output directory: {output_dir}")
+    print(f"\n Input directory:  {input_dir}")
+    print(f" Output directory: {output_dir}")
 
     # Check what data exists
-    print("\n🔍 Checking data status...")
+    print("\n Checking data status...")
     raw_exists, _ = check_raw_data_exists(input_dir)
     pretok_exists, _ = check_pretokenized_data_exists(output_dir)
 
     if raw_exists:
-        print(f"   ✓ Raw data found in {input_dir}")
+        print(f"    Raw data found in {input_dir}")
     else:
-        print(f"   ✗ No raw data in {input_dir}")
+        print(f"    No raw data in {input_dir}")
 
     if pretok_exists:
-        print(f"   ✓ Pretokenized data found in {output_dir}")
+        print(f"    Pretokenized data found in {output_dir}")
     else:
-        print(f"   ✗ No pretokenized data in {output_dir}")
+        print(f"    No pretokenized data in {output_dir}")
 
     # Determine what to do
     if args.download_only:
         download_datasets(config_file, args.force, args.dry_run)
     elif args.no_download:
         if not raw_exists:
-            print(f"\n⚠️  No raw data found and --no-download specified!")
+            print(f"\n  No raw data found and --no-download specified!")
             print(f"Please run:")
             print(f"  python {DOWNLOAD_SCRIPT} --help")
             sys.exit(1)
@@ -346,7 +346,7 @@ def main():
     else:
         # Default: prepare everything
         if not raw_exists and not args.dry_run:
-            print(f"\n⚠️  No raw data found!")
+            print(f"\n  No raw data found!")
             print(f"\nYou can:")
             print(f"  1. Download datasets first:")
             print(f"     python {DOWNLOAD_SCRIPT} --help")

@@ -54,4 +54,10 @@ cover/
 
 # Workbench Project Layout
 data/scratch/*
-!data/scratch/.gitkeepwandb/
+!data/scratch/.gitkeep
+
+# Wandb logs and artifacts
+wandb/
+**/wandb/
+nohup.out
+*.wandb

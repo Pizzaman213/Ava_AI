@@ -4,17 +4,17 @@ Full-Featured Training Script for 100M Parameter Model
 =========================================================
 
 This script demonstrates a production-ready training pipeline with:
-✓ Model initialization and management
-✓ Data loading and preprocessing
-✓ Distributed training support
-✓ Learning rate scheduling
-✓ Checkpointing and resumption
-✓ Metrics tracking and logging
-✓ Mixed precision training
-✓ Gradient accumulation
-✓ Validation and evaluation
-✓ Weights & Biases integration (optional)
-✓ DeepSpeed integration (optional)
+ Model initialization and management
+ Data loading and preprocessing
+ Distributed training support
+ Learning rate scheduling
+ Checkpointing and resumption
+ Metrics tracking and logging
+ Mixed precision training
+ Gradient accumulation
+ Validation and evaluation
+ Weights & Biases integration (optional)
+ DeepSpeed integration (optional)
 
 Usage:
     # Basic training
@@ -78,6 +78,13 @@ from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig
 from src.Ava.config.yaml_loader import load_yaml_with_path_resolution
 from src.Ava.training.train.data_loader_manager import DataLoaderManager
 from src.Ava.training.train.base import TrainingContext
+
+# Import optimization utilities
+try:
+    from src.Ava.training.optimizations import DynamicBatchScheduler, AdaptiveGradientAccumulation
+    DYNAMIC_BATCHING_AVAILABLE = True
+except ImportError:
+    DYNAMIC_BATCHING_AVAILABLE = False
 
 # Import turn-aware loader (optional, for improved conversation coherence)
 try:
@@ -245,15 +252,15 @@ def create_dataloaders(
                     quality_threshold=0.0,
                 )
 
-                print(f"\n✓ Turn-Aware Conversation Loading ENABLED")
+                print(f"\n Turn-Aware Conversation Loading ENABLED")
                 print(f"  Data: {train_jsonl}")
                 print(f"  Benefits: Improved dialogue coherence, speaker awareness, quality tracking")
 
                 return train_loader, val_loader
             except Exception as e:
-                print(f"\n⚠ Turn-aware loading failed ({e}), falling back to standard loading")
+                print(f"\n Turn-aware loading failed ({e}), falling back to standard loading")
         else:
-            print(f"\n⚠ No conversation JSONL files found in {data_dir}, using standard loading")
+            print(f"\n No conversation JSONL files found in {data_dir}, using standard loading")
 
     # ==== STANDARD ARROW/PARQUET LOADING (DEFAULT) ====
     # Create a simple wrapper to handle tokenization
@@ -294,20 +301,20 @@ def create_dataloaders(
     # Fix double-prefixed paths (e.g., /project/code/code/... -> /project/code/...)
     if data_dir and '/code/code' in data_dir:
         data_dir = data_dir.replace('/code/code/', '/code/')
-        print(f"⚠️  Fixed double-prefixed path to: {data_dir}")
+        print(f"  Fixed double-prefixed path to: {data_dir}")
 
     # Log data loading configuration
     if rank == 0:
-        print(f"📂 Data directory: {data_dir}")
-        print(f"📦 Using all data: {use_all_data}")
-        print(f"📊 Data dir exists: {Path(data_dir).exists()}")
-        print(f"📚 Datasets available: {DATASETS_AVAILABLE}")
+        print(f" Data directory: {data_dir}")
+        print(f" Using all data: {use_all_data}")
+        print(f" Data dir exists: {Path(data_dir).exists()}")
+        print(f" Datasets available: {DATASETS_AVAILABLE}")
 
     # Try to load real data first
     if data_dir and Path(data_dir).exists() and DATASETS_AVAILABLE:
         try:
             if rank == 0:
-                print("🔄 Starting data loading...")
+                print(" Starting data loading...")
 
             datasets_list = []
 
@@ -316,7 +323,7 @@ def create_dataloaders(
                 arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
                              sorted(list(Path(data_dir).glob('**/*.arrow')))
                 if rank == 0 and arrow_files:
-                    print(f"🔍 Found {len(arrow_files)} Arrow files")
+                    print(f" Found {len(arrow_files)} Arrow files")
                 for arrow_file in arrow_files:
                     try:
                         file_size = arrow_file.stat().st_size
@@ -337,7 +344,7 @@ def create_dataloaders(
                 parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))[:5]  # Default: first 5
 
             if rank == 0:
-                print(f"🔍 Found {len(parquet_files)} Parquet files")
+                print(f" Found {len(parquet_files)} Parquet files")
 
             for i, parquet_file in enumerate(parquet_files, 1):
                 try:
@@ -361,18 +368,18 @@ def create_dataloaders(
                 dataset = concatenate_datasets(datasets_list)
                 total_examples = len(dataset)
                 if rank == 0:
-                    print(f"✓ Loaded {len(datasets_list)} data files with {total_examples:,} total examples")
+                    print(f" Loaded {len(datasets_list)} data files with {total_examples:,} total examples")
                     num_batches = total_examples // batch_size
-                    print(f"✓ Expected batches per epoch: {num_batches:,}")
+                    print(f" Expected batches per epoch: {num_batches:,}")
                 train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
                 val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
             else:
                 if rank == 0:
-                    print("⚠ No datasets loaded from data directory")
+                    print(" No datasets loaded from data directory")
         except Exception as e:
             # Failed to load data, will use dummy dataset
             if rank == 0:
-                print(f"⚠ Warning: Failed to load real data: {type(e).__name__}: {e}")
+                print(f" Warning: Failed to load real data: {type(e).__name__}: {e}")
                 import traceback
                 print(traceback.format_exc())
             pass
@@ -798,8 +805,18 @@ def generate_sample(
 
         generated_ids = start_token.clone()
 
+        # Get model's max position embeddings to avoid exceeding it
+        max_pos_embeddings = getattr(model, 'max_position_embeddings', 256)
+        effective_max_length = min(max_length, max_pos_embeddings)
+
         # Generate tokens one by one
-        for _ in range(max_length - 1):
+        for _ in range(effective_max_length - 1):
+            # Check if we've reached the position embedding limit
+            if generated_ids.shape[1] >= max_pos_embeddings:
+                if logger is not None:
+                    logger.info(f"Stopping generation at {generated_ids.shape[1]} tokens (max_position_embeddings={max_pos_embeddings})")
+                break
+
             # Forward pass
             outputs = model(generated_ids)
             logits = outputs['logits']
@@ -890,6 +907,8 @@ def train_epoch(
     tokenizer: Optional[Any] = None,
     generation_skip_special_tokens: bool = True,
     generation_prompt: Optional[str] = None,
+    checkpoint_manager: Optional['CheckpointManager'] = None,
+    save_steps: int = 0,
 ) -> float:
     """Train for one epoch."""
 
@@ -967,7 +986,7 @@ def train_epoch(
 
             # Generation testing during training
             if generate_every_n_steps and generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
-                logger.info(f"\n🎯 Testing generation at step {global_step}...")
+                logger.info(f"\n Testing generation at step {global_step}...")
                 generate_sample(
                     model, device, vocab_size,
                     max_length=generation_max_length,
@@ -981,7 +1000,15 @@ def train_epoch(
                     top_k=generation_top_k,  # NEW: Pass top_k parameter
                     repetition_penalty=generation_repetition_penalty  # NEW: Pass repetition penalty
                 )
-                logger.info(f"✓ Generation test complete\n")
+                logger.info(f" Generation test complete\n")
+
+            # Step-based checkpoint saving
+            if save_steps > 0 and global_step % save_steps == 0 and checkpoint_manager is not None:
+                if logger is not None:
+                    logger.info(f" Saving checkpoint at step {global_step}...")
+                checkpoint_manager.save(model, optimizer, epoch, global_step, {'step_loss': loss_value})
+                if logger is not None:
+                    logger.info(f" Checkpoint saved at step {global_step}")
 
             pbar.set_postfix({'loss': f'{loss_value:.4f}'})
 
@@ -1084,7 +1111,7 @@ def main(args):
 
     if rank == 0:
         logger.info("="*80)
-        logger.info("🚀 STARTING 100M PARAMETER TRAINING")
+        logger.info(" STARTING 100M PARAMETER TRAINING")
         logger.info("="*80)
         logger.info(f"Device: {device}")
         logger.info(f"Distributed: Rank {rank}/{world_size}")
@@ -1113,6 +1140,7 @@ def main(args):
     max_steps = training_config.get('max_steps')
     gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
     warmup_steps = training_config.get('warmup_steps', 1000)
+    save_steps = training_config.get('save_steps', 1000)  # Save checkpoint every N steps
 
     # Generation testing configuration
     generate_every_n_steps = training_config.get('generate_every_n_steps', 500)
@@ -1147,16 +1175,16 @@ def main(args):
                 if '/code/code' in tokenizer_path:
                     tokenizer_path = tokenizer_path.replace('/code/code/', '/code/')
                     if rank == 0:
-                        logger.info(f"✓ Fixed tokenizer path: {tokenizer_path}")
+                        logger.info(f" Fixed tokenizer path: {tokenizer_path}")
 
                 if rank == 0:
                     logger.info(f"  Loading tokenizer from: {tokenizer_path}")
                 tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
                 if rank == 0:
-                    logger.info(f"✓ Loaded tokenizer from {tokenizer_path} (vocab_size: {len(tokenizer)})")
+                    logger.info(f" Loaded tokenizer from {tokenizer_path} (vocab_size: {len(tokenizer)})")
             except Exception as e:
                 if rank == 0:
-                    logger.error(f"✗ Failed to load tokenizer from {tokenizer_path}: {e}")
+                    logger.error(f" Failed to load tokenizer from {tokenizer_path}: {e}")
                     import traceback
                     logger.error(f"  Traceback: {traceback.format_exc()}")
         else:
@@ -1189,7 +1217,7 @@ def main(args):
         wandb_config = logging_config.get('wandb', {}) if use_wandb else {}
 
     if rank == 0:
-        logger.info(f"\n📊 Training Config:")
+        logger.info(f"\n Training Config:")
         logger.info(f"   Epochs: {num_epochs}")
         logger.info(f"   Batch size: {batch_size}")
         logger.info(f"   Learning rate: {learning_rate:.2e}")
@@ -1197,7 +1225,7 @@ def main(args):
 
     # Create model - use MoE model from config if available
     if rank == 0:
-        logger.info(f"\n🤖 Creating MoE model...")
+        logger.info(f"\n Creating MoE model...")
 
     # Build MoE config from YAML config
     # Map config names to EnhancedMoEConfig field names
@@ -1234,7 +1262,7 @@ def main(args):
 
     # Create optimizer and scheduler
     if rank == 0:
-        logger.info(f"\n⚡ Setting up optimizer and scheduler...")
+        logger.info(f"\n Setting up optimizer and scheduler...")
 
     # Get optimizer type from config
     optimizer_type = training_config.get('optimizer', 'adamw').lower()
@@ -1260,7 +1288,7 @@ def main(args):
 
     # Create dataloaders
     if rank == 0:
-        logger.info(f"\n📊 Creating dataloaders...")
+        logger.info(f"\n Creating dataloaders...")
 
     # Prepare tokenizer for turn-aware loader (if using)
     tokenizer_for_loader = None
@@ -1273,7 +1301,7 @@ def main(args):
                 if tokenizer_path and '/code/code' in str(tokenizer_path):
                     tokenizer_path = str(tokenizer_path).replace('/code/code/', '/code/')
                     if rank == 0:
-                        logger.info(f"✓ Fixed tokenizer path: {tokenizer_path}")
+                        logger.info(f" Fixed tokenizer path: {tokenizer_path}")
 
                 tokenizer_for_loader = AutoTokenizer.from_pretrained(
                     tokenizer_path,
@@ -1285,7 +1313,7 @@ def main(args):
 
     # Use optimized DataLoaderManager for ultra-fast data loading
     if rank == 0:
-        logger.info("📊 Creating dataloaders with DataLoaderManager...")
+        logger.info(" Creating dataloaders with DataLoaderManager...")
 
     try:
         # Create training context for DataLoaderManager
@@ -1301,7 +1329,7 @@ def main(args):
         )
 
         if rank == 0:
-            logger.info("✓ Dataloaders created with DataLoaderManager (optimized)")
+            logger.info(" Dataloaders created with DataLoaderManager (optimized)")
     except Exception as e:
         if rank == 0:
             logger.warning(f"DataLoaderManager failed ({e}), falling back to create_dataloaders: {e}")
@@ -1371,13 +1399,13 @@ def main(args):
     start_epoch = 0
     if args.resume:
         if rank == 0:
-            logger.info(f"\n📂 Loading checkpoint from {args.resume}...")
+            logger.info(f"\n Loading checkpoint from {args.resume}...")
         start_epoch, _ = checkpoint_manager.load(model, optimizer, Path(args.resume))
 
     # Training loop
     if rank == 0:
         logger.info(f"\n" + "="*80)
-        logger.info("🏋️  STARTING TRAINING")
+        logger.info("  STARTING TRAINING")
         logger.info("="*80)
 
     best_val_loss = float('inf')
@@ -1403,10 +1431,12 @@ def main(args):
             tokenizer=tokenizer,
             generation_skip_special_tokens=generation_skip_special_tokens,
             generation_prompt=generation_prompt,
+            checkpoint_manager=checkpoint_manager if rank == 0 else None,
+            save_steps=save_steps,
         )
 
         if rank == 0:
-            logger.info(f"✅ Epoch {epoch + 1} - Train Loss: {train_loss:.4f}")
+            logger.info(f" Epoch {epoch + 1} - Train Loss: {train_loss:.4f}")
 
         # Validate
         if (epoch + 1) % args.val_interval == 0:
@@ -1414,21 +1444,21 @@ def main(args):
                               logger=logger if rank == 0 else None)
 
             if rank == 0:
-                logger.info(f"📈 Validation Loss: {val_loss:.4f}")
+                logger.info(f" Validation Loss: {val_loss:.4f}")
                 metrics_tracker.log_validation(epoch, loss=val_loss)
 
                 # Save checkpoint if best
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     checkpoint_manager.save(model, optimizer, epoch, 0, {'val_loss': val_loss})
-                    logger.info(f"💾 Saved checkpoint (val_loss: {val_loss:.4f})")
+                    logger.info(f" Saved checkpoint (val_loss: {val_loss:.4f})")
 
     # Final summary
     if rank == 0:
         logger.info(f"\n" + "="*80)
-        logger.info("✅ TRAINING COMPLETE")
+        logger.info(" TRAINING COMPLETE")
         logger.info("="*80)
-        logger.info(f"📊 Summary:")
+        logger.info(f" Summary:")
         logger.info(f"   Total epochs: {num_epochs}")
         logger.info(f"   Best validation loss: {best_val_loss:.4f}")
         logger.info(f"   Model parameters: {total_params:,}")

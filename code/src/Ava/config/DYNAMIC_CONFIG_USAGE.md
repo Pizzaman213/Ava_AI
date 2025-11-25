@@ -5,11 +5,11 @@ The config loader now supports **dynamic loading** of all YAML fields without re
 ## Overview
 
 The new `DynamicConfig` class allows you to:
-- ✅ Load **any YAML structure** without code changes
-- ✅ Access config values using **dot notation** (`config.training.batch_size`)
-- ✅ Access config values using **dictionary style** (`config['training']['batch_size']`)
-- ✅ Add **new fields to YAML** without modifying Python code
-- ✅ Maintain **backward compatibility** with existing code
+-  Load **any YAML structure** without code changes
+-  Access config values using **dot notation** (`config.training.batch_size`)
+-  Access config values using **dictionary style** (`config['training']['batch_size']`)
+-  Add **new fields to YAML** without modifying Python code
+-  Maintain **backward compatibility** with existing code
 
 ## Quick Start
 
@@ -165,11 +165,11 @@ learning_rate = config.training.learning_rate
 
 | Feature | Old System | New System |
 |---------|-----------|------------|
-| Add new YAML field | ❌ Modify Python code | ✅ Just edit YAML |
-| Access nested values | ✅ `config_dict['a']['b']` | ✅ `config.a.b` |
-| Type safety | ✅ Dataclasses | ⚠️ Dynamic (runtime) |
-| Lines of code | ❌ 1000+ lines | ✅ ~100 lines |
-| Backward compatible | N/A | ✅ Yes |
+| Add new YAML field |  Modify Python code |  Just edit YAML |
+| Access nested values |  `config_dict['a']['b']` |  `config.a.b` |
+| Type safety |  Dataclasses |  Dynamic (runtime) |
+| Lines of code |  1000+ lines |  ~100 lines |
+| Backward compatible | N/A |  Yes |
 
 ## API Reference
 

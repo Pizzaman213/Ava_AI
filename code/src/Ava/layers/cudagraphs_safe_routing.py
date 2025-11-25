@@ -106,7 +106,7 @@ class CUDAGraphsSafeTopK(nn.Module):
         max_safe_batch_size = 1_000_000  # 1M max batch size (safety limit)
         if batch_size > max_safe_batch_size:
             raise RuntimeError(
-                f"🚨 CRITICAL: Router received catastrophic batch_size {batch_size:,}!\n"
+                f" CRITICAL: Router received catastrophic batch_size {batch_size:,}!\n"
                 f"   This indicates corrupted input tensors with invalid shapes.\n"
                 f"   Max allowed batch size: {max_safe_batch_size:,}\n"
                 f"   Tensor shape: {logits.shape}\n"
@@ -117,7 +117,7 @@ class CUDAGraphsSafeTopK(nn.Module):
         max_safe_num_experts = 100_000  # 100k max experts (safety limit)
         if num_experts > max_safe_num_experts:
             raise RuntimeError(
-                f"🚨 CRITICAL: Router received catastrophic num_experts {num_experts:,}!\n"
+                f" CRITICAL: Router received catastrophic num_experts {num_experts:,}!\n"
                 f"   Max allowed num_experts: {max_safe_num_experts:,}\n"
                 f"   Tensor shape: {logits.shape}"
             )
@@ -149,7 +149,7 @@ class CUDAGraphsSafeTopK(nn.Module):
         max_allocation_gb = 10.0  # Max 10 GB for padding allocation
         if estimated_allocation_bytes > max_allocation_gb * 1024**3:
             raise RuntimeError(
-                f"🚨 CRITICAL: Padding allocation would exceed {max_allocation_gb}GB!\n"
+                f" CRITICAL: Padding allocation would exceed {max_allocation_gb}GB!\n"
                 f"   Requested shape: ({batch_size}, {pad_size})\n"
                 f"   Estimated allocation: {estimated_allocation_bytes / 1024**3:.2f} GB\n"
                 f"   This indicates corrupted input with invalid dimensions."

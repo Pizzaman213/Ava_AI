@@ -71,7 +71,7 @@ def test_conversation_parsing():
     assert conv.turns[0].speaker == "user", f"Expected first speaker 'user', got {conv.turns[0].speaker}"
     assert conv.turns[1].speaker == "assistant", f"Expected second speaker 'assistant', got {conv.turns[1].speaker}"
     assert "Hello" in conv.turns[0].content, "First turn content missing"
-    print(f"✓ Parsed text format correctly: {conv.num_turns} turns")
+    print(f" Parsed text format correctly: {conv.num_turns} turns")
     print(f"  Turn 0 ({conv.turns[0].speaker}): {conv.turns[0].content[:50]}...")
     print(f"  Turn 1 ({conv.turns[1].speaker}): {conv.turns[1].content[:50]}...")
 
@@ -85,7 +85,7 @@ def test_conversation_parsing():
     assert conv.num_turns == 2, f"Expected 2 turns, got {conv.num_turns}"
     assert conv.turns[0].speaker == "user", "First turn should be user"
     assert conv.turns[1].speaker == "assistant", "Second turn should be assistant"
-    print(f"✓ Parsed messages format correctly: {conv.num_turns} turns")
+    print(f" Parsed messages format correctly: {conv.num_turns} turns")
 
     # Test 1.3: JSONL format parsing
     print("\n1.3 Testing JSONL format...")
@@ -98,7 +98,7 @@ def test_conversation_parsing():
     assert conv.num_turns == 2, f"Expected 2 turns, got {conv.num_turns}"
     assert conv.source == "test_dataset", f"Expected source 'test_dataset', got {conv.source}"
     assert conv.domain == "conversation", f"Expected domain 'conversation', got {conv.domain}"
-    print(f"✓ Parsed JSONL format correctly")
+    print(f" Parsed JSONL format correctly")
     print(f"  Turns: {conv.num_turns}, Source: {conv.source}, Domain: {conv.domain}")
 
     # Test 1.4: Auto-parse (mixed formats)
@@ -112,9 +112,9 @@ def test_conversation_parsing():
     # Dict format
     conv3 = ConversationParser.auto_parse({"messages": [{"role": "user", "content": "Q"}]})
     assert conv3.num_turns == 1
-    print(f"✓ Auto-parse handled all formats correctly")
+    print(f" Auto-parse handled all formats correctly")
 
-    print("\n✓ All parsing tests passed!")
+    print("\n All parsing tests passed!")
     return True
 
 
@@ -141,14 +141,14 @@ def test_turn_aware_tokenization():
     turn = conv.turns[0]
     input_ids, attention_mask = turn_tokenizer.tokenize_turn(turn)
     assert len(input_ids) == len(attention_mask), "Mismatch between input_ids and attention_mask length"
-    print(f"✓ Turn tokenized: {len(input_ids)} tokens")
+    print(f" Turn tokenized: {len(input_ids)} tokens")
     print(f"  Content: {tokenizer.decode(input_ids)}")
 
     print("\n2.2 Testing full conversation tokenization...")
     input_ids, attention_mask = turn_tokenizer.tokenize_conversation(conv)
     assert len(input_ids) == len(attention_mask), "Mismatch in full conversation tokenization"
     assert len(input_ids) > 0, "Empty tokenization"
-    print(f"✓ Full conversation tokenized: {len(input_ids)} tokens")
+    print(f" Full conversation tokenized: {len(input_ids)} tokens")
     print(f"  First 50 tokens: {input_ids[:50]}")
 
     print("\n2.3 Testing conversation with turn preservation...")
@@ -159,9 +159,9 @@ def test_turn_aware_tokenization():
     for i, turn_data in enumerate(result["turn_tokens"]):
         assert "input_ids" in turn_data, f"Missing input_ids for turn {i}"
         assert "speaker" in turn_data, f"Missing speaker for turn {i}"
-        print(f"✓ Turn {i}: {turn_data['speaker']} - {len(turn_data['input_ids'])} tokens")
+        print(f" Turn {i}: {turn_data['speaker']} - {len(turn_data['input_ids'])} tokens")
 
-    print("\n✓ All tokenization tests passed!")
+    print("\n All tokenization tests passed!")
     return True
 
 
@@ -199,7 +199,7 @@ def test_batch_collation():
             "num_turns": conv.num_turns,
         })
 
-    print(f"✓ Created batch with 3 conversations:")
+    print(f" Created batch with 3 conversations:")
     for i, item in enumerate(batch):
         print(f"  Conv {i}: {len(item['input_ids'])} tokens, {item['num_turns']} turns")
 
@@ -210,7 +210,7 @@ def test_batch_collation():
     assert "attention_mask" in collated, "Missing attention_mask in collated batch"
     assert "conversation_metadata" in collated, "Missing conversation_metadata"
 
-    print(f"✓ Collated batch shape: {collated['input_ids'].shape}")
+    print(f" Collated batch shape: {collated['input_ids'].shape}")
     print(f"  Batch size: {collated['input_ids'].size(0)}")
     print(f"  Sequence length: {collated['input_ids'].size(1)}")
 
@@ -226,11 +226,11 @@ def test_batch_collation():
     print("\n3.4 Checking metadata preservation...")
     metadata = collated["conversation_metadata"]
     assert len(metadata["conversation_ids"]) == 3, "Metadata mismatch"
-    print(f"✓ Preserved metadata for {len(metadata['conversation_ids'])} conversations")
+    print(f" Preserved metadata for {len(metadata['conversation_ids'])} conversations")
     for i, conv_id in enumerate(metadata["conversation_ids"]):
         print(f"  Conv {i}: {conv_id} (source={metadata['sources'][i]}, turns={metadata['num_turns'][i]})")
 
-    print("\n✓ All collation tests passed!")
+    print("\n All collation tests passed!")
     return True
 
 
@@ -264,7 +264,7 @@ def test_dataset_loading():
     with open(test_file, "w") as f:
         for conv_data in test_conversations:
             f.write(json.dumps(conv_data) + "\n")
-    print(f"✓ Created test file: {test_file}")
+    print(f" Created test file: {test_file}")
 
     print("\n4.2 Loading dataset...")
     tokenizer = SimpleTokenizer()
@@ -278,7 +278,7 @@ def test_dataset_loading():
     )
 
     assert len(dataset) == 3, f"Expected 3 conversations, got {len(dataset)}"
-    print(f"✓ Loaded {len(dataset)} conversations from JSONL")
+    print(f" Loaded {len(dataset)} conversations from JSONL")
 
     print("\n4.3 Testing dataset indexing...")
     for i in range(len(dataset)):
@@ -306,12 +306,12 @@ def test_dataset_loading():
         min_turns=2,  # Only conversations with 2+ turns
     )
     assert len(dataset_filtered) == 1, f"Expected 1 conversation with 2+ turns, got {len(dataset_filtered)}"
-    print(f"✓ Filtered to {len(dataset_filtered)} conversations with min_turns=2")
+    print(f" Filtered to {len(dataset_filtered)} conversations with min_turns=2")
     test_file_filtered.unlink()
 
     # Cleanup
     test_file.unlink()
-    print("\n✓ All dataset loading tests passed!")
+    print("\n All dataset loading tests passed!")
     return True
 
 
@@ -330,7 +330,7 @@ def test_performance():
         speaker = "user" if i % 2 == 0 else "assistant"
         conv.add_turn(speaker, f"Turn {i}: " + " ".join([f"word{j}" for j in range(20)]))
 
-    print(f"✓ Created conversation with {conv.num_turns} turns")
+    print(f" Created conversation with {conv.num_turns} turns")
 
     turn_tokenizer = TurnAwareTokenizer(
         tokenizer=tokenizer,
@@ -344,7 +344,7 @@ def test_performance():
     for _ in range(10):
         _ = turn_tokenizer.tokenize_conversation(conv)
     elapsed = time.time() - start
-    print(f"✓ 10 tokenizations completed in {elapsed:.3f}s ({elapsed/10:.3f}s per conversation)")
+    print(f" 10 tokenizations completed in {elapsed:.3f}s ({elapsed/10:.3f}s per conversation)")
 
     # Benchmark with turn preservation
     print("\n5.3 Benchmarking with turn preservation...")
@@ -352,9 +352,9 @@ def test_performance():
     for _ in range(10):
         _ = turn_tokenizer.tokenize_conversation_with_turns(conv)
     elapsed = time.time() - start
-    print(f"✓ 10 full tokenizations completed in {elapsed:.3f}s ({elapsed/10:.3f}s per conversation)")
+    print(f" 10 full tokenizations completed in {elapsed:.3f}s ({elapsed/10:.3f}s per conversation)")
 
-    print("\n✓ Performance benchmarks complete!")
+    print("\n Performance benchmarks complete!")
     return True
 
 
@@ -377,9 +377,9 @@ def test_special_tokens():
         token_value = CONVERSATION_TOKENS[token_key]
         assert token_value.startswith("<") and token_value.endswith(">"), \
             f"Token {token_key} has invalid format: {token_value}"
-        print(f"  ✓ {token_key}: {token_value}")
+        print(f"   {token_key}: {token_value}")
 
-    print("\n✓ All special tokens valid!")
+    print("\n All special tokens valid!")
     return True
 
 
@@ -404,7 +404,7 @@ def main():
             result = test_func()
             results.append((test_name, result))
         except Exception as e:
-            print(f"\n❌ {test_name} FAILED: {e}")
+            print(f"\n {test_name} FAILED: {e}")
             import traceback
             traceback.print_exc()
             results.append((test_name, False))
@@ -418,16 +418,16 @@ def main():
     total = len(results)
 
     for test_name, result in results:
-        status = "✓ PASSED" if result else "❌ FAILED"
+        status = " PASSED" if result else " FAILED"
         print(f"{status}: {test_name}")
 
     print(f"\nTotal: {passed}/{total} tests passed")
 
     if passed == total:
-        print("\n🎉 All tests passed!")
+        print("\n All tests passed!")
         return 0
     else:
-        print(f"\n⚠️  {total - passed} test(s) failed")
+        print(f"\n  {total - passed} test(s) failed")
         return 1
 
 

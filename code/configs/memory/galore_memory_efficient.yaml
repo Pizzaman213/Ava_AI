@@ -1,0 +1,209 @@
+# Memory-Efficient Training Configuration with GaLore Optimizer
+#
+# This configuration demonstrates using the GaLore optimizer for
+# 50-65% gradient memory reduction with minimal quality impact.
+#
+# GaLore (Gradient Low-Rank Projection) projects gradients to a
+# low-rank subspace, dramatically reducing memory usage during
+# backpropagation.
+#
+# Memory Savings Comparison:
+# - Standard AdamW: 100% baseline
+# - GaLore AdamW:   35-50% of baseline (50-65% reduction)
+# - GaLore Lion:    30-40% of baseline (60-70% reduction)
+#
+# Use this when:
+# - Training large models with limited GPU memory
+# - Wanting to increase batch size
+# - Gradient memory is a bottleneck
+#
+# Performance notes:
+# - ~10-15% training slowdown due to SVD computation
+# - Quality impact: <1% with proper tuning
+# - Best combined with other optimizations (gradient checkpointing, etc.)
+
+# Model architecture
+model:
+  type: "transformer"
+  hidden_size: 1024
+  num_layers: 12
+  num_heads: 16
+  intermediate_size: 4096
+  vocab_size: 50257
+  max_seq_length: 2048
+  dropout: 0.1
+
+# GaLore Optimizer Configuration
+optimizer:
+  # GaLore variants: 'galore_adamw' or 'galore_lion'
+  type: "galore_adamw"
+
+  # Learning rate (same as standard optimizers)
+  lr: 1.0e-3
+
+  # Weight decay
+  weight_decay: 0.01
+
+  # Standard Adam betas (for galore_adamw)
+  betas: [0.9, 0.999]
+
+  # GaLore-specific parameters
+  galore_params:
+    # Rank for low-rank projection (lower = more memory savings)
+    # Recommended ranges:
+    # - rank: 64  -> Maximum memory savings, may impact quality slightly
+    # - rank: 128 -> Balanced (recommended)
+    # - rank: 256 -> Minimal quality impact, moderate savings
+    rank: 128
+
+    # How often to update projection matrix (in steps)
+    # Higher = less overhead, but may reduce adaptation
+    # Recommended: 100-500 steps
+    update_proj_gap: 200
+
+    # Scaling factor for projected gradients
+    # Usually kept at 1.0
+    galore_scale: 1.0
+
+# Alternative: GaLore Lion (even more memory efficient)
+# Uncomment to use:
+# optimizer:
+#   type: "galore_lion"
+#   lr: 1.0e-4  # Note: Lion uses 3-10x smaller LR
+#   weight_decay: 0.01
+#   betas: [0.9, 0.99]
+#   galore_params:
+#     rank: 128
+#     update_proj_gap: 200
+#     galore_scale: 1.0
+
+# Training configuration
+training:
+  # With GaLore, you can often increase batch size
+  batch_size: 16  # Increase this with memory savings!
+  gradient_accumulation_steps: 4
+  max_steps: 100000
+
+  # Essential: Enable gradient checkpointing for even more savings
+  gradient_checkpointing: true
+
+  # Mixed precision (highly recommended with GaLore)
+  mixed_precision: "bf16"  # or "fp16"
+
+  # Learning rate schedule
+  lr_scheduler:
+    type: "cosine"
+    warmup_steps: 1000
+    min_lr: 1.0e-5
+
+  # Gradient clipping
+  max_grad_norm: 1.0
+
+  # Validation
+  eval_interval: 1000
+  save_interval: 5000
+
+# Data configuration
+data:
+  train_path: "data/processed/train.arrow"
+  val_path: "data/processed/val.arrow"
+
+  # Sequence packing for efficiency
+  use_sequence_packing: true
+
+  # Data loading
+  num_workers: 4
+  prefetch_factor: 2
+
+# Memory optimization stack
+# (Combine GaLore with these for maximum savings)
+memory_optimizations:
+  # Core optimizations
+  gradient_checkpointing: true        # 60-80% activation memory
+  flash_attention: true               # 50-70% attention memory
+  mixed_precision: true               # 50% model memory
+
+  # Optional: Add 8-bit optimizer states
+  # Note: GaLore already handles gradient memory
+  # use_8bit_optimizer: false  # Keep false when using GaLore
+
+  # CPU offloading (for very large models)
+  cpu_offload:
+    enabled: false
+    offload_optimizer: false
+
+# Logging and monitoring
+logging:
+  project_name: "galore-training"
+  experiment_name: "memory-efficient-baseline"
+  log_interval: 10
+
+  # Track memory usage
+  track_memory: true
+
+  # Log optimizer stats
+  log_optimizer_stats: true
+
+# Hardware configuration
+hardware:
+  # Number of GPUs
+  num_gpus: 1
+
+  # Enable TF32 on Ampere+ GPUs
+  allow_tf32: true
+
+  # Compilation (optional)
+  compile_model: false  # Set to true for PyTorch 2.0+
+
+# Advanced: Memory estimation
+# Expected memory usage with this config:
+#
+# Model parameters (1.1B):
+#   - FP16/BF16: ~2.2 GB
+#
+# Optimizer state:
+#   - AdamW (2 moments): ~4.4 GB
+#   - GaLore reduction: ~1.5-2.2 GB (50-65% savings)
+#   - Effective: ~2.5 GB
+#
+# Gradients:
+#   - Standard: ~2.2 GB
+#   - GaLore: ~0.8-1.1 GB (50-65% reduction)
+#
+# Activations (batch_size=16, seq_len=2048):
+#   - Standard: ~8-10 GB
+#   - With checkpointing: ~2-3 GB
+#
+# Total (with all optimizations):
+#   - ~7-8 GB instead of ~18-20 GB
+#   - 2.5x memory reduction!
+#
+# This means you can:
+# - Train on smaller GPUs (e.g., RTX 3090 instead of A100)
+# - Use larger batch sizes (better throughput)
+# - Train larger models on same hardware
+
+# Tips for using GaLore:
+#
+# 1. Start with rank=128 (good balance)
+#    - If quality suffers: increase to 256
+#    - If need more memory: decrease to 64
+#
+# 2. Tune update_proj_gap:
+#    - Default 200 works well
+#    - Increase for speed (less SVD overhead)
+#    - Decrease for better adaptation
+#
+# 3. Combine with other optimizations:
+#    - Always use gradient checkpointing
+#    - Always use flash attention
+#    - Consider DeepSpeed ZeRO for multi-GPU
+#
+# 4. Monitor training:
+#    - Check loss curves (should be similar to standard optimizer)
+#    - Watch memory usage (should see significant savings)
+#    - Validate quality on held-out set
+#
+# 5. Learning rate:
+#    - GaLore AdamW: same as standard AdamW (1e-3 to 3e-4)
+#    - GaLore Lion: 3-10x smaller than AdamW (1e-4 to 1e-5)

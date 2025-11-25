@@ -288,13 +288,13 @@ class EnhancedModularTrainer:
             if total_params > 500_000_000:  # 500M parameters
                 configured_checkpointing = True
                 params_in_millions = total_params / 1_000_000
-                print(f"🧠 Auto-enabling gradient checkpointing for large model ({params_in_millions:.1f}M parameters)")
+                print(f" Auto-enabling gradient checkpointing for large model ({params_in_millions:.1f}M parameters)")
                 print(f"   Expected memory savings: ~25%, slowdown: ~8%")
 
         self.gradient_checkpointing_enabled = configured_checkpointing
         if self.gradient_checkpointing_enabled:
             self._enable_gradient_checkpointing()
-            print("✓ Gradient checkpointing enabled for memory optimization")
+            print(" Gradient checkpointing enabled for memory optimization")
 
         # Mixed precision gradient scaler with health monitoring
         # Note: GradScaler only works with FP16, not BF16
@@ -406,7 +406,7 @@ class EnhancedModularTrainer:
                 memory_headroom_gb = optimizations['memory_headroom_gb']
 
         # DEBUG: Print actual threshold values being used
-        print(f"🔧 Memory Monitor Configuration:")
+        print(f" Memory Monitor Configuration:")
         print(f"   Target utilization: {target_util:.1%}")
         print(f"   Warning threshold:  {warning_thresh:.1%}")
         print(f"   Critical threshold: {critical_thresh:.1%}")
@@ -426,43 +426,43 @@ class EnhancedModularTrainer:
 
         # Initialize dynamic batch sizer if enabled
         self.dynamic_batch_sizer = None
-        print("🔍 DEBUG: Initializing dynamic batch sizer...")
-        print(f"🔍 DEBUG: config type = {type(config)}")
-        print(f"🔍 DEBUG: config.training type = {type(config.training)}")
+        print(" DEBUG: Initializing dynamic batch sizer...")
+        print(f" DEBUG: config type = {type(config)}")
+        print(f" DEBUG: config.training type = {type(config.training)}")
         if hasattr(config.training, '__dict__'):
-            print(f"🔍 DEBUG: config.training.__dict__ keys = {list(config.training.__dict__.keys())[:20]}")  # First 20 keys
+            print(f" DEBUG: config.training.__dict__ keys = {list(config.training.__dict__.keys())[:20]}")  # First 20 keys
         if hasattr(config.training, 'keys') and callable(getattr(config.training, 'keys')):
-            print(f"🔍 DEBUG: config.training.keys() = {list(config.training.keys())[:20]}")  # If it's a dict  # type: ignore[attr-defined]
+            print(f" DEBUG: config.training.keys() = {list(config.training.keys())[:20]}")  # If it's a dict  # type: ignore[attr-defined]
         try:
             # Check if dynamic_batching is configured
             dynamic_batching = None
             if hasattr(config.training, "dynamic_batching"):
                 dynamic_batching = config.training.dynamic_batching
-                print(f"🔍 DEBUG: Found dynamic_batching in config.training")
+                print(f" DEBUG: Found dynamic_batching in config.training")
             elif hasattr(config, "dynamic_batching"):
                 dynamic_batching = config.dynamic_batching  # type: ignore[attr-defined]
-                print(f"🔍 DEBUG: Found dynamic_batching in config")
+                print(f" DEBUG: Found dynamic_batching in config")
             else:
-                print(f"🔍 DEBUG: dynamic_batching not found in config")
+                print(f" DEBUG: dynamic_batching not found in config")
                 # Try direct dict access
                 if isinstance(config.training, dict) and 'dynamic_batching' in config.training:
                     dynamic_batching = config.training['dynamic_batching']
-                    print(f"🔍 DEBUG: Found dynamic_batching via dict access!")
+                    print(f" DEBUG: Found dynamic_batching via dict access!")
                 elif hasattr(config, '__dict__') and 'training' in config.__dict__:
                     training_dict = config.__dict__['training']
                     if isinstance(training_dict, dict) and 'dynamic_batching' in training_dict:
                         dynamic_batching = training_dict['dynamic_batching']
-                        print(f"🔍 DEBUG: Found dynamic_batching via __dict__ access!")
+                        print(f" DEBUG: Found dynamic_batching via __dict__ access!")
 
             if dynamic_batching:
                 enabled = getattr(dynamic_batching, "enabled", False)
-                print(f"🔍 DEBUG: dynamic_batching.enabled = {enabled}")
+                print(f" DEBUG: dynamic_batching.enabled = {enabled}")
 
                 if enabled:
                     try:
                         from ..strategies.progressive_training import DynamicBatchSizer  # type: ignore[import-not-found]
                     except ImportError:
-                        print("⚠️  dynamic_batch_sampler module not found, skipping dynamic batching")
+                        print("  dynamic_batch_sampler module not found, skipping dynamic batching")
                         DynamicBatchSizer = None  # type: ignore
 
                     if DynamicBatchSizer is not None:
@@ -477,15 +477,15 @@ class EnhancedModularTrainer:
                             smooth_transitions=getattr(dynamic_batching, "smooth_transitions", True),
                             memory_monitor=self.memory_monitor
                         )
-                        print(f"✓ Dynamic batch sizing enabled: {self.dynamic_batch_sizer.min_batch_size}-{self.dynamic_batch_sizer.max_batch_size}")  # type: ignore[attr-defined]
+                        print(f" Dynamic batch sizing enabled: {self.dynamic_batch_sizer.min_batch_size}-{self.dynamic_batch_sizer.max_batch_size}")  # type: ignore[attr-defined]
                 else:
-                    print("ℹ️ Dynamic batching configured but disabled")
+                    print("ℹ Dynamic batching configured but disabled")
             else:
-                print("ℹ️ Dynamic batching not configured")
+                print("ℹ Dynamic batching not configured")
         except Exception as e:
             import traceback
-            print(f"⚠️  Could not initialize dynamic batch sizing: {e}")
-            print(f"⚠️  Traceback: {traceback.format_exc()}")
+            print(f"  Could not initialize dynamic batch sizing: {e}")
+            print(f"  Traceback: {traceback.format_exc()}")
             self.dynamic_batch_sizer = None
 
         # Checkpoint restore settings
@@ -631,7 +631,7 @@ class EnhancedModularTrainer:
             print("Single-node training mode")
             return
 
-        print("🚀 Initializing distributed training manager...")
+        print(" Initializing distributed training manager...")
 
         # Create distributed configuration from training config
         distributed_config = DistributedConfig(
@@ -653,7 +653,7 @@ class EnhancedModularTrainer:
         if success:
             self.is_distributed = True
             stats = self.distributed_manager.get_stats()
-            print(f"✅ Distributed training initialized successfully:")
+            print(f" Distributed training initialized successfully:")
             print(f"   Rank: {stats['rank']}/{stats['world_size']}")
             print(f"   Backend: {stats['backend']}")
             print(f"   Health monitoring: {stats['health_monitoring']}")
@@ -663,12 +663,12 @@ class EnhancedModularTrainer:
                 self._distributed_cleanup_handler
             )
         else:
-            print("❌ Failed to initialize distributed training")
+            print(" Failed to initialize distributed training")
             self.distributed_manager = None
 
     def _distributed_cleanup_handler(self):
         """Cleanup handler for distributed training."""
-        print("🧹 Distributed trainer cleanup handler called")
+        print(" Distributed trainer cleanup handler called")
         # Add any trainer-specific distributed cleanup here
 
     def _init_gpu_load_balancer(self):
@@ -701,7 +701,7 @@ class EnhancedModularTrainer:
         enable_expert_migration = getattr(hardware_config, 'enable_expert_migration', True)
         migration_threshold = getattr(hardware_config, 'migration_threshold', 0.2)
 
-        print(f"🔄 Initializing GPU Load Balancer...")
+        print(f" Initializing GPU Load Balancer...")
         print(f"   Number of GPUs: {num_gpus}")
         print(f"   Number of experts: {num_experts}")
         print(f"   Balancing strategy: {balancing_strategy}")
@@ -717,7 +717,7 @@ class EnhancedModularTrainer:
                 enable_expert_migration=enable_expert_migration,
                 migration_threshold=migration_threshold,
             )
-            print("✅ GPU Load Balancer initialized successfully")
+            print(" GPU Load Balancer initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize GPU Load Balancer: {e}")
             self.gpu_load_balancer = None
@@ -730,7 +730,7 @@ class EnhancedModularTrainer:
             print("Single-node training: error handler disabled")
             return
 
-        print("🛡️ Initializing rank-aware error handler...")
+        print(" Initializing rank-aware error handler...")
 
         try:
             # Get error handler with configuration
@@ -750,23 +750,23 @@ class EnhancedModularTrainer:
             # Register recovery callbacks
             self.error_handler.register_recovery_callback(self._handle_rank_failure)
 
-            print(f"✅ Error handler initialized for rank {self.error_handler.rank}")
+            print(f" Error handler initialized for rank {self.error_handler.rank}")
             print(f"   Max retries: {self.error_handler.max_retries}")
             print(f"   Heartbeat interval: {self.error_handler.heartbeat_interval}s")
             print(f"   Failure timeout: {self.error_handler.failure_timeout}s")
 
         except Exception as e:
-            print(f"❌ Failed to initialize error handler: {e}")
+            print(f" Failed to initialize error handler: {e}")
             self.error_handler = None
 
     def _handle_rank_failure(self, failed_rank: int, error_info):
         """Handle rank failure callback."""
         if failed_rank == -1:
             # Global failure - initiate emergency shutdown
-            print(f"🚨 Emergency shutdown initiated due to: {error_info.message}")
+            print(f" Emergency shutdown initiated due to: {error_info.message}")
             # Could trigger model saving, cleanup, etc.
         else:
-            print(f"🔧 Handling failure of rank {failed_rank}: {error_info.message}")
+            print(f" Handling failure of rank {failed_rank}: {error_info.message}")
             # Could implement rank replacement, model redistribution, etc.
 
         # Log the failure event
@@ -787,7 +787,7 @@ class EnhancedModularTrainer:
             print("Single-node training: health checker disabled")
             return
 
-        print("🩺 Initializing distributed health checker...")
+        print(" Initializing distributed health checker...")
 
         try:
             # Get health checker with configuration
@@ -809,13 +809,13 @@ class EnhancedModularTrainer:
                 ),
             )
 
-            print(f"✅ Health checker initialized for rank {self.health_checker.rank}")
+            print(f" Health checker initialized for rank {self.health_checker.rank}")
             print(f"   Check interval: {self.health_checker.check_interval}s")
             print(f"   Anomaly threshold: {self.health_checker.anomaly_threshold}")
             print(f"   Gradient sync: {self.health_checker.enable_gradient_sync}")
 
         except Exception as e:
-            print(f"❌ Failed to initialize health checker: {e}")
+            print(f" Failed to initialize health checker: {e}")
             self.health_checker = None
 
     def _validate_hardware_config_compatibility(self):
@@ -835,27 +835,27 @@ class EnhancedModularTrainer:
         # Check for mismatch
         if config_gpu_count != actual_gpu_count:
             print("\n" + "="*80)
-            print("⚠️  HARDWARE-CONFIG MISMATCH DETECTED")
+            print("  HARDWARE-CONFIG MISMATCH DETECTED")
             print("="*80)
-            print(f"📋 Config expects: {config_gpu_count} GPU{'s' if config_gpu_count > 1 else ''}")
-            print(f"🖥️  System has: {actual_gpu_count} GPU{'s' if actual_gpu_count > 1 else ''}")
+            print(f" Config expects: {config_gpu_count} GPU{'s' if config_gpu_count > 1 else ''}")
+            print(f"  System has: {actual_gpu_count} GPU{'s' if actual_gpu_count > 1 else ''}")
 
             # Provide specific warnings and recommendations
             if config_gpu_count > actual_gpu_count:
-                print(f"\n❌ Configuration requires MORE GPUs than available!")
+                print(f"\n Configuration requires MORE GPUs than available!")
 
                 # Check if this is a multi-GPU config on single GPU
                 if actual_gpu_count == 1 and config_gpu_count > 1:
-                    print(f"\n🔍 This appears to be a multi-GPU configuration on a single-GPU system.")
+                    print(f"\n This appears to be a multi-GPU configuration on a single-GPU system.")
 
                     # Check for DeepSpeed ZeRO-1 on single GPU (ineffective)
                     if (self.config.deepspeed.use_deepspeed and
                         self.config.deepspeed.zero_stage == 1):
-                        print(f"\n⚠️  CRITICAL: DeepSpeed ZeRO-1 is INEFFECTIVE on single GPU!")
+                        print(f"\n  CRITICAL: DeepSpeed ZeRO-1 is INEFFECTIVE on single GPU!")
                         print(f"   ZeRO-1 only provides benefits when sharding across multiple GPUs.")
                         print(f"   On single GPU, it adds overhead with no memory savings.")
 
-                    print(f"\n💡 Recommendations:")
+                    print(f"\n Recommendations:")
                     print(f"   1. Use a single-GPU optimized config:")
                     print(f"      python train.py --config configs/moe/tiny_moe_single_gpu.yaml")
                     print(f"   2. Or use configs/moe/small_moe.yaml (designed for 24GB GPUs)")
@@ -863,11 +863,11 @@ class EnhancedModularTrainer:
 
                     # Check config name for hints
                     if 'multi_gpu' in str(self.config.run_management.run_name).lower():
-                        print(f"\n📝 Note: Config name suggests multi-GPU setup: '{self.config.run_management.run_name}'")
+                        print(f"\n Note: Config name suggests multi-GPU setup: '{self.config.run_management.run_name}'")
                         print(f"   Consider using a single-GPU config instead.")
 
             elif config_gpu_count < actual_gpu_count:
-                print(f"\n⚡ System has MORE GPUs than config expects.")
+                print(f"\n System has MORE GPUs than config expects.")
                 print(f"   Only {config_gpu_count} GPU{'s' if config_gpu_count > 1 else ''} will be used.")
                 print(f"   To use all GPUs, update hardware.num_gpus to {actual_gpu_count}")
 
@@ -935,7 +935,7 @@ class EnhancedModularTrainer:
             # Check for CPU offloading
             if self.config.deepspeed.cpu_offload:
                 # With CPU offload, optimizer states go to CPU
-                print(f"📊 ZeRO-3 with CPU offload detected - optimizer states will use system RAM")
+                print(f" ZeRO-3 with CPU offload detected - optimizer states will use system RAM")
                 optimizer_memory_gb = 0  # Offloaded to CPU
 
         # Estimate activation memory (rough estimate based on batch size and model size)
@@ -965,31 +965,31 @@ class EnhancedModularTrainer:
 
         # Print detailed memory breakdown
         print("\n" + "="*80)
-        print("📊 PRE-FLIGHT MEMORY VALIDATION")
+        print(" PRE-FLIGHT MEMORY VALIDATION")
         print("="*80)
-        print(f"🖥️  GPU: {gpu_name} ({gpu_count} GPU{'s' if gpu_count > 1 else ''})")
-        print(f"💾 Total VRAM: {total_memory_gb:.2f} GB")
-        print(f"\n📈 Model: {model_params_millions:.1f}M parameters")
-        print(f"\n💰 Memory Requirements Breakdown:")
+        print(f"  GPU: {gpu_name} ({gpu_count} GPU{'s' if gpu_count > 1 else ''})")
+        print(f" Total VRAM: {total_memory_gb:.2f} GB")
+        print(f"\n Model: {model_params_millions:.1f}M parameters")
+        print(f"\n Memory Requirements Breakdown:")
         print(f"   Model weights ({dtype_bytes}B): {model_memory_gb:.2f} GB")
         print(f"   Gradients: {gradient_memory_gb:.2f} GB")
         print(f"   Optimizer ({optimizer_name}): {optimizer_memory_gb:.2f} GB")
         print(f"   Activations (batch={batch_size}): {activation_memory_gb:.2f} GB")
         print(f"   CUDA buffer: {buffer_memory_gb:.2f} GB")
-        print(f"   {'─'*40}")
+        print(f"   {''*40}")
         print(f"   Total Required: {total_required_gb:.2f} GB")
 
         # Validation and warnings
         memory_ratio = total_required_gb / total_memory_gb
 
         if memory_ratio > 1.0:
-            print(f"\n❌ CRITICAL: Memory requirements EXCEED available VRAM!")
+            print(f"\n CRITICAL: Memory requirements EXCEED available VRAM!")
             print(f"   Required: {total_required_gb:.2f} GB")
             print(f"   Available: {total_memory_gb:.2f} GB")
             print(f"   Shortfall: {total_required_gb - total_memory_gb:.2f} GB ({(memory_ratio - 1) * 100:.1f}% over)")
 
             # Provide specific recommendations
-            print(f"\n💡 Recommendations to reduce memory usage:")
+            print(f"\n Recommendations to reduce memory usage:")
             print(f"   1. Reduce batch_size (current: {batch_size})")
             print(f"   2. Enable gradient_checkpointing (saves ~60% activation memory)")
             print(f"   3. Use DeepSpeed ZeRO-3 with CPU offload")
@@ -998,7 +998,7 @@ class EnhancedModularTrainer:
 
             # Special check for single GPU with ZeRO-1
             if gpu_count == 1 and zero_stage == 1:
-                print(f"\n⚠️  WARNING: DeepSpeed ZeRO-1 provides NO benefit on single GPU!")
+                print(f"\n  WARNING: DeepSpeed ZeRO-1 provides NO benefit on single GPU!")
                 print(f"   ZeRO-1 only shards optimizer states across multiple GPUs.")
                 print(f"   Consider disabling DeepSpeed or using ZeRO-3 with CPU offload.")
 
@@ -1009,16 +1009,16 @@ class EnhancedModularTrainer:
             )
 
         elif memory_ratio > 0.9:
-            print(f"\n⚠️  WARNING: High memory usage ({memory_ratio * 100:.1f}% of available VRAM)")
+            print(f"\n  WARNING: High memory usage ({memory_ratio * 100:.1f}% of available VRAM)")
             print(f"   Training may fail during peak memory usage.")
             print(f"   Consider reducing batch_size or enabling gradient_checkpointing.")
 
         elif memory_ratio > 0.8:
-            print(f"\n⚡ Memory usage: {memory_ratio * 100:.1f}% of available VRAM")
+            print(f"\n Memory usage: {memory_ratio * 100:.1f}% of available VRAM")
             print(f"   Should train successfully with current configuration.")
 
         else:
-            print(f"\n✅ Memory usage: {memory_ratio * 100:.1f}% of available VRAM")
+            print(f"\n Memory usage: {memory_ratio * 100:.1f}% of available VRAM")
             print(f"   Plenty of headroom for training.")
 
         print("="*80 + "\n")
@@ -1056,7 +1056,7 @@ class EnhancedModularTrainer:
         # Validate DeepSpeed configuration
         self._validate_deepspeed_config(self.deepspeed_config)
 
-        print(f"✓ DeepSpeed configuration prepared (ZeRO Stage {self.config.deepspeed.zero_stage})")
+        print(f" DeepSpeed configuration prepared (ZeRO Stage {self.config.deepspeed.zero_stage})")
 
     def _create_deepspeed_config(self) -> Dict[str, Any]:
         """Create DeepSpeed configuration dictionary."""
@@ -1235,7 +1235,7 @@ class EnhancedModularTrainer:
         if train_batch_size != expected:
             error_msg = (
                 f"\n{'='*80}\n"
-                f"❌ DeepSpeed Configuration Error\n"
+                f" DeepSpeed Configuration Error\n"
                 f"{'='*80}\n"
                 f"train_batch_size does not match the required formula!\n\n"
                 f"  Formula: train_batch_size = micro_batch_size × gradient_accumulation × world_size\n\n"
@@ -1249,9 +1249,9 @@ class EnhancedModularTrainer:
             )
             # Log as warning but don't raise - the auto-calculation should have fixed it
             logger.warning(error_msg)
-            print(f"⚠️  DeepSpeed batch size mismatch detected and auto-corrected to {expected}")
+            print(f"  DeepSpeed batch size mismatch detected and auto-corrected to {expected}")
         else:
-            print(f"✓ DeepSpeed batch size validated: {train_batch_size} = {micro_batch_size} × {grad_accum} × {world_size}")
+            print(f" DeepSpeed batch size validated: {train_batch_size} = {micro_batch_size} × {grad_accum} × {world_size}")
 
     def _init_async_logger(self):
         """Initialize async logging system."""
@@ -1331,7 +1331,7 @@ class EnhancedModularTrainer:
             else:
                 self.deepseek_loss = self.deepseek_loss.to(self.device)
             self.composite_loss = None
-            print("✓ DeepSeek-style loss initialized with MTP and auxiliary-free balancing")
+            print(" DeepSeek-style loss initialized with MTP and auxiliary-free balancing")
         else:
             # Original composite loss configuration
             self.deepseek_loss = None
@@ -1402,12 +1402,12 @@ class EnhancedModularTrainer:
         losses_config = None
         if hasattr(self.config, 'enhanced_features') and hasattr(self.config.enhanced_features, 'losses'):  # type: ignore[attr-defined]
             losses_config = self.config.enhanced_features.losses  # type: ignore[attr-defined]
-            print("📊 Using enhanced_features.losses config path")
+            print(" Using enhanced_features.losses config path")
         elif hasattr(self.config, 'losses'):
             losses_config = self.config.losses
-            print("📊 Using losses config path")
+            print(" Using losses config path")
         else:
-            print("⚠️  No losses config found, using defaults")
+            print("  No losses config found, using defaults")
 
         use_ngram_penalty = getattr(losses_config, "use_ngram_penalty", True) if losses_config else True
         use_repetition_detector = getattr(losses_config, "use_immediate_repetition_detector", True) if losses_config else True
@@ -1422,10 +1422,10 @@ class EnhancedModularTrainer:
                 penalty_weight=ngram_weight,
                 vocab_size=vocab_size
             ).to(self.device)
-            print(f"✓ N-gram repetition penalty initialized (n={ngram_size}, weight={ngram_weight})")
+            print(f" N-gram repetition penalty initialized (n={ngram_size}, weight={ngram_weight})")
         else:
             self.ngram_penalty = None
-            print("⚠️  N-gram repetition penalty DISABLED")
+            print("  N-gram repetition penalty DISABLED")
 
         if use_repetition_detector:
             immediate_weight = getattr(losses_config, "immediate_repetition_weight", 3.0) if losses_config else 3.0
@@ -1433,10 +1433,10 @@ class EnhancedModularTrainer:
             self.repetition_detector = SequenceRepetitionDetector(
                 penalty_weight=immediate_weight
             ).to(self.device)
-            print(f"✓ Immediate repetition detector initialized (weight={immediate_weight})")
+            print(f" Immediate repetition detector initialized (weight={immediate_weight})")
         else:
             self.repetition_detector = None
-            print("⚠️  Immediate repetition detector DISABLED")
+            print("  Immediate repetition detector DISABLED")
 
     def _init_gradient_surgery(self):
         """Initialize gradient surgery."""
@@ -1628,7 +1628,7 @@ class EnhancedModularTrainer:
                     state["memory_adjustments_made"] += 1
 
                     print(
-                        f"    🔄 Memory pressure relief: increased gradient accumulation {current_grad_accum} → {new_grad_accum}"
+                        f"     Memory pressure relief: increased gradient accumulation {current_grad_accum} → {new_grad_accum}"
                     )
                     print(
                         f"       Status: {current_status}, GPU: {memory_health['gpu_utilization']:.1%}"
@@ -1640,10 +1640,10 @@ class EnhancedModularTrainer:
                 else:
                     # If we can't increase grad accumulation further, enable more aggressive measures
                     if state["memory_adjustments_made"] < 3:
-                        print(f"    ⚠️  Memory pressure persists at {memory_health['gpu_utilization']:.1%}, enabling aggressive cleanup")
+                        print(f"      Memory pressure persists at {memory_health['gpu_utilization']:.1%}, enabling aggressive cleanup")
                         if hasattr(self, 'memory_monitor'):
                             cleanup_stats = self.memory_monitor.cleanup_memory(aggressive=True)
-                            print(f"    🧹 Aggressive cleanup freed {cleanup_stats.get('freed_gb', 0):.2f}GB")
+                            print(f"     Aggressive cleanup freed {cleanup_stats.get('freed_gb', 0):.2f}GB")
                         state["last_action_step"] = self.step_count
                         state["memory_adjustments_made"] += 1
 
@@ -1668,12 +1668,12 @@ class EnhancedModularTrainer:
         # Check if we should enable attention checkpointing
         if memory_usage > ENABLE_ATTENTION_CHECKPOINT_THRESHOLD:
             if not getattr(self, '_attention_checkpointing_enabled', False):
-                print(f"    🔧 High memory usage ({memory_usage:.1%}), enabling attention checkpointing")
+                print(f"     High memory usage ({memory_usage:.1%}), enabling attention checkpointing")
                 self._enable_attention_checkpointing()
                 self._attention_checkpointing_enabled = True
         elif memory_usage < DISABLE_ATTENTION_CHECKPOINT_THRESHOLD:
             if getattr(self, '_attention_checkpointing_enabled', False):
-                print(f"    🔧 Memory usage low ({memory_usage:.1%}), disabling attention checkpointing for speed")
+                print(f"     Memory usage low ({memory_usage:.1%}), disabling attention checkpointing for speed")
                 self._disable_attention_checkpointing()
                 self._attention_checkpointing_enabled = False
 
@@ -1693,9 +1693,9 @@ class EnhancedModularTrainer:
                                     attn._original_forward, *args, use_reentrant=False, **kwargs  # type: ignore[attr-defined]
                                 )
                                 checkpoint_count += 1
-            print(f"    ✓ Enabled attention checkpointing on {checkpoint_count} layers (30-40% memory savings)")
+            print(f"     Enabled attention checkpointing on {checkpoint_count} layers (30-40% memory savings)")
         except Exception as e:
-            print(f"    ⚠️  Failed to enable attention checkpointing: {e}")
+            print(f"      Failed to enable attention checkpointing: {e}")
 
     def _disable_attention_checkpointing(self):
         """Disable attention checkpointing to restore speed."""
@@ -1707,9 +1707,9 @@ class EnhancedModularTrainer:
                         if attn and hasattr(attn, '_original_forward'):
                             attn.forward = attn._original_forward
                             delattr(attn, '_original_forward')
-            print(f"    ✓ Disabled attention checkpointing for faster training")
+            print(f"     Disabled attention checkpointing for faster training")
         except Exception as e:
-            print(f"    ⚠️  Failed to disable attention checkpointing: {e}")
+            print(f"      Failed to disable attention checkpointing: {e}")
 
     def _enable_gradient_checkpointing(self):
         """
@@ -1731,12 +1731,12 @@ class EnhancedModularTrainer:
             # For HuggingFace models
             if hasattr(self.model, "gradient_checkpointing_enable"):
                 self.model.gradient_checkpointing_enable()  # type: ignore[attr-defined]
-                print("    ✓ HuggingFace gradient checkpointing enabled")
+                print("     HuggingFace gradient checkpointing enabled")
 
             # For custom models with explicit layer checkpointing
             elif hasattr(self.model, "enable_gradient_checkpointing"):
                 self.model.enable_gradient_checkpointing()  # type: ignore[attr-defined]
-                print("    ✓ Custom gradient checkpointing enabled")
+                print("     Custom gradient checkpointing enabled")
 
             # OPTIMIZATION: Selective checkpointing for MoE models
             elif hasattr(self.model, "layers") and selective_checkpoint:
@@ -1755,7 +1755,7 @@ class EnhancedModularTrainer:
                                 original_forward, use_reentrant=False
                             )
                             checkpoint_count += 1
-                print(f"    ✓ Selective gradient checkpointing enabled on {checkpoint_count} MoE/FFN layers")
+                print(f"     Selective gradient checkpointing enabled on {checkpoint_count} MoE/FFN layers")
 
             # For models with transformer layers, enable layer-wise checkpointing
             elif hasattr(self.model, "transformer") and hasattr(
@@ -1765,16 +1765,16 @@ class EnhancedModularTrainer:
                 for layer in self.model.transformer.h:  # type: ignore[attr-defined]
                     if hasattr(layer, "gradient_checkpointing"):
                         layer.gradient_checkpointing = True
-                print("    ✓ Layer-wise gradient checkpointing enabled")
+                print("     Layer-wise gradient checkpointing enabled")
 
             else:
                 print(
-                    "    ⚠️  Gradient checkpointing not supported by this model architecture"
+                    "      Gradient checkpointing not supported by this model architecture"
                 )
                 self.gradient_checkpointing_enabled = False
 
         except Exception as e:
-            print(f"    ⚠️  Failed to enable gradient checkpointing: {e}")
+            print(f"      Failed to enable gradient checkpointing: {e}")
             self.gradient_checkpointing_enabled = False
 
     def _init_observability(self):
@@ -1784,7 +1784,7 @@ class EnhancedModularTrainer:
             if self.performance_manager.config.mode.value == "ultra_fast":
                 # Lightweight observability for maximum speed
                 self.observability = create_lightweight_observability()
-                print("🔍 Lightweight observability initialized (ultra_fast mode)")
+                print(" Lightweight observability initialized (ultra_fast mode)")
             else:
                 # Full observability for normal training
                 obs_config = ObservabilityConfig(
@@ -1818,7 +1818,7 @@ class EnhancedModularTrainer:
                 )
 
                 self.observability = ObservabilityIntegration(obs_config)
-                print("🔍 Full observability integration initialized")
+                print(" Full observability integration initialized")
 
             # Prepare training context for initialization
             training_context = {
@@ -1834,10 +1834,10 @@ class EnhancedModularTrainer:
 
             # Initialize observability with context
             self.observability.initialize(training_context)
-            print("✓ Phase 7 observability integration ready")
+            print(" Phase 7 observability integration ready")
 
         except Exception as e:
-            print(f"❌ Failed to initialize observability: {e}")
+            print(f" Failed to initialize observability: {e}")
             print("   Training will continue without observability")
             self.observability = None
 
@@ -2001,9 +2001,9 @@ class EnhancedModularTrainer:
             try:
                 from ..models.deepspeed_wrapper import DeepSpeedModelWrapper  # type: ignore[import-not-found]
                 wrapped_model = DeepSpeedModelWrapper(self.model)
-                print("  ✓ Model wrapped for DeepSpeed compatibility")
+                print("   Model wrapped for DeepSpeed compatibility")
             except ImportError:
-                print("⚠️  deepspeed_wrapper not found, using unwrapped model")
+                print("  deepspeed_wrapper not found, using unwrapped model")
                 wrapped_model = self.model
 
             # Initialize DeepSpeed engine with better error handling
@@ -2029,7 +2029,7 @@ class EnhancedModularTrainer:
 
             # Workaround: Initialize engine_timers if missing (DeepSpeed compatibility fix)
             if not hasattr(self.deepspeed_engine, 'engine_timers'):
-                print("⚠️  Warning: DeepSpeed engine_timers not initialized, disabling timers")
+                print("  Warning: DeepSpeed engine_timers not initialized, disabling timers")
                 # Create a dummy timer object to prevent AttributeError
                 from types import SimpleNamespace
                 self.deepspeed_engine.engine_timers = SimpleNamespace(
@@ -2071,11 +2071,11 @@ class EnhancedModularTrainer:
         except Exception as e:
             print(f" DeepSpeed initialization failed: {e}")
             print("   Falling back to standard training")
-            print("   ⚠️  WARNING: DDP mode requires more GPU memory than DeepSpeed ZeRO")
-            print("   ⚠️  If you encounter OOM errors, consider:")
-            print("   ⚠️    1. Fix DeepSpeed config (check train_batch_size formula)")
-            print("   ⚠️    2. Reduce batch_size to 1")
-            print("   ⚠️    3. Enable gradient checkpointing")
+            print("     WARNING: DDP mode requires more GPU memory than DeepSpeed ZeRO")
+            print("     If you encounter OOM errors, consider:")
+            print("       1. Fix DeepSpeed config (check train_batch_size formula)")
+            print("       2. Reduce batch_size to 1")
+            print("       3. Enable gradient checkpointing")
 
             # Cleanup any partial initialization
             if hasattr(self, "deepspeed_engine"):
@@ -2089,14 +2089,14 @@ class EnhancedModularTrainer:
         """Set up standard (non-DeepSpeed) training with intelligent LR management."""
         # Enable gradient checkpointing if configured (critical for memory savings in DDP mode)
         if getattr(self.config.model, "gradient_checkpointing", False):
-            print("🔄 Enabling gradient checkpointing for memory optimization...")
+            print(" Enabling gradient checkpointing for memory optimization...")
             self._enable_gradient_checkpointing()
-            print("✅ Gradient checkpointing enabled")
+            print(" Gradient checkpointing enabled")
 
         # CRITICAL FIX: Wrap model in DDP for non-DeepSpeed distributed training
         if self.distributed_manager and self.distributed_manager.is_initialized():
             if not isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-                print(f"🔄 Wrapping model in DistributedDataParallel...")
+                print(f" Wrapping model in DistributedDataParallel...")
                 print(f"   Rank: {self.distributed_manager.rank}, Device: {self.device}")
 
                 self.model = torch.nn.parallel.DistributedDataParallel(
@@ -2108,14 +2108,14 @@ class EnhancedModularTrainer:
                     gradient_as_bucket_view=True,  # Memory optimization
                     bucket_cap_mb=50,  # OPTIMIZATION: Increased from default 25MB for 10-15% speedup
                 )
-                print(f"✅ Model wrapped in DDP successfully")
+                print(f" Model wrapped in DDP successfully")
 
                 # PHASE 1 OPTIMIZATION: Enable static graph for 10-15% multi-GPU speedup
                 try:
                     self.model._set_static_graph()  # type: ignore[attr-defined]
-                    print("✅ Phase 1: Static DDP graph enabled (10-15% multi-GPU speedup)")
+                    print(" Phase 1: Static DDP graph enabled (10-15% multi-GPU speedup)")
                 except Exception as e:
-                    print(f"⚠️  Could not enable static DDP graph: {e}")
+                    print(f"  Could not enable static DDP graph: {e}")
 
         # Get training parameters
         num_epochs = self.config.training.epochs if self.config.training.epochs else 3
@@ -2163,7 +2163,7 @@ class EnhancedModularTrainer:
         self.warmup_scheduler = None
         self.lr_scheduler = None
 
-        print(f"✓ Intelligent LR management enabled:")
+        print(f" Intelligent LR management enabled:")
         print(f"   Warmup ratio: {lr_config.warmup_ratio:.1%}")
         print(
             f"   Adaptive LR: {'Enabled' if lr_config.enable_adaptive else 'Disabled'}"
@@ -2209,12 +2209,12 @@ class EnhancedModularTrainer:
                             if isinstance(batch, dict) and "input_ids" in batch:
                                 batch_size = batch["input_ids"].size(0)
                                 total_samples += batch_size
-                                print(f"   ✓ Batch {i+1}: {batch_size} samples")
+                                print(f"    Batch {i+1}: {batch_size} samples")
                         except StopIteration:
                             print(f"   Dataset exhausted after {i+1} batches")
                             break
                         except Exception as e:
-                            print(f"   ⚠️  Error sampling batch {i+1}: {e}")
+                            print(f"     Error sampling batch {i+1}: {e}")
                             break
 
                     if total_samples > 0:
@@ -2223,17 +2223,17 @@ class EnhancedModularTrainer:
                         dataset_size = int(
                             avg_batch_size * 1000
                         )  # Assume 1000 batches minimum
-                        print(f"📊 Estimated dataset size: ~{dataset_size:,} samples (from {i+1} sampled batches)")
+                        print(f" Estimated dataset size: ~{dataset_size:,} samples (from {i+1} sampled batches)")
                     else:
                         dataset_size = 100000  # Fallback
                         print(
-                            f"⚠️  Could not estimate dataset size, using fallback: {dataset_size:,}"
+                            f"  Could not estimate dataset size, using fallback: {dataset_size:,}"
                         )
 
             except Exception as e:
                 dataset_size = 100000  # Fallback
                 print(
-                    f"⚠️  Error estimating dataset size: {e}, using fallback: {dataset_size:,}"
+                    f"  Error estimating dataset size: {e}, using fallback: {dataset_size:,}"
                 )
 
         # Calculate total steps with actual dataset information
@@ -2246,7 +2246,7 @@ class EnhancedModularTrainer:
             ],
         )
 
-        print(f"✓ LR schedule configured with actual dataset size:")
+        print(f" LR schedule configured with actual dataset size:")
         print(f"   Dataset size: {dataset_size:,} samples")
         print(f"   Total steps: {total_steps:,}")
         print(f"   Warmup steps: {self.lr_manager.warmup_steps:,}")
@@ -2323,7 +2323,7 @@ class EnhancedModularTrainer:
                         and self.distributed_manager.is_initialized()
                     ):
                         print(
-                            f"🔥 OOM detected on rank {oom_info['rank']} - coordinating with other ranks..."
+                            f" OOM detected on rank {oom_info['rank']} - coordinating with other ranks..."
                         )
 
                         # Broadcast OOM signal to all ranks
@@ -2341,11 +2341,11 @@ class EnhancedModularTrainer:
 
                             if recovery_success:
                                 print(
-                                    f"✅ Collective OOM recovery coordinated across all ranks"
+                                    f" Collective OOM recovery coordinated across all ranks"
                                 )
                             else:
                                 print(
-                                    f"❌ Failed to coordinate OOM recovery - falling back to local handling"
+                                    f" Failed to coordinate OOM recovery - falling back to local handling"
                                 )
 
                     # Handle OOM with error handler and observability
@@ -2514,7 +2514,7 @@ class EnhancedModularTrainer:
 
                 if collective_memory_health["status"] in ["warning", "critical"]:
                     print(
-                        f"⚠️  Collective memory health: {collective_memory_health['status']}"
+                        f"  Collective memory health: {collective_memory_health['status']}"
                     )
                     print(
                         f"   Max utilization: {collective_memory_health['max_utilization']:.1%}"
@@ -2529,7 +2529,7 @@ class EnhancedModularTrainer:
                     # If collective memory is critical, coordinate preventive action
                     if collective_memory_health["status"] == "critical":
                         print(
-                            f"🚨 Critical collective memory situation - coordinating preventive action..."
+                            f" Critical collective memory situation - coordinating preventive action..."
                         )
                         self.distributed_manager.coordinate_oom_recovery(
                             "reduce_batch_size"
@@ -2541,13 +2541,13 @@ class EnhancedModularTrainer:
                 if failure_status["status"] == "success":
                     if not failure_status["all_ranks_healthy"]:
                         failed_ranks = failure_status["failed_ranks"]
-                        print(f"💥 Detected failed ranks: {failed_ranks}")
+                        print(f" Detected failed ranks: {failed_ranks}")
                         print(
                             f"   Healthy ranks: {len(failure_status['healthy_ranks'])}/{failure_status['total_ranks']}"
                         )
 
                         # Coordinate recovery for failed ranks
-                        print(f"🔄 Coordinating recovery for failed ranks...")
+                        print(f" Coordinating recovery for failed ranks...")
                         recovery_success = (
                             self.distributed_manager.coordinate_rank_replacement(
                                 failed_ranks, ""
@@ -2556,7 +2556,7 @@ class EnhancedModularTrainer:
 
                         if recovery_success:
                             print(
-                                f"✅ Successfully coordinated recovery for failed ranks"
+                                f" Successfully coordinated recovery for failed ranks"
                             )
 
                             # Coordinate data resharding if dataloader supports it
@@ -2573,20 +2573,20 @@ class EnhancedModularTrainer:
                                 )
                                 if data_reshard_success:
                                     print(
-                                        f"📊 Data resharding completed for failed ranks"
+                                        f" Data resharding completed for failed ranks"
                                     )
                                 else:
                                     print(
-                                        f"⚠️  Data resharding failed - using existing distribution"
+                                        f"  Data resharding failed - using existing distribution"
                                     )
                         else:
                             print(
-                                f"❌ Failed to coordinate recovery - training may be unstable"
+                                f" Failed to coordinate recovery - training may be unstable"
                             )
                 elif failure_status["status"] == "gather_failed":
                     if failure_status["gather_time"] > 10.0:  # Very slow response
                         print(
-                            f"⚠️  Very slow rank communication: {failure_status['gather_time']:.1f}s"
+                            f"  Very slow rank communication: {failure_status['gather_time']:.1f}s"
                         )
 
                 # OPTIMIZED: Consolidated data distribution monitoring (was every 200 steps)
@@ -2604,7 +2604,7 @@ class EnhancedModularTrainer:
                         samples_assigned = data_stats.get("samples_assigned", 0)
 
                         if abs(load_ratio - 1.0) > 0.1:  # More than 10% imbalance
-                            print(f"⚖️  Data load imbalance detected:")
+                            print(f"  Data load imbalance detected:")
                             print(
                                 f"   Load ratio: {load_ratio:.2f} (1.0 = perfectly balanced)"
                             )
@@ -2944,7 +2944,7 @@ class EnhancedModularTrainer:
             if not skip_auxiliary_losses:
                 if hasattr(self, 'ngram_penalty') and self.ngram_penalty is not None:
                     # NGramRepetitionPenalty.forward(logits, targets, mask)
-                    # - logits: for diversity penalty (WITH GRADIENTS) ✓
+                    # - logits: for diversity penalty (WITH GRADIENTS) 
                     # - targets: for n-gram counting (uses input_ids for context)
                     # The diversity penalty on logits provides the gradient signal!
                     ngram_penalties = self.ngram_penalty(logits, input_ids, attention_mask)
@@ -2990,7 +2990,7 @@ class EnhancedModularTrainer:
                 self.consecutive_nan_losses += 1
                 self.total_nan_losses += 1
 
-                print(f"     ⚠️  Invalid total loss detected! (consecutive: {self.consecutive_nan_losses}, total: {self.total_nan_losses})")
+                print(f"       Invalid total loss detected! (consecutive: {self.consecutive_nan_losses}, total: {self.total_nan_losses})")
                 print(f"        Main: {main_loss.mean().item():.6f}")
                 for name, loss_value in valid_aux_losses.items():
                     print(f"        {name}: {loss_value.item():.6f}")
@@ -3000,7 +3000,7 @@ class EnhancedModularTrainer:
                 if self.consecutive_nan_losses >= self.max_consecutive_nan_losses:
                     error_msg = (
                         f"\n{'='*80}\n"
-                        f"❌ TRAINING FAILED: Too many consecutive NaN losses!\n"
+                        f" TRAINING FAILED: Too many consecutive NaN losses!\n"
                         f"   Consecutive NaN losses: {self.consecutive_nan_losses}\n"
                         f"   Threshold: {self.max_consecutive_nan_losses}\n"
                         f"   Total NaN losses: {self.total_nan_losses}\n"
@@ -3020,7 +3020,7 @@ class EnhancedModularTrainer:
                 if self.total_nan_losses >= self.max_total_nan_losses:
                     error_msg = (
                         f"\n{'='*80}\n"
-                        f"❌ TRAINING FAILED: Too many total NaN losses!\n"
+                        f" TRAINING FAILED: Too many total NaN losses!\n"
                         f"   Total NaN losses: {self.total_nan_losses}\n"
                         f"   Threshold: {self.max_total_nan_losses}\n"
                         f"   Consecutive: {self.consecutive_nan_losses}\n"
@@ -3236,7 +3236,7 @@ class EnhancedModularTrainer:
                     warmup_cutoff = int(max_steps * self.gradient_health_warmup_fraction)
                     if self.optimizer_step_count >= warmup_cutoff:
                         self.gradient_health_monitoring_active = False
-                        print(f"\n✓ [OPTIMIZATION] Gradient health monitoring disabled after {self.optimizer_step_count} optimizer steps ({self.gradient_health_warmup_fraction*100:.0f}% warmup complete)")
+                        print(f"\n [OPTIMIZATION] Gradient health monitoring disabled after {self.optimizer_step_count} optimizer steps ({self.gradient_health_warmup_fraction*100:.0f}% warmup complete)")
 
                 # ULTRA-OPTIMIZED: Only check gradient health if enabled and monitoring is active
                 if self.gradient_health_enabled and self.gradient_health is not None and self.gradient_health_monitoring_active:
@@ -3536,7 +3536,7 @@ class EnhancedModularTrainer:
                     if adjustment_type != "warmup":
                         new_lr_val = lr_step_info.get('new_lr') or lr_step_info.get('lr') or lr_step_info.get('current_lr') or 0.0
                         print(
-                            f"    🔽 LR adjusted at optimizer step {self.optimizer_step_count} (micro-step {self.micro_step_count})"
+                            f"     LR adjusted at optimizer step {self.optimizer_step_count} (micro-step {self.micro_step_count})"
                         )
                         print(f"        New LR: {new_lr_val:.2e}")
 
@@ -3545,7 +3545,7 @@ class EnhancedModularTrainer:
                     phase = lr_step_info.get("phase", "unknown")
                     current_lr_val = lr_step_info.get('lr') or lr_step_info.get('current_lr') or lr_step_info.get('new_lr') or 0.0
                     print(
-                        f"    📈 LR Schedule: optimizer_step={self.optimizer_step_count}, phase={phase}, "
+                        f"     LR Schedule: optimizer_step={self.optimizer_step_count}, phase={phase}, "
                         f"lr={current_lr_val:.2e}, gradient_accum={gradient_accumulation_steps}"
                     )
             else:
@@ -3892,9 +3892,9 @@ class EnhancedModularTrainer:
                 # Log health summary
                 health_logger.info(
                     f"\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 TRAINING HEALTH SUMMARY [Step {self.step_count} | Epoch {epoch}]\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"\n"
+                    f" TRAINING HEALTH SUMMARY [Step {self.step_count} | Epoch {epoch}]\n"
+                    f"\n"
                     f"  Loss:        {total_loss.item():.4f} ({loss_trend})\n"
                     f"  LR:          {current_lr:.2e}\n"
                     f"  Memory:      {memory_util:.1%} ({memory_status})\n"
@@ -3904,7 +3904,7 @@ class EnhancedModularTrainer:
                     f"  Timing:      Forward {forward_time*1000:.1f}ms | "
                     f"Backward {backward_time*1000:.1f}ms | "
                     f"Optimizer {opt_time*1000:.1f}ms\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"\n"
                 )
 
         # Update observability with training step information (Phase 7)
@@ -4028,7 +4028,7 @@ class EnhancedModularTrainer:
             # Compare reported vs actual freed memory
             reported_freed = cleanup_stats.get("freed_gb", 0)
             if abs(actual_freed_gb - reported_freed) > TRAINER_CONSTANTS.MEMORY_CLEANUP_DISCREPANCY_THRESHOLD_GB:
-                print(f"    ⚠️ Memory cleanup discrepancy: reported {reported_freed:.2f}GB, actual {actual_freed_gb:.2f}GB")
+                print(f"     Memory cleanup discrepancy: reported {reported_freed:.2f}GB, actual {actual_freed_gb:.2f}GB")
 
             # Log significant cleanup
             if actual_freed_gb > TRAINER_CONSTANTS.MEMORY_CLEANUP_MIN_LOG_THRESHOLD_GB:
@@ -4144,7 +4144,7 @@ class EnhancedModularTrainer:
             if self.lr_manager.config.enable_adaptive:
                 lr_stats = self.lr_manager.get_statistics()
                 print(
-                    f"    📊 Validation loss set: {validation_loss:.4f} "
+                    f"     Validation loss set: {validation_loss:.4f} "
                     f"(adaptive LR enabled, patience: {lr_stats.get('plateau_patience', 'N/A')})"
                 )
 
@@ -4292,7 +4292,7 @@ class EnhancedModularTrainer:
         # Coordinate synchronized checkpointing if distributed
         if self.distributed_manager and self.distributed_manager.is_initialized():
             print(
-                f"🔄 Coordinating synchronized checkpoint across {self.distributed_manager.world_size} ranks..."
+                f" Coordinating synchronized checkpoint across {self.distributed_manager.world_size} ranks..."
             )
 
             # Use fault-tolerant checkpointing
@@ -4302,10 +4302,10 @@ class EnhancedModularTrainer:
 
             if not sync_success:
                 print(
-                    f"❌ Failed to coordinate distributed checkpoint - proceeding with local checkpoint"
+                    f" Failed to coordinate distributed checkpoint - proceeding with local checkpoint"
                 )
             else:
-                print(f"✅ Distributed checkpoint coordination successful")
+                print(f" Distributed checkpoint coordination successful")
         if self.deepspeed_engine:
             # DeepSpeed checkpoint saving with client_state
             from pathlib import Path
@@ -4447,7 +4447,7 @@ class EnhancedModularTrainer:
                 self.best_loss = client_state.get("loss", client_state.get("best_loss", float("inf")))
 
                 print(
-                    f"   ✓ Training state: optimizer_step={self.optimizer_step_count}, "
+                    f"    Training state: optimizer_step={self.optimizer_step_count}, "
                     f"micro_step={self.micro_step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
                 )
 
@@ -4477,16 +4477,16 @@ class EnhancedModularTrainer:
             if not checkpoint_file.exists():
                 raise FileNotFoundError(f"Checkpoint not found: {checkpoint_file}")
 
-            print(f"🔄 Loading checkpoint: {checkpoint_file}")
+            print(f" Loading checkpoint: {checkpoint_file}")
             print(f"   Target device: {self.device}")
 
             # Device-agnostic loading - always load to CPU first, then move to target device
             try:
                 checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
-                print("   ✓ Checkpoint loaded to CPU")
+                print("    Checkpoint loaded to CPU")
             except Exception as e:
                 # Fallback to target device if CPU loading fails
-                print(f"   ⚠️  CPU loading failed: {e}")
+                print(f"     CPU loading failed: {e}")
                 print(f"   Trying direct loading to {self.device}")
                 checkpoint = torch.load(checkpoint_file, map_location=self.device, weights_only=False)
 
@@ -4504,9 +4504,9 @@ class EnhancedModularTrainer:
                         }
                     base_model = self._get_base_model
                     base_model.load_state_dict(model_state)
-                    print("   ✓ Model state restored")
+                    print("    Model state restored")
                 except Exception as e:
-                    print(f"   ❌ Failed to restore model state: {e}")
+                    print(f"    Failed to restore model state: {e}")
                     raise
 
             # IMPORTANT: Optimizer state must be loaded AFTER model state is fully loaded
@@ -4535,17 +4535,17 @@ class EnhancedModularTrainer:
                     # Load optimizer state - this must happen AFTER model is loaded
                     self.optimizer.load_state_dict(optimizer_state)
                     optimizer_restored = True  # Mark as successfully restored
-                    print(f"   ✓ Optimizer state restored ({num_param_groups} param groups, {num_model_params} params)")
+                    print(f"    Optimizer state restored ({num_param_groups} param groups, {num_model_params} params)")
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore optimizer state: {e}")
+                    print(f"     Failed to restore optimizer state: {e}")
                     print(f"      Error type: {type(e).__name__}")
                     print("   Continuing with fresh optimizer state (momentum/adam state reset)")
             else:
                 # Debug: Print why optimizer wasn't loaded
                 if not has_optimizer:
-                    print(f"   ⚠️  Optimizer not available for restoration (has_optimizer={has_optimizer})")
+                    print(f"     Optimizer not available for restoration (has_optimizer={has_optimizer})")
                 if not has_optimizer_state:
-                    print(f"   ⚠️  Optimizer state not in checkpoint (has_optimizer_state={has_optimizer_state})")
+                    print(f"     Optimizer state not in checkpoint (has_optimizer_state={has_optimizer_state})")
 
             # FIXED: Load basic training state with proper step counters
             # Check for new step counters, fall back to legacy for backwards compatibility
@@ -4558,7 +4558,7 @@ class EnhancedModularTrainer:
             self.best_loss = checkpoint.get("loss", checkpoint.get("best_loss", float("inf")))
             self.scaler_last_reset = checkpoint.get("scaler_last_reset", 0)
             print(
-                f"   ✓ Training state: optimizer_step={self.optimizer_step_count}, "
+                f"    Training state: optimizer_step={self.optimizer_step_count}, "
                 f"micro_step={self.micro_step_count}, epoch={self.epoch_count}, best_loss={self.best_loss:.4f}"
             )
 
@@ -4577,12 +4577,12 @@ class EnhancedModularTrainer:
                 try:
                     self.adaptive_lr_manager.load_state_dict(checkpoint["adaptive_lr_manager_state"])  # type: ignore[attr-defined]
                     print(
-                        f"   ✓ Adaptive LR manager state restored: step={self.adaptive_lr_manager.step_count}, "  # type: ignore[attr-defined]
+                        f"    Adaptive LR manager state restored: step={self.adaptive_lr_manager.step_count}, "  # type: ignore[attr-defined]
                         f"best_loss={self.adaptive_lr_manager.best_loss:.4f}, reductions={self.adaptive_lr_manager.lr_reductions}"  # type: ignore[attr-defined]
                     )
                     restored_states["adaptive_lr_manager"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore adaptive LR manager state: {e}")
+                    print(f"     Failed to restore adaptive LR manager state: {e}")
                     restored_states["adaptive_lr_manager"] = False
             elif (
                 hasattr(self, "lr_manager")
@@ -4612,11 +4612,11 @@ class EnhancedModularTrainer:
 
                     phase = "recovery" if self.lr_manager.in_recovery else ("warmup" if self.lr_manager.current_step < self.lr_manager.warmup_steps else "main")
                     print(
-                        f"   ✓ LR manager state restored: step={self.lr_manager.current_step}, phase={phase}, reductions={self.lr_manager.reduction_count}"
+                        f"    LR manager state restored: step={self.lr_manager.current_step}, phase={phase}, reductions={self.lr_manager.reduction_count}"
                     )
                     restored_states["lr_manager"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore LR manager state: {e}")
+                    print(f"     Failed to restore LR manager state: {e}")
                     print(f"      Error details: {type(e).__name__}")
                     restored_states["lr_manager"] = False
             else:
@@ -4633,10 +4633,10 @@ class EnhancedModularTrainer:
                                 self.device
                             )
                     self.scaler.load_state_dict(scaler_state)
-                    print("   ✓ Mixed precision scaler state restored")
+                    print("    Mixed precision scaler state restored")
                     restored_states["scaler"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore scaler state: {e}")
+                    print(f"     Failed to restore scaler state: {e}")
                     print("   Creating new scaler")
                     restored_states["scaler"] = False
             else:
@@ -4677,11 +4677,11 @@ class EnhancedModularTrainer:
                         )
 
                     print(
-                        f"   ✓ Gradient health restored: {self.gradient_health.total_explosions} explosions, {self.gradient_health.total_steps} steps"
+                        f"    Gradient health restored: {self.gradient_health.total_explosions} explosions, {self.gradient_health.total_steps} steps"
                     )
                     restored_states["gradient_health"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore gradient health state: {e}")
+                    print(f"     Failed to restore gradient health state: {e}")
                     restored_states["gradient_health"] = False
             else:
                 restored_states["gradient_health"] = False
@@ -4692,11 +4692,11 @@ class EnhancedModularTrainer:
                     mem_state = checkpoint["memory_monitor_state"]
                     # Memory monitor state doesn't need device handling
                     print(
-                        f"   ✓ Memory monitor state found: {mem_state.get('emergency_count', 0)} emergencies"
+                        f"    Memory monitor state found: {mem_state.get('emergency_count', 0)} emergencies"
                     )
                     restored_states["memory_monitor"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore memory monitor state: {e}")
+                    print(f"     Failed to restore memory monitor state: {e}")
                     restored_states["memory_monitor"] = False
             else:
                 restored_states["memory_monitor"] = False
@@ -4717,11 +4717,11 @@ class EnhancedModularTrainer:
                     self.loss_health.spike_count = lh_state.get("spike_count", 0)  # type: ignore[attr-defined]
 
                     print(
-                        f"   ✓ Loss health restored: {self.loss_health.nan_count} NaN, {self.loss_health.inf_count} Inf, {self.loss_health.spike_count} spikes"  # type: ignore[attr-defined]
+                        f"    Loss health restored: {self.loss_health.nan_count} NaN, {self.loss_health.inf_count} Inf, {self.loss_health.spike_count} spikes"  # type: ignore[attr-defined]
                     )
                     restored_states["loss_health"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore loss health state: {e}")
+                    print(f"     Failed to restore loss health state: {e}")
                     restored_states["loss_health"] = False
             else:
                 restored_states["loss_health"] = False
@@ -4748,10 +4748,10 @@ class EnhancedModularTrainer:
                         if torch.cuda.is_available():
                             torch.cuda.set_rng_state(rand_states["torch_cuda_random"])
 
-                    print("   ✓ Random states restored for reproducibility")
+                    print("    Random states restored for reproducibility")
                     restored_states["random_states"] = True
                 except Exception as e:
-                    print(f"   ⚠️  Failed to restore random states: {e}")
+                    print(f"     Failed to restore random states: {e}")
                     restored_states["random_states"] = False
             else:
                 restored_states["random_states"] = False
@@ -4761,7 +4761,7 @@ class EnhancedModularTrainer:
             if "early_stopping_state" in checkpoint:
                 early_stopping_info = checkpoint["early_stopping_state"]
                 print(
-                    f"   ℹ️  Early stopping state: enabled={early_stopping_info.get('enabled', False)}, "
+                    f"   ℹ  Early stopping state: enabled={early_stopping_info.get('enabled', False)}, "
                     f"patience={early_stopping_info.get('patience', 'N/A')}"
                 )
 
@@ -4769,11 +4769,11 @@ class EnhancedModularTrainer:
             if "training_progress" in checkpoint:
                 training_progress_info = checkpoint["training_progress"]
                 print(
-                    f"   ℹ️  Training progress: epoch {training_progress_info.get('current_epoch', 'N/A')}/{training_progress_info.get('total_epochs', 'N/A')}, "
+                    f"   ℹ  Training progress: epoch {training_progress_info.get('current_epoch', 'N/A')}/{training_progress_info.get('total_epochs', 'N/A')}, "
                     f"complete={training_progress_info.get('training_complete', False)}"
                 )
 
-            print(f"✅ Checkpoint loaded: {checkpoint_file}")
+            print(f" Checkpoint loaded: {checkpoint_file}")
             print(
                 f"   States restored: {sum(restored_states.values())}/{len(restored_states)}"
             )
@@ -4792,7 +4792,7 @@ class EnhancedModularTrainer:
         """Clean up all components."""
         # Stop observability first to export final data
         if self.observability:
-            print("🔍 Cleaning up observability integration...")
+            print(" Cleaning up observability integration...")
             try:
                 self.observability.stop_training_observation()
                 self.observability.export_all_data()
@@ -4892,7 +4892,7 @@ class EnhancedModularTrainer:
         """
         if self.checkpoint_restore_attempts >= self.max_restore_attempts:
             print(
-                f"     ⚠️  Maximum restore attempts ({self.max_restore_attempts}) reached. "
+                f"       Maximum restore attempts ({self.max_restore_attempts}) reached. "
                 f"Will not attempt further restoration."
             )
             return
@@ -4900,15 +4900,15 @@ class EnhancedModularTrainer:
         # Find the best checkpoint to restore from
         checkpoint_path = self._find_best_checkpoint_for_restore()
         if not checkpoint_path:
-            print("     ⚠️  No valid checkpoint found for restoration.")
+            print("       No valid checkpoint found for restoration.")
             return
 
         try:
             self.checkpoint_restore_attempts += 1
             print(
-                f"     🔄 Attempting checkpoint restore #{self.checkpoint_restore_attempts}: {checkpoint_path}"
+                f"      Attempting checkpoint restore #{self.checkpoint_restore_attempts}: {checkpoint_path}"
             )
-            print(f"     📋 Restore reason: {reason}")
+            print(f"      Restore reason: {reason}")
 
             # Load the checkpoint
             checkpoint_data = self.load_checkpoint(checkpoint_path)
@@ -4916,12 +4916,12 @@ class EnhancedModularTrainer:
             # Reset loss health monitor to prevent immediate re-triggering
             if hasattr(self, "loss_health"):
                 self.loss_health.reset_history()  # type: ignore[attr-defined]
-                print("     ✓ Loss health monitor history reset")
+                print("      Loss health monitor history reset")
 
             # Reset gradient health monitor
             if self.gradient_health_enabled and hasattr(self, "gradient_health") and self.gradient_health is not None:
                 self.gradient_health.reset_history()  # type: ignore[attr-defined]
-                print("     ✓ Gradient health monitor history reset")
+                print("      Gradient health monitor history reset")
 
             # Lower learning rate to reduce instability
             if hasattr(self, "optimizer") and self.optimizer:
@@ -4929,13 +4929,13 @@ class EnhancedModularTrainer:
                     old_lr = param_group["lr"]
                     param_group["lr"] = old_lr * 0.5  # Reduce LR by half
                     print(
-                        f"     📉 Reduced learning rate from {old_lr:.2e} to {param_group['lr']:.2e}"
+                        f"      Reduced learning rate from {old_lr:.2e} to {param_group['lr']:.2e}"
                     )
 
-            print("     ✅ Checkpoint restoration completed. Training will continue.")
+            print("      Checkpoint restoration completed. Training will continue.")
 
         except Exception as e:
-            print(f"     ❌ Checkpoint restoration failed: {e}")
+            print(f"      Checkpoint restoration failed: {e}")
             print("     Will proceed with original error handling.")
 
     def _find_best_checkpoint_for_restore(self) -> Optional[str]:
@@ -4961,7 +4961,7 @@ class EnhancedModularTrainer:
                 if best_checkpoint and Path(best_checkpoint).exists():
                     return str(best_checkpoint)
             except Exception as e:
-                print(f"     ⚠️  Could not get best checkpoint from run manager: {e}")
+                print(f"       Could not get best checkpoint from run manager: {e}")
 
         # Try to find checkpoints in the current run directory
         if self.run_manager and hasattr(self.run_manager, "run_dir"):

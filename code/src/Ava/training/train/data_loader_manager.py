@@ -210,7 +210,7 @@ class DataLoaderManager(TrainingComponent):
 
         # Create appropriate loaders
         if use_pretokenized:
-            get_logger().info("📦 Using pretokenized Arrow data loader (60x faster)")
+            get_logger().info(" Using pretokenized Arrow data loader (60x faster)")
             # Get cache size from config or use optimized default
             cache_size = getattr(training_config.data, "cache_size", 200)
 
@@ -238,7 +238,7 @@ class DataLoaderManager(TrainingComponent):
             )
         else:
             get_logger().info(
-                "📦 Using streaming JSONL data loader with on-the-fly tokenization"
+                " Using streaming JSONL data loader with on-the-fly tokenization"
             )
             train_loader, val_loader = create_streaming_dataloaders(
                 tokenizer=tokenizer,
@@ -379,14 +379,14 @@ class DataLoaderManager(TrainingComponent):
         from src.Ava.utils.logging import get_logger
 
         get_logger().info("\n" + "="*80)
-        get_logger().info("📊 DATASET INFORMATION")
+        get_logger().info(" DATASET INFORMATION")
         get_logger().info("="*80)
 
         data_path = Path(data_dir)
         total_examples = 0
         file_count = 0
 
-        get_logger().info(f"📂 Data directory: {data_dir}")
+        get_logger().info(f" Data directory: {data_dir}")
 
         # Count JSONL files
         for jsonl_file in data_path.glob("*_processed.jsonl"):
@@ -396,10 +396,10 @@ class DataLoaderManager(TrainingComponent):
                     total_examples += file_lines
                     file_count += 1
                     get_logger().info(
-                        f"   ✓ {jsonl_file.name}: {file_lines:,} examples"
+                        f"    {jsonl_file.name}: {file_lines:,} examples"
                     )
             except Exception as e:
-                get_logger().warning(f"   ⚠️  Could not read {jsonl_file.name}: {e}")
+                get_logger().warning(f"     Could not read {jsonl_file.name}: {e}")
 
         # Count Arrow files
         for arrow_file in data_path.glob("*.arrow"):
@@ -413,19 +413,19 @@ class DataLoaderManager(TrainingComponent):
                     total_examples += file_rows
                     file_count += 1
                     get_logger().info(
-                        f"   ✓ {arrow_file.name}: {file_rows:,} examples (pre-tokenized)"
+                        f"    {arrow_file.name}: {file_rows:,} examples (pre-tokenized)"
                     )
             except Exception as e:
-                get_logger().warning(f"   ⚠️  Could not read {arrow_file.name}: {e}")
+                get_logger().warning(f"     Could not read {arrow_file.name}: {e}")
 
-        get_logger().info(f"\n📈 Total examples found: {total_examples:,}")
-        get_logger().info(f"📁 Total files: {file_count}")
+        get_logger().info(f"\n Total examples found: {total_examples:,}")
+        get_logger().info(f" Total files: {file_count}")
 
         # Validate minimum dataset size
         min_samples_required = batch_size * 2
         if total_examples < min_samples_required:
             error_msg = (
-                f"❌ CRITICAL ERROR: Dataset too small for training!\n"
+                f" CRITICAL ERROR: Dataset too small for training!\n"
                 f"   Found: {total_examples} examples\n"
                 f"   Required minimum: {min_samples_required} examples (batch_size * 2)\n"
                 f"   Batch size: {batch_size}\n"
@@ -442,7 +442,7 @@ class DataLoaderManager(TrainingComponent):
 
         if file_count == 0:
             error_msg = (
-                f"❌ CRITICAL ERROR: No data files found!\n"
+                f" CRITICAL ERROR: No data files found!\n"
                 f"   Directory checked: {data_dir}\n"
                 f"   Expected patterns: *_processed.jsonl or *.arrow\n"
                 f"   \n"
@@ -477,7 +477,7 @@ class DataLoaderManager(TrainingComponent):
 
         samples_per_file = self._get_samples_per_file(training_config)
 
-        get_logger().info(f"\n🎯 Training Configuration:")
+        get_logger().info(f"\n Training Configuration:")
         get_logger().info(f"   Batch size: {batch_size}")
         get_logger().info(f"   Gradient accumulation steps: {gradient_acc_steps}")
         get_logger().info(f"   Effective batch size: {effective_batch_size}")
@@ -516,28 +516,28 @@ class DataLoaderManager(TrainingComponent):
         from src.Ava.utils.logging import get_logger
 
         get_logger().info("\n" + "="*60)
-        get_logger().info("🚀 GPU I/O OPTIMIZATIONS ACTIVE")
+        get_logger().info(" GPU I/O OPTIMIZATIONS ACTIVE")
         get_logger().info("="*60)
         if use_pretokenized:
-            get_logger().info("✓ Ultra-fast pretokenized Arrow loader (60x speedup)")
+            get_logger().info(" Ultra-fast pretokenized Arrow loader (60x speedup)")
         else:
-            get_logger().info("✓ Streaming JSONL loader with on-the-fly tokenization")
-        get_logger().info(f"✓ Multi-worker data loading: {num_workers} workers")
-        get_logger().info(f"✓ Persistent workers: {persistent_workers}")
-        get_logger().info(f"✓ Pin memory: {torch.cuda.is_available()}")
-        get_logger().info(f"✓ Prefetch factor: {prefetch_factor}")
-        get_logger().info("✓ Non-blocking GPU transfers: enabled")
+            get_logger().info(" Streaming JSONL loader with on-the-fly tokenization")
+        get_logger().info(f" Multi-worker data loading: {num_workers} workers")
+        get_logger().info(f" Persistent workers: {persistent_workers}")
+        get_logger().info(f" Pin memory: {torch.cuda.is_available()}")
+        get_logger().info(f" Prefetch factor: {prefetch_factor}")
+        get_logger().info(" Non-blocking GPU transfers: enabled")
         stream_status = (
             "enabled" if torch.cuda.is_available() else "not available (CPU mode)"
         )
-        get_logger().info(f"✓ CUDA streams for async transfers: {stream_status}")
+        get_logger().info(f" CUDA streams for async transfers: {stream_status}")
         if use_sequence_packing:
             get_logger().info(
-                f"✓ Sequence packing: ENABLED ({packing_strategy} strategy, 20-35% speedup)"
+                f" Sequence packing: ENABLED ({packing_strategy} strategy, 20-35% speedup)"
             )
         else:
             get_logger().info(
-                "⚠ Sequence packing: DISABLED (enable for 20-35% speedup)"
+                " Sequence packing: DISABLED (enable for 20-35% speedup)"
             )
         get_logger().info("="*60 + "\n")
 
@@ -571,7 +571,7 @@ class DataLoaderManager(TrainingComponent):
                 )
 
             get_logger().info(
-                f"✓ Training data validation passed: {sample_count}+ samples available"
+                f" Training data validation passed: {sample_count}+ samples available"
             )
 
         except Exception as e:
@@ -600,7 +600,7 @@ class DataLoaderManager(TrainingComponent):
         if cache_key in _format_detection_cache:
             cached_result = _format_detection_cache[cache_key]
             get_logger().info(
-                f"   ✓ Using cached format detection: {cached_result['detected_format']}"
+                f"    Using cached format detection: {cached_result['detected_format']}"
             )
             return cached_result
 

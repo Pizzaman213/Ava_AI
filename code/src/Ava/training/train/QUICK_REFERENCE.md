@@ -178,14 +178,14 @@ print(f"Loss: {trainer.context.current_loss}")
 
 ```
 /project/code/src/Ava/training/train/
-├── trainer.py              ← SimplifiedEnhancedTrainer
-├── distributed_manager.py  ← DistributedTrainingManager
-├── checkpoint_manager.py   ← CheckpointManager
-├── loss_manager.py         ← LossComputationManager
-├── monitoring_manager.py   ← MonitoringManager
-├── base.py                 ← Base classes
-├── __init__.py             ← Module exports
-└── example_training.py     ← Working examples
+ trainer.py              ← SimplifiedEnhancedTrainer
+ distributed_manager.py  ← DistributedTrainingManager
+ checkpoint_manager.py   ← CheckpointManager
+ loss_manager.py         ← LossComputationManager
+ monitoring_manager.py   ← MonitoringManager
+ base.py                 ← Base classes
+ __init__.py             ← Module exports
+ example_training.py     ← Working examples
 ```
 
 ## Key Metrics from Status

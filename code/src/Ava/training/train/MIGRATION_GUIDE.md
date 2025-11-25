@@ -108,10 +108,10 @@ trainer.loss_manager.optimizer_step()
 ```
 
 **Benefits:**
-- ✓ Loss functions are explicitly registered
-- ✓ Loss breakdown is returned automatically
-- ✓ Gradient operations are organized
-- ✓ Easy to test loss computation independently
+-  Loss functions are explicitly registered
+-  Loss breakdown is returned automatically
+-  Gradient operations are organized
+-  Easy to test loss computation independently
 
 ### Checkpointing
 
@@ -149,10 +149,10 @@ metadata = trainer.checkpoint_manager.load_checkpoint(checkpoint_path)
 ```
 
 **Benefits:**
-- ✓ Clear API
-- ✓ Automatic best model tracking
-- ✓ Async saving still available
-- ✓ Easy to test independently
+-  Clear API
+-  Automatic best model tracking
+-  Async saving still available
+-  Easy to test independently
 
 ### Distributed Training
 
@@ -178,10 +178,10 @@ trainer.distributed_manager.allreduce(tensor)
 ```
 
 **Benefits:**
-- ✓ Distributed code is isolated
-- ✓ Easy to test without distributed setup
-- ✓ Clear synchronization API
-- ✓ Automatic retry logic on barrier
+-  Distributed code is isolated
+-  Easy to test without distributed setup
+-  Clear synchronization API
+-  Automatic retry logic on barrier
 
 ### Monitoring & Logging
 
@@ -210,10 +210,10 @@ trainer.monitoring_manager.log_model_stats()
 ```
 
 **Benefits:**
-- ✓ Consistent logging interface
-- ✓ Easy to disable W&B if needed
-- ✓ Performance metrics automatically tracked
-- ✓ Step/epoch lifecycle callbacks
+-  Consistent logging interface
+-  Easy to disable W&B if needed
+-  Performance metrics automatically tracked
+-  Step/epoch lifecycle callbacks
 
 ## Common Patterns
 

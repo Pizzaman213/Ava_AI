@@ -40,27 +40,27 @@ class RunManager:
 
     Directory structure created:
     runs/
-    ├── run_YYYYMMDD_HHMMSS_ABC123/
-    │   ├── logs/
-    │   │   ├── training.log
-    │   │   ├── evaluation.log
-    │   │   ├── errors.log
-    │   │   └── debug.log
-    │   ├── checkpoints/
-    │   │   ├── best_model.pt
-    │   │   ├── latest_model.pt
-    │   │   └── step_N/
-    │   ├── configs/
-    │   │   ├── model_config.yaml
-    │   │   ├── training_config.yaml
-    │   │   └── run_metadata.json
-    │   ├── metrics/
-    │   │   ├── training_metrics.json
-    │   │   ├── evaluation_metrics.json
-    │   │   └── loss_curves.json
-    │   └── outputs/
-    │       ├── generated_samples.txt
-    │       └── visualizations/
+     run_YYYYMMDD_HHMMSS_ABC123/
+        logs/
+           training.log
+           evaluation.log
+           errors.log
+           debug.log
+        checkpoints/
+           best_model.pt
+           latest_model.pt
+           step_N/
+        configs/
+           model_config.yaml
+           training_config.yaml
+           run_metadata.json
+        metrics/
+           training_metrics.json
+           evaluation_metrics.json
+           loss_curves.json
+        outputs/
+            generated_samples.txt
+            visualizations/
     """
 
     def __init__(self,

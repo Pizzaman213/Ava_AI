@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🚀 Ava Fine-Tuning Pipeline - Automatic Latest Data & Checkpoint Discovery
+ Ava Fine-Tuning Pipeline - Automatic Latest Data & Checkpoint Discovery
 
 Fine-tuning script that automatically discovers and uses:
 1. Latest checkpoint from previous training runs (for continued training)
@@ -69,9 +69,25 @@ warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
 import torch
 import yaml
 
-# Suppress warnings
+# Configure logging to always output to terminal
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ],
+    force=True
+)
+
+# Suppress only specific noisy loggers, not all output
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message="socket.send()")
+
+# Ensure stdout/stderr are not buffered
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
 
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
@@ -81,10 +97,11 @@ from transformers import AutoTokenizer
 
 # Import all training components from train.py
 from src.Ava.config import EnhancedTrainingConfig, TrainingConfigManager
-from src.Ava.config.feature_compatibility import (
-    print_compatibility_report,
-    validate_training_config,
-)
+# Feature compatibility module was removed
+# from src.Ava.config.feature_compatibility import (
+#     print_compatibility_report,
+#     validate_training_config,
+# )
 from src.Ava.data.dataloader import create_streaming_dataloaders
 from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel
 from src.Ava.data.multi_column_data import create_multi_column_dataloader
@@ -129,19 +146,19 @@ def find_latest_checkpoint(
         # Search for both latest_model.pt and model.pt
         checkpoint_files.extend(list(outputs_dir.rglob(checkpoint_name)))
         checkpoint_files.extend(list(outputs_dir.rglob("model.pt")))
-        print(f"   📂 Searching in training directory: {outputs_dir}")
+        print(f"    Searching in training directory: {outputs_dir}", flush=True)
     else:
-        print(f"   ⚠️  Training directory not found: {outputs_dir}")
+        print(f"     Training directory not found: {outputs_dir}", flush=True)
 
     # Optionally also search in fine-tuning runs
     if include_finetune:
         finetune_dir = Path("/project/code/outputs/finetune_runs")
         if finetune_dir.exists():
             checkpoint_files.extend(list(finetune_dir.rglob(checkpoint_name)))
-            print(f"   📂 Also searching in fine-tuning directory: {finetune_dir}")
+            print(f"    Also searching in fine-tuning directory: {finetune_dir}", flush=True)
 
     if not checkpoint_files:
-        print(f"   ⚠️  No checkpoints found matching '{checkpoint_name}'")
+        print(f"     No checkpoints found matching '{checkpoint_name}'", flush=True)
         return None
 
     # Sort by modification time (newest first)
@@ -196,12 +213,12 @@ def find_config_for_checkpoint(checkpoint_path: Path) -> Optional[Path]:
                     if config_path.exists():
                         return config_path
         except Exception as e:
-            print(f"   ⚠️  Could not parse metadata: {e}")
+            print(f"     Could not parse metadata: {e}", flush=True)
 
     # Final fallback: use small.yaml as default
     default_config = Path("/project/code/configs/gpu/small.yaml")
     if default_config.exists():
-        print(f"   ℹ️  Using default config: {default_config}")
+        print(f"   ℹ  Using default config: {default_config}", flush=True)
         return default_config
 
     return None
@@ -209,19 +226,19 @@ def find_config_for_checkpoint(checkpoint_path: Path) -> Optional[Path]:
 
 def print_checkpoint_info(checkpoint_path: Path) -> None:
     """Print information about the checkpoint to be loaded."""
-    print("\n" + "=" * 80)
-    print("🔄 LOADING PRETRAINED CHECKPOINT")
-    print("=" * 80)
+    print("\n" + "=" * 80, flush=True)
+    print(" LOADING PRETRAINED CHECKPOINT", flush=True)
+    print("=" * 80, flush=True)
 
     size_mb = checkpoint_path.stat().st_size / (1024 * 1024)
     mod_time = datetime.fromtimestamp(checkpoint_path.stat().st_mtime)
 
-    print(f"\n📦 Checkpoint: {checkpoint_path.name}")
-    print(f"   Path: {checkpoint_path}")
-    print(f"   Size: {size_mb:.2f} MB")
-    print(f"   Modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"   Run: {checkpoint_path.parent.parent.parent.name}")
-    print("=" * 80 + "\n")
+    print(f"\n Checkpoint: {checkpoint_path.name}", flush=True)
+    print(f"   Path: {checkpoint_path}", flush=True)
+    print(f"   Size: {size_mb:.2f} MB", flush=True)
+    print(f"   Modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print(f"   Run: {checkpoint_path.parent.parent.parent.name}", flush=True)
+    print("=" * 80 + "\n", flush=True)
 
 
 def find_latest_files(
@@ -280,9 +297,9 @@ def detect_file_format(file_path: Path) -> str:
 
 def print_file_info(files: List[Path]) -> None:
     """Print information about discovered files."""
-    print("\n" + "=" * 80)
-    print("📁 AUTO-DISCOVERED FINE-TUNING DATA FILES")
-    print("=" * 80)
+    print("\n" + "=" * 80, flush=True)
+    print(" AUTO-DISCOVERED FINE-TUNING DATA FILES", flush=True)
+    print("=" * 80, flush=True)
 
     total_size = 0
     for i, file in enumerate(files, 1):
@@ -291,14 +308,14 @@ def print_file_info(files: List[Path]) -> None:
         mod_time = datetime.fromtimestamp(file.stat().st_mtime)
         file_format = detect_file_format(file)
 
-        print(f"\n{i}. {file.name}")
-        print(f"   Path: {file}")
-        print(f"   Size: {size_mb:.2f} MB")
-        print(f"   Format: {file_format}")
-        print(f"   Modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\n{i}. {file.name}", flush=True)
+        print(f"   Path: {file}", flush=True)
+        print(f"   Size: {size_mb:.2f} MB", flush=True)
+        print(f"   Format: {file_format}", flush=True)
+        print(f"   Modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
 
-    print(f"\n📊 Total: {len(files)} file(s), {total_size:.2f} MB")
-    print("=" * 80 + "\n")
+    print(f"\n Total: {len(files)} file(s), {total_size:.2f} MB", flush=True)
+    print("=" * 80 + "\n", flush=True)
 
 
 def create_finetune_dataloaders(
@@ -331,11 +348,11 @@ def create_finetune_dataloaders(
     # Or use the first file's directory as base
     data_dir = data_files[0].parent
 
-    print(f"📦 Creating streaming dataloaders from {len(data_files)} file(s)...")
-    print(f"   Batch size: {batch_size}")
-    print(f"   Max length: {max_length}")
-    print(f"   Buffer size: {buffer_size}")
-    print(f"   Validation split: {val_split * 100:.1f}%")
+    print(f" Creating streaming dataloaders from {len(data_files)} file(s)...", flush=True)
+    print(f"   Batch size: {batch_size}", flush=True)
+    print(f"   Max length: {max_length}", flush=True)
+    print(f"   Buffer size: {buffer_size}", flush=True)
+    print(f"   Validation split: {val_split * 100:.1f}%", flush=True)
 
     # Use the existing streaming dataloader infrastructure
     train_loader, val_loader = create_streaming_dataloaders(
@@ -531,25 +548,41 @@ def main():
     """Main fine-tuning entry point."""
     args = parse_args()
 
-    print("\n" + "=" * 80)
-    print("🚀 AVA FINE-TUNING PIPELINE")
-    print("   Automatic Latest Data Discovery")
-    print(f"   Output Directory: {args.output_dir}")
-    print("=" * 80 + "\n")
+    # Create timestamped run directory for this finetuning session
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.run_name:
+        run_folder_name = f"finetune_{args.run_name}_{timestamp}"
+    else:
+        run_folder_name = f"finetune_run_{timestamp}"
 
-    # Create output directory if it doesn't exist
-    output_path = Path(args.output_dir)
-    if not output_path.exists():
-        output_path.mkdir(parents=True, exist_ok=True)
-        print(f"✅ Created fine-tuning output directory: {output_path}\n")
+    # Create individual run directory under the base output directory
+    base_output_dir = Path(args.output_dir)
+    run_output_dir = base_output_dir / run_folder_name
+
+    # Update args.output_dir to point to this run's directory
+    args.output_dir = str(run_output_dir)
+
+    # Force unbuffered output
+    print("\n" + "=" * 80, flush=True)
+    print(" AVA FINE-TUNING PIPELINE", flush=True)
+    print("   Automatic Latest Data Discovery", flush=True)
+    print(f"   Run Directory: {args.output_dir}", flush=True)
+    print("=" * 80 + "\n", flush=True)
+
+    # Create run directory structure
+    run_output_dir.mkdir(parents=True, exist_ok=True)
+    (run_output_dir / "checkpoints").mkdir(exist_ok=True)
+    (run_output_dir / "logs").mkdir(exist_ok=True)
+    (run_output_dir / "configs").mkdir(exist_ok=True)
+    print(f" Created fine-tuning run directory: {run_output_dir}\n", flush=True)
 
     # 1. Discover latest data files
     data_dir = Path(args.data_dir)
-    print(f"🔍 Searching for data in: {data_dir}")
-    print(f"   Pattern: {args.file_pattern}")
+    print(f" Searching for data in: {data_dir}", flush=True)
+    print(f"   Pattern: {args.file_pattern}", flush=True)
 
     if args.use_all_files:
-        print("   Mode: Using ALL files")
+        print("   Mode: Using ALL files", flush=True)
         # Get all files (set a high number)
         latest_files = find_latest_files(
             data_dir,
@@ -558,7 +591,7 @@ def main():
             exclude_pattern=args.exclude_pattern,
         )
     else:
-        print(f"   Mode: Using latest {args.num_latest_files} file(s)")
+        print(f"   Mode: Using latest {args.num_latest_files} file(s)", flush=True)
         latest_files = find_latest_files(
             data_dir,
             num_files=args.num_latest_files,
@@ -580,7 +613,7 @@ def main():
             print_checkpoint_info(checkpoint_path)
         elif args.auto_checkpoint:
             # Auto-discover latest checkpoint
-            print(f"🔍 Searching for latest checkpoint...")
+            print(f" Searching for latest checkpoint...", flush=True)
             checkpoint_path = find_latest_checkpoint(
                 outputs_dir=Path(args.checkpoint_dir),
                 checkpoint_name="latest_model.pt",
@@ -589,9 +622,9 @@ def main():
             if checkpoint_path:
                 print_checkpoint_info(checkpoint_path)
             else:
-                print("   ℹ️  No checkpoint found - starting from scratch")
+                print("   ℹ  No checkpoint found - starting from scratch", flush=True)
     else:
-        print("\n⚠️  --no-checkpoint specified - training from scratch\n")
+        print("\n  --no-checkpoint specified - training from scratch\n", flush=True)
 
     # 3. Auto-discover or load configuration
     config_path = None
@@ -599,13 +632,13 @@ def main():
     if args.config:
         # Use explicitly specified config
         config_path = Path(args.config)
-        print(f"📋 Using specified configuration: {config_path}")
+        print(f" Using specified configuration: {config_path}", flush=True)
     elif checkpoint_path:
         # Auto-discover config from checkpoint
-        print(f"📋 Auto-discovering configuration from checkpoint...")
+        print(f" Auto-discovering configuration from checkpoint...", flush=True)
         config_path = find_config_for_checkpoint(checkpoint_path)
         if config_path:
-            print(f"   ✅ Found config: {config_path}")
+            print(f"    Found config: {config_path}", flush=True)
         else:
             raise FileNotFoundError(
                 "Could not find config for checkpoint. Please specify --config explicitly."
@@ -613,7 +646,7 @@ def main():
     else:
         # No checkpoint and no config specified - use default
         config_path = Path("/project/code/configs/gpu/small.yaml")
-        print(f"📋 Using default configuration: {config_path}")
+        print(f" Using default configuration: {config_path}", flush=True)
 
     if not config_path.exists():
         # Try relative paths
@@ -643,15 +676,15 @@ def main():
     # Keep streaming enabled but ensure proper directory
     config_dict["data_loading"]["streaming"] = True
 
-    print(f"✅ Configured data_dir: {fine_tuning_dir}")
-    print(f"   (Fine-tuning will ONLY use data from this directory)")
+    print(f" Configured data_dir: {fine_tuning_dir}", flush=True)
+    print(f"   (Fine-tuning will ONLY use data from this directory)", flush=True)
 
     # 5. Configure checkpoint loading in config
     if checkpoint_path:
         if "run_management" not in config_dict:
             config_dict["run_management"] = {}
         config_dict["run_management"]["resume_from_checkpoint"] = str(checkpoint_path)
-        print(f"✅ Configured to load checkpoint: {checkpoint_path.name}")
+        print(f" Configured to load checkpoint: {checkpoint_path.name}", flush=True)
 
     # Apply command-line overrides
     if args.batch_size:
@@ -693,9 +726,8 @@ def main():
         config_dict["run_management"]["experiment_name"] = f"finetune_{args.run_name}"
     else:
         # Auto-generate a fine-tuning run name with timestamp
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        config_dict["run_management"]["experiment_name"] = f"finetune_{timestamp}"
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        config_dict["run_management"]["experiment_name"] = f"finetune_{timestamp_str}"
 
     if args.wandb_project:
         if "wandb" not in config_dict:
@@ -726,34 +758,40 @@ def main():
         with open(temp_config_path, "w") as f:
             yaml.dump(config_dict, f, default_flow_style=False)
 
-        print(f"\n📝 Created temporary config: {temp_config_path}")
-        print(f"   Verified data_dir in config dict: {config_dict['data']['data_dir']}")
+        print(f"\n Created temporary config: {temp_config_path}", flush=True)
+        print(f"   Verified data_dir in config dict: {config_dict['data']['data_dir']}", flush=True)
 
         # Double-check the written file
         with open(temp_config_path, "r") as f:
             verify_dict = yaml.safe_load(f)
-            print(f"   Verified data_dir in written file: {verify_dict['data']['data_dir']}")
+            print(f"   Verified data_dir in written file: {verify_dict['data']['data_dir']}", flush=True)
+
+        # Save a copy of the config to the run's configs directory for reference
+        run_config_path = Path(args.output_dir) / "configs" / "training_config.yaml"
+        with open(run_config_path, "w") as f:
+            yaml.dump(config_dict, f, default_flow_style=False)
+        print(f"   Saved config copy to: {run_config_path}", flush=True)
 
         # Temporarily rename processed directory to force use of fine-tuning data only
         if processed_dir.exists() and not processed_backup.exists():
-            print(f"\n🔒 Temporarily hiding {processed_dir} to ensure fine-tuning data only...")
+            print(f"\n Temporarily hiding {processed_dir} to ensure fine-tuning data only...", flush=True)
             processed_dir.rename(processed_backup)
             renamed_processed = True
-            print(f"   ✓ Renamed to {processed_backup.name}")
+            print(f"    Renamed to {processed_backup.name}", flush=True)
 
         # 5. Configure QLoRA (enabled by default unless --no-qlora is specified)
         # Disable QLoRA if --no-qlora flag is set
         if args.no_qlora:
             args.use_qlora = False
             args.load_in_4bit = False
-            print("\n⚠️  QLoRA disabled - using full fine-tuning")
+            print("\n  QLoRA disabled - using full fine-tuning", flush=True)
 
         if args.use_qlora:
             try:
                 from src.Ava.training.qlora_utils import print_qlora_summary, setup_qlora_config  # type: ignore[import-not-found]
                 print_qlora_summary(args)
             except ImportError:
-                print("⚠️  qlora_utils not found, skipping QLoRA summary")
+                print("  qlora_utils not found, skipping QLoRA summary", flush=True)
 
             # Add QLoRA configuration to config dict
             if "qlora" not in config_dict:
@@ -769,26 +807,26 @@ def main():
             config_dict["qlora"]["bnb_4bit_quant_type"] = args.bnb_4bit_quant_type
             config_dict["qlora"]["use_double_quant"] = args.use_double_quant
 
-            print("✅ QLoRA configuration added to training config")
+            print(" QLoRA configuration added to training config", flush=True)
 
         # 6. Import and call the main training function from train.py
-        print("\n🎯 Initializing fine-tuning with discovered data...")
-        print(f"   Using {len(latest_files)} data file(s) from fine-tuning directory ONLY")
-        print(f"   Base config: {config_path.name}")
-        print(f"   Data directory: {latest_files[0].parent}")
+        print("\n Initializing fine-tuning with discovered data...", flush=True)
+        print(f"   Using {len(latest_files)} data file(s) from fine-tuning directory ONLY", flush=True)
+        print(f"   Base config: {config_path.name}", flush=True)
+        print(f"   Data directory: {latest_files[0].parent}", flush=True)
         if checkpoint_path:
-            print(f"   Resuming from: {checkpoint_path.name}")
+            print(f"   Resuming from: {checkpoint_path.name}", flush=True)
         if args.use_qlora:
-            print(f"   QLoRA: Enabled (rank={args.lora_r}, 4-bit={args.load_in_4bit})")
+            print(f"   QLoRA: Enabled (rank={args.lora_r}, 4-bit={args.load_in_4bit})", flush=True)
 
         # Import main from train.py and run it
         try:
-            from train import main as train_main  # type: ignore[import]
+            from train_100m_full import main as train_main  # type: ignore[import]
 
             # Monkey-patch sys.argv to pass our temporary config
             original_argv = sys.argv
             sys.argv = [
-                "train.py",
+                "train_100m_full.py",
                 "--config", temp_config_path,
                 "--data-dir", fine_tuning_dir  # CRITICAL: Force data directory via command line
             ]
@@ -797,34 +835,55 @@ def main():
             if args.enable_progressive_training:
                 sys.argv.append("--enable-progressive-training")
 
-            # Run training
-            train_main()
+            # Parse args for train_100m_full.py
+            # We need to import the argument parser from train_100m_full
+            # Since it's at module level, we'll need to create a compatible args object
+            from types import SimpleNamespace
+
+            training_args = SimpleNamespace(
+                config=temp_config_path,
+                data_dir=fine_tuning_dir,
+                epochs=args.num_epochs if args.num_epochs else 10,
+                batch_size=args.batch_size if args.batch_size else None,
+                learning_rate=args.learning_rate if args.learning_rate else None,
+                max_steps=args.max_steps if args.max_steps else None,
+                resume=str(checkpoint_path) if checkpoint_path else None,
+                use_turn_aware_loader=True,
+                disable_turn_aware_loader=False,
+                val_interval=1,
+                save_dir=f"{args.output_dir}/checkpoints",
+                log_dir=f"{args.output_dir}/logs",
+                log_interval=10,
+            )
+
+            # Run training with the args object
+            train_main(training_args)
 
             # Restore argv
             sys.argv = original_argv
 
-        except ImportError:
-            print("\n❌ Error: Could not import train.py")
-            print("   Make sure you're running from the scripts/training directory")
+        except ImportError as e:
+            print(f"\n Error: Could not import train_100m_full.py: {e}", flush=True)
+            print("   Make sure you're running from the scripts/5_training directory", flush=True)
             sys.exit(1)
 
     finally:
         # Restore processed directory if it was renamed
         if renamed_processed and processed_backup.exists():
-            print(f"\n🔓 Restoring {processed_backup.name}...")
+            print(f"\n Restoring {processed_backup.name}...", flush=True)
             processed_backup.rename(processed_dir)
-            print(f"   ✓ Restored to {processed_dir}")
+            print(f"    Restored to {processed_dir}", flush=True)
 
         # Clean up temporary config file
         import os
         try:
             os.close(temp_config_fd)
             os.unlink(temp_config_path)
-            print(f"🗑️  Cleaned up temporary config")
+            print(f"  Cleaned up temporary config", flush=True)
         except:
             pass
 
-    print("\n✅ Fine-tuning complete!")
+    print("\n Fine-tuning complete!", flush=True)
 
 
 if __name__ == "__main__":

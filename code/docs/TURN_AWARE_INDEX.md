@@ -3,13 +3,13 @@
 ## Overview
 This index organizes all documentation and implementation files for the turn-aware conversation data loading system.
 
-## 🚀 Start Here
+##  Start Here
 
 **New to turn-aware loading?** Start with one of these:
 - [QUICK_START_TURN_AWARE.md](QUICK_START_TURN_AWARE.md) - 30 seconds to understand, 3 steps to implement
 - [BEFORE_AFTER_COMPARISON.md](BEFORE_AFTER_COMPARISON.md) - See what changes
 
-## 📚 Documentation
+##  Documentation
 
 ### Getting Started
 | Document | Purpose | Read Time |
@@ -24,7 +24,7 @@ This index organizes all documentation and implementation files for the turn-awa
 | [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md) | Technical architecture & file references | 15 min |
 | [TRAINING_INTEGRATION.md](TRAINING_INTEGRATION.md) | Integration with train_100m_full.py | 10 min |
 
-## 💻 Implementation Files
+##  Implementation Files
 
 ### Core System
 | File | Lines | Purpose |
@@ -46,7 +46,7 @@ This index organizes all documentation and implementation files for the turn-awa
 |------|---------|
 | [../scripts/5_training/train_100m_full.py](../scripts/5_training/train_100m_full.py) | Modified to include `--use-turn-aware-loader` flag |
 
-## 🔧 Quick Reference
+##  Quick Reference
 
 ### Import
 ```python
@@ -87,7 +87,7 @@ python code/scripts/5_training/train_100m_full.py \
     --use-turn-aware-loader
 ```
 
-## 📊 Key Features
+##  Key Features
 
 | Feature | Description | Benefit |
 |---------|-------------|---------|
@@ -98,7 +98,7 @@ python code/scripts/5_training/train_100m_full.py \
 | **Metadata Propagation** | Passes metadata to batches | Analysis & filtering |
 | **Easy Integration** | Drop-in data loader | Minimal code changes |
 
-## 📈 Performance
+##  Performance
 
 - **Parsing Speed**: 1000 conversations/second
 - **Tokenization Speed**: 2500 conversations/second
@@ -106,7 +106,7 @@ python code/scripts/5_training/train_100m_full.py \
 - **Quality Improvement**: 15-20% better coherence
 - **Backward Compatible**: Yes, all existing code works
 
-## 🧪 Testing
+##  Testing
 
 ```bash
 # Run all validation tests (6 suites, all passing)
@@ -119,42 +119,42 @@ python code/scripts/examples/example_turn_aware_training.py
 python -m py_compile code/scripts/5_training/train_100m_full.py
 ```
 
-## 📋 Implementation Checklist
+##  Implementation Checklist
 
-- ✅ Core implementation (800+ lines)
-- ✅ Conversation parser (auto-format detection)
-- ✅ Turn-aware tokenizer (speaker/turn markers)
-- ✅ Dataset class (JSONL loading)
-- ✅ Batch collator (conversation preservation)
-- ✅ Factory API (simple create_dataloader)
-- ✅ Special tokens (8 for structure)
-- ✅ Validation tests (6/6 passing)
-- ✅ Training examples
-- ✅ Comprehensive documentation
-- ✅ Training script integration
+-  Core implementation (800+ lines)
+-  Conversation parser (auto-format detection)
+-  Turn-aware tokenizer (speaker/turn markers)
+-  Dataset class (JSONL loading)
+-  Batch collator (conversation preservation)
+-  Factory API (simple create_dataloader)
+-  Special tokens (8 for structure)
+-  Validation tests (6/6 passing)
+-  Training examples
+-  Comprehensive documentation
+-  Training script integration
 
-## 📖 Document Map
+##  Document Map
 
 ```
 docs/
-├── TURN_AWARE_INDEX.md (you are here)
-├── QUICK_START_TURN_AWARE.md (start here)
-├── BEFORE_AFTER_COMPARISON.md (visual explanation)
-├── TURN_AWARE_DATA_LOADING.md (full guide)
-├── IMPLEMENTATION_SUMMARY.md (technical details)
-└── TRAINING_INTEGRATION.md (integration guide)
+ TURN_AWARE_INDEX.md (you are here)
+ QUICK_START_TURN_AWARE.md (start here)
+ BEFORE_AFTER_COMPARISON.md (visual explanation)
+ TURN_AWARE_DATA_LOADING.md (full guide)
+ IMPLEMENTATION_SUMMARY.md (technical details)
+ TRAINING_INTEGRATION.md (integration guide)
 
 src/Ava/data/
-└── conversation_turn_loader.py (main implementation)
+ conversation_turn_loader.py (main implementation)
 
 scripts/
-├── validation/
-│   └── test_turn_aware_loader.py (tests)
-└── examples/
-    └── example_turn_aware_training.py (example)
+ validation/
+    test_turn_aware_loader.py (tests)
+ examples/
+     example_turn_aware_training.py (example)
 ```
 
-## 🎯 Common Tasks
+##  Common Tasks
 
 ### Load Conversations
 See: [QUICK_START_TURN_AWARE.md](QUICK_START_TURN_AWARE.md#basic-usage)
@@ -171,7 +171,7 @@ See: [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)
 ### See Code Examples
 See: [BEFORE_AFTER_COMPARISON.md](BEFORE_AFTER_COMPARISON.md#side-by-side-code-comparison)
 
-## 🤔 FAQ
+##  FAQ
 
 **Q: Do I need to change my model?**
 A: No, it works with any PyTorch model.
@@ -193,7 +193,7 @@ A: Yes, 15-20% improvement in dialogue coherence.
 
 See [TURN_AWARE_DATA_LOADING.md](TURN_AWARE_DATA_LOADING.md#troubleshooting) for more FAQ.
 
-## 🚀 Getting Started (5 minutes)
+##  Getting Started (5 minutes)
 
 1. **Read** (2 min): [QUICK_START_TURN_AWARE.md](QUICK_START_TURN_AWARE.md)
 2. **Test** (1 min): `python code/scripts/validation/test_turn_aware_loader.py`
@@ -202,7 +202,7 @@ See [TURN_AWARE_DATA_LOADING.md](TURN_AWARE_DATA_LOADING.md#troubleshooting) for
 
 Total time: ~7 minutes to fully understand and integrate!
 
-## 📞 Support
+##  Support
 
 For specific topics, see:
 - **How do I...**: [QUICK_START_TURN_AWARE.md](QUICK_START_TURN_AWARE.md#common-tasks)
@@ -210,9 +210,9 @@ For specific topics, see:
 - **Architecture**: [IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)
 - **Details**: [TURN_AWARE_DATA_LOADING.md](TURN_AWARE_DATA_LOADING.md)
 
-## ✅ Implementation Status
+##  Implementation Status
 
-**Status**: ✅ COMPLETE & INTEGRATED
+**Status**:  COMPLETE & INTEGRATED
 
 - Implementation: 100% complete
 - Testing: 100% passing (6/6)
@@ -220,15 +220,15 @@ For specific topics, see:
 - Training Integration: 100% integrated
 - Ready for production: YES
 
-## 🎉 Summary
+##  Summary
 
 Turn-aware conversation data loading is ready to use! It:
 
-✅ Preserves conversation structure
-✅ Maintains speaker context
-✅ Improves dialogue coherence (+15-20%)
-✅ Integrates with one flag
-✅ Works with existing code
-✅ Fully tested and documented
+ Preserves conversation structure
+ Maintains speaker context
+ Improves dialogue coherence (+15-20%)
+ Integrates with one flag
+ Works with existing code
+ Fully tested and documented
 
-Start with [QUICK_START_TURN_AWARE.md](QUICK_START_TURN_AWARE.md) and enjoy better conversational training! 🚀
+Start with [QUICK_START_TURN_AWARE.md](QUICK_START_TURN_AWARE.md) and enjoy better conversational training! 

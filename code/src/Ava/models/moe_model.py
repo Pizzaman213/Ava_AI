@@ -189,6 +189,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = config.attention_dropout
         self.use_flash_attention = getattr(config, 'use_flash_attention', True)
         self.quantize_kv_cache = getattr(config, 'quantize_kv_cache', False)
+        self._attention_backend_logged = False  # Track if we've logged the backend
 
         assert self.hidden_size % self.num_heads == 0, "hidden_size must be divisible by num_attention_heads"
 
@@ -295,6 +296,11 @@ class MultiHeadAttention(nn.Module):
                 # flash_attn_func returns [batch, seq, heads, head_dim]
                 attn_output = attn_output.transpose(1, 2)  # Back to [batch, heads, seq, head_dim]
 
+                if not self._attention_backend_logged:
+                    import logging
+                    logging.info("✓ Using Flash Attention 3 (1.5-2× faster than FA2)")
+                    self._attention_backend_logged = True
+
             except (ImportError, RuntimeError, AttributeError):
                 # Try xformers memory-efficient attention (20-30% speedup)
                 try:
@@ -317,6 +323,11 @@ class MultiHeadAttention(nn.Module):
                     # xformers returns [batch, seq, heads, head_dim]
                     attn_output = attn_output.transpose(1, 2)  # Back to [batch, heads, seq, head_dim]
 
+                    if not self._attention_backend_logged:
+                        import logging
+                        logging.info("✓ Using xformers memory-efficient attention (20-30% speedup)")
+                        self._attention_backend_logged = True
+
                 except (ImportError, RuntimeError, AttributeError, ValueError):
                     # Fallback to PyTorch's Flash Attention 2 (still very fast)
                     # F.scaled_dot_product_attention expects [batch, heads, seq, head_dim]
@@ -327,6 +338,11 @@ class MultiHeadAttention(nn.Module):
                         dropout_p=self.dropout if self.training else 0.0,
                         is_causal=False  # Set to True if you want causal masking
                     )
+
+                    if not self._attention_backend_logged:
+                        import logging
+                        logging.info("✓ Using PyTorch Flash Attention 2 (SDPA)")
+                        self._attention_backend_logged = True
         else:
             # Standard attention implementation
             attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)

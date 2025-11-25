@@ -203,7 +203,7 @@ def main(config_path: str, batch_size: Optional[int] = None, learning_rate: Opti
         model, train_loader, context.device, num_steps=3
     )
 
-    logger.info("✅ All components initialized!")
+    logger.info(" All components initialized!")
 
     return {
         "context": context,
@@ -220,11 +220,11 @@ def main(config_path: str, batch_size: Optional[int] = None, learning_rate: Opti
 
 ## Benefits
 
-✅ **Smaller train.py:** 5,022 → ~400 lines (90% reduction)
-✅ **Better maintainability:** Each manager handles one responsibility
-✅ **Easier testing:** Managers can be tested independently
-✅ **Improved reusability:** Managers can be used in other scripts
-✅ **Backward compatible:** Works with existing YAML configs
+ **Smaller train.py:** 5,022 → ~400 lines (90% reduction)
+ **Better maintainability:** Each manager handles one responsibility
+ **Easier testing:** Managers can be tested independently
+ **Improved reusability:** Managers can be used in other scripts
+ **Backward compatible:** Works with existing YAML configs
 
 ---
 

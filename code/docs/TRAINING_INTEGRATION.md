@@ -100,15 +100,15 @@ Data Loading Path:
 
 ### Standard Mode Training Output
 ```
-📊 Creating dataloaders...
+ Creating dataloaders...
 Creating dataloaders from Arrow/Parquet files...
-✓ Loaded X examples from standard loader
+ Loaded X examples from standard loader
 ```
 
 ### Turn-Aware Mode Training Output
 ```
-📊 Creating dataloaders...
-✓ Turn-Aware Conversation Loading ENABLED
+ Creating dataloaders...
+ Turn-Aware Conversation Loading ENABLED
   Data: code/data/processed/dataset_processed.jsonl
   Benefits: Improved dialogue coherence, speaker awareness, quality tracking
 ```
@@ -294,11 +294,11 @@ python code/scripts/5_training/train_100m_full.py \
 
 The integration is **fully backward compatible**:
 
-- ✓ Existing training scripts work unchanged
-- ✓ New flag is optional (`--use-turn-aware-loader`)
-- ✓ Graceful fallback if loader unavailable
-- ✓ No changes to config format (optional additions only)
-- ✓ All existing data formats still supported
+-  Existing training scripts work unchanged
+-  New flag is optional (`--use-turn-aware-loader`)
+-  Graceful fallback if loader unavailable
+-  No changes to config format (optional additions only)
+-  All existing data formats still supported
 
 ## Next Steps
 
@@ -317,4 +317,4 @@ See documentation:
 
 ## Summary
 
-Turn-aware loading is now integrated and ready to use in your training pipeline. Simply add `--use-turn-aware-loader` to get improved dialogue coherence with no configuration required! 🚀
+Turn-aware loading is now integrated and ready to use in your training pipeline. Simply add `--use-turn-aware-loader` to get improved dialogue coherence with no configuration required! 

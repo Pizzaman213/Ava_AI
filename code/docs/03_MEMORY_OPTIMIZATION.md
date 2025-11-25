@@ -23,14 +23,14 @@ The Ava training framework implements multiple memory optimization techniques to
 
 | Optimization | Memory Savings | Enabled By Default |
 |--------------|----------------|-------------------|
-| Gradient Checkpointing | 60-80% | ✅ Yes |
-| Flash Attention | 50-70% | ✅ Yes |
-| Mixed Precision (FP16/BF16) | 50% | ✅ Yes |
-| DeepSpeed ZeRO Stage 1 | 1.5x | ✅ Yes |
-| DeepSpeed ZeRO Stage 2 | 2x | ⏸️ Optional |
-| DeepSpeed ZeRO Stage 3 | 4x | ⏸️ Optional |
-| Activation Checkpointing | 30-50% | ✅ Yes |
-| CPU Offloading | 2-8x | ❌ No |
+| Gradient Checkpointing | 60-80% |  Yes |
+| Flash Attention | 50-70% |  Yes |
+| Mixed Precision (FP16/BF16) | 50% |  Yes |
+| DeepSpeed ZeRO Stage 1 | 1.5x |  Yes |
+| DeepSpeed ZeRO Stage 2 | 2x | ⏸ Optional |
+| DeepSpeed ZeRO Stage 3 | 4x | ⏸ Optional |
+| Activation Checkpointing | 30-50% |  Yes |
+| CPU Offloading | 2-8x |  No |
 
 **Combined Effective Savings**: ~70-80% total memory reduction with default settings.
 
@@ -63,10 +63,10 @@ training:
 ```
 
 **When to use**:
-- ✅ **Always** for models >500M parameters
-- ✅ When batch size is memory-limited
-- ✅ For long sequences (>512 tokens)
-- ❌ For tiny models (<100M params) where overhead matters
+-  **Always** for models >500M parameters
+-  When batch size is memory-limited
+-  For long sequences (>512 tokens)
+-  For tiny models (<100M params) where overhead matters
 
 ### 2. Flash Attention
 
@@ -88,9 +88,9 @@ model:
 - Install `flash-attn` package: `pip install flash-attn`
 
 **When to use**:
-- ✅ **Always** if your GPU supports it
-- ✅ Critical for long sequences (>1024 tokens)
-- ❌ Only if flash-attn is not available on your system
+-  **Always** if your GPU supports it
+-  Critical for long sequences (>1024 tokens)
+-  Only if flash-attn is not available on your system
 
 ### 3. Mixed Precision Training
 
@@ -110,10 +110,10 @@ training:
 ```
 
 **When to use**:
-- ✅ **Always** on GPUs with Tensor Cores (V100, A100, RTX 20xx+)
-- ✅ Use FP16 for most GPUs
-- ✅ Use BF16 for A100/H100 (better numerical range)
-- ❌ Use FP32 only for debugging numerical issues
+-  **Always** on GPUs with Tensor Cores (V100, A100, RTX 20xx+)
+-  Use FP16 for most GPUs
+-  Use BF16 for A100/H100 (better numerical range)
+-  Use FP32 only for debugging numerical issues
 
 ### 4. DeepSpeed ZeRO
 
@@ -136,10 +136,10 @@ training:
 ```
 
 **When to use**:
-- Stage 1: ✅ Default for all multi-GPU training
-- Stage 2: ✅ When Stage 1 still OOMs
-- Stage 3: ✅ For very large models (>7B params) or limited GPU memory
-- CPU offload: ⚠️ Only as last resort (10-20x slower)
+- Stage 1:  Default for all multi-GPU training
+- Stage 2:  When Stage 1 still OOMs
+- Stage 3:  For very large models (>7B params) or limited GPU memory
+- CPU offload:  Only as last resort (10-20x slower)
 
 ### 5. Data Pipeline Optimization
 
@@ -498,16 +498,16 @@ model:
 
 | Optimization | Memory Saved | Speed Impact | Recommended |
 |--------------|--------------|--------------|-------------|
-| Gradient Checkpointing | ⬇️⬇️⬇️ 60-80% | ⬇️ -10 to -20% | ✅ Yes |
-| Flash Attention | ⬇️⬇️ 50-70% | ⬆️ +200% to +400% | ✅ Yes |
-| Mixed Precision FP16 | ⬇️⬇️ 50% | ⬆️ +200% | ✅ Yes |
-| DeepSpeed ZeRO-1 | ⬇️ 33% | ≈ 0% | ✅ Yes |
-| DeepSpeed ZeRO-2 | ⬇️⬇️ 50% | ⬇️ -5% | ✅ Multi-GPU |
-| DeepSpeed ZeRO-3 | ⬇️⬇️⬇️ 75% | ⬇️ -15% | ⚠️ If needed |
-| CPU Offload | ⬇️⬇️⬇️⬇️ 90% | ⬇️⬇️⬇️ -1000% | ❌ Last resort |
-| Reduced Batch Size | ⬇️ Variable | ⬇️ Variable | ⚠️ As needed |
+| Gradient Checkpointing |  60-80% |  -10 to -20% |  Yes |
+| Flash Attention |  50-70% |  +200% to +400% |  Yes |
+| Mixed Precision FP16 |  50% |  +200% |  Yes |
+| DeepSpeed ZeRO-1 |  33% | ≈ 0% |  Yes |
+| DeepSpeed ZeRO-2 |  50% |  -5% |  Multi-GPU |
+| DeepSpeed ZeRO-3 |  75% |  -15% |  If needed |
+| CPU Offload |  90% |  -1000% |  Last resort |
+| Reduced Batch Size |  Variable |  Variable |  As needed |
 
-**Legend**: ⬆️ Faster, ⬇️ Slower/Less, ≈ No change
+**Legend**:  Faster,  Slower/Less, ≈ No change
 
 ### Optimization Priority
 
@@ -703,13 +703,13 @@ Typical breakdown:
 
 **Key Takeaways**:
 
-1. ✅ **Enable gradient checkpointing** - saves 60-80% activation memory
-2. ✅ **Enable flash attention** - saves 50-70% attention memory AND speeds up training
-3. ✅ **Use mixed precision** - saves 50% parameter memory AND speeds up training
-4. ✅ **Optimize data pipeline** - reduce prefetch_factor to 2
-5. ✅ **Monitor memory proactively** - use MemoryMonitor for real-time tracking
-6. ⚠️ **Increase memory thresholds** - target 90% instead of 75% utilization
-7. ⚠️ **Use DeepSpeed ZeRO** - Stage 1 default, Stage 2/3 if needed
+1.  **Enable gradient checkpointing** - saves 60-80% activation memory
+2.  **Enable flash attention** - saves 50-70% attention memory AND speeds up training
+3.  **Use mixed precision** - saves 50% parameter memory AND speeds up training
+4.  **Optimize data pipeline** - reduce prefetch_factor to 2
+5.  **Monitor memory proactively** - use MemoryMonitor for real-time tracking
+6.  **Increase memory thresholds** - target 90% instead of 75% utilization
+7.  **Use DeepSpeed ZeRO** - Stage 1 default, Stage 2/3 if needed
 
 **Expected Results**:
 - **2-3x memory reduction** from default settings

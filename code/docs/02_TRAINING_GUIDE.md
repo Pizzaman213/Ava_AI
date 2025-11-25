@@ -145,7 +145,7 @@ def validate_data_directory(data_dir):
 
     # Print results
     for check, passed in checks:
-        status = '✓' if passed else '✗'
+        status = '' if passed else ''
         print(f'{status} {check}')
 
     return all(passed for _, passed in checks)
@@ -214,37 +214,37 @@ def run_preflight_checks():
     print("\n1. GPU Availability:")
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
-        print(f"   ✓ {gpu_count} GPU(s) available")
+        print(f"    {gpu_count} GPU(s) available")
         for i in range(gpu_count):
             props = torch.cuda.get_device_properties(i)
             memory_gb = props.total_memory / 1024**3
             print(f"   - GPU {i}: {props.name}, {memory_gb:.1f} GB")
     else:
-        print("   ✗ No GPU available")
+        print("    No GPU available")
         all_passed = False
 
     # 2. CUDA Version
     print("\n2. CUDA Version:")
-    print(f"   ✓ PyTorch CUDA: {torch.version.cuda}")
-    print(f"   ✓ cuDNN: {torch.backends.cudnn.version()}")
+    print(f"    PyTorch CUDA: {torch.version.cuda}")
+    print(f"    cuDNN: {torch.backends.cudnn.version()}")
 
     # 3. Data Directory
     print("\n3. Data Directory:")
     data_dir = '/project/code/data/processed'
     if os.path.exists(data_dir):
         files = [f for f in os.listdir(data_dir) if f.endswith('.jsonl')]
-        print(f"   ✓ Found {len(files)} .jsonl files")
+        print(f"    Found {len(files)} .jsonl files")
     else:
-        print(f"   ✗ Data directory not found: {data_dir}")
+        print(f"    Data directory not found: {data_dir}")
         all_passed = False
 
     # 4. Tokenizer
     print("\n4. Tokenizer:")
     tokenizer_path = '/project/code/models/tokenizer/enhanced-65536'
     if os.path.exists(tokenizer_path):
-        print(f"   ✓ Tokenizer found at {tokenizer_path}")
+        print(f"    Tokenizer found at {tokenizer_path}")
     else:
-        print(f"   ✗ Tokenizer not found: {tokenizer_path}")
+        print(f"    Tokenizer not found: {tokenizer_path}")
         all_passed = False
 
     # 5. Disk Space
@@ -252,9 +252,9 @@ def run_preflight_checks():
     stat = os.statvfs('/project')
     free_gb = (stat.f_bavail * stat.f_frsize) / 1024**3
     if free_gb > 50:
-        print(f"   ✓ {free_gb:.1f} GB free")
+        print(f"    {free_gb:.1f} GB free")
     else:
-        print(f"   ⚠ Only {free_gb:.1f} GB free (recommend 50GB+)")
+        print(f"    Only {free_gb:.1f} GB free (recommend 50GB+)")
 
     # 6. Dependencies
     print("\n6. Dependencies:")
@@ -262,18 +262,18 @@ def run_preflight_checks():
         import transformers
         import deepspeed
         import wandb
-        print(f"   ✓ transformers {transformers.__version__}")
-        print(f"   ✓ deepspeed {deepspeed.__version__}")
-        print(f"   ✓ wandb {wandb.__version__}")
+        print(f"    transformers {transformers.__version__}")
+        print(f"    deepspeed {deepspeed.__version__}")
+        print(f"    wandb {wandb.__version__}")
     except ImportError as e:
-        print(f"   ✗ Missing dependency: {e}")
+        print(f"    Missing dependency: {e}")
         all_passed = False
 
     print("\n" + "=" * 60)
     if all_passed:
-        print("✓ ALL CHECKS PASSED - Ready to train!")
+        print(" ALL CHECKS PASSED - Ready to train!")
     else:
-        print("✗ SOME CHECKS FAILED - Fix issues before training")
+        print(" SOME CHECKS FAILED - Fix issues before training")
     print("=" * 60)
 
     return all_passed
@@ -390,9 +390,9 @@ python /project/code/scripts/4_lr_finding/run_lr_finder_enhanced.py \
 
 # Output: Suggested LR will be displayed and saved to config
 # Example output:
-# ✓ Suggested LR: 0.00015
-# ✓ Steep Point: 0.00012
-# ✓ Minimum Loss LR: 0.00018
+#  Suggested LR: 0.00015
+#  Steep Point: 0.00012
+#  Minimum Loss LR: 0.00018
 ```
 
 ---
@@ -647,23 +647,23 @@ def validate_config_compatibility(config):
 ```python
 # Hierarchical logging structure
 /project/code/outputs/runs/run_20251103_120000/logs/
-├── training.log      # Main training events
-├── evaluation.log    # Validation metrics
-├── errors.log        # Errors and warnings
-└── debug.log         # Detailed debug info
+ training.log      # Main training events
+ evaluation.log    # Validation metrics
+ errors.log        # Errors and warnings
+ debug.log         # Detailed debug info
 
 # Real-time health dashboard
-╔══════════════════════════════════════════════════╗
-║         TRAINING HEALTH DASHBOARD                ║
-╠══════════════════════════════════════════════════╣
-║ Step: 15234/50000 (30.5%)                       ║
-║ Loss: 2.342 (↓ -0.012)                          ║
-║ LR: 0.00015 (stable)                            ║
-║ Grad Norm: 1.23 (healthy)                       ║
-║ Memory: 18.2GB / 24GB (76%, normal)             ║
-║ Expert Util: [0.12, 0.13, 0.11, 0.14, ...]     ║
-║ ETA: 2h 34m                                      ║
-╚══════════════════════════════════════════════════╝
+
+         TRAINING HEALTH DASHBOARD                
+
+ Step: 15234/50000 (30.5%)                       
+ Loss: 2.342 (↓ -0.012)                          
+ LR: 0.00015 (stable)                            
+ Grad Norm: 1.23 (healthy)                       
+ Memory: 18.2GB / 24GB (76%, normal)             
+ Expert Util: [0.12, 0.13, 0.11, 0.14, ...]     
+ ETA: 2h 34m                                      
+
 ```
 
 **Key Components:**
@@ -1001,34 +1001,34 @@ wandb.log({
 def print_health_dashboard(metrics):
     """Print real-time health dashboard."""
     dashboard = f"""
-    ╔══════════════════════════════════════════════════════════╗
-    ║            TRAINING HEALTH DASHBOARD                     ║
-    ╠══════════════════════════════════════════════════════════╣
-    ║ Step: {metrics['step']:>6}/{metrics['total_steps']:>6} ({metrics['progress']:>5.1f}%)          ║
-    ║                                                          ║
-    ║ LOSS & LEARNING                                          ║
-    ║   Loss: {metrics['loss']:>7.4f} ({metrics['loss_trend']:>6})            ║
-    ║   Perplexity: {metrics['perplexity']:>7.2f}                            ║
-    ║   Learning Rate: {metrics['lr']:>9.6f}                        ║
-    ║                                                          ║
-    ║ GRADIENTS                                                ║
-    ║   Grad Norm: {metrics['grad_norm']:>7.4f} ({metrics['grad_health']})        ║
-    ║   Explosions: {metrics['grad_explosions']:>2}                                  ║
-    ║                                                          ║
-    ║ MEMORY                                                   ║
-    ║   Allocated: {metrics['mem_allocated_gb']:>5.2f} GB / {metrics['mem_total_gb']:>5.2f} GB         ║
-    ║   Utilization: {metrics['mem_utilization']:>5.1f}% ({metrics['mem_status']})     ║
-    ║                                                          ║
-    ║ MoE EXPERTS                                              ║
-    ║   Utilization: {metrics['expert_util_str']:>40} ║
-    ║   Entropy: {metrics['routing_entropy']:>7.4f}                            ║
-    ║   Balance Loss: {metrics['balance_loss']:>7.4f}                         ║
-    ║                                                          ║
-    ║ TIMING                                                   ║
-    ║   Step Time: {metrics['step_time']:.2f}s                               ║
-    ║   Tokens/sec: {metrics['tokens_per_sec']:.0f}                           ║
-    ║   ETA: {metrics['eta']}                                      ║
-    ╚══════════════════════════════════════════════════════════╝
+    
+                TRAINING HEALTH DASHBOARD                     
+    
+     Step: {metrics['step']:>6}/{metrics['total_steps']:>6} ({metrics['progress']:>5.1f}%)          
+                                                              
+     LOSS & LEARNING                                          
+       Loss: {metrics['loss']:>7.4f} ({metrics['loss_trend']:>6})            
+       Perplexity: {metrics['perplexity']:>7.2f}                            
+       Learning Rate: {metrics['lr']:>9.6f}                        
+                                                              
+     GRADIENTS                                                
+       Grad Norm: {metrics['grad_norm']:>7.4f} ({metrics['grad_health']})        
+       Explosions: {metrics['grad_explosions']:>2}                                  
+                                                              
+     MEMORY                                                   
+       Allocated: {metrics['mem_allocated_gb']:>5.2f} GB / {metrics['mem_total_gb']:>5.2f} GB         
+       Utilization: {metrics['mem_utilization']:>5.1f}% ({metrics['mem_status']})     
+                                                              
+     MoE EXPERTS                                              
+       Utilization: {metrics['expert_util_str']:>40} 
+       Entropy: {metrics['routing_entropy']:>7.4f}                            
+       Balance Loss: {metrics['balance_loss']:>7.4f}                         
+                                                              
+     TIMING                                                   
+       Step Time: {metrics['step_time']:.2f}s                               
+       Tokens/sec: {metrics['tokens_per_sec']:.0f}                           
+       ETA: {metrics['eta']}                                      
+    
     """
     print(dashboard)
 ```
@@ -1099,17 +1099,17 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None):
 
     # Load model
     model.load_state_dict(checkpoint['model'])
-    print(f'✓ Loaded model from step {checkpoint["step"]}')
+    print(f' Loaded model from step {checkpoint["step"]}')
 
     # Load optimizer
     if optimizer is not None and 'optimizer' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer'])
-        print('✓ Loaded optimizer state')
+        print(' Loaded optimizer state')
 
     # Load scheduler
     if scheduler is not None and 'scheduler' in checkpoint:
         scheduler.load_state_dict(checkpoint['scheduler'])
-        print('✓ Loaded scheduler state')
+        print(' Loaded scheduler state')
 
     # Restore RNG states for reproducibility
     if 'rng_states' in checkpoint:
@@ -1118,7 +1118,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, scheduler=None):
         torch.set_rng_state(checkpoint['rng_states']['torch'])
         if torch.cuda.is_available():
             torch.cuda.set_rng_state_all(checkpoint['rng_states']['cuda'])
-        print('✓ Restored RNG states')
+        print(' Restored RNG states')
 
     return checkpoint['step'], checkpoint.get('metrics', {})
 ```

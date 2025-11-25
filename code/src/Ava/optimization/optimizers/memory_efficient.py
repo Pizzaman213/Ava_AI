@@ -122,7 +122,7 @@ class AdamW8bit(Optimizer):
                 self.is_8bit = False
 
             logger.info(
-                f"✓ Using bitsandbytes AdamW optimizer "
+                f" Using bitsandbytes AdamW optimizer "
                 f"({'8-bit' if self.is_8bit else '32-bit'} mode, ~50-75% memory reduction)"
             )
 
@@ -230,7 +230,7 @@ class Lion8bit(Optimizer):
             )
             self.is_8bit = True
             logger.info(
-                f"✓ Using 8-bit Lion optimizer "
+                f" Using 8-bit Lion optimizer "
                 f"(87.5% memory reduction vs AdamW, 8-bit quantization)"
             )
             logger.info(
@@ -342,24 +342,37 @@ def create_8bit_optimizer(
     **kwargs
 ) -> Optimizer:
     """
-    Factory function to create 8-bit optimizers.
+    Factory function to create 8-bit optimizers and GaLore optimizers.
 
     Args:
-        optimizer_name: Name of optimizer ('adamw8bit', 'lion8bit', 'adamw32bit')
-        params: Model parameters
+        optimizer_name: Name of optimizer:
+            - '8-bit': 'adamw8bit', 'lion8bit', 'adamw32bit'
+            - 'GaLore': 'galore_adamw', 'galore_lion'
+        params: Model parameters (or model for GaLore)
         lr: Learning rate (uses defaults if None)
         weight_decay: Weight decay coefficient
         **kwargs: Additional optimizer-specific arguments
+            - For GaLore: rank, update_proj_gap, galore_scale
 
     Returns:
         Configured optimizer instance
 
     Example:
+        >>> # 8-bit optimizer
         >>> optimizer = create_8bit_optimizer(
         ...     'adamw8bit',
         ...     model.parameters(),
         ...     lr=3e-4,
         ...     weight_decay=0.1
+        ... )
+        >>>
+        >>> # GaLore optimizer (50-65% gradient memory reduction)
+        >>> optimizer = create_8bit_optimizer(
+        ...     'galore_adamw',
+        ...     model,  # Pass model for GaLore
+        ...     lr=1e-3,
+        ...     rank=128,
+        ...     update_proj_gap=200
         ... )
     """
     optimizer_name = optimizer_name.lower()
@@ -376,10 +389,46 @@ def create_8bit_optimizer(
         lr = lr if lr is not None else 1e-3
         return AdamW32bit(params, lr=lr, weight_decay=weight_decay, **kwargs)
 
+    elif optimizer_name in ['galore_adamw', 'galore_lion']:
+        # GaLore optimizers - need to import
+        try:
+            from .galore_optimizer import create_galore_optimizer
+
+            # Extract GaLore-specific kwargs
+            galore_kwargs = {
+                'rank': kwargs.pop('rank', 128),
+                'update_proj_gap': kwargs.pop('update_proj_gap', 200),
+                'galore_scale': kwargs.pop('galore_scale', 1.0),
+            }
+
+            # Determine optimizer type
+            opt_type = 'adamw' if 'adamw' in optimizer_name else 'lion'
+            lr = lr if lr is not None else (1e-3 if opt_type == 'adamw' else 1e-4)
+
+            logger.info(
+                f" Using GaLore {opt_type.upper()} optimizer "
+                f"(50-65% gradient memory reduction, rank={galore_kwargs['rank']})"
+            )
+
+            return create_galore_optimizer(
+                params,  # Should be model for GaLore
+                optimizer_type=opt_type,
+                lr=lr,
+                weight_decay=weight_decay,
+                **galore_kwargs,
+                **kwargs  # Pass remaining kwargs
+            )
+        except ImportError as e:
+            raise ImportError(
+                f"GaLore optimizer not available: {e}. "
+                f"Ensure galore_optimizer.py is in the same directory."
+            )
+
     else:
         raise ValueError(
             f"Unknown optimizer: {optimizer_name}. "
-            f"Available: 'adamw8bit', 'lion8bit', 'adamw32bit'"
+            f"Available: 'adamw8bit', 'lion8bit', 'adamw32bit', "
+            f"'galore_adamw', 'galore_lion'"
         )
 
 
@@ -454,7 +503,7 @@ def print_memory_comparison(model: torch.nn.Module) -> None:
     print("="*70)
     if stats is not None:
         print(f"\nTotal parameters: {stats['param_count']:,}")
-    print(f"\n💡 Recommendation: Use 'adamw8bit' for 75% memory savings")
+    print(f"\n Recommendation: Use 'adamw8bit' for 75% memory savings")
     print(f"   or 'lion8bit' for 87.5% memory savings with minimal quality impact.\n")
 
 

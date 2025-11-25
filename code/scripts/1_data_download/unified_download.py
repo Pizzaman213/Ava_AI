@@ -22,7 +22,7 @@ def download_hf_dataset(output_dir, num_workers=4, max_partitions=None):
     save_path = output_dir / "Ava_Ai"
 
     print(f"\n{'='*70}")
-    print("📥 EFFICIENT PIZZAMAN21/AVA_AI DATASET DOWNLOADER")
+    print(" EFFICIENT PIZZAMAN21/AVA_AI DATASET DOWNLOADER")
     print(f"{'='*70}")
     print(f"Dataset: {dataset_name}")
     print(f"Destination: {save_path}")
@@ -36,7 +36,7 @@ def download_hf_dataset(output_dir, num_workers=4, max_partitions=None):
         try:
             files = [f for f in save_path.glob("*") if f.name != ".git"]
             if files:
-                print(f"✓ Dataset already exists with {len(files)} items")
+                print(f" Dataset already exists with {len(files)} items")
                 print(f"  Using: huggingface_hub (incremental sync)")
                 print()
         except:
@@ -71,7 +71,7 @@ def download_hf_dataset(output_dir, num_workers=4, max_partitions=None):
 
         snapshot_download(**kwargs)
 
-        print(f"\n✅ Dataset synced successfully!")
+        print(f"\n Dataset synced successfully!")
         print(f"Location: {save_path}")
 
         # Count files
@@ -82,14 +82,14 @@ def download_hf_dataset(output_dir, num_workers=4, max_partitions=None):
         return True
 
     except ImportError:
-        print("✗ huggingface_hub not installed")
+        print(" huggingface_hub not installed")
         print("\nInstall it with:")
         print("  pip install huggingface_hub")
         return False
 
     except Exception as e:
         error_msg = str(e)
-        print(f"✗ Download failed: {error_msg}")
+        print(f" Download failed: {error_msg}")
 
         if "unauthorized" in error_msg.lower() or "authentication" in error_msg.lower():
             print(f"\nTo authenticate with HuggingFace:")
@@ -123,10 +123,10 @@ def main():
         sys.exit(0 if success else 1)
 
     except KeyboardInterrupt:
-        print("\n⚠️  Download cancelled by user")
+        print("\n  Download cancelled by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\n✗ Error: {str(e)}")
+        print(f"\n Error: {str(e)}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

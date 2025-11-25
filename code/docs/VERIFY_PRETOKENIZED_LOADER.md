@@ -6,10 +6,10 @@ Your logs show the loading is still slow (~18,000 examples/sec) even though we s
 
 ### Current Symptoms
 ```
-⚠ No conversation JSONL files found in /project/code/data/Ava_Ai/data, using standard loading
-📂 Data directory: /project/code/data/Ava_Ai/data
-📚 Datasets available: True              # ← This line = STREAMING loader active!
-🔄 Starting data loading...
+ No conversation JSONL files found in /project/code/data/Ava_Ai/data, using standard loading
+ Data directory: /project/code/data/Ava_Ai/data
+ Datasets available: True              # ← This line = STREAMING loader active!
+ Starting data loading...
   Loaded 10/1374 parquet files...       # ← Very slow - iterating ALL files
   Loaded 20/1374 parquet files...
 Generating train split: 25000 examples [00:01, 18176.07 examples/s]  # ← 18K/sec = streaming
@@ -17,7 +17,7 @@ Generating train split: 25000 examples [00:01, 18176.07 examples/s]  # ← 18K/s
 
 **Should see instead:**
 ```
-📦 Using pretokenized Arrow data loader (60x faster)   # ← PRE-TOKENIZED loader!
+ Using pretokenized Arrow data loader (60x faster)   # ← PRE-TOKENIZED loader!
 ...no "Loaded X/1374" messages...                       # ← Should NOT iterate files
 Generating train split: 25000 examples [00:01, 60000.00 examples/s]  # ← 60K/sec = pre-tokenized
 ```
@@ -56,8 +56,8 @@ Should output:
 use_pretokenized: true
 ```
 
-✓ If you see this, proceed to Step 2.
-✗ If not, add it to the config.
+ If you see this, proceed to Step 2.
+ If not, add it to the config.
 
 ### Step 2: Verify Config is Being Used
 
@@ -85,9 +85,9 @@ Add debugging right after:
 use_pretokenized = getattr(training_config.data, "use_pretokenized", False)
 
 # DEBUG: Print what we found
-print(f"\n🔍 DEBUG: use_pretokenized = {use_pretokenized}")
-print(f"🔍 DEBUG: training_config.data attributes: {dir(training_config.data)}")
-get_logger().warning(f"🔍 DEBUG: use_pretokenized={use_pretokenized}")
+print(f"\n DEBUG: use_pretokenized = {use_pretokenized}")
+print(f" DEBUG: training_config.data attributes: {dir(training_config.data)}")
+get_logger().warning(f" DEBUG: use_pretokenized={use_pretokenized}")
 ```
 
 Then re-run training. You'll see the debug output showing what value was actually loaded.
@@ -110,7 +110,7 @@ print("Expected: True (bool)")
 # Check if it's a string instead of bool
 val = config.get('data', {}).get('use_pretokenized')
 if isinstance(val, str):
-    print(f"⚠️  WARNING: use_pretokenized is a STRING '{val}', not a bool!")
+    print(f"  WARNING: use_pretokenized is a STRING '{val}', not a bool!")
     print("This will be treated as TRUE (non-empty string) in Python")
 EOF
 ```
@@ -133,7 +133,7 @@ use_pretokenized = True  # ← TEMPORARY: Force it
 
 Then re-run training. You should see:
 ```
-📦 Using pretokenized Arrow data loader (60x faster)
+ Using pretokenized Arrow data loader (60x faster)
 ```
 
 If you see this message, the config loading is the issue (not the code).
@@ -159,9 +159,9 @@ EOF
 
 **Fix**: In YAML, use bare `true` not quoted `"true"`:
 ```yaml
-use_pretokenized: true   # ✓ Correct (boolean)
-use_pretokenized: "true" # ✗ Wrong (string)
-use_pretokenized: yes    # ✓ Also works (boolean)
+use_pretokenized: true   #  Correct (boolean)
+use_pretokenized: "true" #  Wrong (string)
+use_pretokenized: yes    #  Also works (boolean)
 ```
 
 ### Issue 2: Config file not in git (if you recreated it)
@@ -227,16 +227,16 @@ After making changes, verify with this checklist:
 ## Expected Log Output (With Pre-Tokenized Active)
 
 ```
-📊 Creating dataloaders...
-📦 Using pretokenized Arrow data loader (60x faster)   # ← This should appear
-✓ Pre-tokenized Arrow loader initialized
+ Creating dataloaders...
+ Using pretokenized Arrow data loader (60x faster)   # ← This should appear
+ Pre-tokenized Arrow loader initialized
  - Cache size: 200 tables
  - 16 workers
  - 8192 tokens max per batch
 Generating train split: 25000 examples [00:01, 60000.00 examples/s]  # ← Should be 60K/sec
 Generating train split: 25000 examples [00:01, 60000.00 examples/s]
 Generating train split: 25000 examples [00:01, 60000.00 examples/s]
-✓ Data loading complete in 2.3 seconds
+ Data loading complete in 2.3 seconds
 ```
 
 ---
@@ -275,8 +275,8 @@ grep -E "Using pretokenized|Loaded [0-9]+/1374|Generating train split" training.
 ```
 
 If you see:
-- ✓ "Using pretokenized Arrow data loader" = SUCCESS
-- ✗ "Loaded X/1374" messages = Still using streaming (debug further)
+-  "Using pretokenized Arrow data loader" = SUCCESS
+-  "Loaded X/1374" messages = Still using streaming (debug further)
 
 ---
 
@@ -302,16 +302,16 @@ train_loader, val_loader = create_ultra_fast_dataloaders(
     eos_token_id=3,
 )
 
-print(f"✓ Train loader created: {train_loader}")
-print(f"✓ Val loader created: {val_loader}")
+print(f" Train loader created: {train_loader}")
+print(f" Val loader created: {val_loader}")
 
 # Try one batch
 for batch in train_loader:
-    print(f"✓ Batch keys: {batch.keys()}")
-    print(f"✓ Batch shape: input_ids={batch['input_ids'].shape}")
+    print(f" Batch keys: {batch.keys()}")
+    print(f" Batch shape: input_ids={batch['input_ids'].shape}")
     break
 
-print("✓ Pre-tokenized loader works!")
+print(" Pre-tokenized loader works!")
 EOF
 ```
 
@@ -322,9 +322,9 @@ If this works, the pre-tokenized loader code is fine. The issue is config loadin
 ## Summary
 
 **If you see 60,000 examples/sec in logs**:
-✓ Pre-tokenized loader is active - you're done!
+ Pre-tokenized loader is active - you're done!
 
 **If you see 18,000 examples/sec in logs**:
-✗ Streaming loader is still active - use debug steps above
+ Streaming loader is still active - use debug steps above
 
 The bottleneck is clear - we need to ensure `use_pretokenized=true` is being read from your config and used by the training pipeline.

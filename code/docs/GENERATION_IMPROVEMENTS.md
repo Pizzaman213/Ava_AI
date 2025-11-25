@@ -297,7 +297,7 @@ python code/scripts/5_training/train_100m_full.py \
 
 ### Monitor generation quality:
 - Check logs at `logs/training_*.log`
-- Look for "🎯 Testing generation at step" messages
+- Look for " Testing generation at step" messages
 - Compare output coherence during training
 
 ### Key Metrics to Track:
@@ -355,10 +355,10 @@ coherence_score = metrics.compute(generated_text)
 
 These improvements address the fundamental issue that the model was being trained on very short sequences (32 tokens) but asked to generate much longer text (128 tokens). By aligning training and generation lengths and optimizing sampling parameters, we expect to see:
 
-✅ More coherent multi-sentence output
-✅ Better vocabulary diversity
-✅ Reduced token repetition
-✅ Improved semantic transitions
-✅ Natural word boundaries and grammar
+ More coherent multi-sentence output
+ Better vocabulary diversity
+ Reduced token repetition
+ Improved semantic transitions
+ Natural word boundaries and grammar
 
 The changes are backward-compatible and don't require model retraining—they improve the sampling strategy during text generation.

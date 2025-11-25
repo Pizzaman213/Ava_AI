@@ -32,12 +32,12 @@ Batch = [Conversation A (turns 1-2),
 ```
 
 **Issues:**
-- ❌ Speaker identity lost
-- ❌ Turn boundaries undefined
-- ❌ Conversations split across batches
-- ❌ No quality filtering
-- ❌ Model doesn't learn dialogue structure
-- ❌ Poor cross-turn coherence
+-  Speaker identity lost
+-  Turn boundaries undefined
+-  Conversations split across batches
+-  No quality filtering
+-  Model doesn't learn dialogue structure
+-  Poor cross-turn coherence
 
 ---
 
@@ -80,12 +80,12 @@ Batch = [Conversation A (complete, all turns),
 ```
 
 **Improvements:**
-- ✓ Speaker identity preserved: `<user>`, `<assistant>`
-- ✓ Turn boundaries explicit: `<turn_start>`, `<turn_end>`
-- ✓ Complete conversations stay together
-- ✓ Quality scores tracked: `0.95`, `0.87`, etc.
-- ✓ Model learns dialogue structure
-- ✓ Better cross-turn coherence
+-  Speaker identity preserved: `<user>`, `<assistant>`
+-  Turn boundaries explicit: `<turn_start>`, `<turn_end>`
+-  Complete conversations stay together
+-  Quality scores tracked: `0.95`, `0.87`, etc.
+-  Model learns dialogue structure
+-  Better cross-turn coherence
 
 ---
 
@@ -284,9 +284,9 @@ Result: Coherent conversational model, better dialogue quality
 - Response relevance: ~52%
 
 **After:**
-- Cross-turn coherence: 50-55% ✓ (+15-20%)
-- Speaker consistency: 60-65% ✓ (+15-20%)
-- Response relevance: 62-67% ✓ (+10-15%)
+- Cross-turn coherence: 50-55%  (+15-20%)
+- Speaker consistency: 60-65%  (+15-20%)
+- Response relevance: 62-67%  (+10-15%)
 
 ### Training Efficiency
 
@@ -361,10 +361,10 @@ Data → Turn-Aware Loader → Model → Quality-Weighted Loss → Backward
 ```
 
 **Compatibility:**
-- ✓ Drop-in replacement for data loading
-- ✓ No model architecture changes needed
-- ✓ Works with existing optimizers
-- ✓ Backward compatible with existing code
+-  Drop-in replacement for data loading
+-  No model architecture changes needed
+-  Works with existing optimizers
+-  Backward compatible with existing code
 
 ---
 
@@ -372,19 +372,19 @@ Data → Turn-Aware Loader → Model → Quality-Weighted Loss → Backward
 
 | Aspect | Before | After | Improvement |
 |--------|--------|-------|-------------|
-| **Format Detection** | Manual | Automatic | ✓ Easier |
-| **Speaker Awareness** | ❌ Lost | ✓ Preserved | ✓ Yes |
-| **Turn Structure** | ❌ Lost | ✓ Explicit | ✓ Yes |
-| **Conversation Integrity** | ❌ Split | ✓ Complete | ✓ Yes |
-| **Quality Filtering** | ❌ No | ✓ Yes | ✓ Yes |
-| **Metadata Tracking** | ❌ None | ✓ Full | ✓ Yes |
-| **Cross-turn Coherence** | 35% | 50-55% | ✓ +15-20% |
-| **Speaker Consistency** | 45% | 60-65% | ✓ +15-20% |
-| **Integration Complexity** | Medium | Low | ✓ Easier |
-| **Performance Overhead** | - | ~5% | ✓ Minimal |
+| **Format Detection** | Manual | Automatic |  Easier |
+| **Speaker Awareness** |  Lost |  Preserved |  Yes |
+| **Turn Structure** |  Lost |  Explicit |  Yes |
+| **Conversation Integrity** |  Split |  Complete |  Yes |
+| **Quality Filtering** |  No |  Yes |  Yes |
+| **Metadata Tracking** |  None |  Full |  Yes |
+| **Cross-turn Coherence** | 35% | 50-55% |  +15-20% |
+| **Speaker Consistency** | 45% | 60-65% |  +15-20% |
+| **Integration Complexity** | Medium | Low |  Easier |
+| **Performance Overhead** | - | ~5% |  Minimal |
 
 ## Conclusion
 
 Turn-aware loading transforms conversational training from generic sequence prediction to coherent dialogue learning. The improvements in coherence, speaker consistency, and dialogue quality (15-20% improvement) make it essential for training high-quality conversational models.
 
-**The best part?** It requires just 3 lines of code to integrate! 🚀
+**The best part?** It requires just 3 lines of code to integrate! 

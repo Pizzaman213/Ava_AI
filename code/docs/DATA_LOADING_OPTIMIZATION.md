@@ -9,14 +9,14 @@ Your data loading is currently **1,000-2,000 samples/sec** and can be **60x fast
 - **Large buffer** (10,000 samples): Wastes GPU memory
 - **Shallow prefetch** (2 batches): I/O stalls waiting for data
 
-### Quick Wins Applied ✓
+### Quick Wins Applied 
 Your `minimal_working.yaml` has been optimized with:
-- ✓ `num_workers: 4` (4x parallel data loading)
-- ✓ `buffer_size: 5000` (halved memory usage)
-- ✓ `dataloader_prefetch_factor: 4` (2x deeper prefetch)
-- ✓ `dataloader_persistent_workers: true` (reuse workers between epochs)
-- ✓ `use_dynamic_batching: true` (token-based batching, 10-20% less padding)
-- ✓ `dataloader_samples_per_file: 2500` (fewer file rotations)
+-  `num_workers: 4` (4x parallel data loading)
+-  `buffer_size: 5000` (halved memory usage)
+-  `dataloader_prefetch_factor: 4` (2x deeper prefetch)
+-  `dataloader_persistent_workers: true` (reuse workers between epochs)
+-  `use_dynamic_batching: true` (token-based batching, 10-20% less padding)
+-  `dataloader_samples_per_file: 2500` (fewer file rotations)
 
 **Expected throughput improvement: 2-3x faster** (2,000-6,000 samples/sec)
 

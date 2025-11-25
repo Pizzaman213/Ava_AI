@@ -115,13 +115,13 @@ Example tokenized sequence:
 **Test Suite**: [code/scripts/validation/test_turn_aware_loader.py](../scripts/validation/test_turn_aware_loader.py)
 
 Comprehensive validation tests:
-1. ✓ Conversation parsing (text, messages, JSONL formats)
-2. ✓ Turn-aware tokenization with speaker preservation
-3. ✓ Batch collation without conversation splitting
-4. ✓ Dataset loading from JSONL files
-5. ✓ Quality filtering and turn count filtering
-6. ✓ Special token handling
-7. ✓ Performance benchmarking
+1.  Conversation parsing (text, messages, JSONL formats)
+2.  Turn-aware tokenization with speaker preservation
+3.  Batch collation without conversation splitting
+4.  Dataset loading from JSONL files
+5.  Quality filtering and turn count filtering
+6.  Special token handling
+7.  Performance benchmarking
 
 **Test Results**:
 - All 6 test categories pass
@@ -391,7 +391,7 @@ Run the validation tests:
 python code/scripts/validation/test_turn_aware_loader.py
 ```
 
-Expected output: All 6 tests passing ✓
+Expected output: All 6 tests passing 
 
 Run the example training:
 ```bash
@@ -410,13 +410,13 @@ Expected output: Training completes with loss curves showing improvement
 ## Summary
 
 A complete, production-ready turn-aware conversation data loading system has been implemented with:
-- ✓ Automatic conversation format detection
-- ✓ Speaker and turn boundary preservation
-- ✓ Complete conversation batching
-- ✓ Quality-aware filtering and weighting
-- ✓ Metadata propagation
-- ✓ Comprehensive testing (6/6 tests passing)
-- ✓ Working training example
-- ✓ Full documentation
+-  Automatic conversation format detection
+-  Speaker and turn boundary preservation
+-  Complete conversation batching
+-  Quality-aware filtering and weighting
+-  Metadata propagation
+-  Comprehensive testing (6/6 tests passing)
+-  Working training example
+-  Full documentation
 
 The system is ready for integration into training pipelines and will improve conversational coherence and quality during model training.

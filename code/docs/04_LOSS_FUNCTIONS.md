@@ -25,12 +25,12 @@ Ava's loss system is built around a **unified, modular architecture** that combi
 
 ### Key Features
 
-- 🎯 **Three primary loss types**: Standard CE, DeepSeek-style, Adaptive MTP
-- 🧩 **Modular components**: Enable/disable features independently
-- ⚡ **Performance optimized**: Minimal overhead (~5-10% vs standard CE)
-- 🔧 **Highly configurable**: 20+ tunable parameters
-- 📊 **Detailed breakdown**: Monitor individual component contributions
-- 🚀 **Distributed-ready**: Compatible with DDP, FSDP, DeepSpeed
+-  **Three primary loss types**: Standard CE, DeepSeek-style, Adaptive MTP
+-  **Modular components**: Enable/disable features independently
+-  **Performance optimized**: Minimal overhead (~5-10% vs standard CE)
+-  **Highly configurable**: 20+ tunable parameters
+-  **Detailed breakdown**: Monitor individual component contributions
+-  **Distributed-ready**: Compatible with DDP, FSDP, DeepSpeed
 
 ---
 
@@ -45,7 +45,7 @@ graph TB
 
         subgraph "Primary Loss Selection"
             STD[Standard CE<br/>Simple & Fast]
-            DS[DeepSeek Loss<br/>⭐ Recommended]
+            DS[DeepSeek Loss<br/> Recommended]
             AMTP[Adaptive MTP<br/>Confidence-Weighted]
         end
 
@@ -100,7 +100,7 @@ graph LR
         Root --> Optional[Optional Components<br/>Modular]
 
         Primary --> P1[Standard CE]
-        Primary --> P2[DeepSeek ⭐]
+        Primary --> P2[DeepSeek ]
         Primary --> P3[Adaptive MTP]
 
         Optional --> O1[MTP Loss]
@@ -137,10 +137,10 @@ flowchart TD
     Q1 -->|Yes| Q2{Need confidence<br/>weighting?}
     Q1 -->|No| Q3{Need advanced<br/>features?}
 
-    Q2 -->|Yes| AMTP[🎯 Adaptive MTP<br/>primary_loss_type='adaptive_mtp']
-    Q2 -->|No| DS2[🎯 DeepSeek + MTP<br/>primary_loss_type='deepseek'<br/>use_mtp=True]
+    Q2 -->|Yes| AMTP[ Adaptive MTP<br/>primary_loss_type='adaptive_mtp']
+    Q2 -->|No| DS2[ DeepSeek + MTP<br/>primary_loss_type='deepseek'<br/>use_mtp=True]
 
-    Q3 -->|Yes| DS[⭐ DeepSeek<br/>primary_loss_type='deepseek'<br/>RECOMMENDED]
+    Q3 -->|Yes| DS[ DeepSeek<br/>primary_loss_type='deepseek'<br/>RECOMMENDED]
     Q3 -->|No| STD[Standard CE<br/>primary_loss_type='standard'<br/>Simple & Fast]
 
     DS --> Features[+ Temperature scaling<br/>+ Label smoothing<br/>+ EOS penalties<br/>+ Adaptive temp]
@@ -165,12 +165,12 @@ loss_fn = UnifiedLoss(
 ```
 
 **Features**:
-- ✅ Fast and simple
-- ✅ Minimal overhead
-- ✅ Well-understood behavior
-- ❌ No advanced features
+-  Fast and simple
+-  Minimal overhead
+-  Well-understood behavior
+-  No advanced features
 
-### 2. DeepSeek-Style Loss ⭐ **RECOMMENDED**
+### 2. DeepSeek-Style Loss  **RECOMMENDED**
 
 **When to use**: Production training, models prone to repetition, need for stability
 
@@ -186,12 +186,12 @@ loss_fn = UnifiedLoss(
 ```
 
 **Features**:
-- ✅ Temperature-scaled cross-entropy
-- ✅ Adaptive temperature adjustment
-- ✅ Label smoothing
-- ✅ Early EOS penalties
-- ✅ Better gradient flow
-- ✅ Improved training stability
+-  Temperature-scaled cross-entropy
+-  Adaptive temperature adjustment
+-  Label smoothing
+-  Early EOS penalties
+-  Better gradient flow
+-  Improved training stability
 
 ### 3. Adaptive MTP Loss
 
@@ -208,11 +208,11 @@ loss_fn = UnifiedLoss(
 ```
 
 **Features**:
-- ✅ Confidence-weighted predictions
-- ✅ Adaptive loss scaling
-- ✅ Best for MTP-enabled models
-- ⚠️ Requires hidden states input
-- ⚠️ Higher computational cost
+-  Confidence-weighted predictions
+-  Adaptive loss scaling
+-  Best for MTP-enabled models
+-  Requires hidden states input
+-  Higher computational cost
 
 ---
 
@@ -682,7 +682,7 @@ from Ava.losses import UnifiedLoss
 
 loss_fn = UnifiedLoss(
     vocab_size=50257,
-    primary_loss_type="deepseek",      # ⭐ Recommended
+    primary_loss_type="deepseek",      #  Recommended
 
     # Temperature & smoothing
     initial_temperature=1.0,
@@ -941,10 +941,10 @@ graph LR
 ```
 
 **Key Insights**:
-- ✅ Minimal overhead for most components (<5%)
-- ⚠️ MTP has highest cost (~8% slower)
-- ✅ Repetition penalties are very cheap (~1-3%)
-- ✅ Total overhead with all features: ~10%
+-  Minimal overhead for most components (<5%)
+-  MTP has highest cost (~8% slower)
+-  Repetition penalties are very cheap (~1-3%)
+-  Total overhead with all features: ~10%
 
 ### Memory Usage
 
@@ -1006,14 +1006,14 @@ flowchart TD
 
 | Framework | Compatible | Notes |
 |-----------|-----------|-------|
-| PyTorch DDP | ✅ Yes | Fully supported |
-| FSDP | ✅ Yes | Works seamlessly |
-| DeepSpeed ZeRO-1 | ✅ Yes | No issues |
-| DeepSpeed ZeRO-2 | ✅ Yes | No issues |
-| DeepSpeed ZeRO-3 | ✅ Yes | May need small adjustments for MTP |
-| Gradient Accumulation | ✅ Yes | Fully compatible |
-| Mixed Precision (AMP) | ✅ Yes | Recommended |
-| bfloat16 | ✅ Yes | Best option |
+| PyTorch DDP |  Yes | Fully supported |
+| FSDP |  Yes | Works seamlessly |
+| DeepSpeed ZeRO-1 |  Yes | No issues |
+| DeepSpeed ZeRO-2 |  Yes | No issues |
+| DeepSpeed ZeRO-3 |  Yes | May need small adjustments for MTP |
+| Gradient Accumulation |  Yes | Fully compatible |
+| Mixed Precision (AMP) |  Yes | Recommended |
+| bfloat16 |  Yes | Best option |
 
 ---
 
@@ -1269,7 +1269,7 @@ cd /project/code
 python tests/test_unified_loss.py
 ```
 
-All tests should pass with "All tests passed! ✓"
+All tests should pass with "All tests passed! "
 
 ---
 
@@ -1277,13 +1277,13 @@ All tests should pass with "All tests passed! ✓"
 
 ### Key Takeaways
 
-1. ⭐ **Use DeepSeek loss** as the primary loss type for most applications
-2. 🧩 **Enable components incrementally** - start simple, add features as needed
-3. 📊 **Monitor component contributions** with `return_detailed=True`
-4. ⚡ **Minimal overhead** - only ~10% slower with all features
-5. 🔧 **Highly tunable** - adjust weights based on your specific problem
-6. 🚀 **Distributed-ready** - works with DDP, FSDP, DeepSpeed
-7. 🎯 **Prevention is key** - use repetition penalties to avoid mode collapse
+1.  **Use DeepSeek loss** as the primary loss type for most applications
+2.  **Enable components incrementally** - start simple, add features as needed
+3.  **Monitor component contributions** with `return_detailed=True`
+4.  **Minimal overhead** - only ~10% slower with all features
+5.  **Highly tunable** - adjust weights based on your specific problem
+6.  **Distributed-ready** - works with DDP, FSDP, DeepSpeed
+7.  **Prevention is key** - use repetition penalties to avoid mode collapse
 
 ### Quick Configuration Matrix
 

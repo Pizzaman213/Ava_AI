@@ -135,7 +135,7 @@ class PreTokenizedDataset(IterableDataset):
         if not self.data_files:
             raise ValueError(f"No pre-tokenized files found for {split} split in {data_dir}")
 
-        print(f"✓ Found {len(self.data_files)} pre-tokenized files for {split} split")
+        print(f" Found {len(self.data_files)} pre-tokenized files for {split} split")
 
         # Calculate total sequences from Arrow files
         self.total_sequences = 0
@@ -212,7 +212,7 @@ class PreTokenizedDataset(IterableDataset):
                 reader = PreTokenizedSequenceReader(file_path)
                 readers.append((file_path, reader))
             except Exception as e:
-                print(f"⚠️  Failed to open {file_path.name}: {e}")
+                print(f"  Failed to open {file_path.name}: {e}")
 
         if not readers:
             raise ValueError(f"No files could be opened from {self.data_dir}")
@@ -256,7 +256,7 @@ class PreTokenizedDataset(IterableDataset):
                 count += 1
 
             except Exception as e:
-                print(f"⚠️  Error reading sequence {seq_idx} from {file_path.name}: {e}")
+                print(f"  Error reading sequence {seq_idx} from {file_path.name}: {e}")
                 continue
 
         # Close all readers
@@ -336,10 +336,10 @@ class PreTokenizedMapDataset(Dataset):
                 total_sequences += len(reader)
                 self.file_offsets.append(total_sequences)
             except Exception as e:
-                print(f"⚠️  Failed to open {file_path.name}: {e}")
+                print(f"  Failed to open {file_path.name}: {e}")
 
         self.total_sequences = total_sequences
-        print(f"✓ Loaded {len(self.readers)} files with {self.total_sequences:,} sequences")
+        print(f" Loaded {len(self.readers)} files with {self.total_sequences:,} sequences")
 
     def _find_data_files(self) -> List[Path]:
         """Find pre-tokenized Arrow files."""
@@ -467,7 +467,7 @@ class ArrowTableCache:
                 try:
                     self._memory_maps[oldest_path].close()
                 except Exception as e:
-                    print(f"⚠️  Warning: Failed to close memory map for {oldest_path}: {e}")
+                    print(f"  Warning: Failed to close memory map for {oldest_path}: {e}")
                 finally:
                     del self._memory_maps[oldest_path]
 
@@ -483,7 +483,7 @@ class ArrowTableCache:
 
             return table
         except Exception as e:
-            print(f"❌ Failed to load Arrow file {file_path.name}: {e}")
+            print(f" Failed to load Arrow file {file_path.name}: {e}")
             # Return empty table as fallback with proper schema
             schema = pa.schema([
                 ('input_ids', pa.list_(pa.int64())),
@@ -502,7 +502,7 @@ class ArrowTableCache:
             try:
                 memory_map.close()
             except Exception as e:
-                print(f"⚠️  Warning: Failed to close memory map for {path}: {e}")
+                print(f"  Warning: Failed to close memory map for {path}: {e}")
         self.cache.clear()
         self._memory_maps.clear()
 
@@ -563,11 +563,11 @@ class UltraFastPretokenizedDataset(IterableDataset):
             self._create_val_from_train()
 
         if not self.data_files:
-            raise ValueError(f"⚠️  No pretokenized Arrow files found for {split} split in {data_dir}")
+            raise ValueError(f"  No pretokenized Arrow files found for {split} split in {data_dir}")
         else:
-            print(f"✓ Found {len(self.data_files)} pretokenized Arrow files for {split} split")
+            print(f" Found {len(self.data_files)} pretokenized Arrow files for {split} split")
             total_size_gb = sum(f.stat().st_size for f in self.data_files) / (1024**3)
-            print(f"   📊 Total data size: {total_size_gb:.2f} GB (memory-mapped, zero-copy)")
+            print(f"    Total data size: {total_size_gb:.2f} GB (memory-mapped, zero-copy)")
 
     def _find_data_files(self) -> List[Path]:
         """Find pretokenized Arrow files with deterministic train/val splitting."""
@@ -609,10 +609,10 @@ class UltraFastPretokenizedDataset(IterableDataset):
                         split_files.append(file_path)
 
             files = split_files
-            print(f"   🔀 File-based split: {len(files)} files for {self.split}")
+            print(f"    File-based split: {len(files)} files for {self.split}")
 
         if files:
-            print(f"   📊 Sample files: {[f.name for f in files[:3]]}")
+            print(f"    Sample files: {[f.name for f in files[:3]]}")
 
         return files
 
@@ -626,7 +626,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
 
         if train_files:
             self.data_files = train_files
-            print(f" ✓ Created validation set from {len(self.data_files)} training files")
+            print(f"  Created validation set from {len(self.data_files)} training files")
 
     def _stream_examples_ultra_fast(self) -> Iterator[Dict[str, np.ndarray]]:
         """
@@ -664,7 +664,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
                 }
             except Exception as e:
                 if should_print:
-                    print(f"  ⚠️ [Worker {worker_id}] Could not load {file_path.name}: {e}")
+                    print(f"   [Worker {worker_id}] Could not load {file_path.name}: {e}")
 
         # Stream with efficient batch extraction
         # Track iterations to prevent infinite loops when max_samples is not set
@@ -676,7 +676,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
             iteration_count += 1
             if iteration_count > max_iterations:
                 if should_print:
-                    print(f"⚠️  [Worker {worker_id}] Reached max iterations ({max_iterations}), ending epoch")
+                    print(f"  [Worker {worker_id}] Reached max iterations ({max_iterations}), ending epoch")
                 break
 
             for idx, cursor in file_cursors.items():
@@ -726,7 +726,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
                         except (TypeError, AttributeError):
                             # If we can't determine length, skip this item
                             if should_print and i == 0:  # Print only once per file
-                                print(f"  ⚠️ [Worker {worker_id}] Skipping item {i}: Cannot determine sequence length")
+                                print(f"   [Worker {worker_id}] Skipping item {i}: Cannot determine sequence length")
                             continue
 
                         # AGGRESSIVE SANITY CHECK: Detect corrupted sequences
@@ -735,7 +735,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
                         max_allowed_len = min(self.max_length * 10, 32768)  # 10x or 32k, whichever is smaller
                         if raw_len > max_allowed_len:
                             if should_print:
-                                print(f"🚨 [Worker {worker_id}] SKIPPING corrupted sequence {i}:")
+                                print(f" [Worker {worker_id}] SKIPPING corrupted sequence {i}:")
                                 print(f"   Detected catastrophic sequence length: {raw_len:,}")
                                 print(f"   Configured max_length: {self.max_length}")
                                 print(f"   Allowed threshold: {max_allowed_len:,}")
@@ -797,14 +797,14 @@ class UltraFastPretokenizedDataset(IterableDataset):
                             # Validate length BEFORE attempting conversion
                             if raw_len > max_allowed_len:
                                 if should_print:
-                                    print(f"🚨 [Worker {worker_id}] SKIPPING corrupted sequence {i} (per-row fallback):")
+                                    print(f" [Worker {worker_id}] SKIPPING corrupted sequence {i} (per-row fallback):")
                                     print(f"   Detected catastrophic sequence length: {raw_len:,}")
                                     print(f"   Allowed threshold: {max_allowed_len:,}")
                                 continue
                         except Exception as e:
                             # If we can't validate length, skip this item
                             if should_print:
-                                print(f"  ⚠️ [Worker {worker_id}] Skipping item {i}: Could not validate length - {e}")
+                                print(f"   [Worker {worker_id}] Skipping item {i}: Could not validate length - {e}")
                             continue
 
                         try:
@@ -876,14 +876,14 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # CRITICAL FIX: Validate batch structure to prevent OOM
         # Sometimes DataLoader passes incorrect batch structure
         if not isinstance(batch, list):
-            print(f"❌ ERROR: batch is not a list, got {type(batch)}")
+            print(f" ERROR: batch is not a list, got {type(batch)}")
             raise TypeError(f"Expected batch to be a list, got {type(batch)}")
 
         batch_size = len(batch)
 
         # Safety check: prevent absurd batch sizes that cause OOM
         if batch_size > 10000:
-            print(f"❌ ERROR: Abnormal batch size {batch_size:,} detected!")
+            print(f" ERROR: Abnormal batch size {batch_size:,} detected!")
             print(f"   Expected batch_size ≤ 10000 but got {batch_size:,}")
             print(f"   This would allocate {batch_size * self.max_length * 8 * 3 / 1024**3:.2f} GB")
             print(f"   First batch item type: {type(batch[0]) if batch else 'N/A'}")
@@ -904,25 +904,25 @@ class UltraFastPretokenizedDataset(IterableDataset):
 
         for i, item in enumerate(batch):
             if 'input_ids' not in item:
-                print(f"❌ ERROR: Batch item {i} missing 'input_ids' key!")
+                print(f" ERROR: Batch item {i} missing 'input_ids' key!")
                 continue
 
             seq_len = len(item['input_ids'])
 
             # Validate sequence length is reasonable
             if seq_len > max_allowed_len:
-                print(f"🚨 COLLATE_FN: SKIPPING item {i} with catastrophic length {seq_len:,} (allowed: {max_allowed_len:,})")
+                print(f" COLLATE_FN: SKIPPING item {i} with catastrophic length {seq_len:,} (allowed: {max_allowed_len:,})")
                 skipped_count += 1
                 continue
 
             valid_items.append((i, item))
 
         if skipped_count > 0:
-            print(f"⚠️ COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_items)} valid items")
+            print(f" COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_items)} valid items")
 
         # If all items were corrupted, return empty batch (trainer will handle this)
         if not valid_items:
-            print(f"❌ CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
+            print(f" CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
             return {
                 'input_ids': torch.tensor([], dtype=torch.long),
                 'attention_mask': torch.tensor([], dtype=torch.long),
@@ -991,7 +991,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
                 yield sample
                 count += 1
         except Exception as e:
-            print(f"❌ [Worker {worker_id}] Error during iteration: {e}")
+            print(f" [Worker {worker_id}] Error during iteration: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -1079,17 +1079,17 @@ def create_ultra_fast_dataloaders(
     # Safety checks
     if batch_size is None:
         batch_size = 8
-        print(f"⚠️  batch_size was None, defaulting to {batch_size}")
+        print(f"  batch_size was None, defaulting to {batch_size}")
 
     # Auto-detect CPU cores
     if num_workers == -1:
         import multiprocessing
         num_workers = multiprocessing.cpu_count()
-        print(f"🚀 Auto-detected {num_workers} CPU cores")
+        print(f" Auto-detected {num_workers} CPU cores")
     elif num_workers > 0:
-        print(f"🚀 Using {num_workers} CPU workers for ultra-fast pretokenized loading")
+        print(f" Using {num_workers} CPU workers for ultra-fast pretokenized loading")
     else:
-        print(f"🚀 Using 0 workers (main process only) for data loading")
+        print(f" Using 0 workers (main process only) for data loading")
 
     # Dynamic prefetch factor based on sequence length
     if prefetch_factor == 2:  # Only auto-adjust if using default
@@ -1097,9 +1097,9 @@ def create_ultra_fast_dataloaders(
         prefetch_factor = max(2, min(6, int(3072 / max_length)))
         if prefetch_factor != original_prefetch:
             memory_impact_gb = num_workers * (prefetch_factor - original_prefetch) * batch_size * max_length * 2 / (1024**3)
-            print(f"✓ [OPTIMIZATION] Auto-adjusted prefetch_factor: {original_prefetch} → {prefetch_factor} (~{abs(memory_impact_gb):.1f}GB RAM)")
+            print(f" [OPTIMIZATION] Auto-adjusted prefetch_factor: {original_prefetch} → {prefetch_factor} (~{abs(memory_impact_gb):.1f}GB RAM)")
 
-    print(f"⚡ Ultra-fast pretokenized pipeline (60x faster):")
+    print(f" Ultra-fast pretokenized pipeline (60x faster):")
     print(f"   • Memory-mapped Arrow reading (zero-copy, 2x faster)")
     print(f"   • Batch vectorized extraction (5x faster)")
     print(f"   • Zero-copy numpy→torch conversion (1.5x faster)")
@@ -1159,7 +1159,7 @@ def create_ultra_fast_dataloaders(
     # Get collate functions with optional sequence packing
     if use_sequence_packing and SEQUENCE_PACKING_AVAILABLE and SequencePackingCollator is not None and DynamicSequencePackingCollator is not None:
         print(f"\n{'='*60}")
-        print(f"⚡ SEQUENCE PACKING OPTIMIZATION ENABLED")
+        print(f" SEQUENCE PACKING OPTIMIZATION ENABLED")
         print(f"{'='*60}")
         print(f"   Strategy: {packing_strategy}")
         print(f"   Expected speedup: 20-35% by eliminating padding waste")
@@ -1196,7 +1196,7 @@ def create_ultra_fast_dataloaders(
                 pack_sequences=True,
             )
     elif use_sequence_packing and not SEQUENCE_PACKING_AVAILABLE:
-        print("⚠️  Sequence packing requested but not available, using default collation")
+        print("  Sequence packing requested but not available, using default collation")
         # Handle both direct dataset and InfiniteUltraFastDataset wrapper
         if isinstance(train_dataset, InfiniteUltraFastDataset):
             train_collate_fn = train_dataset.base_dataset.collate_fn  # type: ignore[assignment]

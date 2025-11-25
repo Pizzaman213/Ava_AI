@@ -32,7 +32,7 @@ try:
 except ImportError:
     triton = None  # type: ignore
     tl = None  # type: ignore
-    print("⚠️  Triton not available. Using fallback implementations.")
+    print("  Triton not available. Using fallback implementations.")
     print("   Install with: pip install triton")
 
 # For type checking, create mock when triton is not available

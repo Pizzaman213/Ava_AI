@@ -41,12 +41,12 @@ python train_100m_full.py --config config.yaml --disable-turn-aware-loader
 ## Benefits
 
 ### Automatic Improvements
-- ✓ +15-20% better cross-turn coherence (automatic)
-- ✓ +15-20% better speaker consistency (automatic)
-- ✓ +10-15% better response relevance (automatic)
-- ✓ No configuration needed
-- ✓ No command-line flags needed
-- ✓ Works for all conversation datasets
+-  +15-20% better cross-turn coherence (automatic)
+-  +15-20% better speaker consistency (automatic)
+-  +10-15% better response relevance (automatic)
+-  No configuration needed
+-  No command-line flags needed
+-  Works for all conversation datasets
 
 ### Zero Configuration
 - No need to remember flags
@@ -82,12 +82,12 @@ Training Start
 Parse Arguments
     ↓
 Check: --disable-turn-aware-loader flag?
-    ├─ YES → Use standard loader
-    └─ NO  → Use turn-aware loader (DEFAULT)
+     YES → Use standard loader
+     NO  → Use turn-aware loader (DEFAULT)
     ↓
 Load Conversations
-    ├─ Turn-aware: Preserves structure, speaker markers, metadata
-    └─ Standard: Plain Arrow/Parquet loading
+     Turn-aware: Preserves structure, speaker markers, metadata
+     Standard: Plain Arrow/Parquet loading
 ```
 
 ## Examples
@@ -137,16 +137,16 @@ python code/scripts/5_training/train_100m_full.py \
 
 ### With Turn-Aware Enabled (Default)
 ```
-📊 Creating dataloaders...
-✓ Turn-Aware Conversation Loading ENABLED
+ Creating dataloaders...
+ Turn-Aware Conversation Loading ENABLED
   Data: code/data/processed/conversations_processed.jsonl
   Benefits: Improved dialogue coherence, speaker awareness, quality tracking
 ```
 
 ### With Turn-Aware Disabled
 ```
-📊 Creating dataloaders...
-⚠ No conversation JSONL files found in data_dir, using standard loading
+ Creating dataloaders...
+ No conversation JSONL files found in data_dir, using standard loading
 (Falls back gracefully)
 ```
 
@@ -166,7 +166,7 @@ data:
 
 ## Backward Compatibility
 
-✅ **100% Backward Compatible**
+ **100% Backward Compatible**
 
 - All existing training scripts work unchanged
 - No changes needed to existing configs
@@ -177,16 +177,16 @@ data:
 ## Performance Impact
 
 ### No Negative Impact
-- ✓ Same loading speed
-- ✓ Same training speed
-- ✓ Same memory usage
-- ✓ ~5% metadata overhead (minimal)
+-  Same loading speed
+-  Same training speed
+-  Same memory usage
+-  ~5% metadata overhead (minimal)
 
 ### Positive Impact
-- ✓ 15-20% better dialogue coherence
-- ✓ Better speaker consistency
-- ✓ Better response relevance
-- ✓ Quality-aware training available
+-  15-20% better dialogue coherence
+-  Better speaker consistency
+-  Better response relevance
+-  Quality-aware training available
 
 ## Migration Guide
 
@@ -205,9 +205,9 @@ python train_100m_full.py --config config.yaml
 ### For Scripts Using Conversation Data
 
 **Congratulations!** You automatically get:
-- ✓ Better dialogue coherence (no code changes)
-- ✓ Speaker awareness (no code changes)
-- ✓ Quality tracking (no code changes)
+-  Better dialogue coherence (no code changes)
+-  Speaker awareness (no code changes)
+-  Quality tracking (no code changes)
 
 No migration needed!
 
@@ -228,7 +228,7 @@ python code/scripts/5_training/train_100m_full.py \
     --config configs/moe/minimal_working.yaml
 
 # Output should show:
-# ✓ Turn-Aware Conversation Loading ENABLED
+#  Turn-Aware Conversation Loading ENABLED
 ```
 
 ### Verify Disable Works
@@ -268,13 +268,13 @@ A: Yes, add `use_turn_aware_loader: false` to your config.
 
 Turn-aware conversation loading is now the **default** for improved dialogue quality:
 
-✅ Automatic for all training runs
-✅ Better results by default (+15-20% coherence)
-✅ Zero configuration needed
-✅ Graceful fallback if not applicable
-✅ Can disable with `--disable-turn-aware-loader` if needed
+ Automatic for all training runs
+ Better results by default (+15-20% coherence)
+ Zero configuration needed
+ Graceful fallback if not applicable
+ Can disable with `--disable-turn-aware-loader` if needed
 
-**Just train normally and enjoy better conversational models!** 🚀
+**Just train normally and enjoy better conversational models!** 
 
 ## Related Documentation
 

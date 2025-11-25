@@ -29,7 +29,7 @@ trainer = SimplifiedEnhancedTrainer(
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 trainer.initialize(optimizer)
 
-print("✓ Trainer ready to use!")
+print(" Trainer ready to use!")
 ```
 
 ### 2. Train for One Epoch
@@ -126,14 +126,14 @@ print(f"Validation loss: {eval_metrics['eval_loss']:.4f}")
 
 ```
 SimplifiedEnhancedTrainer (Your main interface)
-├── DistributedTrainingManager
-│   └─ Handles multi-GPU/multi-node training
-├── CheckpointManager
-│   └─ Saves and loads models
-├── LossComputationManager
-│   └─ Computes losses and manages gradients
-└── MonitoringManager
-    └─ Tracks metrics and logs to W&B
+ DistributedTrainingManager
+    Handles multi-GPU/multi-node training
+ CheckpointManager
+    Saves and loads models
+ LossComputationManager
+    Computes losses and manages gradients
+ MonitoringManager
+     Tracks metrics and logs to W&B
 ```
 
 ### Key Methods
@@ -306,11 +306,11 @@ finally:
 
 ```python
 trainer = SimplifiedEnhancedTrainer(model, config)
-metrics = trainer.train_step(batch)  # ❌ Error!
+metrics = trainer.train_step(batch)  #  Error!
 
 # Fix: Must initialize first
 trainer = SimplifiedEnhancedTrainer(model, config)
-trainer.initialize(optimizer)  # ✓ Now it works
+trainer.initialize(optimizer)  #  Now it works
 metrics = trainer.train_step(batch)
 ```
 
@@ -320,10 +320,10 @@ metrics = trainer.train_step(batch)
 trainer = SimplifiedEnhancedTrainer(model, config)
 trainer.initialize(optimizer)
 
-# ❌ This will fail - no loss functions
+#  This will fail - no loss functions
 loss, _ = trainer.loss_manager.compute_loss(outputs, targets)
 
-# ✓ Register loss functions first
+#  Register loss functions first
 trainer.loss_manager.register_loss_function("ce", CrossEntropyLoss())
 loss, _ = trainer.loss_manager.compute_loss(outputs, targets)
 ```
@@ -333,11 +333,11 @@ loss, _ = trainer.loss_manager.compute_loss(outputs, targets)
 Batch dictionary must have "labels" or "targets":
 
 ```python
-# ❌ This will fail
+#  This will fail
 batch = {"input_ids": torch.randn(32, 128)}
 trainer.train_step(batch)  # Error: no labels
 
-# ✓ Include labels
+#  Include labels
 batch = {
     "input_ids": torch.randn(32, 128),
     "labels": torch.randint(0, 10, (32,))
@@ -400,12 +400,12 @@ After this quick start:
 ## Summary
 
 You now know how to:
-- ✅ Create and initialize a trainer
-- ✅ Run a training loop
-- ✅ Add custom loss functions
-- ✅ Save and load checkpoints
-- ✅ Evaluate on validation data
-- ✅ Debug training issues
-- ✅ Access manager components
+-  Create and initialize a trainer
+-  Run a training loop
+-  Add custom loss functions
+-  Save and load checkpoints
+-  Evaluate on validation data
+-  Debug training issues
+-  Access manager components
 
 Next: Run `example_training.py` to see it in action!

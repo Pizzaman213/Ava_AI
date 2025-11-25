@@ -404,10 +404,10 @@ Hierarchical routing (32 experts, 4 clusters):
 
 Phases 2 & 3 add powerful memory optimizations on top of Phase 1's LoRA experts:
 
-- **Phase 1 (LoRA)**: 80-96% base reduction ✅
-- **Phase 2 (Offloading)**: +75-87% on active experts ✅
-- **Phase 3 (Hierarchical)**: +30-50% via clustering ✅
-- **Phase 4 (Quantization)**: +50-75% planned 🔜
+- **Phase 1 (LoRA)**: 80-96% base reduction 
+- **Phase 2 (Offloading)**: +75-87% on active experts 
+- **Phase 3 (Hierarchical)**: +30-50% via clustering 
+- **Phase 4 (Quantization)**: +50-75% planned 
 
 **Combined: Up to 99.5% memory reduction achieved!**
 

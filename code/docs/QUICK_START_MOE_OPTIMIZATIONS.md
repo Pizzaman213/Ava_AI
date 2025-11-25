@@ -2,11 +2,11 @@
 
 This guide gets you started with the new MoE performance optimizations and monitoring tools in under 5 minutes.
 
-## ✅ What's Already Working
+##  What's Already Working
 
 ### 1. TF32 Acceleration (Automatic)
 
-**Status**: ✅ Already enabled in training script
+**Status**:  Already enabled in training script
 
 Your training script **automatically** enables TF32 on supported GPUs:
 - RTX 30xx/40xx series (Ampere/Ada)
@@ -16,10 +16,10 @@ Your training script **automatically** enables TF32 on supported GPUs:
 
 Check your logs for confirmation:
 ```
-✅ TF32 and CuDNN benchmark optimizations applied
+ TF32 and CuDNN benchmark optimizations applied
 ```
 
-## 🆕 New Features
+##  New Features
 
 ### 2. Expert Load Balance Monitor
 
@@ -32,9 +32,9 @@ python code/scripts/examples/monitor_moe_balance.py
 
 Expected output:
 ```
-⚠️  Expert Load Imbalance Detected (Step 10):
+  Expert Load Imbalance Detected (Step 10):
    Balance Score: 0.470 (target: 0.700)
-   💡 Suggestion: Increase load_balance_loss_coef from 0.0100 to 0.0150
+    Suggestion: Increase load_balance_loss_coef from 0.0100 to 0.0150
 ```
 
 ### 3. Training Profiler
@@ -53,7 +53,7 @@ python code/scripts/testing/profile_training.py \
 - `outputs/profiling/trace.json` (view in Chrome at `chrome://tracing`)
 - Performance recommendations
 
-## 📋 Common Use Cases
+##  Common Use Cases
 
 ### Use Case 1: Check if TF32 is Enabled
 
@@ -63,7 +63,7 @@ python code/scripts/5_training/train.py \
     --config code/configs/moe/small_moe.yaml
 
 # Look for this line in output:
-# ✅ TF32 and CuDNN benchmark optimizations applied
+#  TF32 and CuDNN benchmark optimizations applied
 ```
 
 ### Use Case 2: My Experts Are Imbalanced
@@ -137,7 +137,7 @@ model:
   num_experts: 8                  # Reduce from 16
 ```
 
-## 🔧 Configuration Templates
+##  Configuration Templates
 
 ### Optimal for Single GPU (24GB VRAM)
 
@@ -180,7 +180,7 @@ deepspeed:
   precision: "bf16"
 ```
 
-## 📊 Monitoring Checklist
+##  Monitoring Checklist
 
 Before each training run, verify:
 
@@ -190,7 +190,7 @@ Before each training run, verify:
 - [ ] **No OOM errors**: Reduce batch size if needed
 - [ ] **Tokens/sec > 1000**: Profile if slower
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Problem: "DeepSpeed ZeRO incompatible with sparse MoE"
 
@@ -218,20 +218,20 @@ model:
   use_torch_compile: true    # 10-20% faster
 ```
 
-## 📚 Full Documentation
+##  Full Documentation
 
 - **Comprehensive Guide**: [MOE_OPTIMIZATION_GUIDE.md](MOE_OPTIMIZATION_GUIDE.md)
 - **MoE Architecture**: [SPARSE_MOE_GUIDE.md](SPARSE_MOE_GUIDE.md)
 - **Example Configs**: `code/configs/moe/*.yaml`
 
-## 🚀 Next Steps
+##  Next Steps
 
 1. **Test the monitor**: `python code/scripts/examples/monitor_moe_balance.py`
 2. **Profile your training**: `python code/scripts/testing/profile_training.py --config your_config.yaml`
 3. **Review your config** against the templates above
 4. **Start training** and monitor the logs!
 
-## 💡 Pro Tips
+##  Pro Tips
 
 1. **Always start small**: Test with `small_moe.yaml` before scaling up
 2. **Profile first**: Don't guess at bottlenecks, measure them

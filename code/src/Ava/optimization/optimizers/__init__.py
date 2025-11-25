@@ -16,6 +16,13 @@ from .memory_efficient import (
     print_memory_comparison,
 )
 
+from .galore_optimizer import (
+    GaLoreProjector,
+    GaLoreAdamW,
+    GaLoreLion,
+    create_galore_optimizer,
+)
+
 __all__ = [
     "AdaFactorOptimizer",
     "LionOptimizer",
@@ -28,4 +35,9 @@ __all__ = [
     "create_8bit_optimizer",
     "estimate_memory_savings",
     "print_memory_comparison",
+    # GaLore gradient low-rank projection optimizers
+    "GaLoreProjector",
+    "GaLoreAdamW",
+    "GaLoreLion",
+    "create_galore_optimizer",
 ]

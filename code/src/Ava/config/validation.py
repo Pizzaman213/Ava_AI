@@ -376,15 +376,15 @@ class ConfigValidator:
         if self.errors:
             logger.error("Configuration validation failed:")
             for error in self.errors:
-                logger.error(f"  ❌ {error}")
+                logger.error(f"   {error}")
 
         if self.warnings:
             logger.warning("Configuration warnings:")
             for warning in self.warnings:
-                logger.warning(f"  ⚠️  {warning}")
+                logger.warning(f"    {warning}")
 
         if not self.errors and not self.warnings:
-            logger.info("✅ Configuration validation passed")
+            logger.info(" Configuration validation passed")
 
 
 def validate_config(config: Dict[str, Any]) -> bool:

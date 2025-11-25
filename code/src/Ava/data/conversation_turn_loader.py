@@ -464,7 +464,7 @@ class TurnAwareConversationDataset(Dataset):
                     print(f"Warning: Failed to parse line {idx}: {e}")
                     continue
 
-        print(f"✓ Loaded {len(conversations)} conversations from {self.data_path}")
+        print(f" Loaded {len(conversations)} conversations from {self.data_path}")
         return conversations
 
     def __len__(self) -> int:

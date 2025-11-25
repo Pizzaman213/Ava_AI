@@ -27,10 +27,10 @@ moe_memory_optimization:
 ```
 
 **When to use:**
-- ✅ Training with limited GPU memory
-- ✅ When experts should share common patterns
-- ✅ Fast iteration during development
-- ❌ When you need full parameter capacity per expert
+-  Training with limited GPU memory
+-  When experts should share common patterns
+-  Fast iteration during development
+-  When you need full parameter capacity per expert
 
 **Training impact:**
 - Speed: ~10-20% faster (fewer parameters to update)
@@ -62,10 +62,10 @@ moe_memory_optimization:
 ```
 
 **When to use:**
-- ✅ Large models that don't fit in GPU memory
-- ✅ Many experts (8+)
-- ✅ When CPU→GPU transfer speed is acceptable
-- ❌ When training speed is critical (adds ~30-50% overhead)
+-  Large models that don't fit in GPU memory
+-  Many experts (8+)
+-  When CPU→GPU transfer speed is acceptable
+-  When training speed is critical (adds ~30-50% overhead)
 
 **Training impact:**
 - Speed: ~30-50% slower (due to transfers)
@@ -92,11 +92,11 @@ moe_memory_optimization:
 ```
 
 **When to use:**
-- ✅ Extreme memory constraints
-- ✅ Combined with offloading (quantized storage on CPU)
-- ✅ When slight accuracy loss is acceptable
-- ❌ When FP16 precision is critical
-- ❌ When quantization overhead outweighs benefits
+-  Extreme memory constraints
+-  Combined with offloading (quantized storage on CPU)
+-  When slight accuracy loss is acceptable
+-  When FP16 precision is critical
+-  When quantization overhead outweighs benefits
 
 **Training impact:**
 - Speed: ~20-30% slower (quantize/dequantize overhead)
@@ -168,7 +168,7 @@ moe_memory_optimization:
 - Standard: ~8MB GPU memory
 - LoRA only: ~1.08MB (86% savings)
 - LoRA + Offload: ~0.27MB (96% savings)
-- **LoRA + Offload + Quant: ~0.08MB (99% savings)** ⭐
+- **LoRA + Offload + Quant: ~0.08MB (99% savings)** 
 
 ---
 
@@ -208,9 +208,9 @@ moe_memory_optimization:
 | Configuration | GPU Memory | Training Speed | Model Quality |
 |--------------|------------|----------------|---------------|
 | Standard | 100% | 100% (baseline) | 100% |
-| LoRA (r=4) | ~14% | 110-120% ⬆️ | ~98% |
-| LoRA + Offload | ~4% | 50-70% ⬇️ | ~98% |
-| LoRA + Offload + Quant | ~1% | 40-60% ⬇️ | ~96-97% |
+| LoRA (r=4) | ~14% | 110-120%  | ~98% |
+| LoRA + Offload | ~4% | 50-70%  | ~98% |
+| LoRA + Offload + Quant | ~1% | 40-60%  | ~96-97% |
 
 ### Hardware Requirements
 

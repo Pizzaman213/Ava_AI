@@ -121,7 +121,10 @@
       "Bash(git -C /project log --oneline -5)",
       "Bash(git -C /project push origin Dev)",
       "Bash(ulimit:*)",
-      "Bash(journalctl:*)"
+      "Bash(journalctl:*)",
+      "Bash(git clean:*)",
+      "Bash(jobs:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []

@@ -3,25 +3,25 @@
 **Date**: November 19, 2024
 **Project**: Ava AI Training Pipeline
 **Focus**: Text Generation Quality Improvements
-**Status**: ✅ Complete and Documented
+**Status**:  Complete and Documented
 
 ---
 
 ## Quick Navigation
 
-### 🚀 **I want a 2-minute summary**
+###  **I want a 2-minute summary**
 → Read [QUICK_IMPROVEMENTS_REFERENCE.md](QUICK_IMPROVEMENTS_REFERENCE.md)
 
-### 📊 **I want before/after comparison**
+###  **I want before/after comparison**
 → Read [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md)
 
-### 📚 **I want detailed technical analysis**
+###  **I want detailed technical analysis**
 → Read [GENERATION_IMPROVEMENTS.md](GENERATION_IMPROVEMENTS.md)
 
-### 📈 **I want the executive summary**
+###  **I want the executive summary**
 → Read [IMPROVEMENTS_COMPLETE.md](IMPROVEMENTS_COMPLETE.md)
 
-### 🔍 **I want to understand everything**
+###  **I want to understand everything**
 → Start here, then follow the links below
 
 ---
@@ -31,10 +31,10 @@
 The model was trained on **32-token sequences** but asked to generate **128-token text** = **4x mismatch**.
 
 This caused:
-- ❌ Incoherent output
-- ❌ Repetitive patterns
-- ❌ Incomplete sentences
-- ❌ Poor grammar
+-  Incoherent output
+-  Repetitive patterns
+-  Incomplete sentences
+-  Poor grammar
 
 ---
 
@@ -136,18 +136,18 @@ This caused:
 ### 1. code/configs/moe/minimal_working.yaml
 
 **Changes**:
-- ✏️ Line 14: max_position_embeddings: 512 → 1024
-- ✏️ Line 96: max_length: 32 → 256
-- ✏️ Lines 68-83: Updated generation parameters
+-  Line 14: max_position_embeddings: 512 → 1024
+-  Line 96: max_length: 32 → 256
+-  Lines 68-83: Updated generation parameters
   - generate_every_n_steps: 1000 → 500
   - num_generations_per_step: 3 → 5
   - generation_max_length: 128 → 256
   - generation_temperature: 0.7 → 0.85
   - generation_top_p: 0.9 → 0.92
-  - ➕ generation_top_k: 50 (NEW)
-  - ➕ generation_repetition_penalty: 1.15 (NEW)
+  -  generation_top_k: 50 (NEW)
+  -  generation_repetition_penalty: 1.15 (NEW)
   - generation_prompt: longer prompt with more context
-  - ➕ alternative_prompts (NEW)
+  -  alternative_prompts (NEW)
 
 **Impact**: Aligns training with generation, optimizes sampling
 
@@ -156,15 +156,15 @@ This caused:
 ### 2. code/scripts/5_training/train_100m_full.py
 
 **Changes**:
-- ✏️ Line 1082: Added `generation_top_k` parameter extraction
-- ✏️ Line 1083: Added `generation_repetition_penalty` parameter extraction
-- ✏️ Lines 702-703: Updated `generate_sample()` function signature
-- ✏️ Lines 708-727: Updated docstring with new parameters
-- ✏️ Lines 731-775: Enhanced `top_p_sampling()` function with:
+-  Line 1082: Added `generation_top_k` parameter extraction
+-  Line 1083: Added `generation_repetition_penalty` parameter extraction
+-  Lines 702-703: Updated `generate_sample()` function signature
+-  Lines 708-727: Updated docstring with new parameters
+-  Lines 731-775: Enhanced `top_p_sampling()` function with:
   - Top-k filtering logic
   - Repetition penalty logic
   - Improved sampling
-- ✏️ Lines 809-810: Updated function call to pass new parameters
+-  Lines 809-810: Updated function call to pass new parameters
 
 **Impact**: Implements new sampling strategies, passes config parameters
 
@@ -261,11 +261,11 @@ tail -f logs/training_*.log | grep "Testing generation" -A 5
 
 ## Backward Compatibility
 
-✅ All new parameters have defaults
-✅ Old code still works
-✅ Old models compatible
-✅ No API changes
-✅ Gradual adoption possible
+ All new parameters have defaults
+ Old code still works
+ Old models compatible
+ No API changes
+ Gradual adoption possible
 
 ---
 
@@ -288,9 +288,9 @@ START HERE
 QUICK_IMPROVEMENTS_REFERENCE.md (2 min)
     ↓
 [Choose one or more:]
-    ├─→ IMPROVEMENTS_SUMMARY.md (5 min) - Want tables & comparison
-    ├─→ GENERATION_IMPROVEMENTS.md (10 min) - Want technical depth
-    └─→ IMPROVEMENTS_COMPLETE.md (5 min) - Want executive summary
+    → IMPROVEMENTS_SUMMARY.md (5 min) - Want tables & comparison
+    → GENERATION_IMPROVEMENTS.md (10 min) - Want technical depth
+    → IMPROVEMENTS_COMPLETE.md (5 min) - Want executive summary
 
 Optional: Read all for complete understanding
 ```
@@ -324,13 +324,13 @@ All can benefit from these improvements!
 
 ## Next Steps
 
-1. ✅ Read appropriate documentation from list above
-2. ✅ Review modified files
-3. ✅ Deploy changes (already done)
-4. ✅ Run training with improved config
-5. ✅ Monitor generation quality
-6. ✅ Compare outputs
-7. ✅ Optional: Apply to other configs
+1.  Read appropriate documentation from list above
+2.  Review modified files
+3.  Deploy changes (already done)
+4.  Run training with improved config
+5.  Monitor generation quality
+6.  Compare outputs
+7.  Optional: Apply to other configs
 
 ---
 

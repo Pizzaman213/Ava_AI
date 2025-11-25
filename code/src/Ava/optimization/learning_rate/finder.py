@@ -193,7 +193,7 @@ class LRFinder:
         logger.info(f"  Mode: {self.config.mode}")
         logger.info(f"  Gradient Accumulation Steps: {accumulation_steps}")
         if accumulation_steps != 1:
-            logger.warning(f"  ⚠️  WARNING: LR Finder using gradient_accumulation_steps={accumulation_steps}")
+            logger.warning(f"    WARNING: LR Finder using gradient_accumulation_steps={accumulation_steps}")
             logger.warning(f"      For most accurate results, should use gradient_accumulation_steps=1")
         logger.info("-" * 80)
 
@@ -804,21 +804,21 @@ class LRFinder:
         self.config.suggestion_method = original_method
 
         # Create summary text
-        summary_text = "📊 LR Finder Summary\n" + "="*50 + "\n\n"
+        summary_text = " LR Finder Summary\n" + "="*50 + "\n\n"
         summary_text += f"Iterations: {len(self.history['lr'])}\n"
         summary_text += f"LR Range: {min(self.history['lr']):.2e} - {max(self.history['lr']):.2e}\n\n"
         summary_text += f"Best Loss: {min_loss:.6f}\n"
         summary_text += f"Best LR: {min_lr:.2e}\n\n"
-        summary_text += "🎯 Suggested Learning Rates:\n" + "-"*50 + "\n"
+        summary_text += " Suggested Learning Rates:\n" + "-"*50 + "\n"
 
         for method, lr_val in suggestions.items():
             if lr_val:
-                marker = "✓" if method == original_method else " "
+                marker = "" if method == original_method else " "
                 summary_text += f"{marker} {method.capitalize():12s}: {lr_val:.6e}\n"
 
-        summary_text += "\n💡 Recommendation:\n" + "-"*50 + "\n"
+        summary_text += "\n Recommendation:\n" + "-"*50 + "\n"
         summary_text += f"Use '{original_method}' method: {suggestions.get(original_method, 0):.2e}\n\n"
-        summary_text += "📝 Notes:\n"
+        summary_text += " Notes:\n"
         summary_text += "• FastAI: Most conservative (1/10 before min)\n"
         summary_text += "• Steepest: Fastest descent point\n"
         summary_text += "• Minimum: Least conservative\n"

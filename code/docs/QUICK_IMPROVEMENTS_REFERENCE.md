@@ -44,7 +44,7 @@ next_tokens = top_p_sampling(..., top_k=top_k, repetition_penalty=repetition_pen
 |--------|--------|-------|
 | Training Length | 32 tokens | 256 tokens |
 | Generation Length | 128 tokens | 256 tokens |
-| Mismatch | 4x ❌ | 1x ✅ |
+| Mismatch | 4x  | 1x  |
 | Coherence | Poor | Excellent |
 | Diversity | Low | High |
 | Repetition | Frequent | Minimal |
@@ -93,7 +93,7 @@ Check the results in logs - look for "Testing generation" lines showing improved
 
 ## Backward Compatible?
 
-✅ Yes! All changes have sensible defaults. Old code still works.
+ Yes! All changes have sensible defaults. Old code still works.
 
 ## Any Questions?
 

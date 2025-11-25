@@ -8,15 +8,15 @@ The data loading configuration settings (`use_pretokenized`, `num_workers`, etc.
 
 ```
 minimal_working.yaml says:
-  ✓ use_pretokenized: true
-  ✓ num_workers: 16
-  ✓ prefetch_factor: 16
+   use_pretokenized: true
+   num_workers: 16
+   prefetch_factor: 16
 
 But the training script did:
-  ✗ Ignored the config
-  ✗ Called its own create_dataloaders() function
-  ✗ Loaded data using old slow datasets.load_dataset() approach
-  ✗ Showed "📚 Datasets available: True" (slow streaming loader)
+   Ignored the config
+   Called its own create_dataloaders() function
+   Loaded data using old slow datasets.load_dataset() approach
+   Showed " Datasets available: True" (slow streaming loader)
 ```
 
 ## The Solution
@@ -55,7 +55,7 @@ With fallback to old method if DataLoaderManager fails.
 
 **Before fix**:
 ```
-📚 Datasets available: True                   # ← Slow streaming loader
+ Datasets available: True                   # ← Slow streaming loader
   Loaded 10/1374 parquet files...
   Loaded 20/1374 parquet files...
 Generating train split: 25000 examples [00:01, 18000.00 examples/s]  # ← Slow!
@@ -63,8 +63,8 @@ Generating train split: 25000 examples [00:01, 18000.00 examples/s]  # ← Slow!
 
 **After fix**:
 ```
-📦 Using pretokenized Arrow data loader (60x faster)  # ← Fast!
-✓ Pre-tokenized Arrow loader initialized
+ Using pretokenized Arrow data loader (60x faster)  # ← Fast!
+ Pre-tokenized Arrow loader initialized
  - 16 parallel workers
  - 16x prefetch depth
 Generating train split: 25000 examples [00:01, 60000.00 examples/s]  # ← 60K/sec!
@@ -79,7 +79,7 @@ Generating train split: 25000 examples [00:01, 60000.00 examples/s]  # ← 60K/s
 | **Data throughput** | 18,000 samples/sec | 40,000-60,000 samples/sec | **27-40x** |
 | **Time to load dataset** | 15 minutes | 2-3 seconds | **300x** |
 | **Training startup** | 15+ minutes | 2-3 seconds | **100x** |
-| **Log message** | "Datasets available" | "pretokenized Arrow data loader" | ✓ |
+| **Log message** | "Datasets available" | "pretokenized Arrow data loader" |  |
 
 ---
 
@@ -92,13 +92,13 @@ Generating train split: 25000 examples [00:01, 60000.00 examples/s]  # ← 60K/s
    ```
 
 2. **Check logs for**:
-   - ✓ "Using pretokenized Arrow data loader (60x faster)"
-   - ✓ NO "Loaded X/1374 parquet files..." messages
-   - ✓ 40,000+ examples/sec throughput
-   - ✓ Data initialization in 2-3 seconds
+   -  "Using pretokenized Arrow data loader (60x faster)"
+   -  NO "Loaded X/1374 parquet files..." messages
+   -  40,000+ examples/sec throughput
+   -  Data initialization in 2-3 seconds
 
 3. **If you still see old logs**:
-   - "📚 Datasets available: True"
+   - " Datasets available: True"
    - "Loaded 10/1374"
    - < 20,000 examples/sec
 
@@ -139,7 +139,7 @@ NO → create_streaming_dataloaders() (fallback)
 If `DataLoaderManager` fails for any reason, the code automatically falls back to the old `create_dataloaders()` method. You'll see:
 
 ```
-⚠ DataLoaderManager failed (error_details), falling back to create_dataloaders
+ DataLoaderManager failed (error_details), falling back to create_dataloaders
 ```
 
 In this case, please file a bug report with the error message.
@@ -171,4 +171,4 @@ data:
 - **Performance**: 40x faster data loading with optimized settings
 - **Fallback**: Old method used if manager fails
 
-Your data loading is now properly optimized! 🚀
+Your data loading is now properly optimized! 

@@ -340,7 +340,7 @@ class ModelManager(TrainingComponent):
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-        get_logger().info("📊 Model Parameters:")
+        get_logger().info(" Model Parameters:")
         get_logger().info(
             f"  Total: {total_params:,} ({total_params/1e6:.1f}M / {total_params/1e9:.2f}B)"
         )

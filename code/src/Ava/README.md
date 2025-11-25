@@ -6,74 +6,74 @@ This directory contains the core implementation of the Ava training framework fo
 
 ```
 src/Ava/
-├── _archived/              # Experimental/optional features (not in training pipeline)
-│   ├── data/              # Data preparation tools
-│   ├── evaluation/        # Alternative evaluators
-│   ├── generation/        # Text generation (inference only)
-│   ├── layers/            # Experimental layer architectures
-│   ├── losses/            # Alternative loss functions
-│   ├── models/            # Model wrappers
-│   ├── optimization/      # Experimental optimizations
-│   └── training/          # Alternative training strategies
-│
-├── config/                # Training configuration
-│   ├── training_config.py
-│   └── feature_compatibility.py
-│
-├── data/                  # Data loading and processing
-│   ├── arrow_reader.py
-│   └── encoding_detector.py
-│
-├── evaluation/            # Model evaluation
-│   └── comprehensive_eval.py
-│
-├── layers/                # Neural network layers
-│   ├── experts.py
-│   └── routing.py
-│
-├── losses/                # Loss functions
-│   ├── advanced_losses.py
-│   └── deepseek_loss.py
-│
-├── memory/                # Memory management
-│   └── episodic_memory.py
-│
-├── models/                # Model architectures
-│   └── moe_model.py
-│
-├── optimization/          # Model optimization
-│   ├── advanced_optimizers.py
-│   ├── fp8_training.py
-│   └── quantization.py
-│
-├── training/              # Training utilities (16 modules)
-│   ├── enhanced_trainer.py         # Core trainer
-│   ├── adaptive_lr.py
-│   ├── advanced_schedulers.py
-│   ├── advanced_warmup.py
-│   ├── distributed_health_checker.py
-│   ├── distributed_manager.py
-│   ├── gradient_health.py
-│   ├── gradient_surgery.py
-│   ├── lr_manager.py
-│   ├── memory_monitor.py
-│   ├── metrics.py
-│   ├── performance_modes.py
-│   ├── progressive_training.py
-│   ├── rank_aware_error_handler.py
-│   └── run_manager.py
-│
-├── utils/                 # Utility functions
-│   ├── async_logging.py
-│   ├── checkpoint.py
-│   ├── gpu_memory.py
-│   └── logging.py
-│
-├── data_streaming.py      # Streaming data loaders
-├── multi_column_data.py   # Multi-column data handling
-│
-├── ARCHIVED_FEATURES.md   # Documentation of archived features
-└── README.md             # This file
+ _archived/              # Experimental/optional features (not in training pipeline)
+    data/              # Data preparation tools
+    evaluation/        # Alternative evaluators
+    generation/        # Text generation (inference only)
+    layers/            # Experimental layer architectures
+    losses/            # Alternative loss functions
+    models/            # Model wrappers
+    optimization/      # Experimental optimizations
+    training/          # Alternative training strategies
+
+ config/                # Training configuration
+    training_config.py
+    feature_compatibility.py
+
+ data/                  # Data loading and processing
+    arrow_reader.py
+    encoding_detector.py
+
+ evaluation/            # Model evaluation
+    comprehensive_eval.py
+
+ layers/                # Neural network layers
+    experts.py
+    routing.py
+
+ losses/                # Loss functions
+    advanced_losses.py
+    deepseek_loss.py
+
+ memory/                # Memory management
+    episodic_memory.py
+
+ models/                # Model architectures
+    moe_model.py
+
+ optimization/          # Model optimization
+    advanced_optimizers.py
+    fp8_training.py
+    quantization.py
+
+ training/              # Training utilities (16 modules)
+    enhanced_trainer.py         # Core trainer
+    adaptive_lr.py
+    advanced_schedulers.py
+    advanced_warmup.py
+    distributed_health_checker.py
+    distributed_manager.py
+    gradient_health.py
+    gradient_surgery.py
+    lr_manager.py
+    memory_monitor.py
+    metrics.py
+    performance_modes.py
+    progressive_training.py
+    rank_aware_error_handler.py
+    run_manager.py
+
+ utils/                 # Utility functions
+    async_logging.py
+    checkpoint.py
+    gpu_memory.py
+    logging.py
+
+ data_streaming.py      # Streaming data loaders
+ multi_column_data.py   # Multi-column data handling
+
+ ARCHIVED_FEATURES.md   # Documentation of archived features
+ README.md             # This file
 ```
 
 ## Core Components

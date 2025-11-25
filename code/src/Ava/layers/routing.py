@@ -573,8 +573,8 @@ class DeepSeekRouter(UnifiedMoERouter):
 #             dynamic=True,
 #             fullgraph=False
 #         )
-#         print("✓ Router compilation successful (MixtralRouter, DeepSeekRouter)")
+#         print(" Router compilation successful (MixtralRouter, DeepSeekRouter)")
 #     except Exception as e:
 #         # torch.compile not available or C++ compiler missing
-#         print(f"⚠ Router compilation skipped: {e}")
+#         print(f" Router compilation skipped: {e}")
 #         pass

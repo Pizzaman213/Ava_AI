@@ -1,7 +1,7 @@
 # Hybrid Optimization Implementation Guide
 ## LoRA + Quantization + CPU Offloading Combined
 
-**Status**: 🚧 Implementation Guide
+**Status**:  Implementation Guide
 **Difficulty**: Medium (2-3 days development)
 **Expected Memory Savings**: 99.9%+
 **Author**: Ava Project Team
@@ -35,10 +35,10 @@ This guide documents how to implement a hybrid memory optimization system that c
 ### Why This Matters
 
 **Current Limitations**:
-- LoRA + Offloading: ✅ Works (99% savings)
-- LoRA + Quantization: ❌ Not implemented
-- Quantization + Offloading: ❌ Not implemented
-- **All Three**: ❌ Not implemented
+- LoRA + Offloading:  Works (99% savings)
+- LoRA + Quantization:  Not implemented
+- Quantization + Offloading:  Not implemented
+- **All Three**:  Not implemented
 
 **After Implementation**:
 - All three optimizations work together
@@ -52,11 +52,11 @@ This guide documents how to implement a hybrid memory optimization system that c
 
 | Configuration | Memory Usage | Savings | Currently Available? |
 |---------------|--------------|---------|---------------------|
-| Baseline | 1,536 MB | 0% | ✅ Yes |
-| LoRA (r=8) | 62 MB | 96% | ✅ Yes |
-| LoRA + Offload | 15.5 MB | 99% | ✅ Yes |
-| LoRA + Quant | ~12 MB | 99.2% | ❌ No |
-| **All Three** | **~2 MB** | **99.87%** | ❌ **No** |
+| Baseline | 1,536 MB | 0% |  Yes |
+| LoRA (r=8) | 62 MB | 96% |  Yes |
+| LoRA + Offload | 15.5 MB | 99% |  Yes |
+| LoRA + Quant | ~12 MB | 99.2% |  No |
+| **All Three** | **~2 MB** | **99.87%** |  **No** |
 
 ---
 
@@ -72,15 +72,15 @@ This guide documents how to implement a hybrid memory optimization system that c
 if use_expert_offloading:
     # Phase 2: CPU offloading (can combine with LoRA!)
     self.experts = CPUOffloadedExpertGroup(
-        use_lora=use_lora_experts,  # ✅ LoRA works
-        # ❌ No quantization support
+        use_lora=use_lora_experts,  #  LoRA works
+        #  No quantization support
     )
 
 elif use_expert_quantization:
     # Phase 4: Quantization (INT8/INT4)
     self.experts = QuantizedExpertGroup(
-        # ❌ No LoRA support
-        # ❌ No offloading support
+        #  No LoRA support
+        #  No offloading support
     )
 
 elif use_lora_experts:
@@ -105,9 +105,9 @@ else:
 if use_expert_offloading or use_expert_quantization:
     # Unified hybrid group
     self.experts = CPUOffloadedExpertGroup(
-        use_lora=use_lora_experts,        # ✅ LoRA
-        use_quantization=use_expert_quantization,  # ✅ NEW
-        quantization_bits=quantization_bits,       # ✅ NEW
+        use_lora=use_lora_experts,        #  LoRA
+        use_quantization=use_expert_quantization,  #  NEW
+        quantization_bits=quantization_bits,       #  NEW
         # Combines all three!
     )
 
@@ -121,10 +121,10 @@ else:
 ```
 
 **Benefits**:
-1. ✅ All three optimizations can be enabled
-2. ✅ Single unified expert group class
-3. ✅ Flexible configuration
-4. ✅ Maximum memory savings
+1.  All three optimizations can be enabled
+2.  Single unified expert group class
+3.  Flexible configuration
+4.  Maximum memory savings
 
 ---
 
@@ -133,56 +133,56 @@ else:
 ### Memory State Machine
 
 ```
-                    ┌─────────────────────────────────┐
-                    │  Expert Created on CPU          │
-                    │  Format: INT8 + LoRA            │
-                    │  Device: CPU (pinned memory)    │
-                    └──────────────┬──────────────────┘
-                                   │
-                    ┌──────────────▼──────────────────┐
-                    │  Router selects expert          │
-                    │  (top-k routing)                │
-                    └──────────────┬──────────────────┘
-                                   │
-              ┌────────────────────┴────────────────────┐
-              │                                         │
+                    
+                      Expert Created on CPU          
+                      Format: INT8 + LoRA            
+                      Device: CPU (pinned memory)    
+                    
+                                   
+                    
+                      Router selects expert          
+                      (top-k routing)                
+                    
+                                   
+              
+                                                       
       Expert is ACTIVE                         Expert is INACTIVE
-              │                                         │
-              ▼                                         ▼
-   ┌──────────────────────┐                 ┌─────────────────────┐
-   │  1. Dequantize       │                 │  1. Quantize         │
-   │     INT8 → FP16      │                 │     FP16 → INT8      │
-   │                      │                 │                      │
-   │  2. Transfer to GPU  │                 │  2. Transfer to CPU  │
-   │     CPU → GPU        │                 │     GPU → CPU        │
-   │                      │                 │                      │
-   │  3. Cache in GPU     │                 │  3. Store in CPU     │
-   │     LRU eviction     │                 │     Compressed       │
-   │                      │                 │                      │
-   │  4. Apply LoRA       │                 │  State: INT8 + LoRA  │
-   │     W = Base + ΔW    │                 │  Memory: ~0.5 MB     │
-   │                      │                 │                      │
-   │  State: FP16 + LoRA  │                 └─────────────────────┘
-   │  Memory: ~4 MB       │
-   └──────────────────────┘
+                                                       
+                                                       
+                    
+     1. Dequantize                          1. Quantize         
+        INT8 → FP16                            FP16 → INT8      
+                                                                
+     2. Transfer to GPU                     2. Transfer to CPU  
+        CPU → GPU                              GPU → CPU        
+                                                                
+     3. Cache in GPU                        3. Store in CPU     
+        LRU eviction                           Compressed       
+                                                                
+     4. Apply LoRA                          State: INT8 + LoRA  
+        W = Base + ΔW                       Memory: ~0.5 MB     
+                                                                
+     State: FP16 + LoRA                   
+     Memory: ~4 MB       
+   
 ```
 
 ### Class Hierarchy
 
 ```
 nn.Module
-    │
-    ├─ Expert (base)
-    │   ├─ LoRAExpert
-    │   │   └─ QuantizedLoRAExpert  ← NEW (implements all 3)
-    │   │
-    │   └─ QuantizedExpert  ← NEW (quantization only)
-    │
-    └─ CPUOffloadedExpertGroup (modified)
-        ├─ Creates QuantizedLoRAExpert (all 3 optimizations)
-        ├─ Creates QuantizedExpert (quantization + offloading)
-        ├─ Creates LoRAExpert (LoRA + offloading) ← existing
-        └─ Creates Expert (offloading only) ← existing
+    
+     Expert (base)
+        LoRAExpert
+           QuantizedLoRAExpert  ← NEW (implements all 3)
+       
+        QuantizedExpert  ← NEW (quantization only)
+    
+     CPUOffloadedExpertGroup (modified)
+         Creates QuantizedLoRAExpert (all 3 optimizations)
+         Creates QuantizedExpert (quantization + offloading)
+         Creates LoRAExpert (LoRA + offloading) ← existing
+         Creates Expert (offloading only) ← existing
 ```
 
 ### Data Flow
@@ -1222,12 +1222,12 @@ def validate_memory_optimizations(config: DynamicConfig):
     # Warn about combined optimizations
     if config.use_expert_offloading and config.use_expert_quantization:
         logger.info(
-            "✅ Hybrid mode enabled: LoRA + Quantization + Offloading"
+            " Hybrid mode enabled: LoRA + Quantization + Offloading"
         )
         if config.use_lora_experts:
-            logger.info("💾 Maximum memory savings: 99.9%+")
+            logger.info(" Maximum memory savings: 99.9%+")
         else:
-            logger.info("💾 Expected memory savings: 97-98%")
+            logger.info(" Expected memory savings: 97-98%")
 
     # Validate quantization bits
     if config.use_expert_quantization:
@@ -1239,7 +1239,7 @@ def validate_memory_optimizations(config: DynamicConfig):
         # Warn about INT4
         if config.expert_quantization_bits == 4:
             logger.warning(
-                "⚠️  INT4 quantization may have higher accuracy degradation. "
+                "  INT4 quantization may have higher accuracy degradation. "
                 "Consider INT8 first."
             )
 
@@ -1247,7 +1247,7 @@ def validate_memory_optimizations(config: DynamicConfig):
     if config.use_lora_experts:
         if config.lora_rank < 1 or config.lora_rank > 64:
             logger.warning(
-                f"⚠️  Unusual LoRA rank: {config.lora_rank}. "
+                f"  Unusual LoRA rank: {config.lora_rank}. "
                 f"Typical range: 4-16"
             )
 ```
@@ -1782,10 +1782,10 @@ max_active_experts_gpu: 16
 
 This implementation guide provides everything needed to combine LoRA, quantization, and CPU offloading for maximum memory efficiency in MoE models. The hybrid approach can achieve:
 
-- ✅ **99.9%+ memory reduction**
-- ✅ **Minimal accuracy loss** (<1%)
-- ✅ **Flexible configuration**
-- ✅ **Production-ready**
+-  **99.9%+ memory reduction**
+-  **Minimal accuracy loss** (<1%)
+-  **Flexible configuration**
+-  **Production-ready**
 
 Expected implementation time: **2-3 days** for experienced developer.
 
@@ -1797,4 +1797,4 @@ Expected implementation time: **2-3 days** for experienced developer.
 5. Benchmark memory and speed
 6. Update documentation
 
-Good luck! 🚀
+Good luck! 
