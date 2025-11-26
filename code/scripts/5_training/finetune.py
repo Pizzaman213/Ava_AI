@@ -53,14 +53,51 @@ Examples:
     python finetune.py --checkpoint /path/to/model.pt --file-pattern "*CodeAlpaca*"
 """
 
-import argparse
-import logging
+# Auto-install requirements if needed (must be before other imports)
+import subprocess
 import sys
-import warnings
-from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
-import glob
+
+def auto_install_requirements():
+    """Auto-install requirements if imports fail"""
+    project_root = Path(__file__).resolve().parents[2]
+    requirements_file = project_root / "requirements.txt"
+
+    print("🔧 Installing Python requirements...")
+    try:
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install",
+            "-r", str(requirements_file), "--upgrade", "-q"
+        ])
+        print("✅ Requirements installed successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to install requirements: {e}")
+        return False
+
+# Try imports with auto-install
+try:
+    import argparse
+    import logging
+    import warnings
+    from datetime import datetime
+    from typing import List, Optional, Tuple
+    import glob
+except (ImportError, ModuleNotFoundError) as e:
+    print(f"❌ Import error: {e}")
+    print("🔧 Attempting to install requirements...")
+    if auto_install_requirements():
+        print("🔄 Retrying imports...")
+        import argparse
+        import logging
+        import warnings
+        from datetime import datetime
+        from typing import List, Optional, Tuple
+        import glob
+    else:
+        print("❌ Failed to install requirements. Please run:")
+        print("   pip install -r requirements.txt")
+        sys.exit(1)
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
 from pydantic.warnings import UnsupportedFieldAttributeWarning

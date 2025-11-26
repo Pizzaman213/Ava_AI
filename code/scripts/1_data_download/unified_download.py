@@ -10,10 +10,43 @@ Features:
 - Optional selective partition download
 """
 
-import os
+# Auto-install requirements if needed (must be before other imports)
+import subprocess
 import sys
-import argparse
 from pathlib import Path
+
+def auto_install_requirements():
+    """Auto-install requirements if imports fail"""
+    project_root = Path(__file__).resolve().parents[2]
+    requirements_file = project_root / "requirements.txt"
+
+    print("🔧 Installing Python requirements...")
+    try:
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install",
+            "-r", str(requirements_file), "--upgrade", "-q"
+        ])
+        print("✅ Requirements installed successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to install requirements: {e}")
+        return False
+
+# Try imports with auto-install
+try:
+    import os
+    import argparse
+except (ImportError, ModuleNotFoundError) as e:
+    print(f"❌ Import error: {e}")
+    print("🔧 Attempting to install requirements...")
+    if auto_install_requirements():
+        print("🔄 Retrying imports...")
+        import os
+        import argparse
+    else:
+        print("❌ Failed to install requirements. Please run:")
+        print("   pip install -r requirements.txt")
+        sys.exit(1)
 
 
 def download_hf_dataset(output_dir, num_workers=4, max_partitions=None):

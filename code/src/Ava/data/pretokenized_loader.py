@@ -32,7 +32,7 @@ Usage:
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Iterator, Tuple
+from typing import Any, Dict, List, Optional, Iterator, Tuple, Union
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset, Dataset, DataLoader
@@ -1044,7 +1044,8 @@ def create_ultra_fast_dataloaders(
     eos_token_id: int = 2,
     use_sequence_packing: bool = False,  # OPTIMIZATION: Enable for 20-35% speedup (eliminates padding waste)
     packing_strategy: str = 'greedy',  # 'greedy' or 'adaptive'
-) -> Tuple[DataLoader, DataLoader]:
+    dynamic_batching_config: Optional[Dict[str, Any]] = None,  # Dynamic batching configuration
+) -> Tuple[Any, Any]:  # Returns DataLoader or DynamicBatchIterator
     """
     Create ultra-fast pretokenized dataloaders with 60x speedup.
 
@@ -1213,7 +1214,67 @@ def create_ultra_fast_dataloaders(
 
         val_collate_fn = val_dataset.collate_fn  # type: ignore[assignment]
 
-    train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **dataloader_kwargs)
-    val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **dataloader_kwargs)
+    # Check if dynamic batching is enabled
+    use_dynamic_batching = (
+        dynamic_batching_config is not None
+        and dynamic_batching_config.get('enabled', False)
+    )
+
+    if use_dynamic_batching:
+        # Import dynamic batch iterator
+        from .dynamic_batch_iterator import DynamicBatchIterator, create_dynamic_batch_scheduler
+
+        db_config = dynamic_batching_config
+        min_batch_size = db_config.get('min_batch_size', 64)
+        max_batch_size = db_config.get('max_batch_size', 256)
+
+        print(f"\n{'='*60}")
+        print(f" DYNAMIC BATCHING ENABLED")
+        print(f"{'='*60}")
+        print(f"   Min batch size: {min_batch_size}")
+        print(f"   Max batch size: {max_batch_size}")
+        print(f"   Memory thresholds: low={db_config.get('low_memory_threshold', 0.5):.0%}, "
+              f"target={db_config.get('target_memory_threshold', 0.7):.0%}, "
+              f"high={db_config.get('high_memory_threshold', 0.85):.0%}")
+        print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency', 10)} steps")
+        print(f"   Warmup steps: {db_config.get('warmup_steps', 100)}")
+        print(f"{'='*60}\n")
+
+        # Create base DataLoader with min_batch_size
+        dataloader_kwargs['batch_size'] = min_batch_size
+
+        train_loader_base = DataLoader(train_dataset, collate_fn=train_collate_fn, **dataloader_kwargs)
+        val_loader_base = DataLoader(val_dataset, collate_fn=val_collate_fn, **dataloader_kwargs)
+
+        # Create scheduler config dict for the factory function
+        scheduler_config = {
+            'dynamic_batching': db_config,
+            'training': {'batch_size': min_batch_size}
+        }
+
+        # Import the scheduler creation function from the optimizations module
+        from ..training.optimizations.dynamic_batching import create_dynamic_batch_scheduler
+
+        # Create schedulers for train and val
+        train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
+        val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
+
+        # Wrap with DynamicBatchIterator
+        train_loader = DynamicBatchIterator(
+            base_dataloader=train_loader_base,
+            scheduler=train_scheduler,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
+        )
+        val_loader = DynamicBatchIterator(
+            base_dataloader=val_loader_base,
+            scheduler=val_scheduler,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
+        )
+    else:
+        # Standard DataLoader without dynamic batching
+        train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **dataloader_kwargs)
+        val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **dataloader_kwargs)
 
     return train_loader, val_loader

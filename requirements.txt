@@ -65,7 +65,7 @@ scikit-learn>=1.7.0
 scikit-image>=0.24.0
 
 # Jupyter & Notebooks
-jupyterlab>=4.4.3
+jupyterlab>3.0
 jupyter>=1.1.1
 notebook>=7.4.3
 ipython>=9.3.0

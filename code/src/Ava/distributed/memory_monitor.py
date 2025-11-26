@@ -51,7 +51,7 @@ def get_gpu_compute_utilization(device: int = 0) -> float:
     Returns:
         GPU compute utilization as a float between 0.0 and 1.0
     """
-    from Ava.utils.gpu_memory import get_gpu_compute_utilization as get_util
+    from src.Ava.utils.gpu_memory import get_gpu_compute_utilization as get_util
     return get_util(device=device)
 
 

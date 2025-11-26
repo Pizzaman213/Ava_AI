@@ -1,0 +1,28 @@
+# System packages required for the project
+# These will be installed via apt-get if needed
+
+# Build essentials for compiling Python packages
+build-essential
+
+# Git for version control
+git
+
+# CUDA development tools (if not already present)
+# cuda-toolkit-12-8
+
+# For MPI support (distributed training)
+libopenmpi-dev
+openmpi-bin
+
+# For image processing
+libjpeg-dev
+libpng-dev
+
+# For data compression
+zlib1g-dev
+liblzma-dev
+libbz2-dev
+
+# Common utilities
+wget
+curl

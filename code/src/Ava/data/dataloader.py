@@ -1831,7 +1831,8 @@ def create_streaming_dataloaders(
     max_tokens_per_batch: Optional[int] = None,  # Max tokens per batch for dynamic batching
     dataset_name: Optional[str] = None,  # FIXED: Optional dataset name to filter to a single file
     dev_log_config: Optional[Any] = None,  # DEV LOG: Config for development logging
-) -> Tuple[DataLoader, DataLoader]:
+    dynamic_batching_config: Optional[Dict[str, Any]] = None,  # Dynamic batching configuration
+) -> Tuple[Any, Any]:  # Returns DataLoader or DynamicBatchIterator
     """
     Create optimized streaming train and validation dataloaders.
 
@@ -2032,10 +2033,40 @@ def create_streaming_dataloaders(
     train_collate_fn = getattr(base_train_dataset, 'collate_fn', None)
     val_collate_fn = getattr(base_val_dataset, 'collate_fn', None)
 
+    # Check if dynamic batching is enabled (memory-aware batch size adjustment)
+    use_dynamic_batch_iterator = (
+        dynamic_batching_config is not None
+        and dynamic_batching_config.get('enabled', False)
+    )
+
+    if use_dynamic_batch_iterator:
+        # Import dynamic batch iterator
+        from .dynamic_batch_iterator import DynamicBatchIterator
+        from ..training.optimizations.dynamic_batching import create_dynamic_batch_scheduler
+
+        db_config = dynamic_batching_config
+        min_batch_size = db_config.get('min_batch_size', 64)
+        max_batch_size = db_config.get('max_batch_size', 256)
+
+        print(f"\n{'='*60}")
+        print(f" DYNAMIC BATCHING ENABLED")
+        print(f"{'='*60}")
+        print(f"   Min batch size: {min_batch_size}")
+        print(f"   Max batch size: {max_batch_size}")
+        print(f"   Memory thresholds: low={db_config.get('low_memory_threshold', 0.5):.0%}, "
+              f"target={db_config.get('target_memory_threshold', 0.7):.0%}, "
+              f"high={db_config.get('high_memory_threshold', 0.85):.0%}")
+        print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency', 10)} steps")
+        print(f"   Warmup steps: {db_config.get('warmup_steps', 100)}")
+        print(f"{'='*60}\n")
+
+        # Create base DataLoader with min_batch_size
+        dataloader_kwargs['batch_size'] = min_batch_size
+
     # CRITICAL FIX: Wrap DataLoader creation with proper error handling
     try:
-        train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
-        val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+        train_loader_base = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+        val_loader_base = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
     except (BrokenPipeError, OSError) as e:
         print(f" DataLoader creation failed with: {e}")
         print(f"   Retrying with num_workers=0 and no multiprocessing...")
@@ -2046,9 +2077,38 @@ def create_streaming_dataloaders(
         dataloader_kwargs['persistent_workers'] = False
         dataloader_kwargs['multiprocessing_context'] = None
 
-        train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
-        val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+        train_loader_base = DataLoader(train_dataset, collate_fn=train_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
+        val_loader_base = DataLoader(val_dataset, collate_fn=val_collate_fn, **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'})
 
         print(f" DataLoader created successfully in fallback single-process mode")
+
+    # Wrap with DynamicBatchIterator if enabled
+    if use_dynamic_batch_iterator:
+        # Create scheduler config dict for the factory function
+        scheduler_config = {
+            'dynamic_batching': db_config,
+            'training': {'batch_size': min_batch_size}
+        }
+
+        # Create schedulers for train and val
+        train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
+        val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
+
+        # Wrap with DynamicBatchIterator
+        train_loader = DynamicBatchIterator(
+            base_dataloader=train_loader_base,
+            scheduler=train_scheduler,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
+        )
+        val_loader = DynamicBatchIterator(
+            base_dataloader=val_loader_base,
+            scheduler=val_scheduler,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
+        )
+    else:
+        train_loader = train_loader_base
+        val_loader = val_loader_base
 
     return train_loader, val_loader

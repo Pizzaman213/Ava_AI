@@ -15,7 +15,7 @@ import yaml
 
 # Import path utilities for relative path resolution
 try:
-    from Ava.utils.paths import get_project_root, get_data_dir, get_outputs_dir
+    from src.Ava.utils.paths import get_project_root, get_data_dir, get_outputs_dir
 except ImportError:
     # Fallback for when utils.paths is not available
     def get_project_root() -> Path:
@@ -876,7 +876,7 @@ class TrainingConfigManager:
         """
         # Try to use the enhanced YAML loader with path resolution
         try:
-            from Ava.config.yaml_loader import load_yaml_with_path_resolution
+            from src.Ava.config.yaml_loader import load_yaml_with_path_resolution
             config_dict = load_yaml_with_path_resolution(config_path)
         except (ImportError, Exception):
             # Fallback to manual loading if loader not available

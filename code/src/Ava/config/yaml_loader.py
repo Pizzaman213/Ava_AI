@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 try:
-    from Ava.utils.paths import get_project_root, resolve_path
+    from src.Ava.utils.paths import get_project_root, resolve_path
 except ImportError:
     def get_project_root() -> Path:
         current = Path(__file__).resolve()

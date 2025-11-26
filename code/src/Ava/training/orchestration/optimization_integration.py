@@ -56,7 +56,7 @@ class OptimizedTrainingSetup:
     def setup_hardware(self):
         """Setup hardware-specific optimizations."""
         try:
-            from Ava.optimization.hardware_optimizations import auto_optimize_hardware  # type: ignore[import-not-found]
+            from src.Ava.optimization.hardware_optimizations import auto_optimize_hardware  # type: ignore[import-not-found]
             self.hw_optimizer = auto_optimize_hardware()
         except ImportError:
             logger.warning("hardware_optimizations module not found, skipping hardware setup")
@@ -91,7 +91,7 @@ class OptimizedTrainingSetup:
     def setup_mixed_precision(self):
         """Setup mixed precision training."""
         try:
-            from Ava.optimization.gradient_optimizations import MixedPrecisionManager  # type: ignore[import-not-found]
+            from src.Ava.optimization.gradient_optimizations import MixedPrecisionManager  # type: ignore[import-not-found]
         except ImportError:
             logger.warning("gradient_optimizations module not found, skipping mixed precision")
             return None
@@ -121,7 +121,7 @@ class OptimizedTrainingSetup:
     def optimize_model(self, model: nn.Module) -> nn.Module:
         """Apply model optimizations."""
         try:
-            from Ava.optimization.compilation_optimizations import optimize_for_training  # type: ignore[import-not-found]
+            from src.Ava.optimization.compilation_optimizations import optimize_for_training  # type: ignore[import-not-found]
         except ImportError:
             logger.warning("compilation_optimizations module not found, skipping model optimization")
             return model
@@ -147,7 +147,7 @@ class OptimizedTrainingSetup:
     def create_optimizer(self, model: nn.Module) -> torch.optim.Optimizer:
         """Create optimized optimizer."""
         try:
-            from Ava.optimization.fused_optimizers import create_optimizer  # type: ignore[import-not-found]
+            from src.Ava.optimization.fused_optimizers import create_optimizer  # type: ignore[import-not-found]
         except ImportError:
             logger.warning("fused_optimizers module not found, using default AdamW")
             return torch.optim.AdamW(
@@ -184,7 +184,7 @@ class OptimizedTrainingSetup:
     ) -> DataLoader:
         """Create optimized dataloader."""
         try:
-            from Ava.data.optimized_dataloader import create_production_dataloader  # type: ignore[import-not-found]
+            from src.Ava.data.optimized_dataloader import create_production_dataloader  # type: ignore[import-not-found]
         except ImportError:
             logger.warning("optimized_dataloader module not found, using default DataLoader")
             batch_size = batch_size or self.config.get('batch_size', 32)
@@ -224,7 +224,7 @@ class OptimizedTrainingSetup:
     def setup_monitoring(self, model: Optional[nn.Module] = None):
         """Setup training monitoring."""
         try:
-            from Ava.training.profiling_tools import TrainingMonitor, ThroughputTracker, MemoryProfiler  # type: ignore[import-not-found]
+            from src.Ava.training.profiling_tools import TrainingMonitor, ThroughputTracker, MemoryProfiler  # type: ignore[import-not-found]
         except ImportError:
             logger.warning("profiling_tools module not found, skipping monitoring setup")
             self.throughput_tracker = None
@@ -262,7 +262,7 @@ class OptimizedTrainingSetup:
     def setup_gradient_optimization(self):
         """Setup gradient optimization components."""
         try:
-            from Ava.optimization.gradient_optimizations import (  # type: ignore[import-not-found]
+            from src.Ava.optimization.gradient_optimizations import (  # type: ignore[import-not-found]
                 AdaptiveGradientClipper,
                 GradientNoiseInjector
             )

@@ -2486,14 +2486,16 @@ class EnhancedModularTrainer:
                 'oom_risk': 0.1,  # Low risk when not checking
             }
 
-        # REMOVED: Dynamic gradient accumulation adjustment (fundamentally flawed)
-        # The DataLoader batch size is fixed, so changing gradient_accumulation_steps
-        # doesn't increase effective batch size - it just processes more batches before
-        # stepping the optimizer, reducing training throughput.
-        # Dynamic batch size adjustment should only be done by recreating the DataLoader,
-        # which is complex and risky during training.
+        # NOTE: Dynamic batch size adjustment via DynamicBatchIterator
+        # When dynamic_batching is enabled in config, the DataLoader is wrapped in
+        # DynamicBatchIterator which automatically adjusts batch sizes based on GPU
+        # memory utilization. The iterator concatenates mini-batches (multiples of
+        # min_batch_size) to achieve dynamic sizing without recreating the DataLoader.
+        #
+        # The legacy dynamic_batch_sizer below is kept for monitoring/statistics only.
+        # Actual batch size adjustment happens in DynamicBatchIterator.__iter__().
 
-        # We keep dynamic_batch_sizer for monitoring purposes only
+        # Legacy dynamic_batch_sizer for monitoring purposes only
         if self.dynamic_batch_sizer is not None:
             # Monitor memory and track batch size history, but don't adjust
             _, _, _ = self.dynamic_batch_sizer.adjust_batch_size(  # type: ignore[attr-defined]

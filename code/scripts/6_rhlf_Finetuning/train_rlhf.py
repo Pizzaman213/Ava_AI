@@ -10,19 +10,56 @@ Usage:
     python train_rlhf.py --config configs/rlhf/rlhf_config.yaml --resume checkpoints/checkpoint.pt
 """
 
+# Auto-install requirements if needed (must be before other imports)
+import subprocess
 import sys
-import os
 from pathlib import Path
+
+def auto_install_requirements():
+    """Auto-install requirements if imports fail"""
+    project_root = Path(__file__).resolve().parents[2]
+    requirements_file = project_root / "requirements.txt"
+
+    print("🔧 Installing Python requirements...")
+    try:
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install",
+            "-r", str(requirements_file), "--upgrade", "-q"
+        ])
+        print("✅ Requirements installed successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to install requirements: {e}")
+        return False
+
+# Try imports with auto-install
+try:
+    import os
+    import torch
+    import torch.nn as nn
+    import argparse
+    import logging
+    from transformers import AutoTokenizer
+    import yaml
+except (ImportError, ModuleNotFoundError) as e:
+    print(f"❌ Import error: {e}")
+    print("🔧 Attempting to install requirements...")
+    if auto_install_requirements():
+        print("🔄 Retrying imports...")
+        import os
+        import torch
+        import torch.nn as nn
+        import argparse
+        import logging
+        from transformers import AutoTokenizer
+        import yaml
+    else:
+        print("❌ Failed to install requirements. Please run:")
+        print("   pip install -r requirements.txt")
+        sys.exit(1)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
-
-import torch
-import torch.nn as nn
-import argparse
-import logging
-from transformers import AutoTokenizer
-import yaml
 
 from src.rlhf import RLHFTrainer
 from src.rlhf.ppo_trainer import PPOConfig

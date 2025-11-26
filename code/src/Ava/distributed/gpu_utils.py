@@ -42,7 +42,7 @@ def get_gpu_memory_stats(device: Optional[torch.device] = None) -> Dict[str, flo
             device_idx = device
 
     # Import and call consolidated function
-    from Ava.utils.gpu_memory import get_memory_stats
+    from src.Ava.utils.gpu_memory import get_memory_stats
     stats = get_memory_stats(device=device_idx, unit='MB')
 
     # Return in expected format for backward compatibility
@@ -99,7 +99,7 @@ def get_gpu_compute_utilization(device: Optional[torch.device] = None) -> float:
         device_idx = device
 
     # Import and call consolidated function
-    from Ava.utils.gpu_memory import get_gpu_compute_utilization as get_util
+    from src.Ava.utils.gpu_memory import get_gpu_compute_utilization as get_util
     return get_util(device=device_idx)
 
 

@@ -49,15 +49,53 @@ Usage:
         --disable-turn-aware-loader
 """
 
-import os
+# Auto-install requirements if needed (must be before other imports)
+import subprocess
 import sys
-import torch
-import json
-import logging
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, Tuple, Any
-import argparse
+
+def auto_install_requirements():
+    """Auto-install requirements if imports fail"""
+    project_root = Path(__file__).resolve().parents[2]
+    requirements_file = project_root / "requirements.txt"
+
+    print("🔧 Installing Python requirements...")
+    try:
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install",
+            "-r", str(requirements_file), "--upgrade", "-q"
+        ])
+        print("✅ Requirements installed successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to install requirements: {e}")
+        return False
+
+# Try imports with auto-install
+try:
+    import os
+    import torch
+    import json
+    import logging
+    from datetime import datetime
+    from typing import Optional, Dict, Tuple, Any
+    import argparse
+except (ImportError, ModuleNotFoundError) as e:
+    print(f"❌ Import error: {e}")
+    print("🔧 Attempting to install requirements...")
+    if auto_install_requirements():
+        print("🔄 Retrying imports...")
+        import os
+        import torch
+        import json
+        import logging
+        from datetime import datetime
+        from typing import Optional, Dict, Tuple, Any
+        import argparse
+    else:
+        print("❌ Failed to install requirements. Please run:")
+        print("   pip install -r requirements.txt")
+        sys.exit(1)
 
 # Configure PyTorch
 os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
@@ -196,7 +234,8 @@ def create_dataloaders(
     use_turn_aware_loader: bool = False,  # Use turn-aware conversation loading
     tokenizer = None,  # Tokenizer for turn-aware loader
     use_all_data: bool = True,  # Use all available parquet files
-) -> Tuple[DataLoader, DataLoader]:
+    dynamic_batching_config: dict = None,  # Dynamic batching configuration
+) -> Tuple[Any, Any]:  # Returns DataLoader or DynamicBatchIterator
     """Create training and validation dataloaders.
 
     Supports two modes:
@@ -316,14 +355,35 @@ def create_dataloaders(
             if rank == 0:
                 print(" Starting data loading...")
 
+            # Suppress verbose dataset loading messages for faster loading
+            import datasets as ds_lib
+            ds_lib.logging.set_verbosity_error()
+
             datasets_list = []
+
+            # Check if premade train/val splits exist
+            train_dir = Path(data_dir) / 'train'
+            val_dir = Path(data_dir) / 'val'
+            use_premade_splits = train_dir.exists() and val_dir.exists()
+
+            if use_premade_splits and rank == 0:
+                print(f" Using premade train/val splits from dataset")
+
+            train_datasets_list = []
+            val_datasets_list = []
 
             # Load Arrow files (.arrow directories and files) if use_all_data is True
             if use_all_data:
-                arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
-                             sorted(list(Path(data_dir).glob('**/*.arrow')))
+                if use_premade_splits:
+                    # Load from train split
+                    arrow_files = sorted(list(train_dir.glob('*.arrow'))) + \
+                                 sorted(list(train_dir.glob('**/*.arrow')))
+                else:
+                    arrow_files = sorted(list(Path(data_dir).glob('*.arrow'))) + \
+                                 sorted(list(Path(data_dir).glob('**/*.arrow')))
+
                 if rank == 0 and arrow_files:
-                    print(f" Found {len(arrow_files)} Arrow files")
+                    print(f" Found {len(arrow_files)} Arrow files in train split" if use_premade_splits else f" Found {len(arrow_files)} Arrow files")
                 for arrow_file in arrow_files:
                     try:
                         file_size = arrow_file.stat().st_size
@@ -332,47 +392,144 @@ def create_dataloaders(
                         dataset = load_dataset('arrow', data_files=str(arrow_file))
                         split_name = list(dataset.keys())[0]
                         dataset = dataset[split_name]
-                        datasets_list.append(dataset)
+                        train_datasets_list.append(dataset)
                     except Exception as e:
                         continue
 
-            # Load ALL Parquet files (.parquet) if use_all_data is True
+            # Load Parquet files for training
             if use_all_data:
-                parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
+                if use_premade_splits:
+                    train_parquet_files = sorted(list(train_dir.glob('*.parquet')))
+                else:
+                    train_parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))
             else:
                 # Load only limited parquet files if not using all data
-                parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))[:5]  # Default: first 5
+                if use_premade_splits:
+                    train_parquet_files = sorted(list(train_dir.glob('*.parquet')))[:5]
+                else:
+                    train_parquet_files = sorted(list(Path(data_dir).glob('*.parquet')))[:5]
 
             if rank == 0:
-                print(f" Found {len(parquet_files)} Parquet files")
+                print(f" Found {len(train_parquet_files)} Parquet files in train split" if use_premade_splits else f" Found {len(train_parquet_files)} Parquet files")
 
-            for i, parquet_file in enumerate(parquet_files, 1):
+            # Fast batch loading: load all parquet files at once
+            if train_parquet_files:
                 try:
-                    file_size = parquet_file.stat().st_size
-                    if file_size == 0:
-                        continue
-                    dataset = load_dataset('parquet', data_files=str(parquet_file))
-                    split_name = list(dataset.keys())[0]
-                    dataset = dataset[split_name]
-                    datasets_list.append(dataset)
-                    if rank == 0 and i % 10 == 0:
-                        print(f"  Loaded {i}/{len(parquet_files)} parquet files...")
+                    # Filter out empty files
+                    valid_files = [str(f) for f in train_parquet_files if f.stat().st_size > 0]
+                    if valid_files:
+                        if rank == 0:
+                            print(f"  Loading {len(valid_files)} train files in batch (faster)...")
+                        # Load all files at once - much faster than one-by-one
+                        dataset = load_dataset('parquet', data_files=valid_files, split='train')
+                        train_datasets_list.append(dataset)
+                        if rank == 0:
+                            print(f"  Loaded {len(valid_files)} train parquet files")
                 except Exception as e:
                     if rank == 0:
-                        print(f"  Failed to load {parquet_file.name}: {e}")
-                    continue
+                        print(f"  Batch loading failed ({e}), falling back to sequential loading...")
+                    # Fallback to sequential loading
+                    for i, parquet_file in enumerate(train_parquet_files, 1):
+                        try:
+                            file_size = parquet_file.stat().st_size
+                            if file_size == 0:
+                                continue
+                            dataset = load_dataset('parquet', data_files=str(parquet_file))
+                            split_name = list(dataset.keys())[0]
+                            dataset = dataset[split_name]
+                            train_datasets_list.append(dataset)
+                            if rank == 0 and i % 10 == 0:
+                                print(f"  Loaded {i}/{len(train_parquet_files)} parquet files...")
+                        except Exception as e:
+                            if rank == 0:
+                                print(f"  Failed to load {parquet_file.name}: {e}")
+                            continue
 
-            if datasets_list:
-                # Concatenate all datasets (Arrow + Parquet combined)
-                from datasets import concatenate_datasets
-                dataset = concatenate_datasets(datasets_list)
-                total_examples = len(dataset)
+            # Load Parquet files for validation
+            if use_premade_splits:
+                if use_all_data:
+                    val_parquet_files = sorted(list(val_dir.glob('*.parquet')))
+                else:
+                    val_parquet_files = sorted(list(val_dir.glob('*.parquet')))[:5]
+
                 if rank == 0:
-                    print(f" Loaded {len(datasets_list)} data files with {total_examples:,} total examples")
-                    num_batches = total_examples // batch_size
+                    print(f" Found {len(val_parquet_files)} Parquet files in val split")
+
+                # Fast batch loading for validation files
+                if val_parquet_files:
+                    try:
+                        # Filter out empty files
+                        valid_files = [str(f) for f in val_parquet_files if f.stat().st_size > 0]
+                        if valid_files:
+                            if rank == 0:
+                                print(f"  Loading {len(valid_files)} val files in batch (faster)...")
+                            # Load all files at once - much faster than one-by-one
+                            dataset = load_dataset('parquet', data_files=valid_files, split='train')
+                            val_datasets_list.append(dataset)
+                            if rank == 0:
+                                print(f"  Loaded {len(valid_files)} val parquet files")
+                    except Exception as e:
+                        if rank == 0:
+                            print(f"  Batch loading failed ({e}), falling back to sequential loading...")
+                        # Fallback to sequential loading
+                        for i, parquet_file in enumerate(val_parquet_files, 1):
+                            try:
+                                file_size = parquet_file.stat().st_size
+                                if file_size == 0:
+                                    continue
+                                dataset = load_dataset('parquet', data_files=str(parquet_file))
+                                split_name = list(dataset.keys())[0]
+                                dataset = dataset[split_name]
+                                val_datasets_list.append(dataset)
+                                if rank == 0 and i % 10 == 0:
+                                    print(f"  Loaded {i}/{len(val_parquet_files)} val parquet files...")
+                            except Exception as e:
+                                if rank == 0:
+                                    print(f"  Failed to load {parquet_file.name}: {e}")
+                                continue
+
+            if train_datasets_list:
+                # Use single dataset if only one, otherwise concatenate
+                if len(train_datasets_list) == 1:
+                    train_data = train_datasets_list[0]
+                else:
+                    from datasets import concatenate_datasets
+                    if rank == 0:
+                        print(f"  Concatenating {len(train_datasets_list)} train datasets...")
+                    train_data = concatenate_datasets(train_datasets_list)
+
+                total_train_examples = len(train_data)
+                if rank == 0:
+                    print(f" Loaded train data with {total_train_examples:,} total examples")
+                    # Handle dynamic batching case where batch_size may need to come from config
+                    effective_bs = batch_size
+                    if effective_bs is None and dynamic_batching_config:
+                        effective_bs = dynamic_batching_config.get('min_batch_size', 64)
+                    if effective_bs is None:
+                        effective_bs = 64  # Default fallback
+                    num_batches = total_train_examples // effective_bs
                     print(f" Expected batches per epoch: {num_batches:,}")
-                train_dataset = ArrowDataset(dataset, seq_length, vocab_size)
-                val_dataset = ArrowDataset(dataset, seq_length, vocab_size)
+                train_dataset = ArrowDataset(train_data, seq_length, vocab_size)
+
+                # Use validation split if available, otherwise use train data
+                if val_datasets_list:
+                    # Use single dataset if only one, otherwise concatenate
+                    if len(val_datasets_list) == 1:
+                        val_data = val_datasets_list[0]
+                    else:
+                        if rank == 0:
+                            print(f"  Concatenating {len(val_datasets_list)} val datasets...")
+                        from datasets import concatenate_datasets
+                        val_data = concatenate_datasets(val_datasets_list)
+
+                    total_val_examples = len(val_data)
+                    if rank == 0:
+                        print(f" Loaded val data with {total_val_examples:,} total examples")
+                    val_dataset = ArrowDataset(val_data, seq_length, vocab_size)
+                else:
+                    if rank == 0:
+                        print(f" No validation split found, using train data for validation")
+                    val_dataset = ArrowDataset(train_data, seq_length, vocab_size)
             else:
                 if rank == 0:
                     print(" No datasets loaded from data directory")
@@ -410,9 +567,40 @@ def create_dataloaders(
         train_dataset = DummyDataset(num_train_samples, seq_length, vocab_size)
         val_dataset = DummyDataset(num_val_samples, seq_length, vocab_size)
 
+    # Check if dynamic batching is enabled
+    use_dynamic_batching = (
+        dynamic_batching_config is not None
+        and dynamic_batching_config.get('enabled', False)
+    )
+
+    if use_dynamic_batching:
+        # Import dynamic batch iterator
+        from src.Ava.data.dynamic_batch_iterator import DynamicBatchIterator
+        from src.Ava.training.optimizations.dynamic_batching import create_dynamic_batch_scheduler
+
+        min_batch_size = dynamic_batching_config.get('min_batch_size', 64)
+        max_batch_size = dynamic_batching_config.get('max_batch_size', 256)
+
+        print(f"\n{'='*60}")
+        print(f" DYNAMIC BATCHING ENABLED (fallback loader)")
+        print(f"{'='*60}")
+        print(f"   Min batch size: {min_batch_size}")
+        print(f"   Max batch size: {max_batch_size}")
+        print(f"   Memory thresholds: low={dynamic_batching_config.get('low_memory_threshold', 0.5):.0%}, "
+              f"target={dynamic_batching_config.get('target_memory_threshold', 0.7):.0%}, "
+              f"high={dynamic_batching_config.get('high_memory_threshold', 0.85):.0%}")
+        print(f"   Adjustment frequency: every {dynamic_batching_config.get('adjustment_frequency', 10)} steps")
+        print(f"   Warmup steps: {dynamic_batching_config.get('warmup_steps', 100)}")
+        print(f"{'='*60}\n")
+
+        # Create base DataLoader with min_batch_size
+        actual_batch_size = min_batch_size
+    else:
+        actual_batch_size = batch_size
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size=actual_batch_size,
         shuffle=(rank == 0),  # Only shuffle on rank 0
         num_workers=num_workers,
         pin_memory=pin_memory,
@@ -421,12 +609,38 @@ def create_dataloaders(
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=batch_size,
+        batch_size=actual_batch_size,
         shuffle=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=False,  # Don't drop last on validation
     )
+
+    # Wrap with DynamicBatchIterator if enabled
+    if use_dynamic_batching:
+        # Create scheduler config dict for the factory function
+        scheduler_config = {
+            'dynamic_batching': dynamic_batching_config,
+            'training': {'batch_size': min_batch_size}
+        }
+
+        # Create schedulers for train and val
+        train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
+        val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
+
+        # Wrap with DynamicBatchIterator
+        train_loader = DynamicBatchIterator(
+            base_dataloader=train_loader,
+            scheduler=train_scheduler,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
+        )
+        val_loader = DynamicBatchIterator(
+            base_dataloader=val_loader,
+            scheduler=val_scheduler,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
+        )
 
     return train_loader, val_loader
 
@@ -973,9 +1187,11 @@ def train_epoch(
             # Log progress and check gradients
             if batch_idx % log_interval == 0 and logger is not None:
                 avg_loss = total_loss / num_batches
+                # Get actual batch size from the batch
+                current_bs = input_ids.shape[0]
                 logger.info(
                     f"Epoch {epoch + 1} | Batch {batch_idx}/{len(train_loader)} | "
-                    f"Loss: {loss_value:.4f} | Avg Loss: {avg_loss:.4f} | "
+                    f"BS: {current_bs} | Loss: {loss_value:.4f} | Avg Loss: {avg_loss:.4f} | "
                     f"LR: {optimizer.param_groups[0]['lr']:.2e}"
                 )
                 # Check gradients after optimizer step
@@ -1134,7 +1350,17 @@ def main(args):
 
     # Training configuration with defaults
     training_config = config.get('training', {})
-    batch_size = args.batch_size or training_config.get('batch_size', 8)
+
+    # Handle batch_size with dynamic batching support
+    # If batch_size is null/None in config, use dynamic_batching.min_batch_size or default 64
+    batch_size = args.batch_size or training_config.get('batch_size')
+    if batch_size is None:
+        # Check if dynamic batching is enabled (can be at top-level or under training)
+        db_config = config.get('dynamic_batching', {}) or training_config.get('dynamic_batching', {})
+        if db_config.get('enabled', False):
+            batch_size = db_config.get('min_batch_size', 64)
+        else:
+            batch_size = 8  # Default fallback
     learning_rate = args.learning_rate or training_config.get('learning_rate', 5e-5)
     num_epochs = args.epochs or training_config.get('num_epochs', 3)
     max_steps = training_config.get('max_steps')
@@ -1316,13 +1542,22 @@ def main(args):
         logger.info(" Creating dataloaders with DataLoaderManager...")
 
     try:
+        # Import DynamicConfig to convert dict to config object
+        from src.Ava.config.training_config import DynamicConfig
+
+        # Convert config dict to DynamicConfig if it's a dict
+        if isinstance(config, dict):
+            config_obj = DynamicConfig(config)
+        else:
+            config_obj = config
+
         # Create training context for DataLoaderManager
-        context = TrainingContext(model=model, config=config, device=device)
+        context = TrainingContext(model=model, config=config_obj, device=device)
         loader_manager = DataLoaderManager(context)
 
         # Create dataloaders using optimized manager
         train_loader, val_loader = loader_manager.create_dataloaders(
-            training_config=config,
+            training_config=config_obj,
             tokenizer=tokenizer_for_loader if tokenizer_for_loader else None,
             config_dict=config,
             batch_size=batch_size
@@ -1333,6 +1568,17 @@ def main(args):
     except Exception as e:
         if rank == 0:
             logger.warning(f"DataLoaderManager failed ({e}), falling back to create_dataloaders: {e}")
+
+        # Extract dynamic_batching config for fallback loader (can be at top-level or under training)
+        dynamic_batching_config = None
+        if isinstance(config, dict):
+            # Check both locations for dynamic_batching config
+            db_config = config.get('dynamic_batching') or config.get('training', {}).get('dynamic_batching', {})
+            if db_config and db_config.get('enabled', False):
+                dynamic_batching_config = db_config
+                if rank == 0:
+                    logger.info(" Dynamic batching will be enabled in fallback loader")
+
         # Fallback to old method
         train_loader, val_loader = create_dataloaders(
             batch_size=batch_size,
@@ -1347,6 +1593,7 @@ def main(args):
             use_turn_aware_loader=getattr(args, 'use_turn_aware_loader', False),
             tokenizer=tokenizer_for_loader,
             use_all_data=use_all_data,
+            dynamic_batching_config=dynamic_batching_config,
         )
 
     # Learning rate scheduler

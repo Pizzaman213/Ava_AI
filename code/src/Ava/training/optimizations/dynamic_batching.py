@@ -107,7 +107,13 @@ class DynamicBatchScheduler:
             self.config.enabled = False
 
     def get_memory_stats(self) -> Dict[str, float]:
-        """Get current GPU memory statistics"""
+        """Get current GPU memory statistics
+
+        Uses memory_reserved() instead of memory_allocated() because:
+        - memory_allocated() only shows currently active tensors
+        - memory_reserved() shows all memory held by PyTorch's caching allocator
+        - This better reflects actual GPU memory pressure and prevents OOM
+        """
         if not torch.cuda.is_available():
             return {
                 'allocated_gb': 0.0,
@@ -118,14 +124,17 @@ class DynamicBatchScheduler:
 
         allocated = torch.cuda.memory_allocated(self.device)
         reserved = torch.cuda.memory_reserved(self.device)
-        peak = torch.cuda.max_memory_allocated(self.device)
-        utilization = allocated / self.total_memory if self.total_memory else 0.0
+        peak = torch.cuda.max_memory_reserved(self.device)  # Use reserved peak
+
+        # Use RESERVED memory for utilization calculation - this is what actually
+        # matters for OOM prevention. allocated() can be misleadingly low.
+        utilization = reserved / self.total_memory if self.total_memory else 0.0
 
         return {
             'allocated_gb': allocated / 1e9,
             'reserved_gb': reserved / 1e9,
             'peak_gb': peak / 1e9,
-            'utilization': utilization
+            'utilization': utilization  # Now based on reserved, not allocated
         }
 
     def should_adjust(self, step: int) -> bool:
@@ -155,38 +164,45 @@ class DynamicBatchScheduler:
         """
         Calculate new batch size based on memory utilization
 
+        increase_factor and decrease_factor are INTEGER MULTIPLIERS:
+        - increase_factor: 2 means target 2x min_batch_size (e.g., 64 with min_bs=32)
+        - decrease_factor: 1 means target 1x min_batch_size (minimum)
+
+        Batch sizes are always multiples of min_batch_size (32, 64, 96, etc.)
+
         Returns:
             Tuple of (new_batch_size, reason)
         """
-        current = self.current_batch_size
+        min_bs = self.config.min_batch_size
+        current_multiplier = self.current_batch_size // min_bs  # Integer multiplier
 
-        # Critical memory - decrease aggressively
+        # Critical memory - decrease to minimum immediately
         if memory_utilization > self.config.critical_memory_threshold:
-            new_size = int(current * (self.config.decrease_factor ** 2))
+            new_multiplier = 1  # Go to minimum
             reason = f"CRITICAL memory {memory_utilization:.1%}"
 
-        # High memory - decrease
+        # High memory - decrease by 1 multiplier step
         elif memory_utilization > self.config.high_memory_threshold:
-            new_size = int(current * self.config.decrease_factor)
+            new_multiplier = max(1, current_multiplier - 1)
             reason = f"HIGH memory {memory_utilization:.1%}"
 
-        # Low memory - increase
+        # Low memory - increase by 1 multiplier step (up to increase_factor)
         elif memory_utilization < self.config.low_memory_threshold:
-            new_size = int(current * self.config.increase_factor)
+            target_multiplier = int(self.config.increase_factor)
+            max_multiplier = self.config.max_batch_size // min_bs
+            new_multiplier = min(current_multiplier + 1, target_multiplier, max_multiplier)
             reason = f"LOW memory {memory_utilization:.1%}"
 
         # Target range - no change
         else:
-            new_size = current
+            new_multiplier = current_multiplier
             reason = f"OPTIMAL memory {memory_utilization:.1%}"
 
-        # Clamp to valid range
-        new_size = max(self.config.min_batch_size,
-                      min(self.config.max_batch_size, new_size))
+        # Convert multiplier to batch size (always multiple of min_bs)
+        new_size = new_multiplier * min_bs
 
-        # Round to nearest power of 2 for efficiency
-        new_size = 2 ** round(torch.log2(torch.tensor(float(new_size))).item())
-        new_size = int(new_size)
+        # Clamp to valid range
+        new_size = max(min_bs, min(self.config.max_batch_size, new_size))
 
         return new_size, reason
 
@@ -247,7 +263,7 @@ class DynamicBatchScheduler:
         # Log adjustment
         logger.info(
             f"Step {step}: {direction} batch size: {old_batch_size} -> {new_batch_size} "
-            f"({reason}, mem={mem_stats['allocated_gb']:.2f}GB)"
+            f"({reason}, mem={mem_stats['reserved_gb']:.2f}GB reserved)"
         )
 
         return new_batch_size

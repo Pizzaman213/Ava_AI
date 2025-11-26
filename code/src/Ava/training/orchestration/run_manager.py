@@ -23,7 +23,7 @@ import torch  # type: ignore[import]
 
 # Import path utilities for relative path resolution
 try:
-    from Ava.utils.paths import get_outputs_dir
+    from src.Ava.utils.paths import get_outputs_dir
 except ImportError:
     def get_outputs_dir() -> Path:
         from pathlib import Path

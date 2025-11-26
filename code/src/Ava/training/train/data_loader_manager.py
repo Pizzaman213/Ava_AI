@@ -9,12 +9,20 @@ Handles all data loading functionality including:
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
 from src.Ava.data.dataloader import create_streaming_dataloaders
+
+# Module-level logger
+_logger = logging.getLogger(__name__)
+
+def get_logger():
+    """Get the module logger."""
+    return _logger
 from src.Ava.data.multi_column_data import create_multi_column_dataloader, DatasetConfig
 from src.Ava.data.pretokenized_loader import create_ultra_fast_dataloaders
 
@@ -76,19 +84,27 @@ class DataLoaderManager(TrainingComponent):
         """
         # Determine batch size
         if batch_size is None:
-            batch_size = training_config.training.batch_size or config_dict.get(
-                "training", {}
-            ).get("batch_size", 8)
+            # Try to get from training_config.training.batch_size
+            if hasattr(training_config, 'training') and hasattr(training_config.training, 'batch_size'):
+                batch_size = training_config.training.batch_size
+            # Fallback to config_dict
+            if batch_size is None:
+                batch_size = config_dict.get("training", {}).get("batch_size", 8)
 
         batch_size = int(batch_size) if batch_size is not None else 8
         assert batch_size > 0, f"Invalid batch_size: {batch_size}"
 
         # Route to appropriate loader type
-        if training_config.multi_column_data.use_multi_column:
+        # Check if multi_column_data exists and is enabled
+        use_multi_column = False
+        if hasattr(training_config, 'multi_column_data'):
+            use_multi_column = getattr(training_config.multi_column_data, 'use_multi_column', False)
+
+        if use_multi_column:
             train_loader, val_loader = self._create_multi_column_loaders(
                 training_config, tokenizer, batch_size
             )
-        elif training_config.data.streaming:
+        elif hasattr(training_config, 'data') and getattr(training_config.data, 'streaming', True):
             train_loader, val_loader = self._create_streaming_loaders(
                 training_config, tokenizer, batch_size, config_dict
             )
@@ -114,8 +130,6 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Tuple of (train_loader, val_loader)
         """
-        from src.Ava.utils.logging import get_logger
-
         get_logger().info("Using multi-column data loader")
 
         # Load dataset config if it's a file path
@@ -166,8 +180,6 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Tuple of (train_loader, val_loader)
         """
-        from src.Ava.utils.logging import get_logger
-
         get_logger().info("Using streaming data loader")
 
         # Find data directory with intelligent fallback
@@ -194,9 +206,35 @@ class DataLoaderManager(TrainingComponent):
         use_sequence_packing = getattr(training_config.data, "use_sequence_packing", False)
         packing_strategy = getattr(training_config.data, "packing_strategy", "greedy")
 
-        # Get dynamic batching config
+        # Get dynamic batching config (token-based for less padding)
         use_dynamic_batching = getattr(training_config.data, "use_dynamic_batching", False)
         max_tokens_per_batch = getattr(training_config.data, "max_tokens_per_batch", None)
+
+        # Get memory-aware dynamic batching config (batch size adjustment based on GPU memory)
+        # Can be at top-level config.dynamic_batching or under config.training.dynamic_batching
+        dynamic_batching_config = None
+        db = None
+        if hasattr(training_config, "dynamic_batching"):
+            db = training_config.dynamic_batching
+        elif hasattr(training_config, "training") and hasattr(training_config.training, "dynamic_batching"):
+            db = training_config.training.dynamic_batching
+        if db and getattr(db, "enabled", False):
+                dynamic_batching_config = {
+                    'enabled': True,
+                    'min_batch_size': getattr(db, 'min_batch_size', 64),
+                    'max_batch_size': getattr(db, 'max_batch_size', 256),
+                    'low_memory_threshold': getattr(db, 'low_memory_threshold', 0.50),
+                    'target_memory_threshold': getattr(db, 'target_memory_threshold', 0.70),
+                    'high_memory_threshold': getattr(db, 'high_memory_threshold', 0.85),
+                    'critical_memory_threshold': getattr(db, 'critical_memory_threshold', 0.95),
+                    'increase_factor': getattr(db, 'increase_factor', 1.2),
+                    'decrease_factor': getattr(db, 'decrease_factor', 0.8),
+                    'adjustment_frequency': getattr(db, 'adjustment_frequency', 10),
+                    'warmup_steps': getattr(db, 'warmup_steps', 100),
+                    'max_adjustments_per_session': getattr(db, 'max_adjustments_per_session', 50),
+                    'cooldown_steps': getattr(db, 'cooldown_steps', 5),
+                }
+                get_logger().info(" Memory-aware dynamic batching enabled")
 
         # Log GPU I/O optimizations
         self._log_io_optimizations(
@@ -235,6 +273,7 @@ class DataLoaderManager(TrainingComponent):
                 val_split_ratio=val_split_ratio,
                 use_sequence_packing=use_sequence_packing,
                 packing_strategy=packing_strategy,
+                dynamic_batching_config=dynamic_batching_config,
             )
         else:
             get_logger().info(
@@ -263,6 +302,7 @@ class DataLoaderManager(TrainingComponent):
                 ),
                 dataset_name=getattr(training_config.data, "dataset_name", None),
                 dev_log_config=getattr(training_config, "dev_log", None),
+                dynamic_batching_config=dynamic_batching_config,
             )
 
         # Validate dataloaders
