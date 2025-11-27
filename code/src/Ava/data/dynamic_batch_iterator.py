@@ -36,6 +36,7 @@ except ImportError:
     )
 
 logger = logging.getLogger(__name__)
+logger.propagate = False  # Prevent duplicate logs
 
 
 class DynamicBatchIterator:
@@ -124,9 +125,9 @@ class DynamicBatchIterator:
         for mini_batch in self.base_dataloader:
             buffer.append(mini_batch)
 
-            # Get target batch size from scheduler
-            target_size = self.scheduler.get_current_batch_size(self._step_count)
-            # Use rounding instead of floor division to handle decimals (e.g., 42/32=1.3 -> 1)
+            # Get current batch size from scheduler (don't trigger step() here)
+            target_size = self.scheduler.current_batch_size
+            # Use rounding instead of floor division to handle decimals
             target_multiplier = max(1, round(target_size / self.min_batch_size))
             target_multiplier = min(target_multiplier, self.max_multiplier)
 
@@ -149,13 +150,13 @@ class DynamicBatchIterator:
                     if hasattr(self.scheduler, 'get_memory_stats'):
                         mem = self.scheduler.get_memory_stats()
                         mem_info = f" | GPU mem: {mem.get('utilization', 0):.1%}"
-                    print(f" [DynamicBatch] Step {self._step_count}: BS={actual_batch_size} "
-                          f"(target={target_size}, multiplier={target_multiplier}x){mem_info}")
+                    logger.debug(f"[DynamicBatch] Step {self._step_count}: BS={actual_batch_size} "
+                                f"(target={target_size}, multiplier={target_multiplier}x){mem_info}")
 
                 yield concatenated
                 buffer = []
 
-                # Update scheduler with current memory state
+                # Update step and let scheduler adjust batch size
                 self._step_count += 1
                 new_size = self.scheduler.step(self._step_count)
 
@@ -208,13 +209,23 @@ class DynamicBatchIterator:
 
     def __len__(self) -> int:
         """
-        Return estimated number of batches.
+        Return estimated number of batches based on CURRENT batch size.
 
-        Note: This is an approximation since batch sizes vary dynamically.
-        Returns the minimum possible batches (if always using max_batch_size).
+        This dynamically updates as batch size changes, so the progress bar
+        shows the correct total based on current throughput.
         """
         base_len = len(self.base_dataloader)
-        return max(1, base_len // self.max_multiplier)
+        current_multiplier = max(1, round(self.scheduler.current_batch_size / self.min_batch_size))
+        current_multiplier = min(current_multiplier, self.max_multiplier)
+        return max(1, base_len // current_multiplier)
+
+    def get_dynamic_total(self) -> int:
+        """
+        Get the expected total number of batches based on current batch size.
+
+        Use this to update tqdm progress bar total dynamically.
+        """
+        return len(self)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get statistics about dynamic batching performance."""
@@ -243,14 +254,14 @@ class DynamicBatchIterator:
         """Log a summary of dynamic batching performance."""
         stats = self.get_statistics()
 
-        logger.info("=" * 60)
-        logger.info("Dynamic Batch Iterator Summary")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
+        logger.info("DYNAMIC BATCH ITERATOR SUMMARY")
+        logger.info("=" * 70)
         logger.info(f"Total batches yielded: {stats['total_batches']}")
         logger.info(f"Average batch size: {stats['avg_batch_size']:.1f}")
         logger.info(f"Batch size range: [{stats['min_batch_size_used']}, {stats['max_batch_size_used']}]")
         logger.info(f"Batch size variance: {stats['batch_size_variance']:.2f}")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
 
         # Also log scheduler summary
         self.scheduler.log_summary()

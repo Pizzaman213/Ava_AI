@@ -19,10 +19,8 @@ from src.Ava.data.dataloader import create_streaming_dataloaders
 
 # Module-level logger
 _logger = logging.getLogger(__name__)
+_logger.propagate = False  # Prevent duplicate logs
 
-def get_logger():
-    """Get the module logger."""
-    return _logger
 from src.Ava.data.multi_column_data import create_multi_column_dataloader, DatasetConfig
 from src.Ava.data.pretokenized_loader import create_ultra_fast_dataloaders
 
@@ -130,7 +128,7 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Tuple of (train_loader, val_loader)
         """
-        get_logger().info("Using multi-column data loader")
+        _logger.info("Using multi-column data loader")
 
         # Load dataset config if it's a file path
         dataset_config = training_config.multi_column_data.dataset_config
@@ -180,7 +178,7 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Tuple of (train_loader, val_loader)
         """
-        get_logger().info("Using streaming data loader")
+        _logger.info("Using streaming data loader")
 
         # Find data directory with intelligent fallback
         data_dir = self._find_data_directory(training_config)
@@ -211,13 +209,16 @@ class DataLoaderManager(TrainingComponent):
         max_tokens_per_batch = getattr(training_config.data, "max_tokens_per_batch", None)
 
         # Get memory-aware dynamic batching config (batch size adjustment based on GPU memory)
-        # Can be at top-level config.dynamic_batching or under config.training.dynamic_batching
+        # Can be at: config.dynamic_batching, config.training.dynamic_batching, or config.training.batching.dynamic_batching
         dynamic_batching_config = None
         db = None
         if hasattr(training_config, "dynamic_batching"):
             db = training_config.dynamic_batching
-        elif hasattr(training_config, "training") and hasattr(training_config.training, "dynamic_batching"):
-            db = training_config.training.dynamic_batching
+        elif hasattr(training_config, "training"):
+            if hasattr(training_config.training, "dynamic_batching"):
+                db = training_config.training.dynamic_batching
+            elif hasattr(training_config.training, "batching") and hasattr(training_config.training.batching, "dynamic_batching"):
+                db = training_config.training.batching.dynamic_batching
         if db and getattr(db, "enabled", False):
                 dynamic_batching_config = {
                     'enabled': True,
@@ -234,7 +235,7 @@ class DataLoaderManager(TrainingComponent):
                     'max_adjustments_per_session': getattr(db, 'max_adjustments_per_session', 50),
                     'cooldown_steps': getattr(db, 'cooldown_steps', 5),
                 }
-                get_logger().info(" Memory-aware dynamic batching enabled")
+                _logger.info(" Memory-aware dynamic batching enabled")
 
         # Log GPU I/O optimizations
         self._log_io_optimizations(
@@ -248,9 +249,12 @@ class DataLoaderManager(TrainingComponent):
 
         # Create appropriate loaders
         if use_pretokenized:
-            get_logger().info(" Using pretokenized Arrow data loader (60x faster)")
+            _logger.info(" Using pretokenized Arrow data loader (60x faster)")
             # Get cache size from config or use optimized default
             cache_size = getattr(training_config.data, "cache_size", 200)
+            # Get prefetch settings from config (for streaming mode)
+            prefetch_threads = getattr(training_config.data, "prefetch_threads", 4)
+            prefetch_lookahead = getattr(training_config.data, "prefetch_lookahead", 6)
 
             train_loader, val_loader = create_ultra_fast_dataloaders(
                 batch_size=batch_size,
@@ -269,14 +273,16 @@ class DataLoaderManager(TrainingComponent):
                 if hasattr(tokenizer, "eos_token_id")
                 and tokenizer.eos_token_id is not None
                 else 2,
-                max_samples=training_config.data.max_samples,
+                max_samples=getattr(training_config.data, 'max_samples', None),
                 val_split_ratio=val_split_ratio,
                 use_sequence_packing=use_sequence_packing,
                 packing_strategy=packing_strategy,
                 dynamic_batching_config=dynamic_batching_config,
+                prefetch_threads=prefetch_threads,
+                prefetch_lookahead=prefetch_lookahead,
             )
         else:
-            get_logger().info(
+            _logger.info(
                 " Using streaming JSONL data loader with on-the-fly tokenization"
             )
             train_loader, val_loader = create_streaming_dataloaders(
@@ -289,7 +295,7 @@ class DataLoaderManager(TrainingComponent):
                 prefetch_factor=prefetch_factor,
                 persistent_workers=persistent_workers,
                 samples_per_file=samples_per_file,
-                max_samples=training_config.data.max_samples,
+                max_samples=getattr(training_config.data, 'max_samples', None),
                 val_split_ratio=val_split_ratio,
                 enable_bucketing=enable_bucketing,
                 use_dynamic_batching=use_dynamic_batching,
@@ -305,8 +311,12 @@ class DataLoaderManager(TrainingComponent):
                 dynamic_batching_config=dynamic_batching_config,
             )
 
-        # Validate dataloaders
-        self._validate_dataloaders(train_loader, batch_size)
+        # Validate dataloaders (skip if configured - useful for pretokenized data with spawn workers)
+        skip_validation = getattr(training_config.data, "skip_dataloader_validation", False)
+        if not skip_validation:
+            self._validate_dataloaders(train_loader, batch_size)
+        else:
+            _logger.info(" Skipping dataloader validation (skip_dataloader_validation=True)")
 
         return train_loader, val_loader
 
@@ -322,8 +332,6 @@ class DataLoaderManager(TrainingComponent):
         Raises:
             RuntimeError: If no valid data directory found
         """
-        from src.Ava.utils.logging import get_logger
-
         data_dir = None
 
         # First, try the configured data directory
@@ -331,10 +339,10 @@ class DataLoaderManager(TrainingComponent):
             config_data_dir = Path(training_config.data.data_dir)
             if config_data_dir.exists():
                 data_dir = str(config_data_dir)
-                get_logger().info(f"Using configured data_dir: {data_dir}")
+                _logger.info(f"Using configured data_dir: {data_dir}")
                 return data_dir
             else:
-                get_logger().warning(f"Configured data_dir does not exist: {config_data_dir}")
+                _logger.warning(f"Configured data_dir does not exist: {config_data_dir}")
 
         # Get fallback paths from config
         if hasattr(training_config, "data_loading"):
@@ -376,22 +384,22 @@ class DataLoaderManager(TrainingComponent):
 
                 if format_info["confidence"] > 0.0:
                     data_dir = str(fallback_dir)
-                    get_logger().info(f"Using fallback data_dir: {data_dir}")
-                    get_logger().info(
+                    _logger.info(f"Using fallback data_dir: {data_dir}")
+                    _logger.info(
                         f"   Format detection: {format_info['detected_format']} "
                         f"(confidence: {format_info['confidence']:.2f})"
                     )
-                    get_logger().info(
+                    _logger.info(
                         f"   Files checked: {format_info['files_checked']}, "
                         f"Distribution: {format_info.get('format_distribution', {})}"
                     )
                     return data_dir
                 else:
-                    get_logger().info(
+                    _logger.info(
                         f"   Checked {fallback_path}: exists but no valid data files found"
                     )
             else:
-                get_logger().info(f"   Checked {fallback_path}: does not exist")
+                _logger.info(f"   Checked {fallback_path}: does not exist")
 
         # No valid directory found
         raise RuntimeError(
@@ -416,17 +424,15 @@ class DataLoaderManager(TrainingComponent):
             batch_size: Batch size
             training_config: Training configuration
         """
-        from src.Ava.utils.logging import get_logger
-
-        get_logger().info("\n" + "="*80)
-        get_logger().info(" DATASET INFORMATION")
-        get_logger().info("="*80)
+        _logger.info("=" * 70)
+        _logger.info("DATASET INFORMATION")
+        _logger.info("=" * 70)
 
         data_path = Path(data_dir)
         total_examples = 0
         file_count = 0
 
-        get_logger().info(f" Data directory: {data_dir}")
+        _logger.info(f" Data directory: {data_dir}")
 
         # Count JSONL files
         for jsonl_file in data_path.glob("*_processed.jsonl"):
@@ -435,11 +441,11 @@ class DataLoaderManager(TrainingComponent):
                     file_lines = sum(1 for _ in f)
                     total_examples += file_lines
                     file_count += 1
-                    get_logger().info(
+                    _logger.info(
                         f"    {jsonl_file.name}: {file_lines:,} examples"
                     )
             except Exception as e:
-                get_logger().warning(f"     Could not read {jsonl_file.name}: {e}")
+                _logger.warning(f"     Could not read {jsonl_file.name}: {e}")
 
         # Count Arrow files
         for arrow_file in data_path.glob("*.arrow"):
@@ -452,14 +458,31 @@ class DataLoaderManager(TrainingComponent):
                     file_rows = len(table)
                     total_examples += file_rows
                     file_count += 1
-                    get_logger().info(
+                    _logger.info(
                         f"    {arrow_file.name}: {file_rows:,} examples (pre-tokenized)"
                     )
             except Exception as e:
-                get_logger().warning(f"     Could not read {arrow_file.name}: {e}")
+                _logger.warning(f"     Could not read {arrow_file.name}: {e}")
 
-        get_logger().info(f"\n Total examples found: {total_examples:,}")
-        get_logger().info(f" Total files: {file_count}")
+        # Count Parquet files (check both root and subdirectories like train/)
+        for parquet_pattern in ["*.parquet", "**/*.parquet"]:
+            for parquet_file in data_path.glob(parquet_pattern):
+                try:
+                    import pyarrow.parquet as pq
+
+                    pq_file = pq.ParquetFile(parquet_file)
+                    file_rows = pq_file.metadata.num_rows
+                    total_examples += file_rows
+                    file_count += 1
+                    rel_path = parquet_file.relative_to(data_path)
+                    _logger.info(
+                        f"    {rel_path}: {file_rows:,} examples (parquet)"
+                    )
+                except Exception as e:
+                    _logger.warning(f"     Could not read {parquet_file.name}: {e}")
+
+        _logger.info(f"\n Total examples found: {total_examples:,}")
+        _logger.info(f" Total files: {file_count}")
 
         # Validate minimum dataset size
         min_samples_required = batch_size * 2
@@ -475,41 +498,52 @@ class DataLoaderManager(TrainingComponent):
                 f"   Solutions:\n"
                 f"     1. Add more training data to {data_dir}\n"
                 f"     2. Reduce batch_size (current: {batch_size})\n"
-                f"     3. Check data files are in correct format (*_processed.jsonl or *.arrow)"
+                f"     3. Check data files are in correct format (*_processed.jsonl, *.arrow, or *.parquet)"
             )
-            get_logger().error(error_msg)
+            _logger.error(error_msg)
             raise RuntimeError(error_msg)
 
         if file_count == 0:
             error_msg = (
                 f" CRITICAL ERROR: No data files found!\n"
                 f"   Directory checked: {data_dir}\n"
-                f"   Expected patterns: *_processed.jsonl or *.arrow\n"
+                f"   Expected patterns: *_processed.jsonl, *.arrow, or *.parquet\n"
                 f"   \n"
                 f"   Please ensure your data files follow the naming convention:\n"
                 f"     - <dataset_name>_processed.jsonl (for raw data)\n"
-                f"     - <dataset_name>_processed.arrow (for pre-tokenized data)"
+                f"     - <dataset_name>_processed.arrow (for pre-tokenized data)\n"
+                f"     - *.parquet (for parquet data, can be in train/ subdirectory)"
             )
-            get_logger().error(error_msg)
+            _logger.error(error_msg)
             raise RuntimeError(error_msg)
 
         # Log training configuration
-        gradient_acc_steps = getattr(
-            training_config.training,
-            "gradient_accumulation_steps",
-            getattr(training_config.training, "gradient_accumulation", 4),
-        )
+        # Check batching subsection first, then flat training config
+        if hasattr(training_config.training, "batching"):
+            gradient_acc_steps = getattr(
+                training_config.training.batching,
+                "gradient_accumulation_steps",
+                getattr(training_config.training, "gradient_accumulation_steps",
+                        getattr(training_config.training, "gradient_accumulation", 4)),
+            )
+        else:
+            gradient_acc_steps = getattr(
+                training_config.training,
+                "gradient_accumulation_steps",
+                getattr(training_config.training, "gradient_accumulation", 4),
+            )
         effective_batch_size = batch_size * gradient_acc_steps
 
         val_split_ratio = self._get_val_split_ratio(training_config)
 
-        if training_config.data.max_samples:
-            train_samples = training_config.data.max_samples
+        max_samples = getattr(training_config.data, 'max_samples', None)
+        if max_samples:
+            train_samples = max_samples
         else:
             train_samples = total_examples
 
-        if training_config.data.max_samples:
-            val_samples = int(training_config.data.max_samples * val_split_ratio)
+        if max_samples:
+            val_samples = int(max_samples * val_split_ratio)
         else:
             val_samples = int(total_examples * val_split_ratio)
 
@@ -517,22 +551,22 @@ class DataLoaderManager(TrainingComponent):
 
         samples_per_file = self._get_samples_per_file(training_config)
 
-        get_logger().info(f"\n Training Configuration:")
-        get_logger().info(f"   Batch size: {batch_size}")
-        get_logger().info(f"   Gradient accumulation steps: {gradient_acc_steps}")
-        get_logger().info(f"   Effective batch size: {effective_batch_size}")
-        get_logger().info(f"   Training samples: {train_samples:,}")
-        get_logger().info(
+        _logger.info(f"\n Training Configuration:")
+        _logger.info(f"   Batch size: {batch_size}")
+        _logger.info(f"   Gradient accumulation steps: {gradient_acc_steps}")
+        _logger.info(f"   Effective batch size: {effective_batch_size}")
+        _logger.info(f"   Training samples: {train_samples:,}")
+        _logger.info(
             f"   Validation samples: {val_samples:,} ({val_split_ratio:.1%} of training)"
         )
-        get_logger().info(f"   Expected training steps: {expected_steps:,}")
-        get_logger().info(f"   Workers: {self._get_num_workers(training_config)}")
-        get_logger().info(f"   Buffer size: {training_config.data.buffer_size:,}")
-        get_logger().info(
+        _logger.info(f"   Expected training steps: {expected_steps:,}")
+        _logger.info(f"   Workers: {self._get_num_workers(training_config)}")
+        _logger.info(f"   Buffer size: {training_config.data.buffer_size:,}")
+        _logger.info(
             f"   Samples per file rotation: {samples_per_file} "
             f"(1=max diversity, higher=less I/O)"
         )
-        get_logger().info("="*80 + "\n")
+        _logger.info("="*80 + "\n")
 
     def _log_io_optimizations(
         self,
@@ -553,33 +587,31 @@ class DataLoaderManager(TrainingComponent):
             use_sequence_packing: Whether sequence packing is enabled
             packing_strategy: Packing strategy name
         """
-        from src.Ava.utils.logging import get_logger
-
-        get_logger().info("\n" + "="*60)
-        get_logger().info(" GPU I/O OPTIMIZATIONS ACTIVE")
-        get_logger().info("="*60)
+        _logger.info("=" * 70)
+        _logger.info("GPU I/O OPTIMIZATIONS ACTIVE")
+        _logger.info("=" * 70)
         if use_pretokenized:
-            get_logger().info(" Ultra-fast pretokenized Arrow loader (60x speedup)")
+            _logger.info("Ultra-fast pretokenized Arrow loader (60x speedup)")
         else:
-            get_logger().info(" Streaming JSONL loader with on-the-fly tokenization")
-        get_logger().info(f" Multi-worker data loading: {num_workers} workers")
-        get_logger().info(f" Persistent workers: {persistent_workers}")
-        get_logger().info(f" Pin memory: {torch.cuda.is_available()}")
-        get_logger().info(f" Prefetch factor: {prefetch_factor}")
-        get_logger().info(" Non-blocking GPU transfers: enabled")
+            _logger.info("Streaming JSONL loader with on-the-fly tokenization")
+        _logger.info(f"Multi-worker data loading: {num_workers} workers")
+        _logger.info(f"Persistent workers: {persistent_workers}")
+        _logger.info(f"Pin memory: {torch.cuda.is_available()}")
+        _logger.info(f"Prefetch factor: {prefetch_factor}")
+        _logger.info("Non-blocking GPU transfers: enabled")
         stream_status = (
             "enabled" if torch.cuda.is_available() else "not available (CPU mode)"
         )
-        get_logger().info(f" CUDA streams for async transfers: {stream_status}")
+        _logger.info(f"CUDA streams for async transfers: {stream_status}")
         if use_sequence_packing:
-            get_logger().info(
-                f" Sequence packing: ENABLED ({packing_strategy} strategy, 20-35% speedup)"
+            _logger.info(
+                f"Sequence packing: ENABLED ({packing_strategy} strategy, 20-35% speedup)"
             )
         else:
-            get_logger().info(
-                " Sequence packing: DISABLED (enable for 20-35% speedup)"
+            _logger.info(
+                "Sequence packing: DISABLED (enable for 20-35% speedup)"
             )
-        get_logger().info("="*60 + "\n")
+        _logger.info("=" * 70)
 
     def _validate_dataloaders(self, train_loader: Any, batch_size: int) -> None:
         """Validate that dataloaders work and have sufficient samples.
@@ -591,8 +623,6 @@ class DataLoaderManager(TrainingComponent):
         Raises:
             RuntimeError: If validation fails
         """
-        from src.Ava.utils.logging import get_logger
-
         min_samples_required = 5  # At least 5 samples for meaningful training
         try:
             train_iter = iter(train_loader)
@@ -610,7 +640,7 @@ class DataLoaderManager(TrainingComponent):
                     f"minimum {min_samples_required} required for stable training"
                 )
 
-            get_logger().info(
+            _logger.info(
                 f" Training data validation passed: {sample_count}+ samples available"
             )
 
@@ -633,14 +663,12 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Format detection results
         """
-        from src.Ava.utils.logging import get_logger
-
         # Check cache first
         cache_key = str(data_dir.absolute())
         if cache_key in _format_detection_cache:
             cached_result = _format_detection_cache[cache_key]
-            get_logger().info(
-                f"    Using cached format detection: {cached_result['detected_format']}"
+            _logger.info(
+                f"Using cached format detection: {cached_result['detected_format']}"
             )
             return cached_result
 

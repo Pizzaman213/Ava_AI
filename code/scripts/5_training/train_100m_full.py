@@ -106,6 +106,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import threading
+from queue import Queue
 
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
@@ -158,36 +160,81 @@ try:
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
 
+# INT8 quantization with bitsandbytes
+try:
+    import bitsandbytes as bnb
+    BITSANDBYTES_AVAILABLE = True
+except ImportError:
+    BITSANDBYTES_AVAILABLE = False
+
+# NVFP4/NF4 quantization with torchao
+try:
+    import torchao
+    from torchao.quantization import quantize_, int8_weight_only, int4_weight_only
+    TORCHAO_AVAILABLE = True
+except ImportError:
+    TORCHAO_AVAILABLE = False
+
 # ============================================================================
 # LOGGING SETUP
 # ============================================================================
 
+# Import colored logging utilities
+try:
+    from src.Ava.utils.colored_logging import (
+        ColoredFormatter,
+        CleanFormatter,
+        configure_root_logger,
+        supports_color,
+    )
+    COLORED_LOGGING_AVAILABLE = True
+except ImportError:
+    COLORED_LOGGING_AVAILABLE = False
+
+
 def setup_logging(log_dir: Path, rank: int = 0) -> logging.Logger:
-    """Setup logging for training."""
+    """Setup logging for training with colored console output."""
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger('train_100m')
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
 
-        # Only log on rank 0 in distributed training
-        if rank == 0:
+    # Clear existing handlers to avoid duplicates on re-initialization
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+
+    # CRITICAL: Prevent propagation to root logger to avoid duplicate messages
+    logger.propagate = False
+
+    # Only log on rank 0 in distributed training
+    if rank == 0:
+        # Console handler with colors (if available)
+        console_handler = logging.StreamHandler()
+        if COLORED_LOGGING_AVAILABLE:
+            console_handler.setFormatter(ColoredFormatter(show_level=False))
+        else:
             formatter = logging.Formatter(
+                '[%(asctime)s] %(message)s',
+                datefmt='%H:%M:%S'
+            )
+            console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+        # File handler (plain format with full timestamps)
+        file_handler = logging.FileHandler(
+            log_dir / f'training_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+        )
+        if COLORED_LOGGING_AVAILABLE:
+            file_handler.setFormatter(CleanFormatter(include_date=True))
+        else:
+            file_handler.setFormatter(logging.Formatter(
                 '%(asctime)s | %(levelname)s | %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S'
-            )
+            ))
+        logger.addHandler(file_handler)
 
-            # Console handler
-            console_handler = logging.StreamHandler()
-            console_handler.setFormatter(formatter)
-            logger.addHandler(console_handler)
-
-            # File handler
-            file_handler = logging.FileHandler(
-                log_dir / f'training_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
-            )
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+    # Configure root logger to reduce noise from other modules
+    if COLORED_LOGGING_AVAILABLE:
+        configure_root_logger(level=logging.WARNING)
 
     return logger
 
@@ -1094,6 +1141,382 @@ def generate_sample(
 
 
 # ============================================================================
+# QUANTIZATION FUNCTIONS
+# ============================================================================
+
+def quantize_model_int8(
+    model: nn.Module,
+    threshold: float = 6.0,
+    skip_modules: Optional[list] = None,
+    logger: Optional[logging.Logger] = None
+) -> nn.Module:
+    """
+    Quantize model Linear layers to INT8 using bitsandbytes.
+
+    This replaces nn.Linear layers with bnb.nn.Linear8bitLt for memory-efficient
+    INT8 training. Note: INT8 training requires careful handling of gradients.
+
+    Args:
+        model: The model to quantize
+        threshold: Outlier threshold for mixed-precision decomposition (default: 6.0)
+        skip_modules: List of module name patterns to skip (e.g., ['embed', 'lm_head'])
+        logger: Optional logger for status messages
+
+    Returns:
+        Quantized model with INT8 linear layers
+    """
+    if not BITSANDBYTES_AVAILABLE:
+        if logger:
+            logger.warning("bitsandbytes not available, skipping INT8 quantization")
+        return model
+
+    if skip_modules is None:
+        skip_modules = ['embed', 'lm_head']
+
+    quantized_count = 0
+
+    # Replace Linear layers with INT8 versions
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            # Get parent module and attribute name
+            parts = name.rsplit('.', 1)
+            if len(parts) == 2:
+                parent_name, attr_name = parts
+                parent = model.get_submodule(parent_name)
+            else:
+                parent = model
+                attr_name = name
+
+            # Skip specified modules (keep in higher precision)
+            if any(skip in name.lower() for skip in skip_modules):
+                continue
+
+            # Create INT8 linear layer with fp16 weights for training
+            # has_fp16_weights=True keeps a fp16 copy for gradient computation
+            int8_layer = bnb.nn.Linear8bitLt(
+                module.in_features,
+                module.out_features,
+                bias=module.bias is not None,
+                has_fp16_weights=True,  # Keep fp16 weights for training
+                threshold=threshold,
+            )
+
+            # Copy weights - use fp16 for training compatibility
+            int8_layer.weight = bnb.nn.Int8Params(
+                module.weight.data.to(torch.float16),
+                requires_grad=False,  # INT8 params don't support gradients directly
+                has_fp16_weights=True
+            )
+            if module.bias is not None:
+                int8_layer.bias = nn.Parameter(module.bias.data)
+
+            # Replace the layer
+            setattr(parent, attr_name, int8_layer)
+            quantized_count += 1
+
+    if logger:
+        logger.info(f"   Quantized {quantized_count} Linear layers to INT8 (threshold={threshold})")
+
+    return model
+
+
+def quantize_model_nf4(
+    model: nn.Module,
+    skip_modules: Optional[list] = None,
+    logger: Optional[logging.Logger] = None
+) -> nn.Module:
+    """
+    Quantize model to NF4 (Normalized Float 4-bit) using bitsandbytes.
+
+    NF4 provides better accuracy than standard INT4 by using a normalized
+    distribution that better matches neural network weight distributions.
+
+    Args:
+        model: The model to quantize
+        skip_modules: List of module name patterns to skip
+        logger: Optional logger for status messages
+
+    Returns:
+        Quantized model with NF4 linear layers
+    """
+    if not BITSANDBYTES_AVAILABLE:
+        if logger:
+            logger.warning("bitsandbytes not available, skipping NF4 quantization")
+        return model
+
+    if skip_modules is None:
+        skip_modules = ['embed', 'lm_head']
+
+    quantized_count = 0
+
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            parts = name.rsplit('.', 1)
+            if len(parts) == 2:
+                parent_name, attr_name = parts
+                parent = model.get_submodule(parent_name)
+            else:
+                parent = model
+                attr_name = name
+
+            if any(skip in name.lower() for skip in skip_modules):
+                continue
+
+            # Create NF4 linear layer
+            nf4_layer = bnb.nn.Linear4bit(
+                module.in_features,
+                module.out_features,
+                bias=module.bias is not None,
+                compute_dtype=torch.bfloat16,
+                quant_type='nf4',  # Normalized Float 4
+            )
+
+            # Copy weights - requires_grad=False for quantized params
+            nf4_layer.weight = bnb.nn.Params4bit(
+                module.weight.data.to(torch.float16),
+                requires_grad=False,  # Quantized params don't support gradients directly
+                quant_type='nf4',
+            )
+            if module.bias is not None:
+                nf4_layer.bias = nn.Parameter(module.bias.data)
+
+            setattr(parent, attr_name, nf4_layer)
+            quantized_count += 1
+
+    if logger:
+        logger.info(f"   Quantized {quantized_count} Linear layers to NF4 (4-bit)")
+
+    return model
+
+
+def quantize_model_nvfp4(
+    model: nn.Module,
+    block_size: int = 16,
+    skip_modules: Optional[list] = None,
+    logger: Optional[logging.Logger] = None
+) -> nn.Module:
+    """
+    Quantize model to NVFP4 (NVIDIA FP4) using torchao.
+
+    NVFP4 is NVIDIA's 4-bit floating point format optimized for inference
+    on Hopper (H100) and later GPUs. Provides ~8x memory reduction.
+
+    Args:
+        model: The model to quantize
+        block_size: Block size for quantization (default: 16)
+        skip_modules: List of module name patterns to skip
+        logger: Optional logger for status messages
+
+    Returns:
+        Quantized model
+    """
+    if not TORCHAO_AVAILABLE:
+        if logger:
+            logger.warning("torchao not available, skipping NVFP4 quantization")
+        return model
+
+    if skip_modules is None:
+        skip_modules = ['embed', 'lm_head']
+
+    try:
+        # Use torchao's int4_weight_only as approximation for FP4
+        # Note: True NVFP4 requires Hopper+ GPUs and specific torchao version
+        def skip_filter(mod, fqn):
+            return any(skip in fqn.lower() for skip in skip_modules)
+
+        quantize_(model, int4_weight_only(), filter_fn=lambda m, fqn: not skip_filter(m, fqn))
+
+        if logger:
+            logger.info(f"   Applied NVFP4/INT4 quantization (block_size={block_size})")
+
+    except Exception as e:
+        if logger:
+            logger.warning(f"   NVFP4 quantization failed: {e}, falling back to unquantized")
+
+    return model
+
+
+def apply_quantization(
+    model: nn.Module,
+    quant_config: dict,
+    logger: Optional[logging.Logger] = None
+) -> nn.Module:
+    """
+    Apply quantization based on configuration.
+
+    Args:
+        model: The model to quantize
+        quant_config: Quantization configuration dict with keys:
+            - enabled: bool
+            - type: 'none', 'int8', 'nf4', 'nvfp4'
+            - int8_threshold: float (for INT8)
+            - nvfp4_block_size: int (for NVFP4)
+            - skip_modules: list of module patterns to skip
+        logger: Optional logger
+
+    Returns:
+        Quantized model
+    """
+    if not quant_config.get('enabled', False):
+        if logger:
+            logger.info("   Quantization disabled")
+        return model
+
+    quant_type = quant_config.get('type', 'none').lower()
+    skip_modules = quant_config.get('skip_modules', ['embed', 'lm_head'])
+
+    if quant_type == 'int8':
+        threshold = quant_config.get('int8_threshold', 6.0)
+        return quantize_model_int8(model, threshold=threshold, skip_modules=skip_modules, logger=logger)
+
+    elif quant_type == 'nf4':
+        return quantize_model_nf4(model, skip_modules=skip_modules, logger=logger)
+
+    elif quant_type == 'nvfp4' or quant_type == 'fp4':
+        block_size = quant_config.get('nvfp4_block_size', 16)
+        return quantize_model_nvfp4(model, block_size=block_size, skip_modules=skip_modules, logger=logger)
+
+    elif quant_type == 'none':
+        if logger:
+            logger.info("   No quantization applied")
+        return model
+
+    else:
+        if logger:
+            logger.warning(f"   Unknown quantization type '{quant_type}', skipping")
+        return model
+
+
+# ============================================================================
+# ASYNC BATCH PREFETCHER - Eliminates GPU starvation
+# ============================================================================
+
+class AsyncBatchPrefetcher:
+    """
+    Prefetches batches in a background thread for continuous GPU feeding.
+
+    This class solves GPU starvation by completely decoupling data loading from
+    GPU computation. The DataLoader runs in a separate thread, continuously
+    loading batches while the main thread focuses solely on GPU operations.
+
+    Key features:
+    - Background thread for DataLoader iteration (never blocks main thread)
+    - Dedicated CUDA stream for CPU→GPU transfers (overlaps with compute)
+    - Queue-based buffering with configurable prefetch depth
+    - CUDA event synchronization for correctness
+    """
+
+    def __init__(self, dataloader, device, prefetch_count: int = 3):
+        """
+        Initialize the async batch prefetcher.
+
+        Args:
+            dataloader: PyTorch DataLoader to iterate over
+            device: Target device for batch transfer
+            prefetch_count: Number of batches to keep ready (default: 3)
+        """
+        self.dataloader = dataloader
+        self.device = device
+        self.prefetch_count = prefetch_count
+        self.queue = Queue(maxsize=prefetch_count)
+        self.stop_event = threading.Event()
+        self.transfer_stream = torch.cuda.Stream() if device.type == 'cuda' else None
+        self._total_batches = 0
+
+        # Start prefetch thread
+        self.thread = threading.Thread(target=self._prefetch_loop, daemon=True)
+        self.thread.start()
+
+    def _prefetch_loop(self):
+        """Background thread that continuously loads batches and transfers to GPU."""
+        try:
+            for batch_idx, batch in enumerate(self.dataloader):
+                if self.stop_event.is_set():
+                    break
+
+                self._total_batches = batch_idx + 1
+
+                # Transfer to GPU using dedicated stream (overlaps with main thread's compute)
+                if self.transfer_stream is not None:
+                    with torch.cuda.stream(self.transfer_stream):
+                        gpu_batch = {
+                            'input_ids': batch['input_ids'].to(self.device, non_blocking=True),
+                            'labels': batch['labels'].to(self.device, non_blocking=True),
+                            'attention_mask': batch['attention_mask'].to(self.device, non_blocking=True),
+                        }
+                    # Record event so main thread knows when transfer is complete
+                    event = torch.cuda.Event()
+                    event.record(self.transfer_stream)
+                else:
+                    # CPU path - direct transfer
+                    gpu_batch = {
+                        'input_ids': batch['input_ids'].to(self.device),
+                        'labels': batch['labels'].to(self.device),
+                        'attention_mask': batch['attention_mask'].to(self.device),
+                    }
+                    event = None
+
+                # Put batch in queue (blocks if queue is full - backpressure)
+                self.queue.put((batch_idx, gpu_batch, event))
+
+        except Exception as e:
+            # Signal error to main thread
+            self.queue.put(('ERROR', e, None))
+        finally:
+            # Signal end of iteration
+            self.queue.put(None)
+
+    def __iter__(self):
+        """Return self as iterator."""
+        return self
+
+    def __next__(self):
+        """Get next batch from queue, waiting for GPU transfer if needed."""
+        item = self.queue.get()
+
+        if item is None:
+            raise StopIteration
+
+        if item[0] == 'ERROR':
+            raise item[1]
+
+        batch_idx, gpu_batch, event = item
+
+        # Wait for GPU transfer to complete before using batch
+        if event is not None:
+            event.synchronize()
+
+        return batch_idx, gpu_batch
+
+    def __len__(self):
+        """Return estimated length from underlying dataloader."""
+        if hasattr(self.dataloader, '__len__'):
+            return len(self.dataloader)
+        if hasattr(self.dataloader, 'get_dynamic_total'):
+            return self.dataloader.get_dynamic_total()
+        return 0
+
+    def get_dynamic_total(self):
+        """Support dynamic batch size tracking."""
+        if hasattr(self.dataloader, 'get_dynamic_total'):
+            return self.dataloader.get_dynamic_total()
+        return len(self.dataloader) if hasattr(self.dataloader, '__len__') else self._total_batches
+
+    def stop(self):
+        """Stop the prefetch thread and clean up."""
+        self.stop_event.set()
+        # Drain queue to unblock thread if it's waiting on queue.put()
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except:
+                pass
+        # Wait for thread to finish (with timeout)
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+
+
+# ============================================================================
 # TRAINING LOOP
 # ============================================================================
 
@@ -1108,6 +1531,7 @@ def train_epoch(
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     use_amp: bool = True,
+    amp_dtype: torch.dtype = torch.bfloat16,
     logger: Optional[logging.Logger] = None,
     metrics_tracker: Optional[MetricsTracker] = None,
     vocab_size: int = 50680,
@@ -1124,116 +1548,144 @@ def train_epoch(
     checkpoint_manager: Optional['CheckpointManager'] = None,
     save_steps: int = 0,
 ) -> float:
-    """Train for one epoch."""
+    """Train for one epoch using async batch prefetching for constant GPU utilization."""
 
     model.train()
     total_loss = 0.0
     num_batches = 0
-    global_step = epoch * len(train_loader)
+    # Use dynamic total if available for global_step calculation
+    loader_len = train_loader.get_dynamic_total() if hasattr(train_loader, 'get_dynamic_total') else len(train_loader)
+    global_step = epoch * loader_len
 
-    pbar = tqdm(enumerate(train_loader), total=len(train_loader),
-                desc=f"Epoch {epoch + 1}", disable=logger is None)
+    # GradScaler is only needed for fp16, not bf16 (bf16 has same dynamic range as fp32)
+    use_scaler = use_amp and amp_dtype == torch.float16
+    scaler = torch.amp.GradScaler('cuda') if use_scaler else None
 
-    scaler = torch.amp.GradScaler('cuda') if use_amp else None
+    # Create async batch prefetcher - this runs DataLoader in background thread
+    # with 3 batches prefetched ahead for continuous GPU feeding
+    prefetcher = AsyncBatchPrefetcher(train_loader, device, prefetch_count=3)
 
-    for batch_idx, batch in pbar:
-        try:
-            # Move batch to device
-            input_ids = batch['input_ids'].to(device)
-            labels = batch['labels'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
+    # Get initial total for progress bar
+    initial_total = prefetcher.get_dynamic_total()
+    pbar = tqdm(total=initial_total, desc=f"Epoch {epoch + 1}", disable=logger is None)
 
-            # Forward pass with mixed precision
-            if use_amp:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+    try:
+        for batch_idx, gpu_batch in prefetcher:
+            # Batch is already on GPU (transferred in background thread)
+            input_ids = gpu_batch['input_ids']
+            labels = gpu_batch['labels']
+            attention_mask = gpu_batch['attention_mask']
+
+            try:
+                # Forward pass with mixed precision
+                if use_amp:
+                    with torch.autocast(device_type='cuda', dtype=amp_dtype):
+                        outputs = model(input_ids, attention_mask, labels)
+                        loss = outputs['loss'] / gradient_accumulation_steps
+
+                    if use_scaler:
+                        scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+                else:
                     outputs = model(input_ids, attention_mask, labels)
                     loss = outputs['loss'] / gradient_accumulation_steps
+                    loss.backward()
 
-                scaler.scale(loss).backward()
-            else:
-                outputs = model(input_ids, attention_mask, labels)
-                loss = outputs['loss'] / gradient_accumulation_steps
-                loss.backward()
-
-            # Gradient accumulation
-            if (batch_idx + 1) % gradient_accumulation_steps == 0:
-                if use_amp:
-                    scaler.unscale_(optimizer)
-
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-
-                if use_amp:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-
-                optimizer.zero_grad()
-                scheduler.step()
-
-            # Track metrics
-            loss_value = loss.item() * gradient_accumulation_steps
-            total_loss += loss_value
-            num_batches += 1
-            global_step += 1
-
-            if metrics_tracker is not None:
-                metrics_tracker.update(
-                    global_step,
-                    loss=loss_value,
-                    lr=optimizer.param_groups[0]['lr']
-                )
-
-            # Log progress and check gradients
-            if batch_idx % log_interval == 0 and logger is not None:
-                avg_loss = total_loss / num_batches
-                # Get actual batch size from the batch
-                current_bs = input_ids.shape[0]
-                logger.info(
-                    f"Epoch {epoch + 1} | Batch {batch_idx}/{len(train_loader)} | "
-                    f"BS: {current_bs} | Loss: {loss_value:.4f} | Avg Loss: {avg_loss:.4f} | "
-                    f"LR: {optimizer.param_groups[0]['lr']:.2e}"
-                )
-                # Check gradients after optimizer step
+                # Gradient accumulation
                 if (batch_idx + 1) % gradient_accumulation_steps == 0:
-                    grad_stats = check_gradients(model, logger)
-                    if metrics_tracker is not None:
-                        metrics_tracker.log_gradients(global_step, grad_stats)
+                    if use_scaler:
+                        scaler.unscale_(optimizer)
 
-            # Generation testing during training
-            if generate_every_n_steps and generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
-                logger.info(f"\n Testing generation at step {global_step}...")
-                generate_sample(
-                    model, device, vocab_size,
-                    max_length=generation_max_length,
-                    num_samples=num_generations_per_step,
-                    logger=logger,
-                    tokenizer=tokenizer,
-                    temperature=generation_temperature,
-                    top_p=generation_top_p,
-                    skip_special_tokens=generation_skip_special_tokens,
-                    prompt=generation_prompt,
-                    top_k=generation_top_k,  # NEW: Pass top_k parameter
-                    repetition_penalty=generation_repetition_penalty  # NEW: Pass repetition penalty
-                )
-                logger.info(f" Generation test complete\n")
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
-            # Step-based checkpoint saving
-            if save_steps > 0 and global_step % save_steps == 0 and checkpoint_manager is not None:
+                    if use_scaler:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+
+                    optimizer.zero_grad()
+                    scheduler.step()
+
+                # Track metrics
+                loss_value = loss.item() * gradient_accumulation_steps
+                total_loss += loss_value
+                num_batches += 1
+                global_step += 1
+
+                if metrics_tracker is not None:
+                    metrics_tracker.update(
+                        global_step,
+                        loss=loss_value,
+                        lr=optimizer.param_groups[0]['lr']
+                    )
+
+                # Log progress and check gradients
+                if batch_idx % log_interval == 0 and logger is not None:
+                    avg_loss = total_loss / num_batches
+                    # Get actual batch size from the batch
+                    current_bs = input_ids.shape[0]
+                    # Get dynamic total if available
+                    total_batches = prefetcher.get_dynamic_total()
+                    logger.info(
+                        f"Epoch {epoch + 1} | Batch {batch_idx}/{total_batches} | "
+                        f"BS: {current_bs} | Loss: {loss_value:.4f} | Avg Loss: {avg_loss:.4f} | "
+                        f"LR: {optimizer.param_groups[0]['lr']:.2e}"
+                    )
+                    # Check gradients after optimizer step
+                    if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        grad_stats = check_gradients(model, logger)
+                        if metrics_tracker is not None:
+                            metrics_tracker.log_gradients(global_step, grad_stats)
+
+                # Generation testing during training
+                if generate_every_n_steps and generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
+                    logger.info(f"\n Testing generation at step {global_step}...")
+                    generate_sample(
+                        model, device, vocab_size,
+                        max_length=generation_max_length,
+                        num_samples=num_generations_per_step,
+                        logger=logger,
+                        tokenizer=tokenizer,
+                        temperature=generation_temperature,
+                        top_p=generation_top_p,
+                        skip_special_tokens=generation_skip_special_tokens,
+                        prompt=generation_prompt,
+                        top_k=generation_top_k,
+                        repetition_penalty=generation_repetition_penalty
+                    )
+                    logger.info(f" Generation test complete\n")
+
+                # Step-based checkpoint saving
+                if save_steps > 0 and global_step % save_steps == 0 and checkpoint_manager is not None:
+                    if logger is not None:
+                        logger.info(f" Saving checkpoint at step {global_step}...")
+                    checkpoint_manager.save(model, optimizer, epoch, global_step, {'step_loss': loss_value})
+                    if logger is not None:
+                        logger.info(f" Checkpoint saved at step {global_step}")
+
+                # Update progress bar total if using dynamic batching
+                new_total = prefetcher.get_dynamic_total()
+                if pbar.total != new_total:
+                    pbar.total = new_total
+                    pbar.refresh()
+
+                pbar.set_postfix({'loss': f'{loss_value:.4f}'})
+                pbar.update(1)
+
+            except Exception as e:
                 if logger is not None:
-                    logger.info(f" Saving checkpoint at step {global_step}...")
-                checkpoint_manager.save(model, optimizer, epoch, global_step, {'step_loss': loss_value})
-                if logger is not None:
-                    logger.info(f" Checkpoint saved at step {global_step}")
+                    logger.error(f"Error in batch {batch_idx}: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                pbar.update(1)
+                continue
 
-            pbar.set_postfix({'loss': f'{loss_value:.4f}'})
-
-        except Exception as e:
-            if logger is not None:
-                logger.error(f"Error in batch {batch_idx}: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-            continue
+    finally:
+        # Always stop prefetcher to clean up background thread
+        prefetcher.stop()
+        pbar.close()
 
     avg_epoch_loss = total_loss / max(num_batches, 1)
     return avg_epoch_loss
@@ -1244,6 +1696,7 @@ def validate(
     val_loader: DataLoader,
     device: torch.device,
     use_amp: bool = True,
+    amp_dtype: torch.dtype = torch.bfloat16,
     logger: Optional[logging.Logger] = None,
 ) -> float:
     """Validate model."""
@@ -1262,7 +1715,7 @@ def validate(
                 attention_mask = batch['attention_mask'].to(device)
 
                 if use_amp:
-                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                    with torch.autocast(device_type='cuda', dtype=amp_dtype):
                         outputs = model(input_ids, attention_mask, labels)
                         loss = outputs['loss']
                 else:
@@ -1351,33 +1804,51 @@ def main(args):
     # Training configuration with defaults
     training_config = config.get('training', {})
 
+    # Extract nested config sections (supports both flat and nested structure)
+    batching_config = training_config.get('batching', {})
+    optimizer_cfg = training_config.get('optimizer', {})
+    schedule_config = training_config.get('schedule', {})
+    logging_config = training_config.get('logging', {})
+    validation_config = training_config.get('validation', {})
+    generation_config = training_config.get('generation', {})
+
     # Handle batch_size with dynamic batching support
     # If batch_size is null/None in config, use dynamic_batching.min_batch_size or default 64
-    batch_size = args.batch_size or training_config.get('batch_size')
+    batch_size = args.batch_size or batching_config.get('batch_size') or training_config.get('batch_size')
     if batch_size is None:
-        # Check if dynamic batching is enabled (can be at top-level or under training)
-        db_config = config.get('dynamic_batching', {}) or training_config.get('dynamic_batching', {})
+        # Check if dynamic batching is enabled (can be at top-level, under training, or under training.batching)
+        db_config = (config.get('dynamic_batching', {}) or
+                     training_config.get('dynamic_batching', {}) or
+                     batching_config.get('dynamic_batching', {}))
         if db_config.get('enabled', False):
             batch_size = db_config.get('min_batch_size', 64)
         else:
             batch_size = 8  # Default fallback
-    learning_rate = args.learning_rate or training_config.get('learning_rate', 5e-5)
-    num_epochs = args.epochs or training_config.get('num_epochs', 3)
-    max_steps = training_config.get('max_steps')
-    gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
-    warmup_steps = training_config.get('warmup_steps', 1000)
-    save_steps = training_config.get('save_steps', 1000)  # Save checkpoint every N steps
 
-    # Generation testing configuration
-    generate_every_n_steps = training_config.get('generate_every_n_steps', 500)
-    num_generations_per_step = training_config.get('num_generations_per_step', 1)
-    generation_max_length = training_config.get('generation_max_length', 128)
-    generation_temperature = training_config.get('generation_temperature', 0.7)
-    generation_top_p = training_config.get('generation_top_p', 0.9)
-    generation_top_k = training_config.get('generation_top_k', 50)  # NEW: Top-k sampling
-    generation_repetition_penalty = training_config.get('generation_repetition_penalty', 1.0)  # NEW: Repetition penalty
-    generation_skip_special_tokens = training_config.get('generation_skip_special_tokens', True)
-    generation_prompt = training_config.get('generation_prompt', None)
+    # Learning rate: check optimizer config first (nested), then flat training config
+    learning_rate = args.learning_rate or optimizer_cfg.get('learning_rate') or training_config.get('learning_rate', 5e-5)
+
+    # Schedule settings: check nested schedule config first, then flat training config
+    num_epochs = args.epochs or schedule_config.get('num_epochs') or training_config.get('num_epochs', 3)
+    max_steps = schedule_config.get('max_steps') or training_config.get('max_steps')
+    warmup_steps = schedule_config.get('warmup_steps') or training_config.get('warmup_steps', 1000)
+
+    # Batching settings
+    gradient_accumulation_steps = batching_config.get('gradient_accumulation_steps') or training_config.get('gradient_accumulation_steps', 1)
+
+    # Logging settings: check nested logging config first, then flat training config
+    save_steps = logging_config.get('save_steps') or training_config.get('save_steps', 1000)
+
+    # Generation testing configuration (check nested generation config first)
+    generate_every_n_steps = generation_config.get('every_n_steps') or training_config.get('generate_every_n_steps', 500)
+    num_generations_per_step = generation_config.get('num_per_step') or training_config.get('num_generations_per_step', 1)
+    generation_max_length = generation_config.get('max_length') or training_config.get('generation_max_length', 128)
+    generation_temperature = generation_config.get('temperature') or training_config.get('generation_temperature', 0.7)
+    generation_top_p = generation_config.get('top_p') or training_config.get('generation_top_p', 0.9)
+    generation_top_k = generation_config.get('top_k') or training_config.get('generation_top_k', 50)
+    generation_repetition_penalty = generation_config.get('repetition_penalty') or training_config.get('generation_repetition_penalty', 1.0)
+    generation_skip_special_tokens = generation_config.get('skip_special_tokens', training_config.get('generation_skip_special_tokens', True))
+    generation_prompt = generation_config.get('prompt') or training_config.get('generation_prompt', None)
 
     # Data configuration
     data_config = config.get('data', {})
@@ -1422,8 +1893,49 @@ def main(args):
 
     # Performance configuration
     perf_config = config.get('performance', {})
-    mixed_precision = perf_config.get('float32_matmul_precision', 'high') if 'float32_matmul_precision' in perf_config else 'high'
-    use_amp = True  # Always use mixed precision with bfloat16
+    training_config = config.get('training', {})
+
+    # Get precision config (new subcategory containing mixed_precision and quantization)
+    precision_config = training_config.get('precision', {})
+
+    # Get mixed precision - check both new (training.precision.mixed_precision) and old (training.mixed_precision) paths
+    mixed_precision_setting = precision_config.get('mixed_precision', training_config.get('mixed_precision', 'bf16'))
+
+    # Validate and determine dtype
+    valid_precisions = ['bf16', 'fp16', 'fp32', 'no']
+    if mixed_precision_setting not in valid_precisions:
+        if rank == 0:
+            logger.warning(f"   Invalid mixed_precision '{mixed_precision_setting}', valid options: {valid_precisions}. Defaulting to 'bf16'")
+        mixed_precision_setting = 'bf16'
+
+    # Determine dtype and whether to use AMP
+    if mixed_precision_setting == 'bf16':
+        amp_dtype = torch.bfloat16
+        use_amp = True
+    elif mixed_precision_setting == 'fp16':
+        amp_dtype = torch.float16
+        use_amp = True
+    else:  # fp32 or 'no'
+        amp_dtype = torch.float32
+        use_amp = False
+
+    # Get quantization config - check both new (training.precision.quantization) and old (training.quantization) paths
+    quant_config = precision_config.get('quantization', training_config.get('quantization', {}))
+    quant_enabled = quant_config.get('enabled', False)
+    quant_type = quant_config.get('type', 'none').lower() if quant_enabled else 'none'
+
+    # Validate quantization type
+    valid_quant_types = ['none', 'int8', 'nf4', 'nvfp4', 'fp4']
+    if quant_enabled and quant_type not in valid_quant_types:
+        if rank == 0:
+            logger.warning(f"   Invalid quantization type '{quant_type}', valid options: {valid_quant_types}. Disabling quantization.")
+        quant_enabled = False
+        quant_type = 'none'
+
+    if rank == 0:
+        logger.info(f"   Mixed precision: {mixed_precision_setting} (use_amp={use_amp})")
+        if quant_enabled:
+            logger.info(f"   Quantization: {quant_type}")
 
     # Logging configuration - check both 'logging' and 'wandb' sections
     logging_config = config.get('logging', {})
@@ -1474,11 +1986,28 @@ def main(args):
     )
 
     model = EnhancedMoEModel(moe_config)
+
+    # Apply quantization if enabled (before moving to device)
+    if quant_enabled:
+        if rank == 0:
+            logger.info(f"   Applying {quant_type} quantization...")
+        model = apply_quantization(model, quant_config, logger if rank == 0 else None)
+
     model = model.to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
     if rank == 0:
         logger.info(f"   Parameters: {total_params:,} ({total_params/1e6:.1f}M)")
+        if quant_enabled:
+            # Estimate memory savings based on quantization type
+            if quant_type == 'int8':
+                bytes_per_param = 1
+            elif quant_type in ['nf4', 'nvfp4', 'fp4']:
+                bytes_per_param = 0.5
+            else:
+                bytes_per_param = 4
+            estimated_memory_mb = total_params * bytes_per_param / (1024 * 1024)
+            logger.info(f"   {quant_type.upper()} estimated weight memory: {estimated_memory_mb:.1f}MB")
 
     # Wrap in DDP if distributed
     if world_size > 1 and DISTRIBUTED_AVAILABLE:
@@ -1490,15 +2019,23 @@ def main(args):
     if rank == 0:
         logger.info(f"\n Setting up optimizer and scheduler...")
 
-    # Get optimizer type from config
-    optimizer_type = training_config.get('optimizer', 'adamw').lower()
-    weight_decay = training_config.get('weight_decay', 0.01)
+    # Get optimizer settings from config (supports both flat and nested structure)
+    optimizer_config = training_config.get('optimizer', {})
+    if isinstance(optimizer_config, dict):
+        # New nested structure: training.optimizer.type, training.optimizer.weight_decay, etc.
+        optimizer_type = optimizer_config.get('type', 'adamw').lower()
+        weight_decay = optimizer_config.get('weight_decay', training_config.get('weight_decay', 0.01))
+        lion_betas = optimizer_config.get('lion_betas', [0.9, 0.99])
+    else:
+        # Old flat structure: training.optimizer = 'lion'
+        optimizer_type = str(optimizer_config).lower()
+        weight_decay = training_config.get('weight_decay', 0.01)
+        lion_betas = training_config.get('lion_betas', [0.9, 0.99])
 
     if optimizer_type == 'lion':
         # Import Lion optimizer
         try:
             from lion_pytorch import Lion
-            lion_betas = training_config.get('lion_betas', [0.9, 0.99])
             optimizer = Lion(model.parameters(), lr=learning_rate, betas=tuple(lion_betas), weight_decay=weight_decay)
             if rank == 0:
                 logger.info(f"   Optimizer: Lion (lr={learning_rate:.2e}, betas={lion_betas})")
@@ -1569,11 +2106,13 @@ def main(args):
         if rank == 0:
             logger.warning(f"DataLoaderManager failed ({e}), falling back to create_dataloaders: {e}")
 
-        # Extract dynamic_batching config for fallback loader (can be at top-level or under training)
+        # Extract dynamic_batching config for fallback loader (can be at top-level, under training, or under training.batching)
         dynamic_batching_config = None
         if isinstance(config, dict):
-            # Check both locations for dynamic_batching config
-            db_config = config.get('dynamic_batching') or config.get('training', {}).get('dynamic_batching', {})
+            # Check all possible locations for dynamic_batching config
+            db_config = (config.get('dynamic_batching') or
+                         config.get('training', {}).get('dynamic_batching', {}) or
+                         config.get('training', {}).get('batching', {}).get('dynamic_batching', {}))
             if db_config and db_config.get('enabled', False):
                 dynamic_batching_config = db_config
                 if rank == 0:
@@ -1664,7 +2203,8 @@ def main(args):
             epoch=epoch,
             log_interval=args.log_interval,
             gradient_accumulation_steps=gradient_accumulation_steps,
-            use_amp=True,
+            use_amp=use_amp,
+            amp_dtype=amp_dtype,
             logger=logger if rank == 0 else None,
             metrics_tracker=metrics_tracker if rank == 0 else None,
             vocab_size=vocab_size,
@@ -1687,8 +2227,8 @@ def main(args):
 
         # Validate
         if (epoch + 1) % args.val_interval == 0:
-            val_loss = validate(model, val_loader, device, use_amp=True,
-                              logger=logger if rank == 0 else None)
+            val_loss = validate(model, val_loader, device, use_amp=use_amp,
+                              amp_dtype=amp_dtype, logger=logger if rank == 0 else None)
 
             if rank == 0:
                 logger.info(f" Validation Loss: {val_loss:.4f}")

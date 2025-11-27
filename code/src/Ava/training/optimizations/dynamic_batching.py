@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import time
 
 logger = logging.getLogger(__name__)
+logger.propagate = False  # Prevent duplicate logs
 
 
 @dataclass
@@ -164,9 +165,8 @@ class DynamicBatchScheduler:
         """
         Calculate new batch size based on memory utilization
 
-        increase_factor and decrease_factor are INTEGER MULTIPLIERS:
-        - increase_factor: 2 means target 2x min_batch_size (e.g., 64 with min_bs=32)
-        - decrease_factor: 1 means target 1x min_batch_size (minimum)
+        increase_factor: max multiplier to increase to (e.g., 3 = up to 3x min_batch_size)
+        decrease_factor: ignored (always decrease by 1 step)
 
         Batch sizes are always multiples of min_batch_size (32, 64, 96, etc.)
 
@@ -175,6 +175,7 @@ class DynamicBatchScheduler:
         """
         min_bs = self.config.min_batch_size
         current_multiplier = self.current_batch_size // min_bs  # Integer multiplier
+        max_multiplier = self.config.max_batch_size // min_bs
 
         # Critical memory - decrease to minimum immediately
         if memory_utilization > self.config.critical_memory_threshold:
@@ -186,11 +187,9 @@ class DynamicBatchScheduler:
             new_multiplier = max(1, current_multiplier - 1)
             reason = f"HIGH memory {memory_utilization:.1%}"
 
-        # Low memory - increase by 1 multiplier step (up to increase_factor)
+        # Low memory - increase by 1 multiplier step (up to max_multiplier)
         elif memory_utilization < self.config.low_memory_threshold:
-            target_multiplier = int(self.config.increase_factor)
-            max_multiplier = self.config.max_batch_size // min_bs
-            new_multiplier = min(current_multiplier + 1, target_multiplier, max_multiplier)
+            new_multiplier = min(current_multiplier + 1, max_multiplier)
             reason = f"LOW memory {memory_utilization:.1%}"
 
         # Target range - no change
@@ -300,16 +299,16 @@ class DynamicBatchScheduler:
             logger.info("Dynamic batching: No statistics available")
             return
 
-        logger.info("=" * 60)
-        logger.info("Dynamic Batching Summary")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
+        logger.info("DYNAMIC BATCHING SUMMARY")
+        logger.info("=" * 70)
         logger.info(f"Original batch size: {stats['original_batch_size']}")
         logger.info(f"Final batch size: {stats['current_batch_size']}")
         logger.info(f"Batch size range: [{stats['min_batch_size_reached']}, {stats['max_batch_size_reached']}]")
         logger.info(f"Total adjustments: {stats['total_adjustments']} ({stats['total_increases']} increases, {stats['total_decreases']} decreases)")
         logger.info(f"Avg memory utilization: {stats['avg_memory_utilization']:.1%}")
         logger.info(f"Batch size improvement: {stats['batch_size_improvement']:+.1f}%")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
 
     def reset(self):
         """Reset scheduler to initial state"""
@@ -341,8 +340,9 @@ def create_dynamic_batch_scheduler(config_dict: Dict[str, Any]) -> DynamicBatchS
     # Extract dynamic batching config
     db_config = config_dict.get('dynamic_batching', {})
 
-    # Get initial batch size from training config
-    initial_batch_size = config_dict.get('training', {}).get('batch_size', 128)
+    # Get initial batch size - use min_batch_size from dynamic_batching config
+    # (training.batch_size may be null when dynamic batching is enabled)
+    initial_batch_size = db_config.get('min_batch_size', 32)
 
     # Create config
     config = DynamicBatchConfig(

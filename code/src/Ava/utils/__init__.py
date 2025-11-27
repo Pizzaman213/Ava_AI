@@ -2,66 +2,51 @@
 Utility Module
 
 General utility functions for the Ava training framework.
-
-Components:
-- checkpoint: Checkpoint saving and loading
-- gpu_memory: GPU memory management
-
-Note: Logging utilities have been moved to Ava.logging module.
-      This module re-exports them for backward compatibility.
 """
 
-# Re-export logging utilities from new location for backward compatibility
-from ..logging import (
-    setup_logging,
+from .paths import get_project_root, resolve_path
+
+# Colored logging utilities
+from .colored_logging import (
+    ColoredFormatter,
+    CleanFormatter,
+    Colors,
+    setup_colored_logging,
+    configure_root_logger,
     get_logger,
-    AsyncLogger,
+    supports_color,
+    print_header,
+    print_success,
+    print_warning,
+    print_error,
+    print_info,
 )
 
-# Import from async_logging module to get the configs
-try:
-    from ..logging.async_logging import (
-        AsyncLoggingConfig,
-        AsyncLoggingContext,
-        create_fast_logging_config,
-        create_comprehensive_logging_config,
-        create_minimal_logging_config
-    )
-except ImportError:
-    # Fallback for compatibility
-    AsyncLoggingConfig = None
-    AsyncLoggingContext = None
-    create_fast_logging_config = None
-    create_comprehensive_logging_config = None
-    create_minimal_logging_config = None
+# Provide stub functions for removed modules
+def register_cleanup_handlers(*args, **kwargs):
+    """Stub for removed cleanup handler registration."""
+    pass
 
-from .checkpoint import save_checkpoint, load_checkpoint
-from .gpu_memory import (
-    GPUMemoryManager, get_memory_manager,
-    cleanup_gpu_memory, register_cleanup_handlers,
-    get_memory_stats, monitor_memory
-)
+def cleanup_gpu_memory(*args, **kwargs):
+    """Stub for removed GPU memory cleanup."""
+    pass
 
 __all__ = [
-    # Checkpoint utilities
-    "save_checkpoint",
-    "load_checkpoint",
-
-    # GPU Memory Management
-    "GPUMemoryManager",
-    "get_memory_manager",
-    "cleanup_gpu_memory",
-    "register_cleanup_handlers",
-    "get_memory_stats",
-    "monitor_memory",
-
-    # Logging (re-exported from Ava.logging for backward compatibility)
-    "setup_logging",
+    "get_project_root",
+    "resolve_path",
     "get_logger",
-    "AsyncLogger",
-    "AsyncLoggingConfig",
-    "AsyncLoggingContext",
-    "create_fast_logging_config",
-    "create_comprehensive_logging_config",
-    "create_minimal_logging_config"
+    "register_cleanup_handlers",
+    "cleanup_gpu_memory",
+    # Colored logging
+    "ColoredFormatter",
+    "CleanFormatter",
+    "Colors",
+    "setup_colored_logging",
+    "configure_root_logger",
+    "supports_color",
+    "print_header",
+    "print_success",
+    "print_warning",
+    "print_error",
+    "print_info",
 ]
