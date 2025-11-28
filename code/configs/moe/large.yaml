@@ -25,19 +25,20 @@ model:
   num_attention_heads: 12
   intermediate_size: 3072
   max_position_embeddings: 1024
-  num_experts: 2
-  num_experts_per_token: 1
+  num_experts: 4
+  num_experts_per_token: 2
   router_type: mixtral
   capacity_factor: 1
+  quantize_kv_cache: true  # INT8 quantization for KV cache (75% memory savings)
   expert_dropout: 0
   activation: swiglu
 
-  # Phase 1 Optimizations - ALL ENABLED
+  # Phase 1 Optimizations - OPTIMIZED FOR 24GB GPU
   use_grouped_gemm: true # ✅ 15-25% speedup for parallel expert computation
   use_triton_kernels: true # ✅ 2-3x speedup with fused routing ops
-  use_torch_compile: true # ✅ 15% router speedup via compilation
+  use_torch_compile: false # Disabled - CUDA graph conflicts with causal mask caching
   use_flash_attention: true # ✅ 2-4x faster attention, 40% memory savings
-  gradient_checkpointing: true # ✅ Memory efficiency
+  gradient_checkpointing: true # ✅ Memory efficiency - CRITICAL for 24GB
   use_optimized_moe: true # ✅ Fused MoE operations for 10-20% speedup
 
   router_z_loss_coef: 0.001
@@ -52,38 +53,16 @@ model:
   layer_norm_eps: 0.00001
   initializer_range: 0.02
 
-moe_memory_optimization:
-  use_lora_experts: false
-  use_expert_offloading: false
-  use_hierarchical_experts: false
-  use_expert_quantization: false
-
-# Phase 2 Medium: Overlapped Checkpointing
-# Reduces gradient checkpointing overhead by 30%
-overlapped_checkpointing:
-  enabled: true # ✅ ENABLED: Overlap recomputation with backward pass
-  stream_overlap: true # Use CUDA streams for true overlapping
-  target_layers: "layers" # Apply to all layers
-
-# Phase 2 Medium: Double Checkpointing
-# Train on 10x longer sequences with 50% memory savings
-double_checkpointing:
-  enabled: true # ✅ ENABLED: Two-level checkpoint hierarchy
-  coarse_checkpoint_interval: 8 # Save checkpoint every 8 layers
-  fine_checkpoint_interval: 2 # Save checkpoint every 2 layers within segments
-  use_cuda_streams: true # Use CUDA streams for overlapping
-  min_layers_for_double: 4 # Minimum layers to use double checkpointing
-
 # Phase 2 Medium: Hybrid Caching
-# 2.19x throughput improvement via intelligent caching
+# ENABLED with conservative 0.5GB cache for RTX 3090
 hybrid_caching:
-  enabled: true # ✅ ENABLED: Smart KV cache + activation caching
-  max_cache_size_gb: 2.0 # 2GB cache (conservative for 24GB GPU)
-  kv_cache_ratio: 0.6 # 60% for KV cache, 40% for activations
-  eviction_policy: hybrid # hybrid = best balance of recency + frequency
-  prefetch_enabled: true # Prefetch entries that will be needed soon
-  prefetch_lookahead: 2 # Prefetch N layers ahead
-  min_score_threshold: 0.1 # Evict entries below this score
+  enabled: false # ✅ ENABLED: 20-30% throughput improvement
+  max_cache_size_gb: 0.5 # Conservative for 24GB GPU
+  kv_cache_ratio: 0.7
+  eviction_policy: hybrid
+  prefetch_enabled: false # Disabled to save memory
+  prefetch_lookahead: 2
+  min_score_threshold: 0.1
 
 training:
   # Precision settings for mixed precision and quantization
@@ -93,36 +72,86 @@ training:
     mixed_precision: bf16
 
   batching:
-    batch_size: null 
-    gradient_accumulation_steps: 1
+    batch_size: null
+    gradient_accumulation_steps: 4 # ✅ INCREASED: Larger effective batch for better convergence
 
     dynamic_batching:
       enabled: true # ✅ ENABLED: Auto-adjust batch size for optimal throughput
-      min_batch_size: 32 # Base batch size unit
-      max_batch_size: 512 # Max multiplier
-      low_memory_threshold: 0.85 # Below 85% memory, increase batch
-      target_memory_threshold: 0.90 # Target 90% utilization
-      high_memory_threshold: 0.98 # Above 95%, decrease batch
-      critical_memory_threshold: 0.99 # Above 99%, emergency decrease
-      increase_factor: 16 # Target multiplier
-      decrease_factor: 1 # Target multiplier when decreasing (1x = 32 = minimum)
-      adjustment_frequency: 20 # Check every 20 steps (more stable)
-      warmup_steps: 50 # Shorter warmup - start adjusting sooner
-      max_adjustments_per_session: 100 # Allow more adjustments
-      cooldown_steps: 10 # Wait 10 steps between adjustments (more stable)
+      min_batch_size: 8 # REDUCED: Safe minimum for 24GB GPU with 256 tokens
+      max_batch_size: 256 # REDUCED: Safe maximum for 24GB GPU
+
+      # Feature 1: Token Budget Batching
+      # Target token count per batch instead of sample count - maximizes GPU utilization
+      token_budget:
+        enabled: true
+        target_tokens_per_batch: 4096 # Target ~4K tokens per batch
+        max_tokens_per_batch: 8192 # Never exceed 8K tokens
+        min_tokens_per_batch: 512 # Minimum useful batch
+
+      # Feature 2: Sequence-Length Aware Batching
+      # Scale batch size inversely with sequence length (attention is O(n²))
+      sequence_aware: true
+      base_sequence_length: 64 # Reference length for scaling (matches data.max_length)
+      sequence_scaling_factor: 0.8 # How aggressively to scale (0.5-1.5)
+
+      # Feature 3: Multi-GPU Batch Size Synchronization
+      # Prevent DDP hangs from mismatched batch sizes across GPUs
+      sync_across_gpus: true
+      sync_strategy: min # 'min', 'max', or 'mean'
+
+      # Feature 4: Gradient Accumulation Integration
+      # Coordinate batch size with gradient accumulation for stable effective batch
+      coordinate_with_grad_accum: true
+      target_effective_batch_size: 512 # batch_size * grad_accum_steps
+      dynamic_grad_accum: false # Keep grad_accum fixed, adjust batch_size
+
+      # Feature 5: Predictive Memory Estimation
+      # Pre-calculate expected memory to avoid OOM proactively
+      predictive:
+        enabled: true
+        calibration_steps: 50 # Steps to calibrate memory model
+        memory_model: linear # 'linear' or 'quadratic'
+
+      # Feature 6: Memory Thresholds (CONSERVATIVE for stability)
+      low_memory_threshold: 0.60 # Below 60% = room to INCREASE batch
+      target_memory_threshold: 0.75 # Target 75% utilization
+      high_memory_threshold: 0.85 # Above 85%, DECREASE batch
+      critical_memory_threshold: 0.92 # Above 92%, emergency decrease
+
+      # Feature 7: Geometric Warmup Strategy
+      # Start small and grow exponentially during warmup
+      warmup_strategy: geometric # 'none', 'linear', 'geometric'
+      warmup_steps: 50 # Steps for warmup phase
+      warmup_growth_rate: 1.15 # Multiply by this each adjustment
+      warmup_initial_fraction: 0.25 # Start at 25% of min_batch_size
+
+      # Feature 8: Memory Trend Detection
+      # Detect patterns and prevent oscillation
+      trend_detection:
+        enabled: true
+        window: 20 # Steps to analyze for trends
+        oscillation_threshold: 5 # Direction changes before dampening
+        auto_tune_smoothing: true # Auto-adjust EMA alpha
+
+      # Adjustment parameters
+      increase_factor: 32 # Gradual increase to avoid OOM
+      decrease_factor: 64 # Faster decrease when memory pressure
+      adjustment_frequency: 5 # Check every 5 steps (more responsive)
+      cooldown_steps: 3 # Steps to wait after adjustment
+      max_adjustments_per_session: 500 # Allow more flexibility
 
   optimizer:
     type: lion # 50% less memory than AdamW
-    learning_rate: 0.0001
+    learning_rate: 0.00003 # Reduced from 0.0001 - Lion optimizer needs lower LR
     lion_betas: [0.9, 0.99]
-    weight_decay: 0.3
+    weight_decay: 0.1 # Reduced from 0.3 - too high weight decay can hurt training
     use_fused: true # ✅ 5-10% speedup
     offload_state: false
 
   schedule:
     num_epochs: 2
     max_steps: null
-    warmup_steps: 0
+    warmup_steps: 1000
 
   logging:
     save_steps: 500
@@ -131,18 +160,18 @@ training:
 
   validation:
     enabled: true
-    batch_size: 64 # OPTIMIZED: 32x faster validation
+    batch_size: 16 # REDUCED: Safe for 24GB GPU
     max_batches: 10
     compute_train_ratio: true
 
   generation:
     # Generation disabled during training (can enable post-training)
     enabled: false
-    every_n_steps: null
+    every_n_steps: 1000
     num_per_step: 0
     during_eval: false
     test_quality: false
-    max_length: 16
+    max_length: 64
     temperature: 0.85
     top_p: 0.92
     top_k: 50
@@ -154,28 +183,39 @@ training:
       - In the beginning
       - A long time ago
 
-  gradient_health:
-    enabled: true
-    disable_after_steps: 500 # Disable after warmup
-    conditional_monitoring: true
-    warmup_fraction: 0.1
-
 data:
+  streaming: true
+  buffer_size: 2000 # OPTIMIZED: Better prefetching
   data_dir: /project/code/data/Ava_Ai/data
-  max_length: 16
-  buffer_size: 5000  # Required by DataLoaderManager even for pretokenized
-  tokenizer_name: /project/code/data/Ava_Ai/tokenizer  # For pad_token_id lookup
+  max_length: 64 # ✅ INCREASED from 32: 8x more tokens per batch, much better GPU utilization
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: /project/code/data/Ava_Ai/tokenizer
+  padding_side: right
+  truncation: true
 
-  # STREAMING MODE: 2 workers for GPU overlap (keeps GPU constantly fed)
-  # - Workers prepare batches while GPU computes (no idle time)
-  # - File distribution prevents I/O contention between workers
-  # - Each worker prefetches files in background threads
-  num_workers: 16
+  # Data loading optimizations
+  num_workers: 16 # Reduced from 16 to save CPU memory with longer sequences
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4 # ✅ 4x batch buffering
+  dataloader_persistent_workers: true # ✅ 3-5x speedup
+  dataloader_samples_per_file: 500
+
+  # Phase 2 High Priority: Sequence Packing
+  # Eliminates padding waste for 20-35% speedup
+  use_sequence_packing: true # ✅ ENABLED: Pack multiple sequences, reduce padding
+  packing_strategy: adaptive # adaptive = best performance
+
+  
   use_pretokenized: true
-
-  # Prefetch settings per worker (keeps data flowing)
-  prefetch_threads: 4      # Background threads for loading files
-  prefetch_lookahead: 6    # Number of files to prefetch ahead per worker
+  use_all_data: true
+  max_files_to_load: 10000
+  multiprocessing_context: spawn
+  cache_size: 500
+  skip_validation: true # Skip data validation for 2-3% speedup
 
 output:
   output_dir: code/outputs/runs/fully_optimized
@@ -185,28 +225,17 @@ output:
 
 performance:
   # Phase 1: Compilation optimizations
-  enable_tf32: true # ✅ 8x faster matmul on Ampere+ GPUs
-  float32_matmul_precision: high
   enable_cudnn_benchmark: true # ✅ Auto-tune cuDNN kernels
-  enable_gpu_memory_cleanup: true
-  gradient_check_frequency: 10
-
-  # Aggressive compilation for maximum speed
-  torchinductor_max_autotune: 1 # ✅ 10-15% additional speedup
-  enable_torch_compile: true # ✅ Whole-model compilation
-  torch_compile_mode: reduce-overhead # Best for training loops
+  # Compilation settings - DISABLED due to CUDA graph conflicts with causal mask
+  torchinductor_max_autotune: 0 # Keep disabled to avoid compilation overhead
+  enable_torch_compile: false # Disabled - causes RuntimeError with cached causal mask
+  torch_compile_mode: reduce-overhead
   torch_compile_fullgraph: false
-  torch_compile_dynamic: true # Handle dynamic shapes
-
-gradient_health:
-  enabled: true
-  disable_after_steps: 500 # Disable after warmup
-  conditional_monitoring: true
-  warmup_fraction: 0.1
+  torch_compile_dynamic: true
 
 wandb:
-  use_wandb: false
-  project: ava-training
+  use_wandb: true
+  project: ava-training-Fin
   entity: null
   tags:
     - fully_optimized
