@@ -124,7 +124,8 @@ class RoPEPositionalEmbedding(nn.Module):
         sin = emb.sin()
 
         # Cache for common sequence lengths (limit cache size to avoid OOM)
-        if len(self._cache) < 100:  # Cache up to 100 different lengths
+        # VRAM OPTIMIZATION: Reduced from 100 to 30 entries (~18MB savings)
+        if len(self._cache) < 30:  # Cache up to 30 different lengths
             self._cache[cache_key] = (cos, sin)
 
         return cos, sin
@@ -598,7 +599,8 @@ class EnhancedMoEModel(nn.Module):
         causal_mask = causal_mask[None, None, :, :]
 
         # Cache it (limit cache size to avoid OOM)
-        if len(self._causal_mask_cache) < 50:  # Cache up to 50 different configs
+        # VRAM OPTIMIZATION: Reduced from 50 to 15 entries (~250MB savings for 2048 seq)
+        if len(self._causal_mask_cache) < 15:  # Cache up to 15 different configs
             self._causal_mask_cache[cache_key] = causal_mask
 
         return causal_mask
@@ -614,6 +616,27 @@ class EnhancedMoEModel(nn.Module):
         elif isinstance(module, nn.LayerNorm):
             torch.nn.init.ones_(module.weight)
             torch.nn.init.zeros_(module.bias)
+
+    def clear_caches(self) -> None:
+        """
+        Clear internal caches to free VRAM.
+
+        Call periodically during training (e.g., every 500 steps) to prevent
+        memory fragmentation and reduce VRAM usage.
+
+        Clears:
+        - Causal attention mask cache
+        - RoPE positional embedding cache (in attention layers)
+        """
+        # Clear causal mask cache
+        if hasattr(self, '_causal_mask_cache'):
+            self._causal_mask_cache.clear()
+
+        # Clear RoPE cache in each attention layer
+        for layer in self.layers:
+            if hasattr(layer, 'attention') and hasattr(layer.attention, 'rope'):
+                if hasattr(layer.attention.rope, '_cache'):
+                    layer.attention.rope._cache.clear()
 
     def forward(
         self,

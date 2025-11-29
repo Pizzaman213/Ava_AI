@@ -64,18 +64,61 @@ moe_memory_optimization:
 # Settings for 200M MoE model on 48GB VRAM per GPU
 dynamic_batching:
   enabled: true # ✅ ENABLED: Auto-adjust batch size for optimal throughput
-  min_batch_size: 64 # Conservative for 200M model
-  max_batch_size: 256 # Max for 200M model with 48GB VRAM
-  low_memory_threshold: 0.55 # Below 55% memory, increase batch
-  target_memory_threshold: 0.75 # Target 75% utilization (higher than 24GB)
-  high_memory_threshold: 0.88 # Above 88%, decrease batch
-  critical_memory_threshold: 0.95 # Above 95%, emergency decrease
-  increase_factor: 1.25 # Increase by 25% (more aggressive)
-  decrease_factor: 0.8 # Decrease by 20%
-  adjustment_frequency: 10 # Check every 10 steps
-  warmup_steps: 100 # Don't adjust during first 100 steps
-  max_adjustments_per_session: 50 # Max 50 adjustments
-  cooldown_steps: 5 # Wait 5 steps between adjustments
+  min_batch_size: 8 # Finer granularity (48GB allows more headroom)
+  max_batch_size: 512 # Higher max for 48GB VRAM per GPU
+
+  # Token Budget Batching - target tokens instead of samples
+  token_budget:
+    enabled: true
+    target_tokens_per_batch: 8192 # Higher target for 48GB GPU
+    max_tokens_per_batch: 32768 # Allow more tokens
+    min_tokens_per_batch: 1024
+
+  # Sequence-Aware (disabled - conflicts with token-budget)
+  sequence_aware: false
+  base_sequence_length: 128
+  sequence_scaling_factor: 0.8
+
+  # Multi-GPU Sync - CRITICAL for 4-GPU setup
+  sync_across_gpus: true
+  sync_strategy: min # Safest for DDP
+
+  # Gradient Accumulation Integration
+  coordinate_with_grad_accum: true
+  target_effective_batch_size: 1024 # Higher for 4-GPU
+  dynamic_grad_accum: false
+
+  # Predictive Memory Estimation
+  predictive:
+    enabled: true
+    calibration_steps: 50
+    memory_model: linear
+
+  # Memory Thresholds (slightly more aggressive for 48GB)
+  low_memory_threshold: 0.50
+  target_memory_threshold: 0.78 # Slightly higher target
+  high_memory_threshold: 0.88
+  critical_memory_threshold: 0.95
+
+  # Geometric Warmup
+  warmup_strategy: geometric
+  warmup_steps: 100
+  warmup_growth_rate: 1.2
+  warmup_initial_fraction: 0.25
+
+  # Trend Detection
+  trend_detection:
+    enabled: true
+    window: 20
+    oscillation_threshold: 5
+    auto_tune_smoothing: true
+
+  # Adjustment parameters (optimized for multi-GPU stability)
+  increase_factor: 8
+  decrease_factor: 16
+  adjustment_frequency: 25
+  cooldown_steps: 10
+  max_adjustments_per_session: 500
 
 # Phase 2 Medium: Overlapped Checkpointing
 overlapped_checkpointing:
@@ -210,8 +253,6 @@ performance:
   enable_tf32: true # ✅ 8x faster matmul on Ampere GPUs (A6000)
   float32_matmul_precision: high
   enable_cudnn_benchmark: true # ✅ Auto-tune cuDNN kernels
-  enable_gpu_memory_cleanup: true
-  gradient_check_frequency: 10
 
   # Aggressive compilation for maximum speed
   torchinductor_max_autotune: 1 # ✅ 10-15% additional speedup
@@ -220,14 +261,7 @@ performance:
   torch_compile_fullgraph: false
   torch_compile_dynamic: true # Handle dynamic shapes
 
-gradient_health:
-  enabled: true
-  disable_after_steps: 500 # Disable after warmup
-  conditional_monitoring: true
-  warmup_fraction: 0.1
-
 optimizations:
-  gradient_health_monitoring: true
   torchinductor_autotune: 1 # ✅ Aggressive autotuning
 
   memory_headroom_gb: 2 # 2GB headroom per GPU (8GB total)

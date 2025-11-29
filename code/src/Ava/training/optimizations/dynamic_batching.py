@@ -413,6 +413,8 @@ class DynamicBatchScheduler:
             logger.info(f"Total GPU memory: {self.total_memory / 1e9:.2f} GB")
             logger.info(f"Initial batch size: {self.current_batch_size}")
             logger.info(f"Batch size range: [{config.min_batch_size}, {config.max_batch_size}]")
+            logger.info(f"Thresholds: low={config.low_memory_threshold:.0%}, target={config.target_memory_threshold:.0%}, high={config.high_memory_threshold:.0%}")
+            logger.info(f"Adjustment: freq={config.adjustment_frequency}, cooldown={config.cooldown_steps}, warmup={config.warmup_steps}")
 
             # Log enabled features
             features = []
@@ -473,21 +475,77 @@ class DynamicBatchScheduler:
             return float(self.config.target_tokens_per_batch)
         return sum(self.tokens_history) / len(self.tokens_history)
 
+    def get_dynamic_token_budget(self) -> int:
+        """
+        AUTOMATIC dynamic token budget based on current memory utilization.
+
+        Automatically adjusts to maximize GPU utilization without manual threshold tuning.
+        Uses a simple proportional controller: more headroom = more tokens.
+
+        Returns:
+            Adjusted target tokens per batch
+        """
+        base_target = self.config.target_tokens_per_batch  # 4096
+        max_target = self.config.max_tokens_per_batch      # 16384
+        min_target = self.config.min_tokens_per_batch      # 512
+
+        # Get current memory utilization
+        if self.smoothed_utilization < 0.01 and torch.cuda.is_available():
+            reserved = torch.cuda.memory_reserved(self.device)
+            raw_util = reserved / self.total_memory if self.total_memory else 0.0
+            if raw_util < 0.01:
+                return base_target
+        else:
+            raw_util = self.smoothed_utilization
+
+        # AUTOMATIC SCALING: Use config thresholds for VRAM targets
+        # If VRAM is below target, we have headroom -> increase tokens
+        # If VRAM is above target, we're tight -> decrease tokens
+        target_vram = self.config.target_memory_threshold  # Use config value
+        safety_max = self.config.critical_memory_threshold  # Use config value
+
+        if raw_util >= safety_max:
+            # Emergency: clear cache and use minimum
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return min_target
+
+        # Calculate how much headroom we have (0 to 1 scale)
+        # headroom = 1.0 means 0% VRAM used, headroom = 0 means at target
+        headroom = max(0, target_vram - raw_util) / target_vram
+
+        # Scale token budget: more headroom = bigger budget
+        # At 0% VRAM -> headroom=1.0 -> max_target
+        # At 80% VRAM -> headroom=0.0 -> base_target
+        # Above 80% -> scale down toward min
+        if raw_util < target_vram:
+            # Below target: scale UP from base toward max
+            target = int(base_target + (max_target - base_target) * headroom)
+        else:
+            # Above target: scale DOWN from base toward min
+            excess = (raw_util - target_vram) / (safety_max - target_vram)
+            target = int(base_target - (base_target - min_target) * excess)
+
+        return max(min_target, min(max_target, target))
+
     def calculate_token_budget_batch_size(self) -> int:
         """
         Calculate batch size to achieve target token budget.
 
+        In token-budget mode, this function is informational only - the actual
+        batch size is determined by the DynamicBatchIterator based on token accumulation.
+
         Returns:
-            Recommended batch size based on token budget
+            Recommended batch size based on token budget (not used in token-budget mode)
         """
         if not self.tokens_history or not self.sequence_lengths:
             return self.current_batch_size
 
-        avg_tokens_per_sample = self.get_avg_tokens_per_batch() / max(1, self.current_batch_size)
-        if avg_tokens_per_sample == 0:
-            avg_tokens_per_sample = self.config.base_sequence_length
+        # Use average sequence length to estimate tokens per sample
+        avg_seq_len = self.avg_sequence_length if self.avg_sequence_length > 0 else self.config.base_sequence_length
 
-        target_batch = int(self.config.target_tokens_per_batch / avg_tokens_per_sample)
+        # Calculate target batch size based on token budget and avg sequence length
+        target_batch = int(self.config.target_tokens_per_batch / avg_seq_len)
 
         # Clamp to valid range
         return max(self.config.min_batch_size,
@@ -701,11 +759,12 @@ class DynamicBatchScheduler:
         reserved = torch.cuda.memory_reserved(self.device)
         peak = torch.cuda.max_memory_allocated(self.device)
 
-        # Use ALLOCATED memory for more stable utilization tracking
-        raw_utilization = allocated / self.total_memory if self.total_memory else 0.0
+        # Use RESERVED memory for utilization - this matches nvidia-smi more closely
+        # allocated only shows PyTorch tensors, reserved includes CUDA caches/workspace
+        raw_utilization = reserved / self.total_memory if self.total_memory else 0.0
 
-        # Also track reserved (includes fragmentation) for safety checks
-        reserved_utilization = reserved / self.total_memory if self.total_memory else 0.0
+        # Track allocated separately for debugging
+        allocated_utilization = allocated / self.total_memory if self.total_memory else 0.0
 
         # Feature 8: Auto-tune smoothing based on oscillation detection
         if self.config.auto_tune_smoothing and self.trend_analyzer:
@@ -733,8 +792,8 @@ class DynamicBatchScheduler:
             'reserved_gb': reserved / 1e9,
             'peak_gb': peak / 1e9,
             'utilization': self.smoothed_utilization,  # Smoothed for increase decisions
-            'raw_utilization': raw_utilization,  # Raw for decrease/safety decisions
-            'reserved_utilization': reserved_utilization  # For fragmentation awareness
+            'raw_utilization': raw_utilization,  # Raw (reserved-based) for decrease/safety decisions
+            'allocated_utilization': allocated_utilization  # Just tensors, for debugging
         }
 
     def should_adjust(self, step: int) -> bool:
@@ -776,13 +835,12 @@ class DynamicBatchScheduler:
         current_multiplier = self.current_batch_size // min_bs
         max_multiplier = self.config.max_batch_size // min_bs
 
-        # Use RAW utilization for safety decisions (immediate response to pressure)
+        # Use RAW utilization for safety decisions (reserved-based, matches nvidia-smi)
         raw_util = mem_stats.get('raw_utilization', 0.0)
-        reserved_util = mem_stats.get('reserved_utilization', 0.0)
         smoothed_util = mem_stats.get('utilization', 0.0)
 
-        # Take the MAX of raw and reserved for safety checks
-        safety_util = max(raw_util, reserved_util)
+        # raw_util is now reserved-based, use directly for safety
+        safety_util = raw_util
 
         # Feature 8: Check trend for preemptive action
         trend = 'unknown'
@@ -829,19 +887,22 @@ class DynamicBatchScheduler:
         new_size = new_multiplier * min_bs
 
         # Feature 2: Apply sequence-length adjustment
+        # Note: Disabled by default when token_budget is enabled (they conflict)
         if self.config.sequence_aware and self.sequence_lengths:
             seq_adjusted = self.get_sequence_adjusted_batch_size()
             if seq_adjusted < new_size:
                 new_size = seq_adjusted
                 reason += f" (seq-adjusted to {new_size})"
 
-        # Feature 1: Consider token budget
-        if self.config.token_budget_enabled and self.tokens_history:
-            token_batch = self.calculate_token_budget_batch_size()
-            # Use the more conservative of the two
-            if token_batch < new_size:
-                new_size = token_batch
-                reason += f" (token-budget to {new_size})"
+        # Feature 1: Token budget mode
+        # When token_budget is enabled, the DynamicBatchIterator controls actual batch size
+        # by accumulating mini-batches until target tokens is reached. The scheduler's
+        # batch size is the mini-batch size, not the actual yielded batch size.
+        # So we skip batch size adjustment logic in token-budget mode.
+        if self.config.token_budget_enabled:
+            # In token-budget mode, don't adjust scheduler batch size
+            # The actual batch size is controlled by token accumulation
+            pass
 
         # Clamp to valid range
         new_size = max(min_bs, min(self.config.max_batch_size, new_size))
@@ -898,6 +959,14 @@ class DynamicBatchScheduler:
 
         # Check if we should adjust
         if not self.should_adjust(step):
+            # Log every 100 steps
+            if step % 100 == 0:
+                raw_util = mem_stats.get('raw_utilization', 0.0)
+                if self.config.token_budget_enabled:
+                    dyn_budget = self.get_dynamic_token_budget()
+                    print(f"[DynBatch] Step {step}: VRAM={raw_util:.0%}, token_budget={dyn_budget}")
+                else:
+                    print(f"[DynBatch] Step {step}: smoothed={utilization:.1%}, raw={raw_util:.1%}, BS={self.current_batch_size}")
             return None
 
         # Calculate new batch size
@@ -909,7 +978,14 @@ class DynamicBatchScheduler:
 
         # Check if adjustment needed
         if new_batch_size == self.current_batch_size:
-            logger.debug(f"Step {step}: {reason}, keeping batch size {new_batch_size}")
+            # Log every 100 steps when we're staying the same
+            if step % 100 == 0:
+                raw_util = mem_stats.get('raw_utilization', 0.0)
+                if self.config.token_budget_enabled:
+                    dyn_budget = self.get_dynamic_token_budget()
+                    print(f"[DynBatch] Step {step}: VRAM={raw_util:.0%}, token_budget={dyn_budget}")
+                else:
+                    print(f"[DynBatch] Step {step}: {reason}, BS={new_batch_size}")
             return None
 
         # Apply adjustment

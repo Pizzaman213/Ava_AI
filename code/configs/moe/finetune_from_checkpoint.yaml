@@ -132,22 +132,13 @@ performance:
   enable_tf32: true
   float32_matmul_precision: high
   enable_cudnn_benchmark: true
-  enable_gpu_memory_cleanup: true
-  gradient_check_frequency: 10
   torchinductor_max_autotune: 1
   enable_torch_compile: true
   torch_compile_mode: reduce-overhead
   torch_compile_fullgraph: false
   torch_compile_dynamic: true
 
-gradient_health:
-  enabled: true
-  disable_after_steps: 500
-  conditional_monitoring: true
-  warmup_fraction: 0.1
-
 optimizations:
-  gradient_health_monitoring: true
   torchinductor_autotune: 1
   memory_headroom_gb: 1
   memory_cleanup_thresholds:

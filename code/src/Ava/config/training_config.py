@@ -331,23 +331,11 @@ class LossConfig:
 
 
 @dataclass
-class GradientHealthConfig:
-    """Configuration for gradient health monitoring."""
-    grad_norm_history: List[float] = field(default_factory=list)  # History of gradient norms
-    grad_norm_pre_clip_history: List[float] = field(default_factory=list)  # Pre-clip norms
-    total_steps: int = 0                      # Total steps tracked
-    explosion_threshold: float = 10.0         # Threshold for gradient explosions
-    recent_explosions: List[int] = field(default_factory=list)  # Recent explosion steps
-    total_explosions: int = 0                 # Total explosions detected
-
-
-@dataclass
 class GradientConfig:
     """Configuration for gradient surgery."""
     gradient_surgery: bool = False            # Enable gradient surgery (disabled by default)
     adaptive_gradient_surgery: bool = False   # Adaptive method selection (disabled by default)
     gradient_surgery_method: str = 'pcgrad'   # Surgery method
-    health_monitoring: GradientHealthConfig = field(default_factory=GradientHealthConfig)  # Gradient health monitoring
 
 
 @dataclass
@@ -693,7 +681,6 @@ class OptimizationsConfig:
     """Configuration for all training optimizations (Phase 1, 2, 3)."""
 
     # Phase 1: Quick Wins
-    gradient_health_monitoring: bool = True    # Enable gradient health monitoring
     torchinductor_autotune: int = 1            # 0=off, 1=basic, 2=aggressive (10-15% speedup)
 
     # Memory Management

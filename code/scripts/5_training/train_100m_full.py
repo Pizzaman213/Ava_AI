@@ -111,6 +111,9 @@ import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
 
+# Global storage for generation history (persists across async calls for WandB logging)
+_GENERATION_HISTORY = []
+
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
@@ -677,18 +680,30 @@ def create_dataloaders(
         train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
         val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
 
+        # Extract token budget settings from config
+        token_budget = dynamic_batching_config.get('token_budget', {})
+        token_budget_enabled = token_budget.get('enabled', False)
+        target_tokens = token_budget.get('target_tokens_per_batch', 4096)
+        max_tokens = token_budget.get('max_tokens_per_batch', 8192)
+
         # Wrap with DynamicBatchIterator
         train_loader = DynamicBatchIterator(
             base_dataloader=train_loader,
             scheduler=train_scheduler,
             min_batch_size=min_batch_size,
             max_batch_size=max_batch_size,
+            token_budget_enabled=token_budget_enabled,
+            target_tokens_per_batch=target_tokens,
+            max_tokens_per_batch=max_tokens,
         )
         val_loader = DynamicBatchIterator(
             base_dataloader=val_loader,
             scheduler=val_scheduler,
             min_batch_size=min_batch_size,
             max_batch_size=max_batch_size,
+            token_budget_enabled=token_budget_enabled,
+            target_tokens_per_batch=target_tokens,
+            max_tokens_per_batch=max_tokens,
         )
 
     return train_loader, val_loader
@@ -1473,7 +1488,7 @@ def async_generate_on_cpu(
                     if gen_logger:
                         gen_logger.info(f"=== Async Generation at Step {global_step} ===")
 
-                    generate_sample(
+                    generated_text = generate_sample(
                         cpu_model,
                         cpu_device,
                         vocab_size,
@@ -1483,6 +1498,64 @@ def async_generate_on_cpu(
 
                     if gen_logger:
                         gen_logger.info("=== Generation Complete ===")
+
+                    # Log to WandB if available
+                    try:
+                        import wandb
+                        import csv
+                        import io
+                        if wandb.run is not None:
+                            global _GENERATION_HISTORY
+                            prompt_text = generation_kwargs.get('prompt', 'N/A')
+
+                            # Add this generation to global history
+                            _GENERATION_HISTORY.append({
+                                "step": global_step,
+                                "prompt": prompt_text[:100] + "..." if len(prompt_text) > 100 else prompt_text,
+                                "text": generated_text[:500] + "..." if len(generated_text) > 500 else generated_text,
+                                "length": len(generated_text) if generated_text else 0
+                            })
+
+                            # Create CSV spreadsheet
+                            csv_buffer = io.StringIO()
+                            writer = csv.writer(csv_buffer)
+                            writer.writerow(["Step", "Prompt", "Generated Text", "Text Length"])
+                            for gen in _GENERATION_HISTORY:
+                                writer.writerow([gen["step"], gen["prompt"], gen["text"], gen["length"]])
+                            csv_content = csv_buffer.getvalue()
+
+                            # Save CSV as artifact (downloadable spreadsheet)
+                            artifact = wandb.Artifact(
+                                name=f"generations-{wandb.run.id}",
+                                type="generations",
+                                description="Generated text samples during training"
+                            )
+                            # Write CSV to temp file and add to artifact
+                            csv_path = f"/tmp/generations_{wandb.run.id}.csv"
+                            with open(csv_path, 'w') as f:
+                                f.write(csv_content)
+                            artifact.add_file(csv_path, name="generations.csv")
+                            wandb.log_artifact(artifact)
+
+                            # Also create WandB Table for inline viewing
+                            gen_table = wandb.Table(columns=["Step", "Prompt", "Generated Text", "Length"])
+                            for gen in _GENERATION_HISTORY:
+                                gen_table.add_data(gen["step"], gen["prompt"], gen["text"], gen["length"])
+
+                            # Log metrics and table
+                            wandb.log({
+                                "generations_spreadsheet": gen_table,
+                                "generation/text_length": len(generated_text) if generated_text else 0,
+                                "generation/count": len(_GENERATION_HISTORY),
+                            }, commit=True)
+
+                            # Store latest in summary
+                            wandb.run.summary["generation/latest_text"] = generated_text
+                            wandb.run.summary["generation/latest_step"] = global_step
+                            wandb.run.summary["generation/total_count"] = len(_GENERATION_HISTORY)
+                    except Exception as e:
+                        if gen_logger:
+                            gen_logger.warning(f"WandB logging failed: {e}")
 
                     # Clean up
                     del cpu_model
@@ -1935,6 +2008,7 @@ def train_epoch(
     model.train()
     total_loss = 0.0
     num_batches = 0
+    generation_future = None  # Track async generation tasks
     # Use dynamic total if available for global_step calculation
     loader_len = train_loader.get_dynamic_total() if hasattr(train_loader, 'get_dynamic_total') else len(train_loader)
     global_step = epoch * loader_len
@@ -1996,24 +2070,44 @@ def train_epoch(
                 num_batches += 1
                 global_step += 1
 
+                # Get batch size and token budget for logging
+                current_bs = input_ids.shape[0]
+                token_budget = None
+                if hasattr(train_loader, 'scheduler') and hasattr(train_loader.scheduler, 'get_dynamic_token_budget'):
+                    token_budget = train_loader.scheduler.get_dynamic_token_budget()
+
+                # Get GPU memory info
+                mem_reserved = torch.cuda.memory_reserved(device) / 1e9
+                mem_total = torch.cuda.get_device_properties(device).total_memory / 1e9
+                mem_pct = mem_reserved / mem_total * 100
+
                 if metrics_tracker is not None:
-                    metrics_tracker.update(
-                        global_step,
-                        loss=loss_value,
-                        lr=optimizer.param_groups[0]['lr']
-                    )
+                    # Log core metrics
+                    metrics_dict = {
+                        'loss': loss_value,
+                        'lr': optimizer.param_groups[0]['lr'],
+                        'batch_size': current_bs,
+                        'vram_percent': mem_pct,
+                    }
+                    # Add token budget if available
+                    if token_budget is not None:
+                        metrics_dict['token_budget'] = token_budget
+
+                    metrics_tracker.update(global_step, **metrics_dict)
 
                 # Log progress and check gradients
                 if batch_idx % log_interval == 0 and logger is not None:
                     avg_loss = total_loss / num_batches
-                    # Get actual batch size from the batch
-                    current_bs = input_ids.shape[0]
                     # Get dynamic total if available
                     total_batches = prefetcher.get_dynamic_total()
+
+                    # Get token budget info for log message
+                    token_budget_str = f" | TokBudget: {token_budget}" if token_budget else ""
+
                     logger.info(
                         f"Epoch {epoch + 1} | Batch {batch_idx}/{total_batches} | "
                         f"BS: {current_bs} | Loss: {loss_value:.4f} | Avg Loss: {avg_loss:.4f} | "
-                        f"LR: {optimizer.param_groups[0]['lr']:.2e}"
+                        f"LR: {optimizer.param_groups[0]['lr']:.2e} | VRAM: {mem_pct:.0f}%{token_budget_str}"
                     )
                     # Check gradients after optimizer step
                     if (batch_idx + 1) % gradient_accumulation_steps == 0:
@@ -2022,25 +2116,30 @@ def train_epoch(
                             metrics_tracker.log_gradients(global_step, grad_stats)
 
                 # Generation testing during training (async on CPU)
-                if generate_every_n_steps and generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and logger is not None:
+                if generate_every_n_steps and generate_every_n_steps > 0 and global_step % generate_every_n_steps == 0 and global_step > 0 and logger is not None:
                     if generation_executor is not None:
-                        # Launch fully async generation - no console output, writes to file
-                        async_generate_on_cpu(
-                            model, device, vocab_size,
-                            executor=generation_executor,
-                            logger=None,  # No logger to prevent console output
-                            global_step=global_step,
-                            log_dir=log_dir,
-                            max_length=generation_max_length,
-                            num_samples=num_generations_per_step,
-                            tokenizer=tokenizer,
-                            temperature=generation_temperature,
-                            top_p=generation_top_p,
-                            skip_special_tokens=generation_skip_special_tokens,
-                            prompt=generation_prompt,
-                            top_k=generation_top_k,
-                            repetition_penalty=generation_repetition_penalty
-                        )
+                        # Check if previous generation is still running (avoid queue buildup)
+                        if generation_future is not None and not generation_future.done():
+                            logger.info(f"[Gen] Skipping step {global_step} - previous generation still running")
+                        else:
+                            # Launch fully async generation - writes to file
+                            logger.info(f"[Gen] Launching async generation at step {global_step}")
+                            generation_future = async_generate_on_cpu(
+                                model, device, vocab_size,
+                                executor=generation_executor,
+                                logger=None,  # No logger to prevent console output
+                                global_step=global_step,
+                                log_dir=log_dir,
+                                max_length=generation_max_length,
+                                num_samples=num_generations_per_step,
+                                tokenizer=tokenizer,
+                                temperature=generation_temperature,
+                                top_p=generation_top_p,
+                                skip_special_tokens=generation_skip_special_tokens,
+                                prompt=generation_prompt,
+                                top_k=generation_top_k,
+                                repetition_penalty=generation_repetition_penalty
+                            )
                         # No logging to console - generation runs silently in background
                     else:
                         # Fallback to synchronous generation
@@ -2069,6 +2168,16 @@ def train_epoch(
 
                 # VRAM OPTIMIZATION: Periodic cache clearing every 500 steps
                 # Prevents memory fragmentation and reduces VRAM usage by ~1-2GB
+                # Check if memory is critically high - clear cache immediately
+                if torch.cuda.is_available():
+                    mem_util = torch.cuda.memory_reserved() / torch.cuda.get_device_properties(0).total_memory
+                    if mem_util > 0.90:
+                        torch.cuda.empty_cache()
+                        if hasattr(model, 'clear_caches'):
+                            model.clear_caches()
+                        elif hasattr(model, 'module') and hasattr(model.module, 'clear_caches'):
+                            model.module.clear_caches()
+
                 if global_step % 500 == 0:
                     # Clear model caches (causal mask, RoPE)
                     if hasattr(model, 'clear_caches'):
@@ -2269,8 +2378,18 @@ def main(args):
     save_steps = logging_config.get('save_steps') or training_config.get('save_steps', 1000)
 
     # Generation testing configuration (check nested generation config first)
-    generate_every_n_steps = generation_config.get('every_n_steps') or training_config.get('generate_every_n_steps', 500)
-    num_generations_per_step = generation_config.get('num_per_step') or training_config.get('num_generations_per_step', 1)
+    generation_enabled = generation_config.get('enabled', False)
+    if generation_enabled:
+        generate_every_n_steps = generation_config.get('every_n_steps') or training_config.get('generate_every_n_steps', 500)
+        num_generations_per_step = generation_config.get('num_per_step') or training_config.get('num_generations_per_step', 1)
+        if rank == 0:
+            logger.info(f"[Generation] ENABLED: every {generate_every_n_steps} steps, {num_generations_per_step} samples/step")
+    else:
+        # Generation disabled - set steps to 0 to skip
+        generate_every_n_steps = 0
+        num_generations_per_step = 0
+        if rank == 0:
+            logger.info(f"[Generation] DISABLED (config enabled={generation_enabled}, config keys={list(generation_config.keys())})")
     generation_max_length = generation_config.get('max_length') or training_config.get('generation_max_length', 128)
     generation_temperature = generation_config.get('temperature') or training_config.get('generation_temperature', 0.7)
     generation_top_p = generation_config.get('top_p') or training_config.get('generation_top_p', 0.9)

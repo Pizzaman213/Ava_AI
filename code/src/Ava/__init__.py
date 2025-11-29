@@ -77,7 +77,7 @@ LionOptimizer = SophiaOptimizer = AdaFactorOptimizer = None
 OptimizerFactory = None
 FP8Handler = FP8Linear = FP8MultiHeadAttention = None
 FP8LayerNorm = FP8TransformerLayer = FP8ModelWrapper = None
-GradientHealthMonitor = LossHealthMonitor = None
+LossHealthMonitor = None
 LRFinder = LRFinderConfig = None
 AdaptiveLearningRateManager = IntelligentLRManager = None
 

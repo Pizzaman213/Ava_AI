@@ -185,7 +185,13 @@ class DynamicBatchIterator:
 
             if self.token_budget_enabled:
                 # Token budget mode: yield when we reach target tokens
-                if accumulated_tokens >= self.target_tokens_per_batch:
+                # Use dynamic token budget from scheduler if available
+                if hasattr(self.scheduler, 'get_dynamic_token_budget'):
+                    current_target = self.scheduler.get_dynamic_token_budget()
+                else:
+                    current_target = self.target_tokens_per_batch
+
+                if accumulated_tokens >= current_target:
                     should_yield = True
                 # Also yield if we would exceed max tokens with next batch
                 elif accumulated_tokens >= self.max_tokens_per_batch:
@@ -297,15 +303,61 @@ class DynamicBatchIterator:
 
     def __len__(self) -> int:
         """
-        Return estimated number of batches based on CURRENT batch size.
+        Return estimated number of batches.
 
-        This dynamically updates as batch size changes, so the progress bar
-        shows the correct total based on current throughput.
+        For token-budget mode: estimate based on actual token throughput
+        For sample-count mode: estimate based on samples / batch size
         """
-        base_len = len(self.base_dataloader)
-        current_multiplier = max(1, round(self.scheduler.current_batch_size / self.min_batch_size))
-        current_multiplier = min(current_multiplier, self.max_multiplier)
-        return max(1, base_len // current_multiplier)
+        # Get base dataloader length - this might be batches OR samples depending on dataset type
+        try:
+            base_len = len(self.base_dataloader)
+        except TypeError:
+            # IterableDataset may not have __len__
+            return self._total_batches_yielded + 1000  # Return current + reasonable estimate
+
+        # Get base batch size
+        try:
+            base_batch_size = self.base_dataloader.batch_size or self.min_batch_size
+        except AttributeError:
+            base_batch_size = self.min_batch_size
+
+        # IMPORTANT: Check if base_len looks like number of samples (too high) vs batches
+        # If base_len > 100000 and base_batch_size is small, it's probably samples not batches
+        if base_len > 100000 and base_batch_size <= 64:
+            # Assume base_len is number of samples, convert to batches
+            num_mini_batches = base_len // base_batch_size
+        else:
+            num_mini_batches = base_len
+
+        if self.token_budget_enabled:
+            # Token-budget mode: use actual average tokens per yielded batch if available
+            if self._tokens_per_batch_history and len(self._tokens_per_batch_history) >= 10:
+                # We have enough history - use actual throughput
+                avg_tokens_per_batch = sum(self._tokens_per_batch_history) / len(self._tokens_per_batch_history)
+                avg_samples_per_batch = sum(self._batch_size_history) / len(self._batch_size_history)
+
+                # Estimate total tokens in dataset
+                total_samples = num_mini_batches * base_batch_size
+                tokens_per_sample = avg_tokens_per_batch / max(1, avg_samples_per_batch)
+                total_tokens = total_samples * tokens_per_sample
+
+                # Batches = total tokens / target tokens per batch
+                estimated_batches = max(1, int(total_tokens / self.target_tokens_per_batch))
+                return estimated_batches
+            else:
+                # Not enough history - use simple estimate
+                # Each yielded batch has ~target_tokens_per_batch tokens
+                # Estimate: (num_samples * avg_seq_len) / target_tokens
+                total_samples = num_mini_batches * base_batch_size
+                avg_seq_len = 64  # Conservative default
+                total_tokens = total_samples * avg_seq_len
+                estimated_batches = max(1, int(total_tokens / self.target_tokens_per_batch))
+                return estimated_batches
+        else:
+            # Sample-count mode: original calculation
+            current_multiplier = max(1, round(self.scheduler.current_batch_size / self.min_batch_size))
+            current_multiplier = min(current_multiplier, self.max_multiplier)
+            return max(1, num_mini_batches // current_multiplier)
 
     def get_dynamic_total(self) -> int:
         """

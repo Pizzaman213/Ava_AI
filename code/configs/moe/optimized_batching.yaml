@@ -63,18 +63,61 @@ moe_memory_optimization:
 # Expected: 15-25% throughput improvement
 dynamic_batching:
   enabled: true # ✅ ENABLED: Auto-adjust batch size for optimal throughput
-  min_batch_size: 64 # Won't go below this
-  max_batch_size: 256 # Won't exceed this (conservative for 24GB GPU)
-  low_memory_threshold: 0.50 # Below 50% memory, increase batch
-  target_memory_threshold: 0.70 # Target 70% utilization
-  high_memory_threshold: 0.85 # Above 85%, decrease batch
-  critical_memory_threshold: 0.95 # Above 95%, emergency decrease
-  increase_factor: 1.2 # Increase by 20%
-  decrease_factor: 0.8 # Decrease by 20%
-  adjustment_frequency: 10 # Check every 10 steps
-  warmup_steps: 100 # Don't adjust during first 100 steps
-  max_adjustments_per_session: 50 # Max 50 adjustments
-  cooldown_steps: 5 # Wait 5 steps between adjustments
+  min_batch_size: 4 # Finer granularity for smoother adjustments
+  max_batch_size: 256
+
+  # Token Budget Batching - target tokens instead of samples
+  token_budget:
+    enabled: true
+    target_tokens_per_batch: 4096
+    max_tokens_per_batch: 16384
+    min_tokens_per_batch: 512
+
+  # Sequence-Aware (disabled - conflicts with token-budget)
+  sequence_aware: false
+  base_sequence_length: 128
+  sequence_scaling_factor: 0.8
+
+  # Multi-GPU Sync
+  sync_across_gpus: true
+  sync_strategy: min
+
+  # Gradient Accumulation Integration
+  coordinate_with_grad_accum: true
+  target_effective_batch_size: 512
+  dynamic_grad_accum: false
+
+  # Predictive Memory Estimation
+  predictive:
+    enabled: true
+    calibration_steps: 50
+    memory_model: linear
+
+  # Memory Thresholds
+  low_memory_threshold: 0.50
+  target_memory_threshold: 0.75
+  high_memory_threshold: 0.85
+  critical_memory_threshold: 0.95
+
+  # Geometric Warmup
+  warmup_strategy: geometric
+  warmup_steps: 100
+  warmup_growth_rate: 1.2
+  warmup_initial_fraction: 0.25
+
+  # Trend Detection
+  trend_detection:
+    enabled: true
+    window: 20
+    oscillation_threshold: 5
+    auto_tune_smoothing: true
+
+  # Adjustment parameters (optimized for stability)
+  increase_factor: 8
+  decrease_factor: 16
+  adjustment_frequency: 25
+  cooldown_steps: 10
+  max_adjustments_per_session: 500
 
 # Phase 2 Medium: Overlapped Checkpointing
 # Reduces gradient checkpointing overhead by 30%
@@ -211,8 +254,6 @@ performance:
   enable_tf32: true # ✅ 8x faster matmul on Ampere+ GPUs
   float32_matmul_precision: high
   enable_cudnn_benchmark: true # ✅ Auto-tune cuDNN kernels
-  enable_gpu_memory_cleanup: true
-  gradient_check_frequency: 10
 
   # Aggressive compilation for maximum speed
   torchinductor_max_autotune: 1 # ✅ 10-15% additional speedup
@@ -221,14 +262,7 @@ performance:
   torch_compile_fullgraph: false
   torch_compile_dynamic: true # Handle dynamic shapes
 
-gradient_health:
-  enabled: true
-  disable_after_steps: 500 # Disable after warmup
-  conditional_monitoring: true
-  warmup_fraction: 0.1
-
 optimizations:
-  gradient_health_monitoring: true
   torchinductor_autotune: 1 # ✅ Aggressive autotuning
 
   memory_headroom_gb: 1
