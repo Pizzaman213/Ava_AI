@@ -317,13 +317,14 @@ class PPOTrainer:
         # Apply mask and average
         policy_loss = (policy_loss * mask).sum() / mask.sum()
 
-        # Compute statistics
+        # GPU SYNC FIX: Return tensors instead of floats - defer .item() to batch
+        # This eliminates 3 syncs per mini-batch (policy_loss, clipfrac, approx_kl)
         with torch.no_grad():
-            clipfrac = ((ratio - 1.0).abs() > self.config.clip_range).float().mean().item()
-            approx_kl = (old_logprobs - logprobs).mean().item()
+            clipfrac = ((ratio - 1.0).abs() > self.config.clip_range).float().mean()
+            approx_kl = (old_logprobs - logprobs).mean()
 
         stats = {
-            'policy_loss': policy_loss.item(),
+            'policy_loss': policy_loss.detach(),
             'clipfrac': clipfrac,
             'approx_kl': approx_kl
         }
@@ -388,14 +389,18 @@ class PPOTrainer:
 
         # Compute advantages
         # Expand rewards to match sequence length, but only where we have valid tokens
+        # GPU SYNC FIX: Compute valid lengths on GPU without per-sample .item() calls
         batch_size, seq_len = input_ids.size()
         expanded_rewards = torch.zeros(batch_size, seq_len, device=rewards.device)
-        # Put the reward at the last valid token position for each sequence
-        for i in range(batch_size):
-            valid_len: int = int(attention_mask[i].sum().item())
-            if valid_len > 0:
-                idx: int = valid_len - 1
-                expanded_rewards[i, idx] = rewards[i]
+
+        # Vectorized approach: find last valid position for each sequence
+        # attention_mask.sum(dim=1) gives valid lengths, then we use scatter_
+        valid_lens = attention_mask.sum(dim=1).long()  # [batch_size]
+        last_positions = (valid_lens - 1).clamp(min=0)  # Handle empty sequences
+
+        # Create index tensor for scatter
+        batch_indices = torch.arange(batch_size, device=rewards.device)
+        expanded_rewards[batch_indices, last_positions] = rewards * (valid_lens > 0).float()
 
         advantages, returns = self.compute_advantages(
             expanded_rewards,
@@ -470,19 +475,21 @@ class PPOTrainer:
                 else:
                     loss.backward()
 
-                # Update stats
+                # GPU SYNC FIX: Accumulate tensors, defer .item() to end
+                # policy_stats now contains tensors, not floats
                 for k, v in policy_stats.items():
                     if k not in stats_accum:
                         stats_accum[k] = []
-                    stats_accum[k].append(v)
+                    # v is already a tensor (detached)
+                    stats_accum[k].append(v if isinstance(v, torch.Tensor) else torch.tensor(v, device=self.device))
 
                 if 'kl_div' not in stats_accum:
                     stats_accum['kl_div'] = []
-                stats_accum['kl_div'].append(kl_penalty.item())
+                stats_accum['kl_div'].append(kl_penalty.detach())
 
                 if 'entropy' not in stats_accum:
                     stats_accum['entropy'] = []
-                stats_accum['entropy'].append(entropy.item())
+                stats_accum['entropy'].append(entropy.detach())
 
                 # Gradient accumulation
                 if (i + 1) % self.config.gradient_accumulation_steps == 0:

@@ -24,9 +24,11 @@ class DataPipelineConstants:
     BUCKET_BOUNDARIES_DEFAULT: Optional[List[int]] = None  # Will be set in __post_init__
 
     # File handling
-    BUFFER_SIZE_DEFAULT: int = 10000  # Default shuffle buffer size
+    # Memory tradeoff: buffer_size x avg_seq_len x 24 bytes per worker
+    # 10000 x 512 x 24 = 120MB per worker (old) -> 5000 = 60MB per worker (new)
+    BUFFER_SIZE_DEFAULT: int = 5000  # RAM-OPTIMIZED: Reduced from 10000, saves ~60MB per worker
     SAMPLES_PER_FILE: int = 32  # File sampling rate
-    STREAMING_BUFFER_SIZE: int = 1000  # Streaming mode buffer (saves 500MB-1GB RAM)
+    STREAMING_BUFFER_SIZE: int = 500  # RAM-OPTIMIZED: Reduced from 1000, saves ~12MB per worker
     MIN_FILE_SIZE_BYTES: int = 10 * 1024  # 10KB minimum file size
     MIN_TOKENIZE_BATCH: int = 32  # Minimum batch size for vectorized tokenization
 

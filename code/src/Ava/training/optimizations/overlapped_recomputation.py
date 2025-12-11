@@ -37,7 +37,49 @@ from typing import Callable, Tuple, Optional, Any, List
 from contextlib import contextmanager
 import logging
 
+# Import optimized stream utilities
+try:
+    from Ava.utils.cuda_streams import StreamPool, get_stream_pool
+    _STREAM_POOL_AVAILABLE = True
+except ImportError:
+    _STREAM_POOL_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+# Global stream pool for recomputation - avoids creating new streams each backward pass
+_recompute_stream_pool: Optional['StreamPool'] = None
+
+# GPU SYNC FIX: Track last recomputation event for proper ordering between layers
+# Without this, different layers getting different streams from the pool could
+# interleave their recomputations in undefined order, causing race conditions
+_last_recompute_event: Optional[torch.cuda.Event] = None
+
+# FIX: Initialize lock at module load time to prevent race condition
+# Previously, lazy initialization could cause multiple threads to create different locks
+import threading
+_recompute_event_lock: threading.Lock = threading.Lock()
+
+
+def _get_recompute_event_lock() -> threading.Lock:
+    """Get the lock for recompute event synchronization."""
+    # Lock is now initialized at module load time, no race condition possible
+    return _recompute_event_lock
+
+
+def _get_recompute_stream() -> Optional[torch.cuda.Stream]:
+    """Get a stream from the pool for recomputation (much faster than creating new)."""
+    global _recompute_stream_pool
+
+    if not torch.cuda.is_available():
+        return None
+
+    if _STREAM_POOL_AVAILABLE:
+        if _recompute_stream_pool is None:
+            _recompute_stream_pool = StreamPool(num_streams=4, high_priority=False)
+        return _recompute_stream_pool.get_stream()
+    else:
+        # Fallback: create new stream (less efficient)
+        return torch.cuda.Stream()
 
 
 class OverlappedCheckpointFunction(torch.autograd.Function):
@@ -132,16 +174,26 @@ class StreamedCheckpointFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, *grad_outputs):
         """Backward with CUDA stream overlapping"""
+        global _last_recompute_event
+
         inputs = ctx.saved_tensors
 
-        # Create stream for overlapped computation if enabled
+        # Get stream from pool for overlapped computation (avoids stream creation overhead)
         if ctx.stream_overlap and torch.cuda.is_available():
-            recompute_stream = torch.cuda.Stream()
+            recompute_stream = _get_recompute_stream()
         else:
             recompute_stream = None
 
         # Recompute activations (potentially on separate stream)
         if recompute_stream is not None:
+            # GPU SYNC FIX: Ensure proper ordering between layers using events
+            # Without this, different layers could interleave their recomputations
+            # in undefined order when using a stream pool with round-robin allocation
+            with _get_recompute_event_lock():
+                # Wait for any previous recomputation to complete before starting ours
+                if _last_recompute_event is not None:
+                    recompute_stream.wait_event(_last_recompute_event)
+
             with torch.cuda.stream(recompute_stream):
                 with torch.enable_grad():
                     detached_inputs = []
@@ -150,9 +202,14 @@ class StreamedCheckpointFunction(torch.autograd.Function):
                             detached_inputs.append(inp.detach().requires_grad_(True))
                         else:
                             detached_inputs.append(inp)
-                    
+
                     outputs = ctx.run_function(*detached_inputs)
-            
+
+            # GPU SYNC FIX: Record completion event for next layer to wait on
+            with _get_recompute_event_lock():
+                _last_recompute_event = torch.cuda.Event()
+                _last_recompute_event.record(recompute_stream)
+
             # Wait for recomputation to finish before backward
             torch.cuda.current_stream().wait_stream(recompute_stream)
         else:

@@ -231,7 +231,7 @@ data:
   skip_validation: true # Skip data validation for 2-3% speedup
 
 output:
-  output_dir: code/outputs/runs/fully_optimized
+  output_dir: /project/code/outputs
   save_every: 500
   fresh_start: false
 

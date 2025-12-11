@@ -302,6 +302,7 @@ class AsyncFilePrefetcher:
     - Adaptive prefetch depth based on I/O latency
     - Pattern tracking for predictive prefetching
     - Cache hit rate monitoring
+    - Proper resource cleanup with idempotent shutdown
     """
 
     def __init__(self, max_workers: Optional[int] = None, prefetch_size: Optional[int] = None):
@@ -309,6 +310,7 @@ class AsyncFilePrefetcher:
         self.executor = ThreadPoolExecutor(max_workers=max_workers_val)
         self.prefetch_size = prefetch_size or DATA_CONSTANTS.PREFETCH_SIZE
         self.futures: List[Future] = []
+        self._shutdown_called = False
 
         # Adaptive prefetching metrics
         self.io_latencies = []  # Track recent I/O latencies
@@ -366,13 +368,29 @@ class AsyncFilePrefetcher:
         """Remove completed futures from tracking list to prevent memory leak."""
         self.futures = [f for f in self.futures if not f.done()]
 
-    def shutdown(self):
-        """Clean up executor resources."""
+    def shutdown(self, wait: bool = True):
+        """
+        Clean up executor resources.
+
+        Idempotent - safe to call multiple times.
+
+        Args:
+            wait: If True, wait for all threads to complete. If False, return immediately.
+        """
+        if self._shutdown_called:
+            return
+        self._shutdown_called = True
+
         # Cancel all pending futures
         for future in self.futures:
             future.cancel()
-        # Wait for threads to complete to ensure proper cleanup
-        self.executor.shutdown(wait=True)
+
+        # Shutdown executor
+        try:
+            self.executor.shutdown(wait=wait)
+        except Exception as e:
+            logging.getLogger(__name__).debug(f"Executor shutdown warning: {e}")
+
         # Clear futures list
         self.futures.clear()
 
@@ -382,16 +400,20 @@ class AsyncFilePrefetcher:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - ensures cleanup."""
-        self.shutdown()
+        self.shutdown(wait=True)
         return False
 
     def __del__(self):
         """Destructor - ensures executor is cleaned up even if not using context manager."""
         try:
-            if hasattr(self, 'executor') and self.executor is not None:
-                self.executor.shutdown(wait=False)
-        except Exception:
-            pass  # Ignore errors during cleanup
+            # Use wait=True in destructor to ensure clean shutdown
+            # This prevents zombie threads when iteration is interrupted
+            self.shutdown(wait=True)
+        except Exception as e:
+            # Log at debug level - destructor errors are usually benign during shutdown
+            logging.getLogger(__name__).debug(
+                f"Executor cleanup warning in __del__: {e}"
+            )
 
 
 class FileReader:
@@ -538,6 +560,8 @@ class FileReader:
                                     print(f"  JSON decode error at line {line_count}")
                             except Exception as e:
                                 error_count += 1
+                                if error_count <= 5:  # Only log first few errors
+                                    logging.getLogger(__name__).debug(f"  Error processing line {line_count}: {e}")
                     break  # Successfully read with this encoding
                 except UnicodeDecodeError:
                     continue  # Try next encoding
@@ -822,10 +846,10 @@ class StreamingDataset(IterableDataset):
                         if hasattr(oldest_gen, 'close'):
                             try:
                                 oldest_gen.close()
-                            except:
-                                pass
-            except:
-                pass  # Fallback to normal operation
+                            except (RuntimeError, GeneratorExit) as e:
+                                logging.getLogger(__name__).debug(f"Generator close in cache eviction: {e}")
+            except (RuntimeError, AttributeError) as e:
+                logging.getLogger(__name__).debug(f"Memory pressure check failed, using normal operation: {e}")
 
         # Return cached generator if available (move to end for LRU)
         if cache_key in self._worker_file_cache:
@@ -839,8 +863,10 @@ class StreamingDataset(IterableDataset):
             if hasattr(oldest_gen, 'close'):
                 try:
                     oldest_gen.close()
-                except Exception:
-                    pass  # Ignore errors during cleanup
+                except Exception as e:
+                    logging.getLogger(__name__).debug(
+                        f"Generator close warning for cache key {oldest_key}: {e}"
+                    )
 
         # Create new generator and cache it
         gen = self.file_reader.read_file(file_path)
@@ -852,12 +878,20 @@ class StreamingDataset(IterableDataset):
         Clear the worker file cache and close all cached generators.
         Call this between epochs to free memory.
         """
-        for gen in self._worker_file_cache.values():
+        close_errors = 0
+        for cache_key, gen in self._worker_file_cache.items():
             if hasattr(gen, 'close'):
                 try:
                     gen.close()
-                except Exception:
-                    pass  # Ignore errors during cleanup
+                except Exception as e:
+                    close_errors += 1
+                    logging.getLogger(__name__).debug(
+                        f"Generator close warning for {cache_key}: {e}"
+                    )
+        if close_errors > 0:
+            logging.getLogger(__name__).debug(
+                f"File cache cleared with {close_errors} close warnings"
+            )
         self._worker_file_cache.clear()
 
 
@@ -927,8 +961,9 @@ class StreamingDataset(IterableDataset):
         for idx, (file_path, _) in enumerate(file_generators):
             try:
                 file_sizes[idx] = file_path.stat().st_size
-            except:
+            except OSError as e:
                 file_sizes[idx] = 1024 * 1024  # Default 1MB if stat fails
+                logging.getLogger(__name__).debug(f"Could not stat {file_path}: {e}")
 
         # Create prefetcher for upcoming files
         prefetcher = AsyncFilePrefetcher(max_workers=2, prefetch_size=2)
@@ -1013,9 +1048,27 @@ class StreamingDataset(IterableDataset):
             # Restart if all files exhausted
             if len(exhausted_files) == len(file_generators):
                 restart_count += 1
-                # FIXED: Removed restart limit for infinite streaming mode
-                # This allows the dataloader to continue cycling through files indefinitely
-                # which is essential for ultra-low memory configs with small buffers
+
+                # Safety limit: max restarts to prevent infinite loops with tiny/corrupted data
+                max_restarts = getattr(self, 'max_epoch_restarts', 1000)
+                if restart_count > max_restarts:
+                    import warnings
+                    warnings.warn(
+                        f"Reached maximum epoch restarts ({max_restarts}). "
+                        f"Check data size or set max_epoch_restarts higher."
+                    )
+                    return
+
+                # Rate limiting: detect rapid restarts (possible data corruption)
+                if not hasattr(self, '_restart_start_time'):
+                    self._restart_start_time = time.time()
+                if restart_count > 10 and (time.time() - self._restart_start_time) < 60:
+                    import warnings
+                    warnings.warn(
+                        f"Rapid epoch restarts detected ({restart_count} in <60s). "
+                        f"Data may be too small or corrupted."
+                    )
+                    time.sleep(1)  # Throttle to prevent CPU spinning
 
                 exhausted_files.clear()
                 self._stream_epoch_number = getattr(self, '_stream_epoch_number', 0) + 1
@@ -1030,12 +1083,21 @@ class StreamingDataset(IterableDataset):
                 rng.shuffle(shuffled_files)
 
                 file_generators = []
+                failed_files = []
                 for file_path in shuffled_files:
                     try:
                         gen = self.file_reader.read_file(file_path)
                         file_generators.append((file_path, gen))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        failed_files.append((file_path, str(e)))
+                        logging.getLogger(__name__).warning(
+                            f"Failed to read file {file_path}: {e}"
+                        )
+
+                if failed_files and len(failed_files) > len(shuffled_files) * 0.5:
+                    logging.getLogger(__name__).error(
+                        f"Too many file read failures: {len(failed_files)}/{len(shuffled_files)}"
+                    )
 
     def _validate_sequence(self, input_ids: torch.Tensor) -> bool:
         """
@@ -1224,7 +1286,10 @@ class StreamingDataset(IterableDataset):
         if self.dynamic_length_fn is not None:
             try:
                 current_max_length = self.dynamic_length_fn()
-            except Exception:
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    f"dynamic_length_fn failed, using max_length={self.max_length}: {e}"
+                )
                 current_max_length = self.max_length
         else:
             current_max_length = self.max_length
@@ -1389,7 +1454,8 @@ class StreamingDataset(IterableDataset):
                 min_buffer = DATA_CONSTANTS.DYNAMIC_BUFFER_MIN
                 max_buffer = self.buffer_size  # Original max
                 return max(min_buffer, min(safe_buffer_size, max_buffer))
-            except:
+            except (RuntimeError, ValueError) as e:
+                logging.getLogger(__name__).debug(f"Dynamic buffer calculation failed: {e}")
                 return self.buffer_size
         return self.buffer_size
 
@@ -1525,8 +1591,8 @@ class StreamingDataset(IterableDataset):
                     # Put in queue for pipelined consumption
                     try:
                         queue.put(results, block=True, timeout=1.0)
-                    except:
-                        pass  # Queue full, will use future instead
+                    except (queue.Full, RuntimeError):
+                        pass  # Queue full, will use future instead - this is expected behavior
                     return results
 
                 # Submit tokenization to thread pool with queue
@@ -1659,6 +1725,9 @@ class StreamingDataset(IterableDataset):
         # Increment epoch
         self._epoch_number = epoch_number + 1
 
+        # Cleanup tokenization executor
+        tokenization_executor.shutdown(wait=False)
+
     def __getstate__(self):
         """Custom pickle support - exclude unpicklable objects."""
         state = self.__dict__.copy()
@@ -1777,9 +1846,11 @@ class DistributedStreamingDataset(IterableDataset):
                         elif self.rank == min_util_rank and self._skip_next == 0:
                             # Take one extra sample
                             pass
-                except Exception:
+                except Exception as e:
                     # Fallback to round-robin if coordination fails
-                    pass
+                    logging.getLogger(__name__).debug(
+                        f"Worker coordination fallback to round-robin (rank {self.rank}): {e}"
+                    )
 
             # Apply skip logic
             if self._skip_next > 0:
@@ -2053,11 +2124,14 @@ def create_streaming_dataloaders(
         print(f"{'='*60}")
         print(f"   Min batch size: {min_batch_size}")
         print(f"   Max batch size: {max_batch_size}")
-        print(f"   Memory thresholds: low={db_config.get('low_memory_threshold', 0.5):.0%}, "
-              f"target={db_config.get('target_memory_threshold', 0.7):.0%}, "
-              f"high={db_config.get('high_memory_threshold', 0.85):.0%}")
-        print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency', 10)} steps")
-        print(f"   Warmup steps: {db_config.get('warmup_steps', 100)}")
+        low_thresh = db_config.get('low_memory_threshold') or 0.5
+        target_thresh = db_config.get('target_memory_threshold') or 0.7
+        high_thresh = db_config.get('high_memory_threshold') or 0.85
+        print(f"   Memory thresholds: low={low_thresh:.0%}, "
+              f"target={target_thresh:.0%}, "
+              f"high={high_thresh:.0%}")
+        print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency') or 10} steps")
+        print(f"   Warmup steps: {db_config.get('warmup_steps') or 100}")
         print(f"{'='*60}\n")
 
         # Create base DataLoader with min_batch_size

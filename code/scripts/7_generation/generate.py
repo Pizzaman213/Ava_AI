@@ -656,8 +656,8 @@ Examples:
                         if 'created_at' in metadata:
                             created = datetime.fromisoformat(metadata['created_at'])
                             metadata_str = f" - Created: {created.strftime('%Y-%m-%d %H:%M:%S')}"
-                except:
-                    pass
+                except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
+                    logging.debug(f"Could not read metadata for {run_id}: {e}")
 
             print(f"{i}. {run_id}{metadata_str}")
             print(f"   Checkpoints: {', '.join(checkpoints) if checkpoints else 'none'}")

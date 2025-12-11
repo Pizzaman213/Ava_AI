@@ -10,8 +10,9 @@ Classes:
     DynamicSequencePackingCollator: Adaptive packing with statistics tracking
 """
 
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 import torch
+import numpy as np
 from collections import defaultdict
 
 
@@ -48,24 +49,48 @@ class SequencePackingCollator:
         self.total_tokens_after = 0
         self.num_batches = 0
 
-    def _get_sequence_length(self, item: Union[Dict, torch.Tensor]) -> int:
+        # Pre-allocated tensors for efficiency (avoid per-batch allocations)
+        self._eos_tensor: Optional[torch.Tensor] = None
+        self._output_buffer: Optional[torch.Tensor] = None
+
+    def _to_tensor(self, arr: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
+        """Convert numpy array to tensor if needed."""
+        if isinstance(arr, np.ndarray):
+            return torch.from_numpy(arr.copy())
+        return arr
+
+    def _get_sequence_length(self, item: Union[Dict, torch.Tensor, np.ndarray]) -> int:
         """Get the actual length of a sequence (excluding padding)."""
         if isinstance(item, dict):
             if 'attention_mask' in item:
-                return int(item['attention_mask'].sum())
+                mask = item['attention_mask']
+                if isinstance(mask, np.ndarray):
+                    return int(mask.sum())
+                return int(mask.sum())
             elif 'input_ids' in item:
                 ids = item['input_ids']
+                if isinstance(ids, np.ndarray):
+                    return int((ids != self.pad_token_id).sum())
                 # Count non-padding tokens
                 return int((ids != self.pad_token_id).sum())
+        elif isinstance(item, np.ndarray):
+            return int((item != self.pad_token_id).sum())
         elif isinstance(item, torch.Tensor):
             return int((item != self.pad_token_id).sum())
         return self.max_length
 
-    def _extract_ids(self, item: Union[Dict, torch.Tensor]) -> torch.Tensor:
-        """Extract input_ids from various input formats."""
+    def _extract_ids(self, item: Union[Dict, torch.Tensor, np.ndarray]) -> torch.Tensor:
+        """Extract input_ids from various input formats and convert to tensor."""
         if isinstance(item, dict):
-            return item['input_ids']
-        return item
+            ids = item['input_ids']
+            return self._to_tensor(ids)
+        return self._to_tensor(item)
+
+    def _get_eos_tensor(self, dtype: torch.dtype) -> torch.Tensor:
+        """Get cached EOS tensor, creating if needed."""
+        if self._eos_tensor is None or self._eos_tensor.dtype != dtype:
+            self._eos_tensor = torch.tensor([self.eos_token_id], dtype=dtype)
+        return self._eos_tensor
 
     def _pack_sequences_greedy(
         self,
@@ -73,10 +98,11 @@ class SequencePackingCollator:
         lengths: List[int]
     ) -> List[torch.Tensor]:
         """
-        Greedy bin-packing algorithm.
+        Optimized greedy bin-packing algorithm.
 
         Sorts sequences by length (longest first) and packs them
         into bins until each bin reaches max_length.
+        Uses pre-allocated buffers to minimize tensor allocations.
         """
         if not sequences:
             return []
@@ -85,7 +111,13 @@ class SequencePackingCollator:
         sorted_indices = sorted(range(len(sequences)), key=lambda i: lengths[i], reverse=True)
 
         packed = []
-        current_pack = []
+        dtype = sequences[0].dtype
+        eos_tensor = self._get_eos_tensor(dtype)
+
+        # Pre-allocate output buffer (reused for each pack)
+        output_buffer = torch.full((self.max_length,), self.pad_token_id, dtype=dtype)
+
+        current_parts: List[Tuple[torch.Tensor, int]] = []  # (tensor, length) pairs
         current_length = 0
 
         for idx in sorted_indices:
@@ -93,28 +125,40 @@ class SequencePackingCollator:
             seq_len = lengths[idx]
 
             # +1 for EOS separator between sequences
-            needed_length = seq_len + (1 if current_pack else 0)
+            needed_length = seq_len + (1 if current_parts else 0)
 
             if current_length + needed_length <= self.max_length:
                 # Add to current pack
-                if current_pack:
-                    # Add EOS separator
-                    current_pack.append(torch.tensor([self.eos_token_id], dtype=seq.dtype))
+                if current_parts:
+                    current_parts.append((eos_tensor, 1))
                     current_length += 1
-                current_pack.append(seq[:seq_len])  # Only non-padded portion
+                current_parts.append((seq[:seq_len], seq_len))
                 current_length += seq_len
             else:
-                # Start new pack
-                if current_pack:
-                    packed.append(self._finalize_pack(current_pack, current_length))
-                current_pack = [seq[:seq_len]]
+                # Finalize current pack and start new one
+                if current_parts:
+                    packed.append(self._finalize_pack_fast(current_parts, current_length, output_buffer.clone()))
+                current_parts = [(seq[:seq_len], seq_len)]
                 current_length = seq_len
 
         # Don't forget the last pack
-        if current_pack:
-            packed.append(self._finalize_pack(current_pack, current_length))
+        if current_parts:
+            packed.append(self._finalize_pack_fast(current_parts, current_length, output_buffer.clone()))
 
         return packed
+
+    def _finalize_pack_fast(
+        self,
+        parts: List[Tuple[torch.Tensor, int]],
+        total_length: int,
+        output: torch.Tensor
+    ) -> torch.Tensor:
+        """Fast pack finalization using pre-allocated buffer."""
+        pos = 0
+        for tensor, length in parts:
+            output[pos:pos + length] = tensor[:length]
+            pos += length
+        return output
 
     def _finalize_pack(self, pack: List[torch.Tensor], pack_length: int) -> torch.Tensor:
         """Concatenate pack and add padding to max_length."""

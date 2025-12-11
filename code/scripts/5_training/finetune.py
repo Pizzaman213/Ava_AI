@@ -917,8 +917,9 @@ def main():
             os.close(temp_config_fd)
             os.unlink(temp_config_path)
             print(f"  Cleaned up temporary config", flush=True)
-        except:
-            pass
+        except OSError as e:
+            # File descriptor or file may already be closed/deleted - expected during cleanup
+            logging.debug(f"Temp config cleanup: {e}")
 
     print("\n Fine-tuning complete!", flush=True)
 

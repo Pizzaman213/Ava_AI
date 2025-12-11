@@ -31,6 +31,7 @@ Usage:
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Iterator, Tuple, Union
 import numpy as np
@@ -39,9 +40,24 @@ from torch.utils.data import IterableDataset, Dataset, DataLoader
 import random
 import pyarrow as pa
 import pyarrow.ipc as ipc
-import hashlib
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
+
+from ..utils.shared import find_data_files, collate_batch
+
+# GPU SYNC FIX: Import pinned buffer pool for async GPU transfers
+# Only used when num_workers=0 (main process), as pinned memory doesn't
+# survive IPC from worker processes to main process
+try:
+    from ..utils.pinned_buffers import PinnedBufferPool, get_buffer_pool, is_main_process_dataloader
+    PINNED_BUFFERS_AVAILABLE = True
+except ImportError:
+    PINNED_BUFFERS_AVAILABLE = False
+    PinnedBufferPool = None
+    get_buffer_pool = None
+    is_main_process_dataloader = None
 
 # Import sequence packing for 20-35% speedup
 try:
@@ -51,6 +67,14 @@ except ImportError as e:
     SEQUENCE_PACKING_AVAILABLE = False
     SequencePackingCollator = None
     DynamicSequencePackingCollator = None
+    # PERFORMANCE FIX: Warn user they're missing 20-35% speedup
+    logger.warning("=" * 60)
+    logger.warning("⚠️  SEQUENCE PACKING UNAVAILABLE - 20-35% SPEEDUP LOST")
+    logger.warning("=" * 60)
+    logger.warning(f"Failed to import sequence_packing: {e}")
+    logger.warning("If use_sequence_packing=true in config, it will be ignored!")
+    logger.warning("To enable: ensure sequence_packing.py exists in Ava/data/")
+    logger.warning("=" * 60)
 
 
 class PreTokenizedSequenceReader:
@@ -153,42 +177,17 @@ class PreTokenizedDataset(IterableDataset):
         print(f"  Total sequences: {self.total_sequences:,}")
 
     def _find_data_files(self) -> List[Path]:
-        """Find pre-tokenized Arrow files."""
-        # Look for .arrow files in split directory
-        patterns = [
-            f"**/{self.split}/**/*.arrow",
-            f"{self.split}_*.arrow",
-            f"{self.split}/*.arrow",
-        ]
-
-        files = []
-        for pattern in patterns:
-            files.extend(self.data_dir.glob(pattern))
-
-        # Remove duplicates and filter by existence
-        files = list(dict.fromkeys(files))
-        files = [f for f in files if f.exists() and f.stat().st_size > 0]
-
-        # If no split-specific files, do file-based splitting
-        if not files:
-            all_files = list(self.data_dir.glob("**/*.arrow"))
-            if all_files:
-                files = sorted(all_files, key=lambda f: f.name)
-                split_files = []
-
-                for file_path in files:
-                    file_hash = int(hashlib.md5(file_path.name.encode()).hexdigest(), 16) % 100
-
-                    if self.split == "train":
-                        if file_hash < 85:  # 85% for training
-                            split_files.append(file_path)
-                    else:  # val
-                        if file_hash >= 85:  # 15% for validation
-                            split_files.append(file_path)
-
-                files = split_files
-
-        return sorted(files)
+        """Find pre-tokenized Arrow files (using shared utility)."""
+        return find_data_files(
+            data_dir=self.data_dir,
+            split=self.split,
+            patterns=[
+                f"**/{self.split}/**/*.arrow",
+                f"{self.split}_*.arrow",
+                f"{self.split}/*.arrow",
+            ],
+            min_file_size=0,
+        )
 
     def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
         """Iterate over dataset with shuffling."""
@@ -207,12 +206,19 @@ class PreTokenizedDataset(IterableDataset):
 
         # Open readers for all files
         readers = []
+        failed_files = []
         for file_path in shuffled_files:
             try:
                 reader = PreTokenizedSequenceReader(file_path)
                 readers.append((file_path, reader))
             except Exception as e:
-                print(f"  Failed to open {file_path.name}: {e}")
+                failed_files.append((file_path, str(e)))
+                logger.warning(f"Failed to open {file_path}: {e}")
+
+        if failed_files:
+            logger.warning(
+                f"Failed to open {len(failed_files)}/{len(shuffled_files)} files"
+            )
 
         if not readers:
             raise ValueError(f"No files could be opened from {self.data_dir}")
@@ -256,7 +262,9 @@ class PreTokenizedDataset(IterableDataset):
                 count += 1
 
             except Exception as e:
-                print(f"  Error reading sequence {seq_idx} from {file_path.name}: {e}")
+                logger.warning(
+                    f"Error reading sequence {seq_idx} from {file_path.name}: {e}"
+                )
                 continue
 
         # Close all readers
@@ -267,35 +275,18 @@ class PreTokenizedDataset(IterableDataset):
         """
         Collate function with FIXED padding to self.max_length.
 
+        Uses shared collate_batch utility to eliminate code duplication.
+
         CRITICAL FIX: Use fixed-length padding to prevent torch.compile recompilation.
         Dynamic padding causes shape changes (e.g., 235→217) that trigger expensive
         recompilation cycles and eventually fallback to slow eager mode.
         """
-        if not batch:
-            return {}
-
-        batch_size = len(batch)
-        # FIXED PADDING: Always use self.max_length instead of max(seq_lengths)
-        # This ensures constant shapes for torch.compile optimization
-        max_len = self.max_length
-
-        # Pre-allocate tensors
-        input_ids = torch.full((batch_size, max_len), self.pad_token_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
-        labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
-
-        # Fill tensors (vectorized)
-        for i, item in enumerate(batch):
-            seq_len = min(len(item['input_ids']), max_len)  # Actual sequence length, capped at max_len
-            input_ids[i, :seq_len] = item['input_ids'][:seq_len]
-            attention_mask[i, :seq_len] = item['attention_mask'][:seq_len]
-            labels[i, :seq_len] = item['labels'][:seq_len]
-
-        return {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': labels
-        }
+        return collate_batch(
+            batch,
+            max_length=self.max_length,
+            pad_token_id=self.pad_token_id,
+            use_fixed_padding=True,  # Fixed padding for torch.compile compatibility
+        )
 
 
 class PreTokenizedMapDataset(Dataset):
@@ -329,6 +320,7 @@ class PreTokenizedMapDataset(Dataset):
         self.file_offsets = [0]
         total_sequences = 0
 
+        failed_count = 0
         for file_path in self.data_files:
             try:
                 reader = PreTokenizedSequenceReader(file_path)
@@ -336,46 +328,29 @@ class PreTokenizedMapDataset(Dataset):
                 total_sequences += len(reader)
                 self.file_offsets.append(total_sequences)
             except Exception as e:
-                print(f"  Failed to open {file_path.name}: {e}")
+                failed_count += 1
+                logger.warning(f"Failed to open {file_path}: {e}")
+
+        if failed_count > 0:
+            logger.warning(
+                f"Failed to open {failed_count}/{len(self.data_files)} files"
+            )
 
         self.total_sequences = total_sequences
-        print(f" Loaded {len(self.readers)} files with {self.total_sequences:,} sequences")
+        logger.info(f"Loaded {len(self.readers)} files with {self.total_sequences:,} sequences")
 
     def _find_data_files(self) -> List[Path]:
-        """Find pre-tokenized Arrow files."""
-        patterns = [
-            f"**/{self.split}/**/*.arrow",
-            f"{self.split}_*.arrow",
-            f"{self.split}/*.arrow",
-        ]
-
-        files = []
-        for pattern in patterns:
-            files.extend(self.data_dir.glob(pattern))
-
-        files = list(dict.fromkeys(files))
-        files = [f for f in files if f.exists() and f.stat().st_size > 0]
-
-        # If no split-specific files, do file-based splitting
-        if not files:
-            all_files = list(self.data_dir.glob("**/*.arrow"))
-            if all_files:
-                files = sorted(all_files, key=lambda f: f.name)
-                split_files = []
-
-                for file_path in files:
-                    file_hash = int(hashlib.md5(file_path.name.encode()).hexdigest(), 16) % 100
-
-                    if self.split == "train":
-                        if file_hash < 85:  # 85% for training
-                            split_files.append(file_path)
-                    else:  # val
-                        if file_hash >= 85:  # 15% for validation
-                            split_files.append(file_path)
-
-                files = split_files
-
-        return sorted(files)
+        """Find pre-tokenized Arrow files (using shared utility)."""
+        return find_data_files(
+            data_dir=self.data_dir,
+            split=self.split,
+            patterns=[
+                f"**/{self.split}/**/*.arrow",
+                f"{self.split}_*.arrow",
+                f"{self.split}/*.arrow",
+            ],
+            min_file_size=0,
+        )
 
     def __len__(self):
         return self.total_sequences
@@ -406,29 +381,18 @@ class PreTokenizedMapDataset(Dataset):
         }
 
     def collate_fn(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """Collate function with dynamic padding."""
-        if not batch:
-            return {}
+        """
+        Collate function with dynamic padding.
 
-        batch_size = len(batch)
-        seq_lengths = [len(item['input_ids']) for item in batch]
-        max_len = max(seq_lengths)
-
-        input_ids = torch.full((batch_size, max_len), self.pad_token_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
-        labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
-
-        for i, item in enumerate(batch):
-            seq_len = seq_lengths[i]
-            input_ids[i, :seq_len] = item['input_ids']
-            attention_mask[i, :seq_len] = item['attention_mask']
-            labels[i, :seq_len] = item['labels']
-
-        return {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': labels
-        }
+        Uses shared collate_batch utility to eliminate code duplication.
+        Uses dynamic padding (pad to batch max) for memory efficiency in validation.
+        """
+        return collate_batch(
+            batch,
+            max_length=self.max_length,
+            pad_token_id=self.pad_token_id,
+            use_fixed_padding=False,  # Dynamic padding for memory efficiency in validation
+        )
 
 
 # ============================================================================
@@ -444,15 +408,69 @@ class ArrowTableCache:
     Uses LRU eviction to prevent memory pressure.
 
     Performance improvement: 1.3x faster than opening files repeatedly
+
+    Memory tradeoff: Each cached table uses ~5-40MB RAM per worker.
+    - 200 tables x 4 workers x 20MB avg = 16GB RAM (old default)
+    - 50 tables x 4 workers x 20MB avg = 4GB RAM (new default)
+    Set higher (100-200) if RAM > 64GB. Set lower (20-30) if RAM < 32GB.
+
+    Resource Management:
+    - Call close() when done to release file handles
+    - __del__ provides backup cleanup on garbage collection
     """
 
-    def __init__(self, max_size: int = 200):
+    def __init__(self, max_size: int = 50):
         self.max_size = max_size
         self.cache: OrderedDict[Path, pa.Table] = OrderedDict()
         self._memory_maps: OrderedDict[Path, pa.MemoryMappedFile] = OrderedDict()
+        self._closed = False
+
+    def __del__(self):
+        """Ensure resources are released on garbage collection."""
+        self.close()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - close resources."""
+        self.close()
+        return False
+
+    def close(self):
+        """
+        Close all memory-mapped files and release resources.
+
+        Safe to call multiple times (idempotent).
+        """
+        if self._closed:
+            return
+
+        self._closed = True
+        close_errors = 0
+
+        # Close all memory maps
+        for path in list(self._memory_maps.keys()):
+            try:
+                mmap = self._memory_maps.pop(path, None)
+                if mmap is not None:
+                    mmap.close()
+            except Exception as e:
+                close_errors += 1
+                logger.debug(f"Failed to close memory map for {path}: {e}")
+
+        # Clear the table cache
+        self.cache.clear()
+
+        if close_errors > 0:
+            logger.debug(f"ArrowTableCache closed with {close_errors} memory map close warnings")
 
     def get(self, file_path: Path) -> pa.Table:
         """Get table from cache or load with memory mapping (zero-copy)."""
+        if self._closed:
+            raise RuntimeError("ArrowTableCache has been closed")
+
         # Check cache first
         if file_path in self.cache:
             # Move to end for LRU
@@ -467,23 +485,32 @@ class ArrowTableCache:
                 try:
                     self._memory_maps[oldest_path].close()
                 except Exception as e:
-                    print(f"  Warning: Failed to close memory map for {oldest_path}: {e}")
+                    logger.debug(f"Failed to close memory map for {oldest_path}: {e}")
                 finally:
                     del self._memory_maps[oldest_path]
 
         # Load with memory mapping for zero-copy access
         try:
-            memory_map = pa.memory_map(str(file_path), 'r')
-            reader = pa.ipc.RecordBatchFileReader(memory_map)
-            table = reader.read_all()
+            file_ext = file_path.suffix.lower()
+            if file_ext == '.parquet':
+                # Use parquet reader for .parquet files
+                import pyarrow.parquet as pq
+                table = pq.read_table(str(file_path))
+                # Cache table (no memory map for parquet)
+                self.cache[file_path] = table
+            else:
+                # Use Arrow IPC reader for .arrow files
+                memory_map = pa.memory_map(str(file_path), 'r')
+                reader = pa.ipc.RecordBatchFileReader(memory_map)
+                table = reader.read_all()
 
-            # Cache table and memory map
-            self.cache[file_path] = table
-            self._memory_maps[file_path] = memory_map
+                # Cache table and memory map
+                self.cache[file_path] = table
+                self._memory_maps[file_path] = memory_map
 
             return table
         except Exception as e:
-            print(f" Failed to load Arrow file {file_path.name}: {e}")
+            logger.warning(f"Failed to load data file {file_path}: {e}")
             # Return empty table as fallback with proper schema
             schema = pa.schema([
                 ('input_ids', pa.list_(pa.int64())),
@@ -497,14 +524,177 @@ class ArrowTableCache:
             }, schema=schema)
 
     def clear(self):
-        """Clear cache and close all memory maps."""
-        for path, memory_map in list(self._memory_maps.items()):
+        """Clear cache and close all memory maps (resets for reuse)."""
+        close_errors = 0
+        for path in list(self._memory_maps.keys()):
             try:
-                memory_map.close()
+                mmap = self._memory_maps.pop(path, None)
+                if mmap is not None:
+                    mmap.close()
             except Exception as e:
-                print(f"  Warning: Failed to close memory map for {path}: {e}")
+                close_errors += 1
+                logger.debug(f"Failed to close memory map for {path}: {e}")
+        if close_errors > 0:
+            logger.debug(f"Cache cleared with {close_errors} memory map close warnings")
         self.cache.clear()
-        self._memory_maps.clear()
+        # Note: Don't set _closed=True here - clear() allows reuse, close() doesn't
+
+
+class LazyFileDiscovery:
+    """
+    Lazy file discovery that finds files on-demand during iteration.
+
+    Instead of discovering all files upfront (which can cause OOM with thousands
+    of files), this class discovers files incrementally as they're needed.
+
+    Benefits:
+    - No upfront memory allocation for file list
+    - Faster startup time (no glob of entire directory)
+    - Memory-efficient for very large datasets
+    - Supports infinite streaming without loading all file paths
+    """
+
+    def __init__(
+        self,
+        data_dir: Path,
+        split: str,
+        patterns: Optional[List[str]] = None,
+        min_file_size: int = 10 * 1024,  # 10KB minimum
+        max_files: Optional[int] = None,
+        shuffle_seed: int = 42,
+    ):
+        self.data_dir = Path(data_dir)
+        self.split = split
+        self.min_file_size = min_file_size
+        self.max_files = max_files
+        self.shuffle_seed = shuffle_seed
+
+        # Default patterns for Arrow/Parquet files
+        self.patterns = patterns or [
+            f"**/{split}/**/*.parquet",
+            f"**/{split}/**/*.arrow",
+            f"{split}_*.parquet",
+            f"{split}_*.arrow",
+            "*.parquet",
+            "*.arrow",
+        ]
+
+        # Lazy state - files discovered on demand
+        self._discovered_files: List[Path] = []
+        self._discovery_complete = False
+        self._pattern_iterators: List[Iterator[Path]] = []
+        self._files_yielded = 0
+
+    def _init_pattern_iterators(self):
+        """Initialize glob iterators for each pattern (lazy evaluation)."""
+        if not self._pattern_iterators:
+            for pattern in self.patterns:
+                self._pattern_iterators.append(self.data_dir.glob(pattern))
+
+    def _discover_next_batch(self, batch_size: int = 50) -> List[Path]:
+        """Discover the next batch of files lazily."""
+        if self._discovery_complete:
+            return []
+
+        self._init_pattern_iterators()
+
+        new_files = []
+        seen_paths = set(self._discovered_files)
+
+        for pattern_iter in self._pattern_iterators:
+            try:
+                while len(new_files) < batch_size:
+                    file_path = next(pattern_iter)
+
+                    # Skip duplicates, non-existent, and small files
+                    if file_path in seen_paths:
+                        continue
+                    if not file_path.exists():
+                        continue
+                    try:
+                        if file_path.stat().st_size < self.min_file_size:
+                            continue
+                    except OSError:
+                        continue
+
+                    new_files.append(file_path)
+                    seen_paths.add(file_path)
+
+                    # Check max_files limit
+                    if self.max_files and len(self._discovered_files) + len(new_files) >= self.max_files:
+                        self._discovery_complete = True
+                        break
+
+            except StopIteration:
+                continue
+
+            if self._discovery_complete:
+                break
+
+        # If no new files found from any pattern, discovery is complete
+        if not new_files:
+            self._discovery_complete = True
+
+        # Add to discovered files
+        self._discovered_files.extend(new_files)
+
+        return new_files
+
+    def __iter__(self) -> Iterator[Path]:
+        """Iterate over files, discovering them lazily."""
+        self._files_yielded = 0
+        rng = random.Random(self.shuffle_seed)
+
+        # Buffer for shuffling discovered files
+        shuffle_buffer: List[Path] = []
+        buffer_target_size = 100  # Shuffle within windows of 100 files
+
+        # Yield from already discovered files first (shuffled)
+        if self._discovered_files:
+            shuffled = list(self._discovered_files)
+            rng.shuffle(shuffled)
+            for f in shuffled:
+                if self.max_files and self._files_yielded >= self.max_files:
+                    return
+                yield f
+                self._files_yielded += 1
+
+        # Continue discovering and yielding new files
+        while not self._discovery_complete:
+            new_files = self._discover_next_batch(batch_size=50)
+
+            if not new_files:
+                break
+
+            # Add to shuffle buffer
+            shuffle_buffer.extend(new_files)
+
+            # When buffer is full enough, shuffle and yield
+            if len(shuffle_buffer) >= buffer_target_size:
+                rng.shuffle(shuffle_buffer)
+                for f in shuffle_buffer:
+                    if self.max_files and self._files_yielded >= self.max_files:
+                        return
+                    yield f
+                    self._files_yielded += 1
+                shuffle_buffer = []
+
+        # Yield remaining files in buffer
+        if shuffle_buffer:
+            rng.shuffle(shuffle_buffer)
+            for f in shuffle_buffer:
+                if self.max_files and self._files_yielded >= self.max_files:
+                    return
+                yield f
+                self._files_yielded += 1
+
+    def get_discovered_count(self) -> int:
+        """Get count of files discovered so far."""
+        return len(self._discovered_files)
+
+    def is_discovery_complete(self) -> bool:
+        """Check if all files have been discovered."""
+        return self._discovery_complete
 
 
 class UltraFastPretokenizedDataset(IterableDataset):
@@ -534,11 +724,15 @@ class UltraFastPretokenizedDataset(IterableDataset):
         max_samples: Optional[int] = None,
         buffer_size: int = 10000,
         samples_per_file: int = 1000,  # Read larger chunks from Arrow files
-        cache_size: int = 200,  # OPTIMIZATION: Cache up to 200 Arrow tables (8-12% speedup, ~1GB extra RAM)
+        cache_size: int = 50,  # RAM-OPTIMIZED: Cache 50 Arrow tables (5-8% speedup, ~250MB per worker)
         # Minimal validation (data pre-validated)
         min_sequence_length: int = 10,
         validation_rate: float = 0.0,  # No validation by default (already validated)
         pad_token_id: int = 0,
+        use_dynamic_padding: bool = False,  # RAM-OPTIMIZED: Pad to batch max instead of global max
+        max_files_to_load: Optional[int] = None,  # Limit number of files to prevent OOM
+        lazy_file_discovery: bool = False,  # Enable lazy file discovery for large datasets
+        use_pinned_buffers: bool = True,  # GPU SYNC FIX: Use pinned buffers when in main process
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -550,68 +744,69 @@ class UltraFastPretokenizedDataset(IterableDataset):
         self.min_sequence_length = min_sequence_length
         self.validation_rate = validation_rate
         self.pad_token_id = pad_token_id
+        self.use_dynamic_padding = use_dynamic_padding
+        self.max_files_to_load = max_files_to_load
+        self.lazy_file_discovery = lazy_file_discovery
         self._validation_counter = 0
+        # GPU SYNC FIX: Enable pinned buffer pool for async GPU transfers
+        self.use_pinned_buffers = use_pinned_buffers and PINNED_BUFFERS_AVAILABLE
+        self._pinned_buffer_pool: Optional[PinnedBufferPool] = None
 
         # Arrow table cache for instant access (1.3x speedup)
         self.table_cache = ArrowTableCache(max_size=cache_size)
 
-        # Find data files
-        self.data_files = self._find_data_files()
-
-        # Auto-create validation from training if needed
-        if not self.data_files and self.split == "val":
-            self._create_val_from_train()
-
-        if not self.data_files:
-            raise ValueError(f"  No pretokenized Arrow files found for {split} split in {data_dir}")
+        # File discovery - lazy or eager
+        if lazy_file_discovery:
+            # Lazy discovery: files found on-demand during iteration
+            self.lazy_discoverer = LazyFileDiscovery(
+                data_dir=self.data_dir,
+                split=self.split,
+                max_files=self.max_files_to_load,
+            )
+            self.data_files = []  # Will be populated lazily
+            print(f" Lazy file discovery enabled for {split} split")
+            print(f"    Files will be discovered on-demand during iteration")
+            if self.max_files_to_load:
+                print(f"    Max files limit: {self.max_files_to_load}")
         else:
-            print(f" Found {len(self.data_files)} pretokenized Arrow files for {split} split")
-            total_size_gb = sum(f.stat().st_size for f in self.data_files) / (1024**3)
-            print(f"    Total data size: {total_size_gb:.2f} GB (memory-mapped, zero-copy)")
+            # Eager discovery: find all files upfront
+            self.lazy_discoverer = None
+            self.data_files = self._find_data_files()
+
+            # Auto-create validation from training if needed
+            if not self.data_files and self.split == "val":
+                self._create_val_from_train()
+
+            if not self.data_files:
+                raise ValueError(f"  No pretokenized Arrow files found for {split} split in {data_dir}")
+            else:
+                print(f" Found {len(self.data_files)} pretokenized Arrow files for {split} split")
+                total_size_gb = sum(f.stat().st_size for f in self.data_files) / (1024**3)
+                print(f"    Total data size: {total_size_gb:.2f} GB (memory-mapped, zero-copy)")
 
     def _find_data_files(self) -> List[Path]:
-        """Find pretokenized Arrow files with deterministic train/val splitting."""
-        files = []
+        """Find pretokenized Arrow files with deterministic train/val splitting (using shared utility)."""
         MIN_FILE_SIZE = 10 * 1024  # 10KB
 
-        # Look for pretokenized Arrow files
-        patterns = [
-            f"**/{self.split}/**/*_processed.arrow",
-            f"{self.split}_*.arrow",
-            "*_processed.arrow",
-            "*.arrow",
-        ]
-
-        # Collect all matching files
-        for pattern in patterns:
-            files.extend(self.data_dir.glob(pattern))
-
-        # Remove duplicates
-        files = list(dict.fromkeys(files))
-
-        # Filter by size
-        files = [f for f in files if f.exists() and f.stat().st_size >= MIN_FILE_SIZE]
-
-        # Apply deterministic train/val split (85/15)
-        if self.split in ["train", "val"] and len(files) > 0:
-            files = sorted(files, key=lambda f: f.name)
-            split_files = []
-
-            for file_path in files:
-                # Use MD5 for consistent hashing
-                file_hash = int(hashlib.md5(file_path.name.encode()).hexdigest(), 16) % 100
-
-                if self.split == "train":
-                    if file_hash < 85:  # 85% for training
-                        split_files.append(file_path)
-                else:  # val
-                    if file_hash >= 85:  # 15% for validation
-                        split_files.append(file_path)
-
-            files = split_files
-            print(f"    File-based split: {len(files)} files for {self.split}")
+        files = find_data_files(
+            data_dir=self.data_dir,
+            split=self.split,
+            patterns=[
+                f"**/{self.split}/**/*_processed.arrow",
+                f"{self.split}_*.arrow",
+                "*_processed.arrow",
+                "*.arrow",
+                # Also support Parquet files (pre-tokenized data)
+                f"**/{self.split}/**/*.parquet",
+                f"{self.split}_*.parquet",
+                "*.parquet",
+            ],
+            min_file_size=MIN_FILE_SIZE,
+            max_files=self.max_files_to_load,
+        )
 
         if files:
+            print(f"    File-based split: {len(files)} files for {self.split}")
             print(f"    Sample files: {[f.name for f in files[:3]]}")
 
         return files
@@ -628,6 +823,50 @@ class UltraFastPretokenizedDataset(IterableDataset):
             self.data_files = train_files
             print(f"  Created validation set from {len(self.data_files)} training files")
 
+    def _count_total_samples(self) -> int:
+        """Count total samples across all Arrow files (fast estimation for large datasets)."""
+        if hasattr(self, '_total_samples_cache') and self._total_samples_cache is not None:
+            return self._total_samples_cache
+
+        # For large datasets, estimate from file sizes to avoid slow counting
+        # Average ~500 bytes per sample for pretokenized data
+        BYTES_PER_SAMPLE_ESTIMATE = 500
+
+        if len(self.data_files) > 100:
+            # Fast estimation: sum file sizes and divide by estimated bytes per sample
+            total_bytes = sum(f.stat().st_size for f in self.data_files if f.exists())
+            estimated_total = total_bytes // BYTES_PER_SAMPLE_ESTIMATE
+            self._total_samples_cache = estimated_total
+            print(f"    Estimated {estimated_total:,} samples from {len(self.data_files)} files ({total_bytes / 1e9:.2f} GB)")
+            return estimated_total
+
+        # For smaller datasets, count exactly
+        total = 0
+        for file_path in self.data_files:
+            try:
+                table = self.table_cache.get(file_path)
+                total += len(table)
+            except Exception:
+                # Estimate based on file size
+                try:
+                    total += file_path.stat().st_size // BYTES_PER_SAMPLE_ESTIMATE
+                except Exception:
+                    total += 1000  # Fallback estimate
+
+        self._total_samples_cache = total
+        return total
+
+    def __len__(self) -> int:
+        """Return total number of samples in dataset."""
+        if self.lazy_file_discovery:
+            # For lazy discovery, we don't know the exact count until we iterate
+            # Return an estimate based on discovered files so far
+            if hasattr(self, '_total_samples_cache') and self._total_samples_cache:
+                return self._total_samples_cache
+            # Return a large estimate to prevent premature stopping
+            return 10000000  # Will be refined during iteration
+        return self._count_total_samples()
+
     def _stream_examples_ultra_fast(self) -> Iterator[Dict[str, np.ndarray]]:
         """
         Stream examples with maximum performance optimizations.
@@ -637,12 +876,19 @@ class UltraFastPretokenizedDataset(IterableDataset):
         - Memory-mapped cached tables (zero I/O overhead)
         - Direct buffer protocol access (zero-copy)
         - Sequential reads for OS page cache hits
+        - Lazy file discovery for memory-efficient large datasets
         """
         worker_info = torch.utils.data.get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
         should_print = worker_info is None or worker_info.id == 0
 
-        # Shuffle files for diversity
+        # Get file source - lazy discovery or pre-discovered files
+        if self.lazy_file_discovery and self.lazy_discoverer is not None:
+            # Lazy mode: stream files from lazy discoverer
+            yield from self._stream_examples_lazy(worker_id, should_print)
+            return
+
+        # Eager mode: use pre-discovered files
         epoch_num = getattr(self, '_stream_epoch_number', 0)
         shuffled_files = list(self.data_files)
         rng = random.Random(42 + epoch_num)
@@ -663,8 +909,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
                     'file_path': file_path
                 }
             except Exception as e:
-                if should_print:
-                    print(f"   [Worker {worker_id}] Could not load {file_path.name}: {e}")
+                logger.warning(f"Worker {worker_id} could not load {file_path}: {e}")
 
         # Stream with efficient batch extraction
         # Track iterations to prevent infinite loops when max_samples is not set
@@ -675,8 +920,9 @@ class UltraFastPretokenizedDataset(IterableDataset):
             # Safety check to prevent infinite loops
             iteration_count += 1
             if iteration_count > max_iterations:
-                if should_print:
-                    print(f"  [Worker {worker_id}] Reached max iterations ({max_iterations}), ending epoch")
+                logger.warning(
+                    f"Worker {worker_id} reached max iterations ({max_iterations}), ending epoch"
+                )
                 break
 
             for idx, cursor in file_cursors.items():
@@ -853,6 +1099,105 @@ class UltraFastPretokenizedDataset(IterableDataset):
                 # For UltraFastPretokenizedDataset, end the epoch here
                 break
 
+    def _stream_examples_lazy(self, worker_id: int, should_print: bool) -> Iterator[Dict[str, np.ndarray]]:
+        """
+        Stream examples with lazy file discovery - files found on-demand.
+
+        This mode discovers files incrementally during iteration instead of
+        finding all files upfront, which is memory-efficient for large datasets.
+        """
+        if self.lazy_discoverer is None:
+            return
+
+        files_processed = 0
+        samples_yielded = 0
+
+        if should_print:
+            print(f" [Lazy Discovery] Starting lazy streaming for {self.split} split")
+
+        # Stream files from lazy discoverer
+        for file_path in self.lazy_discoverer:
+            files_processed += 1
+
+            # Log progress periodically
+            if should_print and files_processed % 50 == 0:
+                print(f"    [Lazy] Processed {files_processed} files, discovered {self.lazy_discoverer.get_discovered_count()} total")
+
+            try:
+                # Load table with caching
+                table = self.table_cache.get(file_path)
+                total_rows = len(table)
+
+                if total_rows == 0:
+                    continue
+
+                # Process file in batches
+                offset = 0
+                while offset < total_rows:
+                    batch_size = min(self.samples_per_file, total_rows - offset)
+                    batch_slice = table.slice(offset, batch_size)
+
+                    try:
+                        # Vectorized batch extraction
+                        batch_dict = batch_slice.to_pydict()
+                        input_ids_list = batch_dict['input_ids']
+                        attention_mask_list = batch_dict.get('attention_mask', None)
+                        labels_list = batch_dict.get('labels', None)
+
+                        for i in range(len(input_ids_list)):
+                            input_ids_raw = input_ids_list[i]
+
+                            # Validate sequence length
+                            max_allowed_len = min(self.max_length * 10, 32768)
+                            if len(input_ids_raw) > max_allowed_len:
+                                continue
+
+                            # Convert to numpy
+                            input_ids_np = np.array(input_ids_raw, dtype=np.int64)
+
+                            if attention_mask_list and i < len(attention_mask_list):
+                                attention_mask_np = np.array(attention_mask_list[i], dtype=np.int64)
+                            else:
+                                attention_mask_np = np.ones(len(input_ids_np), dtype=np.int64)
+
+                            if labels_list and i < len(labels_list):
+                                labels_np = np.array(labels_list[i], dtype=np.int64)
+                            else:
+                                labels_np = input_ids_np.copy()
+
+                            # Truncate to max_length
+                            if len(input_ids_np) > self.max_length:
+                                input_ids_np = input_ids_np[:self.max_length]
+                                attention_mask_np = attention_mask_np[:self.max_length]
+                                labels_np = labels_np[:self.max_length]
+
+                            # Yield if valid
+                            if len(input_ids_np) >= self.min_sequence_length:
+                                yield {
+                                    'input_ids': input_ids_np,
+                                    'attention_mask': attention_mask_np,
+                                    'labels': labels_np
+                                }
+                                samples_yielded += 1
+
+                                # Check max_samples limit
+                                if self.max_samples and samples_yielded >= self.max_samples:
+                                    if should_print:
+                                        print(f"    [Lazy] Reached max_samples limit: {self.max_samples}")
+                                    return
+
+                    except Exception as e:
+                        logger.warning(f"[Lazy] Worker {worker_id} batch extraction failed for {file_path}: {e}")
+
+                    offset += batch_size
+
+            except Exception as e:
+                logger.warning(f"[Lazy] Worker {worker_id} could not process {file_path}: {e}")
+                continue
+
+        if should_print:
+            print(f" [Lazy Discovery] Complete: processed {files_processed} files, yielded {samples_yielded} samples")
+
     def collate_fn(self, batch: List[Dict[str, np.ndarray]]) -> Dict[str, torch.Tensor]:
         """
         Ultra-fast batch collation with FIXED-LENGTH padding.
@@ -893,9 +1238,6 @@ class UltraFastPretokenizedDataset(IterableDataset):
             print(f"   Check if there's a mismatch between dataset.__iter__() yield format and collate_fn expectations.")
             raise ValueError(f"Abnormal batch size {batch_size:,} would cause OOM")
 
-        # FIXED PADDING: Always use self.max_length instead of max(seq_lengths)
-        max_len = self.max_length
-
         # CRITICAL VALIDATION: Check all sequences BEFORE tensor allocation
         # This prevents OOM from corrupted data in the batch
         max_allowed_len = min(self.max_length * 10, 32768)
@@ -920,29 +1262,64 @@ class UltraFastPretokenizedDataset(IterableDataset):
         if skipped_count > 0:
             print(f" COLLATE_FN: Skipped {skipped_count}/{batch_size} corrupted items, using {len(valid_items)} valid items")
 
-        # If all items were corrupted, return empty batch (trainer will handle this)
+        # If all items were corrupted, return a skip marker batch
+        # Training loop should check for '_skip_batch' flag and skip this batch
         if not valid_items:
-            print(f" CRITICAL: All {batch_size} items in batch were corrupted! Returning empty batch.")
+            print(f" CRITICAL: All {batch_size} items in batch were corrupted! Returning skip marker.")
+            pad_token_id = getattr(self, 'pad_token_id', 0)
             return {
-                'input_ids': torch.tensor([], dtype=torch.long),
-                'attention_mask': torch.tensor([], dtype=torch.long),
-                'labels': torch.tensor([], dtype=torch.long)
+                'input_ids': torch.tensor([[pad_token_id]], dtype=torch.long),
+                'attention_mask': torch.tensor([[0]], dtype=torch.long),  # Mask=0 means ignore
+                'labels': torch.tensor([[-100]], dtype=torch.long),  # -100 = ignore in cross entropy
+                '_skip_batch': True,  # Flag for training loop to detect and skip
+                '_corruption_info': f"All {batch_size} items corrupted"
             }
 
         # Use only valid items
         valid_batch_size = len(valid_items)
 
-        # PHASE 4 OPTIMIZATION: Pre-allocate pinned tensors for faster GPU transfer
-        # Pinned memory enables asynchronous CPU→GPU copies
-        input_ids = torch.full((valid_batch_size, max_len), self.pad_token_id, dtype=torch.long)
-        attention_mask = torch.zeros((valid_batch_size, max_len), dtype=torch.long)
-        labels = torch.full((valid_batch_size, max_len), -100, dtype=torch.long)
+        # PADDING STRATEGY: Fixed vs Dynamic
+        # Dynamic padding saves 50-70% memory but may cause torch.compile recompilation
+        if self.use_dynamic_padding:
+            # Dynamic: pad to longest sequence in batch (RAM-optimized)
+            actual_lengths = [len(item['input_ids']) for _, item in valid_items]
+            max_len = min(max(actual_lengths), self.max_length) if actual_lengths else self.max_length
+        else:
+            # Fixed: always pad to max_length (torch.compile friendly)
+            max_len = self.max_length
 
-        # Pin memory if CUDA is available (done after creation for efficiency)
-        if torch.cuda.is_available():
-            input_ids = input_ids.pin_memory()
-            attention_mask = attention_mask.pin_memory()
-            labels = labels.pin_memory()
+        # Pre-allocate tensors on CPU
+        # GPU SYNC FIX: Use pinned buffers when in main process (num_workers=0)
+        # Pinned memory enables true async DMA transfers when using non_blocking=True
+        # NOTE: Do NOT use pinned memory with num_workers > 0 because pinned memory
+        # from worker processes gets copied to pageable memory during IPC.
+        use_pinned = (
+            self.use_pinned_buffers and
+            PINNED_BUFFERS_AVAILABLE and
+            is_main_process_dataloader is not None and
+            is_main_process_dataloader() and
+            torch.cuda.is_available()
+        )
+
+        if use_pinned and get_buffer_pool is not None:
+            # Get buffers from pool (fast path when pool has matching buffers)
+            buffer_pool = get_buffer_pool()
+            shape = (valid_batch_size, max_len)
+
+            # Get pinned buffers from pool
+            input_ids = buffer_pool.get_buffer(torch.long, shape)
+            attention_mask = buffer_pool.get_buffer(torch.long, shape)
+            labels = buffer_pool.get_buffer(torch.long, shape)
+
+            # Initialize with padding values
+            input_ids.fill_(self.pad_token_id)
+            attention_mask.fill_(0)
+            labels.fill_(-100)
+        else:
+            # Standard allocation (used with num_workers > 0 or no CUDA)
+            input_ids = torch.full((valid_batch_size, max_len), self.pad_token_id, dtype=torch.long)
+            attention_mask = torch.zeros((valid_batch_size, max_len), dtype=torch.long)
+            labels = torch.full((valid_batch_size, max_len), -100, dtype=torch.long)
 
         # Fill tensors efficiently
         # Note: torch.from_numpy creates a view when possible (shares memory with numpy array)
@@ -991,9 +1368,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
                 yield sample
                 count += 1
         except Exception as e:
-            print(f" [Worker {worker_id}] Error during iteration: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Worker {worker_id} error during iteration: {e}", exc_info=True)
             raise
 
     def __getstate__(self):
@@ -1023,6 +1398,15 @@ class InfiniteUltraFastDataset(IterableDataset):
             for item in self.base_dataset:
                 yield item
 
+    def __len__(self) -> int:
+        """Return length of base dataset for progress tracking.
+
+        Note: This is used for progress bars and epoch estimation.
+        The actual iteration is infinite, but one 'epoch' is one pass
+        through the base dataset.
+        """
+        return len(self.base_dataset)
+
     def collate_fn(self, batch):
         """Delegate collation to base dataset."""
         return self.base_dataset.collate_fn(batch)
@@ -1039,12 +1423,14 @@ def create_ultra_fast_dataloaders(
     prefetch_factor: int = 2,
     persistent_workers: bool = True,
     samples_per_file: int = 1000,
-    cache_size: int = 200,  # OPTIMIZATION: Increased from 50 for 8-12% speedup (~1GB extra RAM)
+    cache_size: int = 50,  # RAM-OPTIMIZED: 50 tables default (set higher if RAM > 64GB)
     pad_token_id: int = 0,
     eos_token_id: int = 2,
     use_sequence_packing: bool = False,  # OPTIMIZATION: Enable for 20-35% speedup (eliminates padding waste)
     packing_strategy: str = 'greedy',  # 'greedy' or 'adaptive'
     dynamic_batching_config: Optional[Dict[str, Any]] = None,  # Dynamic batching configuration
+    max_files_to_load: Optional[int] = None,  # Limit number of files to prevent OOM
+    lazy_file_discovery: bool = False,  # Enable lazy file discovery for memory-efficient large datasets
 ) -> Tuple[Any, Any]:  # Returns DataLoader or DynamicBatchIterator
     """
     Create ultra-fast pretokenized dataloaders with 60x speedup.
@@ -1117,6 +1503,8 @@ def create_ultra_fast_dataloaders(
         'samples_per_file': samples_per_file,
         'cache_size': cache_size,
         'pad_token_id': pad_token_id,
+        'max_files_to_load': max_files_to_load,
+        'lazy_file_discovery': lazy_file_discovery,
     }
 
     # Training dataset
@@ -1228,16 +1616,29 @@ def create_ultra_fast_dataloaders(
         min_batch_size = db_config.get('min_batch_size', 64)
         max_batch_size = db_config.get('max_batch_size', 256)
 
+        # Extract token budget config
+        token_budget_config = db_config.get('token_budget', {})
+        token_budget_enabled = token_budget_config.get('enabled', False)
+        target_tokens = token_budget_config.get('target_tokens_per_batch', 4096)
+        max_tokens = token_budget_config.get('max_tokens_per_batch', 8192)
+
         print(f"\n{'='*60}")
         print(f" DYNAMIC BATCHING ENABLED")
         print(f"{'='*60}")
         print(f"   Min batch size: {min_batch_size}")
         print(f"   Max batch size: {max_batch_size}")
-        print(f"   Memory thresholds: low={db_config.get('low_memory_threshold', 0.5):.0%}, "
-              f"target={db_config.get('target_memory_threshold', 0.7):.0%}, "
-              f"high={db_config.get('high_memory_threshold', 0.85):.0%}")
-        print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency', 10)} steps")
-        print(f"   Warmup steps: {db_config.get('warmup_steps', 100)}")
+        low_thresh = db_config.get('low_memory_threshold') or 0.5
+        target_thresh = db_config.get('target_memory_threshold') or 0.7
+        high_thresh = db_config.get('high_memory_threshold') or 0.85
+        print(f"   Memory thresholds: low={low_thresh:.0%}, "
+              f"target={target_thresh:.0%}, "
+              f"high={high_thresh:.0%}")
+        print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency') or 10} steps")
+        print(f"   Warmup steps: {db_config.get('warmup_steps') or 100}")
+        if token_budget_enabled:
+            print(f"   Token budget: ENABLED")
+            print(f"     Target tokens/batch: {target_tokens:,}")
+            print(f"     Max tokens/batch: {max_tokens:,}")
         print(f"{'='*60}\n")
 
         # Create base DataLoader with min_batch_size
@@ -1259,18 +1660,24 @@ def create_ultra_fast_dataloaders(
         train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
         val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
 
-        # Wrap with DynamicBatchIterator
+        # Wrap with DynamicBatchIterator - NOW WITH TOKEN BUDGET PARAMS
         train_loader = DynamicBatchIterator(
             base_dataloader=train_loader_base,
             scheduler=train_scheduler,
             min_batch_size=min_batch_size,
             max_batch_size=max_batch_size,
+            token_budget_enabled=token_budget_enabled,
+            target_tokens_per_batch=target_tokens,
+            max_tokens_per_batch=max_tokens,
         )
         val_loader = DynamicBatchIterator(
             base_dataloader=val_loader_base,
             scheduler=val_scheduler,
             min_batch_size=min_batch_size,
             max_batch_size=max_batch_size,
+            token_budget_enabled=token_budget_enabled,
+            target_tokens_per_batch=target_tokens,
+            max_tokens_per_batch=max_tokens,
         )
     else:
         # Standard DataLoader without dynamic batching

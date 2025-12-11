@@ -1135,23 +1135,27 @@ class AdvancedWarmupScheduler:
         print(f"   Warmup restarted (#{self.warmup_restart_count}) - LR reset to {warmup_start_lrs[0]:.2e}")
 
     def _compute_gradient_norm(self, model: torch.nn.Module) -> float:
-        """Compute gradient norm for adaptive warmup completion."""
-        try:
-            total_norm = 0.0
-            param_count = 0
+        """
+        Compute gradient norm for adaptive warmup completion.
 
+        GPU SYNC FIX: Accumulate norms on GPU with single .item() call at the end
+        instead of calling .item() per parameter (which caused N cudaStreamSynchronize calls).
+        """
+        try:
+            # Collect all gradient norms on GPU first
+            grad_norms = []
             for param in model.parameters():
                 if param.grad is not None:
-                    param_norm = param.grad.data.norm(2)
-                    total_norm += param_norm.item() ** 2
-                    param_count += 1
+                    grad_norms.append(param.grad.data.norm(2))
 
-            if param_count > 0:
-                total_norm = total_norm ** (1. / 2)
-                return total_norm
+            if grad_norms:
+                # Stack and compute total norm on GPU - single sync at .item()
+                stacked_norms = torch.stack(grad_norms)
+                total_norm = torch.sqrt((stacked_norms ** 2).sum())
+                return total_norm.item()  # Single cudaStreamSynchronize here
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Gradient norm computation failed: {e}")
 
         return float('inf')
 

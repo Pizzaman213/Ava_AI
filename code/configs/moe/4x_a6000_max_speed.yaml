@@ -12,7 +12,7 @@
 # ✅ Aggressive memory utilization (75-80% target)
 #
 # Launch with:
-#   torchrun --nproc_per_node=4 code/scripts/5_training/train_100m_full.py \
+#   torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py \
 #     --config code/configs/moe/4x_a6000_max_speed.yaml
 
 model:
@@ -120,10 +120,20 @@ dynamic_batching:
   cooldown_steps: 10
   max_adjustments_per_session: 500
 
-# Phase 2 Medium: Overlapped Checkpointing
+# CUDA Stream Optimizations - reduces synchronization overhead
+# Uses StreamPool (reusable streams), CUDATimer (event-based timing),
+# efficient_sync (current-stream only), NonBlockingTransfer (async CPU<->GPU)
+cuda_streams:
+  enabled: true
+  num_streams: 8              # 8 streams for 4-GPU (2 per GPU)
+  use_event_timing: true      # Use CUDA events instead of synchronize+time
+  use_stream_pool: true       # Reuse streams instead of creating new
+  high_priority_transfers: true  # Priority streams for CPU<->GPU
+
+# Phase 2 Medium: Overlapped Checkpointing - uses optimized CUDA streams
 overlapped_checkpointing:
   enabled: true # ✅ ENABLED: Overlap recomputation with backward pass
-  stream_overlap: true # Use CUDA streams for true overlapping
+  stream_overlap: true # Use CUDA StreamPool for true overlapping
   target_layers: "layers" # Apply to all layers
 
 # Phase 2 Medium: Double Checkpointing
@@ -131,7 +141,7 @@ double_checkpointing:
   enabled: true # ✅ ENABLED: Two-level checkpoint hierarchy
   coarse_checkpoint_interval: 8 # Save checkpoint every 8 layers
   fine_checkpoint_interval: 2 # Save checkpoint every 2 layers within segments
-  use_cuda_streams: true # Use CUDA streams for overlapping
+  use_cuda_streams: true # Uses optimized stream utilities
   min_layers_for_double: 4 # Minimum layers to use double checkpointing
 
 # Phase 2 Medium: Hybrid Caching
@@ -229,7 +239,7 @@ data:
   skip_validation: true # Skip data validation for 2-3% speedup
 
 output:
-  output_dir: code/outputs/runs/4x_a6000_max_speed
+  output_dir: /project/code/outputs
   save_every: 500
   fresh_start: false
 

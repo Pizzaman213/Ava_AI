@@ -94,7 +94,7 @@ class RunManager:
             self.run_id = f"run_{timestamp}_{unique_id}"
 
         # Create run directory structure
-        self.run_dir = self.base_output_dir / "runs" / self.run_id
+        self.run_dir = self.base_output_dir / "pretraining" / self.run_id
         self._create_directory_structure()
 
         # Initialize logging
@@ -406,8 +406,8 @@ class RunManager:
             # Clean up temp file on failure
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+            except OSError:
+                pass  # File may not exist or already cleaned up
             raise RuntimeError(f"Failed to save checkpoint atomically: {e}") from e
 
     def _update_best_loss(self, loss: float):
@@ -514,7 +514,7 @@ class RunManager:
         """
         if base_output_dir is None:
             base_output_dir = str(get_outputs_dir())
-        runs_dir = Path(base_output_dir) / "runs"
+        runs_dir = Path(base_output_dir) / "pretraining"
 
         if not runs_dir.exists():
             return []
@@ -547,7 +547,7 @@ class RunManager:
         """
         if base_output_dir is None:
             base_output_dir = str(get_outputs_dir())
-        run_dir = Path(base_output_dir) / "runs" / run_id
+        run_dir = Path(base_output_dir) / "pretraining" / run_id
 
         if not run_dir.exists():
             raise ValueError(f"Run {run_id} not found in {base_output_dir}")

@@ -1,8 +1,4 @@
-"""
-Text generation utilities for Qwen MoE++ models.
-"""
+"""Text generation utilities for Ava MoE++ models."""
+from .generator import TextGenerator
 
-# Note: generator.py has been moved to _archived/generation/
-# Generation functionality is not used in the core training pipeline
-
-__all__ = []
+__all__ = ["TextGenerator"]

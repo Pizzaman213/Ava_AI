@@ -151,7 +151,7 @@ memory:
 
 # Output & Evaluation
 output:
-  output_dir: "outputs/deepspeed_zero3"
+  output_dir: "/project/code/outputs"
   save_total_limit: 1
   save_on_each_node: false
 

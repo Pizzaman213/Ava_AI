@@ -1,16 +1,30 @@
 """Training orchestration and optimization coordination."""
 
 from .run_manager import RunManager
-from .optimizations import UnifiedOptimizer, OptimizationConfig
-from .optimization_integration import OptimizedTrainingSetup
+from .pipeline import TrainingPipeline, ErrorSeverity, ComponentError
 
-# Use the comprehensive version from optimization_integration as the primary
-from .optimization_integration import quick_optimize
+try:
+    from .optimizations import UnifiedOptimizer, OptimizationConfig
+    from .optimization_integration import OptimizedTrainingSetup, quick_optimize
+    _OPTIMIZATIONS_AVAILABLE = True
+except ImportError:
+    _OPTIMIZATIONS_AVAILABLE = False
+    UnifiedOptimizer = None
+    OptimizationConfig = None
+    OptimizedTrainingSetup = None
+    quick_optimize = None
 
 __all__ = [
     "RunManager",
-    "UnifiedOptimizer",
-    "OptimizationConfig",
-    "OptimizedTrainingSetup",
-    "quick_optimize",
+    "TrainingPipeline",
+    "ErrorSeverity",
+    "ComponentError",
 ]
+
+if _OPTIMIZATIONS_AVAILABLE:
+    __all__.extend([
+        "UnifiedOptimizer",
+        "OptimizationConfig",
+        "OptimizedTrainingSetup",
+        "quick_optimize",
+    ])

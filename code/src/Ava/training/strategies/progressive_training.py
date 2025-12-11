@@ -486,8 +486,10 @@ class CurriculumLearning:
         # Reshape back to (batch_size, seq_len-1)
         losses_per_token = flat_losses.view(batch_size, seq_len - 1)
 
-        # Compute per-example loss by averaging over valid tokens
-        per_example_losses = []
+        # GPU SYNC FIX: Compute all per-example losses on GPU, then single .tolist() sync
+        # Instead of calling .item() per example (batch_size cudaStreamSynchronize calls)
+        per_example_losses_tensor = torch.zeros(batch_size, device=losses_per_token.device)
+
         for i in range(batch_size):
             if shift_attention_mask is not None:
                 # Only consider valid tokens (where attention_mask = 1 and labels != -100)
@@ -497,51 +499,57 @@ class CurriculumLearning:
                 valid_mask = (shift_labels[i] != -100)
 
             if valid_mask.sum() > 0:
-                example_loss = losses_per_token[i][valid_mask].mean().item()
-            else:
-                # Fallback if no valid tokens
-                example_loss = 0.0
+                per_example_losses_tensor[i] = losses_per_token[i][valid_mask].mean()
+            # else: stays 0.0 (initialized above)
 
-            per_example_losses.append(example_loss)
-
-        return per_example_losses
+        # Single cudaStreamSynchronize here instead of batch_size syncs
+        return per_example_losses_tensor.tolist()
 
     def _compute_attention_difficulty(self, model: nn.Module, batch: Dict) -> List[float]:
-        """Compute difficulty based on attention entropy."""
+        """
+        Compute difficulty based on attention entropy.
+
+        GPU SYNC FIX: Accumulate entropies on GPU, single sync at end.
+        """
         outputs = model(**batch, output_attentions=True)
 
         # Compute attention entropy across all heads and layers
         batch_size = batch['input_ids'].size(0)
-        difficulties = []
+        device = batch['input_ids'].device
 
-        for sample_idx in range(batch_size):
-            total_entropy = 0.0
-            attention_count = 0
+        # GPU SYNC FIX: Accumulate on GPU tensors instead of Python floats
+        total_entropies = torch.zeros(batch_size, device=device)
+        attention_counts = torch.zeros(batch_size, device=device)
 
-            for layer_attentions in outputs.attentions:
-                # layer_attentions: [batch, heads, seq_len, seq_len]
+        for layer_attentions in outputs.attentions:
+            # layer_attentions: [batch, heads, seq_len, seq_len]
+            num_heads = layer_attentions.size(1)
+
+            for sample_idx in range(batch_size):
                 sample_attention = layer_attentions[sample_idx]  # [heads, seq_len, seq_len]
 
-                # Compute entropy for each head
-                for head_idx in range(sample_attention.size(0)):
-                    head_attention = sample_attention[head_idx]  # [seq_len, seq_len]
+                # Compute entropy for all heads at once: -sum(p * log(p))
+                # Shape: [heads, seq_len]
+                head_entropies = -torch.sum(
+                    sample_attention * torch.log(sample_attention + 1e-8),
+                    dim=-1
+                ).mean(dim=-1)  # Mean over seq_len -> [heads]
 
-                    # Compute entropy: -sum(p * log(p))
-                    entropy = -torch.sum(
-                        head_attention * torch.log(head_attention + 1e-8),
-                        dim=-1
-                    ).mean()
+                total_entropies[sample_idx] += head_entropies.sum()
+                attention_counts[sample_idx] += num_heads
 
-                    total_entropy += entropy.item()
-                    attention_count += 1
+        # Compute average and sync once
+        avg_entropies = total_entropies / attention_counts.clamp(min=1)
 
-            avg_entropy = total_entropy / attention_count if attention_count > 0 else 0.0
-            difficulties.append(avg_entropy)
-
-        return difficulties
+        # Single cudaStreamSynchronize here instead of batch_size * num_layers * num_heads syncs
+        return avg_entropies.tolist()
 
     def _compute_perplexity_difficulty(self, model: nn.Module, batch: Dict) -> List[float]:
-        """FIXED: Compute difficulty based on per-example perplexity for causal LM."""
+        """
+        Compute difficulty based on per-example perplexity for causal LM.
+
+        GPU SYNC FIX: Accumulate losses on GPU, single sync at end.
+        """
         # Get model outputs
         with torch.no_grad():
             outputs = model(
@@ -556,13 +564,15 @@ class CurriculumLearning:
 
         # Handle causal LM: shift logits and labels
         batch_size, seq_len = labels.shape[:2]
+        device = logits.device
 
         # Shift for next token prediction
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         shift_attention_mask = attention_mask[..., 1:].contiguous() if attention_mask is not None else None
 
-        difficulties = []
+        # GPU SYNC FIX: Accumulate perplexities on GPU
+        perplexities = torch.zeros(batch_size, device=device)
 
         for sample_idx in range(batch_size):
             sample_logits = shift_logits[sample_idx]  # [seq_len-1, vocab_size]
@@ -575,8 +585,7 @@ class CurriculumLearning:
                 valid_mask = (sample_labels != -100)
 
             if valid_mask.sum() == 0:
-                difficulties.append(0.0)
-                continue
+                continue  # perplexities[sample_idx] stays 0.0
 
             # Compute cross-entropy loss for valid tokens only
             valid_logits = sample_logits[valid_mask]
@@ -586,26 +595,26 @@ class CurriculumLearning:
                 valid_logits, valid_labels, reduction='mean'
             )
 
-            # Convert to perplexity
-            perplexity = torch.exp(loss).item()
-            # Clip extremely high perplexities to prevent numerical issues
-            perplexity = min(perplexity, 10000.0)
-            difficulties.append(perplexity)
+            # Convert to perplexity on GPU, clip to prevent overflow
+            perplexities[sample_idx] = torch.exp(loss.clamp(max=9.21))  # ln(10000) ≈ 9.21
 
-        return difficulties
+        # Single cudaStreamSynchronize here instead of batch_size syncs
+        return perplexities.tolist()
 
     def _compute_length_difficulty(self, model: nn.Module, batch: Dict) -> List[float]:
-        """Compute difficulty based on sequence length."""
+        """
+        Compute difficulty based on sequence length.
+
+        GPU SYNC FIX: Compute all lengths on GPU with single sync.
+        """
         input_ids = batch['input_ids']
-        batch_size = input_ids.size(0)
 
-        difficulties = []
-        for sample_idx in range(batch_size):
-            # Count non-padding tokens
-            sample_length = (input_ids[sample_idx] != self.tokenizer.pad_token_id).sum().item()
-            difficulties.append(float(sample_length))
+        # GPU SYNC FIX: Compute non-padding counts for all samples at once on GPU
+        # Shape: [batch_size]
+        lengths = (input_ids != self.tokenizer.pad_token_id).sum(dim=1).float()
 
-        return difficulties
+        # Single cudaStreamSynchronize here instead of batch_size syncs
+        return lengths.tolist()
 
     def _compute_vocab_difficulty(self, model: nn.Module, batch: Dict) -> List[float]:
         """Compute difficulty based on vocabulary diversity."""
@@ -1099,8 +1108,9 @@ class DynamicBatchSizer:
 
             return total_memory
 
-        except Exception:
+        except Exception as e:
             # Fallback estimation based on sequence length and batch size
+            logger.debug(f"Memory estimation failed, using fallback: {e}")
             base_memory = 2.0  # GB baseline
             seq_factor = seq_length / 512  # Sequence length scaling
             batch_factor = batch_size / 8  # Batch size scaling

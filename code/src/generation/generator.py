@@ -12,6 +12,7 @@ The generator is designed to work with models trained on data from
 text generation with various control parameters.
 """
 
+import logging
 import torch  # type: ignore[import]
 import torch.nn.functional as F  # type: ignore[import]
 from typing import Optional, List, Tuple, Union, TYPE_CHECKING
@@ -20,6 +21,8 @@ from transformers import AutoTokenizer  # type: ignore[import]
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
+
+logger = logging.getLogger(__name__)
 
 
 class TextGenerator:
@@ -397,7 +400,8 @@ class TextGenerator:
             # If it's a list or string, try to convert to int, otherwise return
             try:
                 eos_id: int = int(self.eos_token_id[0] if isinstance(self.eos_token_id, list) else self.eos_token_id)
-            except (ValueError, IndexError, TypeError):
+            except (ValueError, IndexError, TypeError) as e:
+                logger.debug(f"Could not convert eos_token_id to int: {e}")
                 return
         else:
             eos_id: int = int(self.eos_token_id)

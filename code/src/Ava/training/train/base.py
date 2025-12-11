@@ -18,12 +18,42 @@ class TrainingContext:
     Shared context passed to all training components.
 
     This allows components to access training state without tight coupling.
+    The context serves as the central hub for all shared state in the Ava pipeline.
+
+    Attributes:
+        model: The neural network model being trained
+        optimizer: The optimizer for model parameters
+        scheduler: Learning rate scheduler
+        device: Target device (cuda/cpu)
+        config: Training configuration dictionary or object
+        run_manager: RunManager for output organization
+        tokenizer: Tokenizer for text encoding/decoding
+
+        epoch: Current epoch number
+        step: Current optimizer step (after gradient accumulation)
+        micro_step: Current micro-batch step (before accumulation)
+
+        current_loss: Loss from most recent step
+        best_loss: Best loss seen so far
+
+        rank: Process rank for distributed training
+        world_size: Total number of processes
+        is_main_process: Whether this is rank 0
+
+        gradient_accumulation_steps: Number of accumulation steps
+        use_amp: Whether to use automatic mixed precision
+        amp_dtype: Data type for AMP (bfloat16 or float16)
+
+        metadata: Custom attributes for extension
     """
+    # Core components
     model: nn.Module
     optimizer: Optional[torch.optim.Optimizer] = None
+    scheduler: Optional[Any] = None  # LRScheduler
     device: Optional[torch.device] = None
-    config: Optional[Any] = None  # EnhancedTrainingConfig
+    config: Optional[Any] = None  # EnhancedTrainingConfig or dict
     run_manager: Optional[Any] = None
+    tokenizer: Optional[Any] = None
 
     # Training state
     epoch: int = 0
@@ -34,8 +64,56 @@ class TrainingContext:
     current_loss: float = 0.0
     best_loss: float = float("inf")
 
+    # Distributed training info
+    rank: int = 0
+    world_size: int = 1
+    is_main_process: bool = True
+
+    # Training configuration shortcuts
+    gradient_accumulation_steps: int = 1
+    use_amp: bool = True
+    amp_dtype: torch.dtype = torch.bfloat16
+
+    # Batch size management
+    batch_controller: Optional[Any] = None  # BatchSizeController for dynamic batching
+
     # Custom attributes for extension
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        """Post-initialization setup."""
+        # Ensure is_main_process is consistent with rank
+        if self.rank != 0:
+            self.is_main_process = False
+
+    def update_from_config(self, config: Dict[str, Any]) -> None:
+        """
+        Update context fields from a configuration dictionary.
+
+        Args:
+            config: Configuration dictionary with training settings
+        """
+        training = config.get('training', {})
+
+        # Update training settings
+        self.gradient_accumulation_steps = training.get(
+            'gradient_accumulation_steps',
+            self.gradient_accumulation_steps
+        )
+
+        # Update precision settings
+        precision = training.get('precision', {})
+        mixed_precision = precision.get('mixed_precision', 'bf16')
+
+        if mixed_precision == 'bf16':
+            self.use_amp = True
+            self.amp_dtype = torch.bfloat16
+        elif mixed_precision == 'fp16':
+            self.use_amp = True
+            self.amp_dtype = torch.float16
+        elif mixed_precision in ('fp32', 'none', False):
+            self.use_amp = False
+            self.amp_dtype = torch.float32
 
 
 class TrainingComponent(ABC):

@@ -104,11 +104,7 @@ execution:
         gpu:
             requested: 1
         sharedMemoryMB: 20480
-    secrets:
-        - variable: AWS_ACCESS_KEY_ID
-          description: AWS Access Key for boto3
-        - variable: AWS_SECRET_ACCESS_KEY
-          description: AWS Secret Key for boto3
+    secrets: []
     mounts:
         - type: project
           target: /project/

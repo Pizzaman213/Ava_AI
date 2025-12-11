@@ -61,9 +61,9 @@ except (ImportError, ModuleNotFoundError) as e:
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
-from src.rlhf import RLHFTrainer
-from src.rlhf.ppo_trainer import PPOConfig
-from src.rlhf.rlhf_trainer import RLHFConfig
+from rlhf import RLHFTrainer
+from rlhf.ppo_trainer import PPOConfig
+from rlhf.rlhf_trainer import RLHFConfig
 from Ava.config.training_config import TrainingConfigManager
 
 # Setup logging
@@ -108,21 +108,6 @@ def load_model(model_path: str, config: dict, device: str) -> nn.Module:
         logger.info("Created new model from config")
 
     return model.to(device)
-
-
-def load_config(config_path: str) -> dict:
-    """
-    Load configuration from YAML file.
-
-    Args:
-        config_path: Path to config file
-
-    Returns:
-        Configuration dictionary
-    """
-    config_manager = TrainingConfigManager()
-    config = config_manager.load_yaml_config(config_path)
-    return config.to_dict()
 
 
 def create_rlhf_config(config_dict: dict) -> RLHFConfig:
@@ -247,9 +232,11 @@ def main():
 
     args = parser.parse_args()
 
-    # Load configuration
+    # Load configuration (using TrainingConfigManager directly, no wrapper needed)
     logger.info(f"Loading configuration from {args.config}")
-    config_dict = load_config(args.config)
+    config_manager = TrainingConfigManager()
+    config = config_manager.load_yaml_config(args.config)
+    config_dict = config.to_dict()
 
     # Create RLHF config
     rlhf_config = create_rlhf_config(config_dict)
@@ -271,8 +258,9 @@ def main():
         from transformers import PreTrainedTokenizerFast
         tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
         logger.info(f"Loaded custom tokenizer with vocab size: {len(tokenizer)}")
-    except:
+    except Exception as e:
         # Fallback to AutoTokenizer
+        logger.debug(f"PreTrainedTokenizerFast failed: {e}, falling back to AutoTokenizer")
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         logger.info(f"Loaded tokenizer with vocab size: {len(tokenizer)}")
 

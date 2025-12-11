@@ -63,17 +63,14 @@ class DynamicConfig:
 
     def __getattr__(self, name: str) -> Any:
         """
-        Allow accessing any attribute dynamically with better error handling.
+        Allow accessing any attribute dynamically.
 
-        Raises AttributeError for truly missing attributes instead of silently
-        returning None, making bugs in config access more obvious.
+        Returns None for missing attributes to allow safe access to optional
+        config fields. Use .get() with a default or hasattr() if you need
+        to distinguish between None values and missing attributes.
         """
-        # This is called when an attribute is not found normally
-        # Provide a clear error message about the missing attribute
-        raise AttributeError(
-            f"'{type(self).__name__}' object has no attribute '{name}'. "
-            f"Please check your configuration YAML or ensure the attribute is set."
-        )
+        # Return None for missing attributes - allows safe optional config access
+        return None
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Allow setting any attribute dynamically."""
@@ -223,6 +220,18 @@ class ModelConfig:
     rope_theta: float = 10000.0               # RoPE base theta for rotary positional embeddings
     rope_scaling: Optional[Dict[str, float]] = None  # RoPE scaling configuration
 
+    def __post_init__(self):
+        """Validate configuration values to prevent division by zero."""
+        if self.num_attention_heads <= 0:
+            raise ValueError(f"num_attention_heads must be > 0, got {self.num_attention_heads}")
+        if self.num_experts <= 0:
+            raise ValueError(f"num_experts must be > 0, got {self.num_experts}")
+        if self.hidden_size % self.num_attention_heads != 0:
+            raise ValueError(
+                f"hidden_size ({self.hidden_size}) must be divisible by "
+                f"num_attention_heads ({self.num_attention_heads})"
+            )
+
 
 @dataclass
 class GenerationConfig:
@@ -356,6 +365,63 @@ class QuantizationConfig:
     stochastic_rounding: bool = False         # Stochastic rounding
     use_hadamard_transform: bool = False      # Hadamard transforms
     use_torchao_nvfp4: bool = False          # TorchAO NVFP4
+
+
+@dataclass
+class HybridCachingConfig:
+    """Configuration for hybrid KV + activation caching."""
+    enabled: bool = False
+    max_cache_size_gb: float = 1.0
+    kv_cache_ratio: float = 0.7               # Ratio for KV vs activation cache
+    eviction_policy: str = 'hybrid'           # 'lru', 'lfu', 'hybrid'
+    prefetch_enabled: bool = True
+    prefetch_lookahead: int = 2
+    min_score_threshold: float = 0.1
+
+
+@dataclass
+class CudaStreamsConfig:
+    """Configuration for CUDA stream optimizations."""
+    enabled: bool = False
+    num_streams: int = 4                      # Stream pool size
+    use_event_timing: bool = True             # Use CUDA events for timing
+    use_stream_pool: bool = True              # Reuse streams
+    high_priority_transfers: bool = True      # Priority for CPU<->GPU transfers
+
+
+@dataclass
+class OverlappedCheckpointingConfig:
+    """Configuration for overlapped gradient checkpointing."""
+    enabled: bool = False
+    stream_overlap: bool = True               # Use CUDA streams for overlapping
+    target_layers: str = 'layers'             # Which layers to apply to
+
+
+@dataclass
+class DoubleCheckpointingConfig:
+    """Configuration for double (nested) gradient checkpointing."""
+    enabled: bool = False
+    coarse_checkpoint_interval: int = 8       # Outer checkpoint interval
+    fine_checkpoint_interval: int = 2         # Inner checkpoint interval
+    use_cuda_streams: bool = True
+
+
+@dataclass
+class FP8Config:
+    """Configuration for FP8 training (Hopper/Ada GPUs only)."""
+    enabled: bool = False
+    use_transformer_engine: bool = False
+    format: str = 'e4m3'                      # 'e4m3' or 'e5m2'
+    margin: int = 0                           # Scale margin
+
+
+@dataclass
+class MoEMetricsConfig:
+    """Configuration for MoE-specific metrics tracking."""
+    track_expert_utilization: bool = True
+    log_frequency: int = 50
+    track_routing_decisions: bool = False
+    track_load_balance: bool = True
 
 
 @dataclass
@@ -541,16 +607,141 @@ class ProgressiveTrainingConfig:
 
 
 @dataclass
+class CalibrationConfig:
+    """Configuration for enhanced calibration system for dynamic batching.
+
+    The calibration system profiles GPU memory and throughput at training start
+    to enable more accurate batch size predictions and better GPU utilization.
+    """
+    # Enable/disable calibration
+    enabled: bool = True
+
+    # Calibration phases
+    run_memory_profiling: bool = True           # Profile memory at different batch/seq configs
+    run_backward_profiling: bool = True         # Measure actual backward/forward memory ratio
+    run_throughput_profiling: bool = True       # Profile throughput to find optimal batch size
+
+    # Thorough profiling grid (7x7 = 49 combinations)
+    batch_sizes_to_profile: List[int] = field(default_factory=lambda: [4, 8, 16, 32, 64, 128, 256])
+    seq_lengths_to_profile: List[int] = field(default_factory=lambda: [32, 64, 128, 256, 512, 1024, 2048])
+    num_samples_per_config: int = 3             # Measurements per configuration
+
+    # Persistence - both global cache AND run-local
+    cache_enabled: bool = True
+    cache_dir: str = "~/.cache/ava_calibration"  # Global cache for fast reuse
+    save_to_run_dir: bool = True                # Also save to outputs/runs/<run>/calibration/
+    cache_ttl_hours: int = 168                  # 1 week TTL
+
+    # Safety
+    max_calibration_time_seconds: int = 300     # 5 min max for thorough profiling
+
+
+@dataclass
 class DynamicBatchingConfig:
-    """Configuration for dynamic batch sizing based on GPU memory."""
+    """
+    Unified configuration for dynamic batch sizing based on GPU memory.
+
+    Consolidates all 8+ features for improved GPU utilization and stability.
+    All advanced features default to disabled for backward compatibility.
+    """
+    # Core settings
     enabled: bool = False                      # Enable dynamic batching
+    initial_batch_size: int = 128              # Starting batch size
     min_batch_size: int = 1                    # Minimum batch size
     max_batch_size: int = 64                   # Maximum batch size
-    target_memory_utilization: float = 0.85    # Target GPU memory usage (0.85 = 85%)
+
+    # Memory thresholds (conservative for stability)
+    target_memory_utilization: float = 0.85    # Target GPU memory usage (legacy name)
+    low_memory_threshold: float = 0.55         # Below this, increase batch size
+    target_memory_threshold: float = 0.70      # Target utilization (conservative)
+    high_memory_threshold: float = 0.80        # Above this, decrease batch size
+    critical_memory_threshold: float = 0.88    # Emergency decrease (safe margin)
+
+    # Adjustment parameters
     adjustment_frequency: int = 100            # Check every N steps
-    adjustment_factor: float = 1.25            # Scale factor for adjustments
+    adjustment_factor: float = 1.25            # Scale factor for adjustments (legacy)
+    adjustment_strategy: str = 'adaptive'      # 'adaptive', 'geometric', 'linear'
+    increase_factor: float = 1.1               # Multiply by this when increasing
+    decrease_factor: float = 0.9               # Multiply by this when decreasing
     warmup_steps: int = 500                    # Don't adjust during first N steps
     smooth_transitions: bool = False           # Use gradual adjustments (YAML controls)
+
+    # Safety parameters
+    max_adjustments_per_session: int = 100     # Prevent oscillation
+    cooldown_steps: int = 30                   # Steps to wait after adjustment
+    hysteresis_margin: float = 0.05            # Don't adjust unless memory differs by >5%
+    min_stable_steps: int = 30                 # Require N stable steps before change
+
+    # Feature 1: Token Budget Batching
+    token_budget_enabled: bool = False
+    target_tokens_per_batch: int = 4096
+    max_tokens_per_batch: int = 8192
+    min_tokens_per_batch: int = 512
+
+    # Feature 2: Sequence-Length Aware Batching
+    sequence_aware: bool = False
+    base_sequence_length: int = 512            # Reference length for scaling
+    sequence_scaling_factor: float = 1.0       # How aggressively to scale (0.5-1.5)
+
+    # Feature 3: Multi-GPU Synchronization
+    sync_across_gpus: bool = True              # Enable for distributed training
+    sync_strategy: str = 'min'                 # 'min', 'max', or 'mean'
+
+    # Feature 4: Gradient Accumulation Integration
+    coordinate_with_grad_accum: bool = False
+    target_effective_batch_size: int = 512     # batch_size * grad_accum_steps
+    dynamic_grad_accum: bool = False           # Adjust grad_accum instead of batch_size
+    original_grad_accum_steps: int = 1         # Store original value
+
+    # Feature 5: Predictive Memory Estimation
+    predictive_enabled: bool = False
+    calibration_steps: int = 50
+    memory_model: str = 'linear'               # 'linear' or 'quadratic'
+    backward_safety_margin: float = 1.20       # Multiplier for backward pass memory
+
+    # Feature 7: Geometric Warmup Strategy
+    warmup_strategy: str = 'none'              # 'none', 'linear', 'geometric'
+    warmup_growth_rate: float = 1.15           # For geometric: multiply each adjustment
+    warmup_initial_fraction: float = 0.25      # Start at 25% of min_batch_size
+
+    # Feature 8: Memory Trend Detection
+    trend_detection_enabled: bool = False
+    trend_window: int = 20                     # Steps to analyze for trends
+    oscillation_threshold: int = 5             # Direction changes before dampening
+    auto_tune_smoothing: bool = True           # Auto-adjust EMA alpha
+
+    # Feature 9: Adaptive backward margin (auto-tunes over time)
+    adaptive_margin_enabled: bool = False      # Disabled by default for stability
+    adaptive_margin_min: float = 1.05          # Minimum margin (backward >= 5% more)
+    adaptive_margin_max: float = 2.0           # Maximum margin (backward <= 2x forward)
+    adaptive_margin_learning_rate: float = 0.02  # How fast to adapt (lower = stable)
+    adaptive_margin_ema_alpha: float = 0.1     # EMA smoothing for observations
+
+    # GPU SYNC: Memory stats cache interval (reduces cudaStreamSynchronize calls)
+    memory_stats_cache_interval_sec: float = 0.5  # Query GPU memory at most every N seconds
+
+    # Feature 10: Aggressive Growth Mode (probes for optimal batch size)
+    aggressive_growth_enabled: bool = False       # Enable aggressive batch size exploration
+    aggressive_growth_exploration_steps: int = 500  # Steps to explore larger batches
+    aggressive_growth_factor: int = 2             # Multiplier for batch increases during exploration
+    aggressive_growth_min_headroom: float = 0.10  # Min memory headroom to trigger growth
+
+    # Enhanced calibration system
+    calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
+
+    def __post_init__(self):
+        """Validate configuration values to prevent division by zero."""
+        if self.min_batch_size <= 0:
+            raise ValueError(f"min_batch_size must be > 0, got {self.min_batch_size}")
+        if self.max_batch_size < self.min_batch_size:
+            raise ValueError(
+                f"max_batch_size ({self.max_batch_size}) must be >= "
+                f"min_batch_size ({self.min_batch_size})"
+            )
+
+
+# Backward compatibility alias
+DynamicBatchConfig = DynamicBatchingConfig
 
 
 @dataclass
@@ -607,6 +798,35 @@ class WandBConfig:
     wandb_log_freq: int = 10                  # Log frequency
     wandb_cache_size: int = 2000             # Cache size
     wandb_cache_flush_interval: int = 50     # Cache flush interval
+
+
+@dataclass
+class CoherenceConfig:
+    """Configuration for coherence measurement during training evaluation."""
+    enabled: bool = False                     # Enable coherence measurement
+    eval_every_n_steps: int = 500             # Measure coherence every N steps
+    num_samples: int = 10                     # Number of samples to generate for evaluation
+    max_generation_length: int = 256          # Max tokens to generate
+
+    # Metric weights for aggregate score
+    perplexity_weight: float = 0.3
+    repetition_weight: float = 0.2
+    flow_weight: float = 0.25
+    topic_weight: float = 0.25
+
+    # Thresholds
+    max_perplexity: float = 100.0             # Cap perplexity for scoring
+    ngram_sizes: List[int] = field(default_factory=lambda: [2, 3, 4])
+    min_sentence_length: int = 5              # Min tokens to consider a sentence
+
+    # Generation parameters
+    temperature: float = 0.8
+    top_p: float = 0.9
+    top_k: int = 50
+
+    # Logging
+    log_to_wandb: bool = True                 # Log coherence metrics to WandB
+    log_to_console: bool = True               # Log coherence metrics to console
 
 
 @dataclass
@@ -782,6 +1002,31 @@ class DevLogConfig:
 
 
 @dataclass
+class KernelOptimizationConfig:
+    """Configuration for low-level kernel optimizations.
+
+    Controls Triton kernel usage, dispatch strategies, and GPU optimizations.
+    These settings can provide 50-80% throughput improvement when properly tuned.
+    """
+    # Router/Gating kernel optimizations
+    router_kernel_mode: str = 'auto'          # 'auto', 'triton', 'pytorch'
+    use_fused_softmax_topk: bool = True       # Fused softmax + top-k kernel
+    router_block_size: int = 4                # Tokens per thread block (1-8)
+
+    # Expert computation optimizations
+    use_sparse_expert_dispatch: bool = False  # Sparse vs dense dispatch (sparse=memory efficient)
+    use_fused_activations: bool = True        # Fused SwiGLU/GeGLU kernels
+    use_selective_expert_loading: bool = False # On-demand expert loading for large E
+
+    # Capacity limiting
+    use_vectorized_capacity: bool = True      # Vectorized vs loop-based capacity limiting
+
+    # Advanced optimizations (experimental)
+    use_fused_moe_kernel: bool = False        # Mega kernel (routing + expert in one)
+    enable_kernel_profiling: bool = False     # Profile kernel execution times
+
+
+@dataclass
 class BasicModelConfig:
     """Configuration for model architecture parameters (basic version for legacy compatibility)."""
     vocab_size: int = 32000                   # Vocabulary size
@@ -815,6 +1060,7 @@ class EnhancedTrainingConfig:
     adaptive_mtp: AdaptiveMTPConfig = field(default_factory=AdaptiveMTPConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     dev_log: DevLogConfig = field(default_factory=DevLogConfig)
+    optimizations: OptimizationsConfig = field(default_factory=OptimizationsConfig)
 
     # Enhanced features (supports both losses and enhanced_features.losses paths)
     enhanced_features: Optional[Dict[str, Any]] = None  # type: ignore[assignment]
@@ -831,6 +1077,7 @@ class EnhancedTrainingConfig:
     wandb: WandBConfig = field(default_factory=WandBConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     deepspeed: DeepSpeedConfig = field(default_factory=DeepSpeedConfig)  # type: ignore[call-overload]
+    kernel_optimization: KernelOptimizationConfig = field(default_factory=KernelOptimizationConfig)
 
     # Special flags
     enable_all_features: bool = False         # Enable all features

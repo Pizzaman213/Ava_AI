@@ -15,14 +15,23 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
-from src.Ava.data.dataloader import create_streaming_dataloaders
+from ...data.dataloader import create_streaming_dataloaders
 
 # Module-level logger
 _logger = logging.getLogger(__name__)
 _logger.propagate = False  # Prevent duplicate logs
 
-from src.Ava.data.multi_column_data import create_multi_column_dataloader, DatasetConfig
-from src.Ava.data.pretokenized_loader import create_ultra_fast_dataloaders
+from ...data.multi_column_data import create_multi_column_dataloader, DatasetConfig
+from ...data.pretokenized_loader import create_ultra_fast_dataloaders
+from ...utils.shared import (
+    get_num_workers,
+    get_prefetch_factor,
+    get_persistent_workers,
+    get_samples_per_file,
+    get_enable_bucketing,
+    get_val_split_ratio,
+    extract_dynamic_batching_config,
+)
 
 from .base import TrainingComponent, TrainingContext
 
@@ -107,8 +116,11 @@ class DataLoaderManager(TrainingComponent):
                 training_config, tokenizer, batch_size, config_dict
             )
         else:
-            raise NotImplementedError(
-                "Basic data loading not implemented in this refactored version"
+            # Fallback: use streaming loader with defaults when no specific config found
+            # This handles cases where streaming is explicitly set to False or missing
+            _logger.info("No streaming config found, using streaming loader with defaults")
+            train_loader, val_loader = self._create_streaming_loaders(
+                training_config, tokenizer, batch_size, config_dict
             )
 
         self.train_loader = train_loader
@@ -208,34 +220,19 @@ class DataLoaderManager(TrainingComponent):
         use_dynamic_batching = getattr(training_config.data, "use_dynamic_batching", False)
         max_tokens_per_batch = getattr(training_config.data, "max_tokens_per_batch", None)
 
-        # Get memory-aware dynamic batching config (batch size adjustment based on GPU memory)
-        # Can be at: config.dynamic_batching, config.training.dynamic_batching, or config.training.batching.dynamic_batching
-        dynamic_batching_config = None
-        db = None
-        if hasattr(training_config, "dynamic_batching"):
-            db = training_config.dynamic_batching
-        elif hasattr(training_config, "training"):
-            if hasattr(training_config.training, "dynamic_batching"):
-                db = training_config.training.dynamic_batching
-            elif hasattr(training_config.training, "batching") and hasattr(training_config.training.batching, "dynamic_batching"):
-                db = training_config.training.batching.dynamic_batching
-        if db and getattr(db, "enabled", False):
-                dynamic_batching_config = {
-                    'enabled': True,
-                    'min_batch_size': getattr(db, 'min_batch_size', 64),
-                    'max_batch_size': getattr(db, 'max_batch_size', 256),
-                    'low_memory_threshold': getattr(db, 'low_memory_threshold', 0.50),
-                    'target_memory_threshold': getattr(db, 'target_memory_threshold', 0.70),
-                    'high_memory_threshold': getattr(db, 'high_memory_threshold', 0.85),
-                    'critical_memory_threshold': getattr(db, 'critical_memory_threshold', 0.95),
-                    'increase_factor': getattr(db, 'increase_factor', 1.2),
-                    'decrease_factor': getattr(db, 'decrease_factor', 0.8),
-                    'adjustment_frequency': getattr(db, 'adjustment_frequency', 10),
-                    'warmup_steps': getattr(db, 'warmup_steps', 100),
-                    'max_adjustments_per_session': getattr(db, 'max_adjustments_per_session', 50),
-                    'cooldown_steps': getattr(db, 'cooldown_steps', 5),
-                }
-                _logger.info(" Memory-aware dynamic batching enabled")
+        # Get memory-aware dynamic batching config using shared utility
+        # Checks: config.dynamic_batching, config.training.dynamic_batching, config.training.batching.dynamic_batching
+        dynamic_batching_config = extract_dynamic_batching_config(training_config)
+
+        if dynamic_batching_config:
+            _logger.info(" Memory-aware dynamic batching enabled")
+            token_budget_config = dynamic_batching_config.get('token_budget', {})
+            predictive_config = dynamic_batching_config.get('predictive', {})
+            if token_budget_config.get('enabled'):
+                _logger.info(f"   Token budget: target={token_budget_config['target_tokens_per_batch']}, "
+                            f"max={token_budget_config['max_tokens_per_batch']}")
+            if predictive_config.get('enabled'):
+                _logger.info(f"   Predictive: backward_margin={predictive_config['backward_safety_margin']:.2f}")
 
         # Log GPU I/O optimizations
         self._log_io_optimizations(
@@ -252,9 +249,12 @@ class DataLoaderManager(TrainingComponent):
             _logger.info(" Using pretokenized Arrow data loader (60x faster)")
             # Get cache size from config or use optimized default
             cache_size = getattr(training_config.data, "cache_size", 200)
-            # Get prefetch settings from config (for streaming mode)
-            prefetch_threads = getattr(training_config.data, "prefetch_threads", 4)
-            prefetch_lookahead = getattr(training_config.data, "prefetch_lookahead", 6)
+
+            # Get max_files_to_load from config to limit memory usage
+            max_files_to_load = getattr(training_config.data, 'max_files_to_load', None)
+
+            # Get lazy_file_discovery from config for memory-efficient large datasets
+            lazy_file_discovery = getattr(training_config.data, 'lazy_file_discovery', False)
 
             train_loader, val_loader = create_ultra_fast_dataloaders(
                 batch_size=batch_size,
@@ -278,8 +278,8 @@ class DataLoaderManager(TrainingComponent):
                 use_sequence_packing=use_sequence_packing,
                 packing_strategy=packing_strategy,
                 dynamic_batching_config=dynamic_batching_config,
-                prefetch_threads=prefetch_threads,
-                prefetch_lookahead=prefetch_lookahead,
+                max_files_to_load=max_files_to_load,
+                lazy_file_discovery=lazy_file_discovery,
             )
         else:
             _logger.info(
@@ -724,7 +724,8 @@ class DataLoaderManager(TrainingComponent):
                             format_scores[format_type] = (
                                 format_scores.get(format_type, 0) + 1
                             )
-            except Exception:
+            except Exception as e:
+                _logger.debug(f"Failed to detect format for {file_path}: {e}")
                 continue
 
         # Calculate confidence
@@ -750,81 +751,33 @@ class DataLoaderManager(TrainingComponent):
         _format_detection_cache[cache_key] = result
         return result
 
+    # Config getter methods - delegating to shared utilities
     @staticmethod
     def _get_num_workers(training_config: Any) -> int:
-        """Get number of data loading workers from config."""
-        if hasattr(training_config, "data_loading"):
-            num_workers = getattr(training_config.data_loading, "num_workers", None)
-        else:
-            num_workers = None
-
-        if num_workers is None:
-            num_workers = getattr(training_config.data, "num_workers", 0)
-
-        return num_workers
+        """Get number of data loading workers from config (using shared utility)."""
+        return get_num_workers(training_config)
 
     @staticmethod
     def _get_prefetch_factor(training_config: Any) -> int:
-        """Get prefetch factor from config."""
-        if hasattr(training_config, "data_loading"):
-            prefetch_factor = getattr(
-                training_config.data_loading, "prefetch_factor", None
-            )
-        else:
-            prefetch_factor = None
-
-        if prefetch_factor is None:
-            prefetch_factor = getattr(training_config.data, "prefetch_factor", 2)
-
-        return prefetch_factor
+        """Get prefetch factor from config (using shared utility)."""
+        return get_prefetch_factor(training_config)
 
     @staticmethod
     def _get_persistent_workers(training_config: Any) -> bool:
-        """Get persistent workers setting from config."""
-        if hasattr(training_config, "data_loading"):
-            persistent_workers = getattr(
-                training_config.data_loading, "persistent_workers", None
-            )
-        else:
-            persistent_workers = None
-
-        if persistent_workers is None:
-            persistent_workers = getattr(training_config.data, "persistent_workers", False)
-
-        return persistent_workers
+        """Get persistent workers setting from config (using shared utility)."""
+        return get_persistent_workers(training_config)
 
     @staticmethod
     def _get_samples_per_file(training_config: Any) -> int:
-        """Get samples per file from config."""
-        if hasattr(training_config, "data_loading"):
-            samples_per_file = getattr(
-                training_config.data_loading, "samples_per_file", 64
-            )
-        else:
-            samples_per_file = getattr(training_config.data, "samples_per_file", 64)
-
-        return samples_per_file
+        """Get samples per file from config (using shared utility)."""
+        return get_samples_per_file(training_config)
 
     @staticmethod
     def _get_enable_bucketing(training_config: Any) -> bool:
-        """Get bucketing enabled setting from config."""
-        if hasattr(training_config, "data_loading"):
-            enable_bucketing = getattr(
-                training_config.data_loading, "enable_bucketing", True
-            )
-        else:
-            enable_bucketing = getattr(training_config.data, "enable_bucketing", True)
-
-        return enable_bucketing
+        """Get bucketing enabled setting from config (using shared utility)."""
+        return get_enable_bucketing(training_config)
 
     @staticmethod
     def _get_val_split_ratio(training_config: Any) -> float:
-        """Get validation split ratio from config."""
-        if hasattr(training_config, "data_loading"):
-            val_split_ratio = getattr(
-                training_config.data_loading, "val_split_ratio", 0.1
-            )
-        else:
-            val_split_ratio = getattr(training_config.data, "val_split_ratio", 0.1)
-
-        return val_split_ratio
+        """Get validation split ratio from config (using shared utility)."""
+        return get_val_split_ratio(training_config)

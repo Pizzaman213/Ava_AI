@@ -72,8 +72,8 @@ def download_hf_dataset(output_dir, num_workers=4, max_partitions=None):
                 print(f" Dataset already exists with {len(files)} items")
                 print(f"  Using: huggingface_hub (incremental sync)")
                 print()
-        except:
-            pass
+        except OSError as e:
+            print(f" Warning: Could not check existing dataset: {e}")
 
     try:
         from huggingface_hub import snapshot_download

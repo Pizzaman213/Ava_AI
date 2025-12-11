@@ -268,7 +268,7 @@ class ConversationParser:
                 # Try to parse as JSON first
                 try:
                     return cls.parse_jsonl_data(json.dumps(data))
-                except:
+                except (json.JSONDecodeError, ValueError, TypeError):
                     return cls.parse_text_format(str(data))
         elif isinstance(data, list):
             if data and isinstance(data[0], dict):

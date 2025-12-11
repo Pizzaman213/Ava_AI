@@ -27,6 +27,12 @@ from .training_config import (
     TrainingConfigManager
 )
 
+from .config_validator import (
+    ConfigValidator,
+    ConfigValidationError,
+    validate_training_config,
+)
+
 __all__ = [
     # Configuration dataclasses
     'ArchitectureConfig',
@@ -46,5 +52,10 @@ __all__ = [
     'EnhancedTrainingConfig',
 
     # Manager class
-    'TrainingConfigManager'
+    'TrainingConfigManager',
+
+    # Validation
+    'ConfigValidator',
+    'ConfigValidationError',
+    'validate_training_config',
 ]

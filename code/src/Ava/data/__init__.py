@@ -1,19 +1,20 @@
 """
 Data Loading and Processing Module
 
-Consolidated data functionality including:
+Provides data loaders for:
 - Streaming dataset loaders
+- Pre-tokenized Arrow loaders (60x faster)
 - Multi-column dataset handling
+- Turn-aware conversation loaders
 - Distributed sampling
 - Bucketing and batching strategies
+
+Recommended usage:
+    from Ava.data.dataloader import create_streaming_dataloaders
+    from Ava.data.pretokenized_loader import create_ultra_fast_dataloaders
 """
 
-# Note: The following files have been moved to _archived/data/:
-# - data_profiler.py (moved from parent directory)
-# - deduplication.py
-# - optimized_dataloader.py
-# These are data preparation/analysis tools not used in the core training loop
-
+# Streaming loaders
 from .dataloader import (
     StreamingDataset,
     InfiniteStreamingDataset,
@@ -23,6 +24,7 @@ from .dataloader import (
     create_streaming_dataloaders,
 )
 
+# Multi-column loaders
 from .multi_column_data import (
     MultiColumnDataset,
     StreamingMultiColumnDataset,
@@ -30,12 +32,14 @@ from .multi_column_data import (
 )
 
 __all__ = [
+    # Streaming
     "StreamingDataset",
     "InfiniteStreamingDataset",
     "DistributedStreamingDataset",
     "LengthBasedBucketing",
     "FileReader",
     "create_streaming_dataloaders",
+    # Multi-column
     "MultiColumnDataset",
     "StreamingMultiColumnDataset",
     "AdvancedDistributedSampler",
