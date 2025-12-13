@@ -10,6 +10,11 @@
 #   ./profile_training.sh --config /project/code/configs/moe/large.yaml --epochs 1
 #   MAX_STEPS=1000 ./profile_training.sh --config /project/code/configs/moe/large.yaml
 #
+# Multi-GPU:
+#   By default, profiling uses only GPU 0 for consistent results.
+#   To use multiple GPUs: PROFILE_ALL_GPUS=1 ./profile_training.sh ...
+#   To select specific GPU: CUDA_VISIBLE_DEVICES=1 ./profile_training.sh ...
+#
 # Output:
 #   - Nsight Systems report saved to the training run's profiles/ folder
 #   - PyTorch profiler traces also in the run's profiles/ folder
@@ -20,6 +25,15 @@
 #
 
 set -e
+
+# Default to single GPU (GPU 0) unless PROFILE_ALL_GPUS is set
+if [ -z "${PROFILE_ALL_GPUS}" ] && [ -z "${CUDA_VISIBLE_DEVICES}" ]; then
+    export CUDA_VISIBLE_DEVICES=0
+    echo "Note: Using single GPU (GPU 0) by default for profiling."
+    echo "      To use all GPUs: PROFILE_ALL_GPUS=1 $0 $@"
+    echo "      To select specific GPU: CUDA_VISIBLE_DEVICES=1 $0 $@"
+    echo ""
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -45,6 +59,25 @@ if ! command -v nsys &> /dev/null; then
     echo "ERROR: nsys (Nsight Systems) not found in PATH"
     echo "Please install NVIDIA Nsight Systems or add it to your PATH"
     exit 1
+fi
+
+# Check for heterogeneous GPU setup and warn user
+if command -v nvidia-smi &> /dev/null; then
+    GPU_MEMORIES=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -u | wc -l)
+    if [ "$GPU_MEMORIES" -gt 1 ]; then
+        echo "============================================================"
+        echo "WARNING: Heterogeneous GPU setup detected!"
+        echo "============================================================"
+        nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
+        echo ""
+        echo "GPUs have different memory sizes. Options:"
+        echo "  1. Use single GPU: CUDA_VISIBLE_DEVICES=0 $0 $@"
+        echo "  2. Use heterogeneous config: --config code/configs/moe/heterogeneous_multi_gpu.yaml"
+        echo ""
+        echo "Continuing with current settings..."
+        echo "============================================================"
+        echo ""
+    fi
 fi
 
 echo "Running nsys profile with full CUDA/NVTX/memory tracing..."
@@ -117,17 +150,45 @@ trap 'cleanup_and_move_profiles' INT TERM
 
 # Run nsys with comprehensive tracing options
 # Output to temp directory, will be moved to run folder after
+#
+# NOTE: We do NOT use --enable-profiling here because nsys already provides
+# comprehensive GPU profiling. Using both causes CUPTI_ERROR_MULTIPLE_SUBSCRIBERS_NOT_SUPPORTED
+# since only one tool can subscribe to CUPTI at a time.
+#
+# nsys captures: CUDA kernels, memory operations, NVTX markers, API calls
+# PyTorch profiler would be redundant and causes conflicts
+#
+# CPU Profiling Options:
+#   --sample=cpu         : Enable CPU sampling (may require root or perf_event_paranoid=1)
+#   --backtrace=dwarf    : Use DWARF for accurate Python backtraces
+#   --cpuctxsw=process-tree : Track CPU context switches for process tree
+#
+# To enable CPU sampling without root, run:
+#   sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'
+#   sudo sh -c 'echo 0 > /proc/sys/kernel/kptr_restrict'
+
+# Check if CPU sampling is likely to work
+CPU_SAMPLE_ARGS=""
+if [ -r /proc/sys/kernel/perf_event_paranoid ]; then
+    PARANOID_LEVEL=$(cat /proc/sys/kernel/perf_event_paranoid)
+    if [ "$PARANOID_LEVEL" -le 1 ] || [ "$(id -u)" -eq 0 ]; then
+        CPU_SAMPLE_ARGS="--sample=cpu --backtrace=dwarf --cpuctxsw=process-tree"
+        echo "CPU sampling enabled (perf_event_paranoid=$PARANOID_LEVEL)"
+    else
+        echo "NOTE: CPU sampling disabled (perf_event_paranoid=$PARANOID_LEVEL > 1)"
+        echo "      To enable: sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'"
+    fi
+fi
+
 nsys profile \
-    --trace=cuda,nvtx \
+    --trace=cuda,nvtx,osrt \
     --cuda-memory-usage=true \
+    ${CPU_SAMPLE_ARGS} \
     --stats=true \
     --force-overwrite=true \
     --kill=sigterm \
     --output="${TEMP_NSYS_DIR}/${PROFILE_NAME}" \
     python "${SCRIPT_DIR}/train_pipeline.py" \
-        --enable-profiling \
-        --profile-start-step 0 \
-        --profile-end-step "${MAX_STEPS}" \
         --max-steps "${MAX_STEPS}" \
         --save-dir "${BASE_OUTPUT_DIR}" \
         "$@"

@@ -105,11 +105,12 @@ enhanced_features:
 
 # Data Loading
 data:
-  data_dir: "/project/code/data/processed"
+  data_dir: "code/data/processed"
   max_length: 2048
   tokenizer_name: "gpt2"
   train_batch_size: 2
   eval_batch_size: 4
+  use_pretokenized: true  # Use pretokenized Arrow/Parquet data (60x faster)
 
   # Data loading configuration
   streaming: true
@@ -133,7 +134,7 @@ memory:
 
 # Output & Evaluation
 output:
-  output_dir: "/project/code/outputs"
+  output_dir: "code/outputs"
   save_total_limit: 2
 
 evaluation:

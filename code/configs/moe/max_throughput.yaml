@@ -130,13 +130,13 @@ training:
 data:
   streaming: true
   buffer_size: 10000  # Larger buffer
-  data_dir: /project/code/data/Ava_Ai/data
+  data_dir: code/data/Ava_Ai/data
   max_length: 512  # Match model max_position_embeddings
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
   validation_split_ratio: 0.02  # Smaller validation
-  tokenizer_name: /project/code/data/Ava_Ai/tokenizer
+  tokenizer_name: code/data/Ava_Ai/tokenizer
   padding_side: right
   truncation: true
 
@@ -165,7 +165,7 @@ data:
   shuffle_files: true
 
 output:
-  output_dir: /project/code/outputs
+  output_dir: code/outputs
   save_every: 1000
   fresh_start: true
 

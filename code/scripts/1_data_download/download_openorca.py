@@ -317,15 +317,15 @@ Examples:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/project/code/data/fine-tuning/OpenOrca",
-        help="Output directory for tokenized data (default: /project/code/data/fine-tuning/OpenOrca)",
+        default="/root/Ava_AI/code/data/fine-tuning/OpenOrca",
+        help="Output directory for tokenized data (default: /root/Ava_AI/code/data/fine-tuning/OpenOrca)",
     )
 
     parser.add_argument(
         "--tokenizer-path",
         type=str,
-        default="/project/code/data/Ava_Ai/tokenizer",
-        help="Path to custom tokenizer (default: /project/code/data/Ava_Ai/tokenizer)",
+        default="/root/Ava_AI/code/data/Ava_Ai/tokenizer",
+        help="Path to custom tokenizer (default: /root/Ava_AI/code/data/Ava_Ai/tokenizer)",
     )
 
     parser.add_argument(

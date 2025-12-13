@@ -1,0 +1,162 @@
+# Test config - large.yaml with async prefetch/streams disabled
+# To isolate the CUDA illegal memory access issue
+
+model:
+  vocab_size: 50680
+  pad_token_id: 0
+  eos_token_id: 3
+  hidden_size: 768
+  num_layers: 12
+  num_attention_heads: 12
+  intermediate_size: 3072
+  max_position_embeddings: 1024
+  num_experts: 4
+  num_experts_per_token: 2
+  router_type: mixtral
+  capacity_factor: 1.25
+  quantize_kv_cache: false
+  expert_dropout: 0.0
+  activation: swiglu
+
+  # GPU Optimizations - keep most enabled
+  use_grouped_gemm: true
+  use_triton_kernels: false  # DISABLED - potential crash source
+  use_torch_compile: false
+  use_flash_attention: true
+  gradient_checkpointing: true
+  use_optimized_moe: true
+
+  # MoE loss coefficients
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.0
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.01
+
+  # Regularization
+  use_lora_experts: false
+  use_expert_offloading: false
+  attention_dropout: 0.1
+  dropout: 0.1
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+# Hybrid Caching - DISABLED for testing
+hybrid_caching:
+  enabled: false
+
+training:
+  precision:
+    mixed_precision: bf16  # Better than fp16 for training stability
+
+  batching:
+    batch_size: 24  # Fixed stable batch size
+    gradient_accumulation_steps: 4  # Simulate larger batch
+
+    dynamic_batching:
+      enabled: false  # DISABLE - causing thrashing
+
+  optimizer:
+    type: adamw
+    learning_rate: 3.0e-4
+    betas: [0.9, 0.95]
+    weight_decay: 0.1
+    use_fused: true
+    eps: 1.0e-8
+    max_grad_norm: 1.0
+
+  schedule:
+    num_epochs: 1
+    max_steps: 100
+    warmup_steps: 20
+    scheduler_type: cosine_with_restarts
+    num_cycles: 1
+    min_lr: 1.0e-5
+
+  logging:
+    save_steps: 500
+    eval_steps: 500
+    logging_steps: 20
+
+  validation:
+    enabled: false
+    batch_size: 16
+    max_batches: 5
+
+  generation:
+    enabled: false
+
+  coherence:
+    enabled: false
+
+data:
+  streaming: true
+  buffer_size: 5000  # Larger buffer for smoother data flow
+  data_dir: code/data/Ava_Ai/data
+  max_length: 512
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.05
+  tokenizer_name: code/data/Ava_Ai/tokenizer
+  padding_side: right
+  truncation: true
+
+  num_workers: 4  # More parallel data loading
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4  # More prefetching
+  dataloader_persistent_workers: true  # Keep workers alive
+  dataloader_samples_per_file: 1000
+  skip_dataloader_validation: true
+
+  use_sequence_packing: true  # 20-35% speedup by eliminating padding
+  use_pretokenized: true
+  use_all_data: false
+  max_files_to_load: 50
+  lazy_file_discovery: true
+  multiprocessing_context: spawn
+  cache_size: 10
+  skip_validation: true
+  shuffle_files: true
+
+output:
+  output_dir: code/outputs
+  save_every: 500
+  fresh_start: true
+
+optimizations:
+  use_overlapped_checkpointing: false
+
+# CUDA Streams - DISABLED to prevent async prefetch issues
+cuda_streams:
+  enabled: false
+
+# Overlapped checkpointing - DISABLED
+overlapped_checkpointing:
+  enabled: false
+
+# Double checkpointing - DISABLED
+double_checkpointing:
+  enabled: false
+
+fp8:
+  enabled: false
+
+performance:
+  enable_cudnn_benchmark: true
+  enable_tf32: true
+  enable_torch_compile: false
+
+kernel_optimization:
+  router_kernel_mode: pytorch
+  use_fused_softmax_topk: false
+  router_block_size: 4
+  use_fused_activations: false
+  use_vectorized_capacity: true
+
+wandb:
+  use_wandb: false
+
+deepspeed:
+  use_deepspeed: false

@@ -20,13 +20,24 @@ from pathlib import Path
 
 import torch
 
-# Add project root to path
-project_root = Path(__file__).resolve().parent.parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root / 'code' / 'src'))
+# Add src to path before importing Ava modules
+_script_dir = Path(__file__).resolve().parent
+_project_root = _script_dir.parents[2]  # scripts/5_training -> code -> project root
+_src_dir = _project_root / "code" / "src"
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
+
+# Now we can import Ava modules
+from ava.core.paths import get_project_root, get_tokenizer_path
+from ava.core.logging import (
+    Colors, Icons, ColoredFormatter,
+    print_header, print_subheader, print_success, print_warning, print_error,
+    print_info, print_config, configure_root_logger,
+)
+project_root = get_project_root()
 
 # Ava pipeline imports
-from Ava.training.train import (
+from ava.training import (
     TrainingContext,
     DataLoaderManager,
     ModelBuilder,
@@ -36,23 +47,52 @@ from Ava.training.train import (
     ValidationManager,
     GenerationManager,
     MetricsManager,
+    RunManager,
+    TrainingPipeline,
+    setup_distributed,
+    cleanup_distributed,
 )
-from Ava.training.orchestration import RunManager, TrainingPipeline
-from Ava.training.utils import setup_distributed, cleanup_distributed
-from Ava.config.yaml_loader import load_yaml_with_path_resolution
-from Ava.config.training_config import DynamicConfig
-from Ava.kernels import KernelConfig, set_kernel_config, TRITON_AVAILABLE
-from Ava.utils.checkpoint_manager import CheckpointManager
+from ava.config.yaml_loader import load_yaml_with_path_resolution
+from ava.config.training_config import DynamicConfig
+from ava.kernels import KernelConfig, set_kernel_config, TRITON_AVAILABLE
+from ava.core.checkpoint import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
 
+def _status_indicator(enabled: bool, impact: str = None) -> str:
+    """Return a colored YES/NO indicator with optional impact hint."""
+    if enabled:
+        status = f"{Colors.GREEN}{Colors.BOLD}YES{Colors.RESET}"
+        if impact:
+            status += f" {Colors.GRAY}({impact}){Colors.RESET}"
+        return status
+    return f"{Colors.GRAY}NO{Colors.RESET}"
+
+
+def _format_value(value, unit: str = "", color: str = Colors.CYAN) -> str:
+    """Format a configuration value with color."""
+    if value is None:
+        return f"{Colors.GRAY}default{Colors.RESET}"
+    return f"{color}{value}{unit}{Colors.RESET}"
+
+
+def _format_memory(bytes_val: int) -> str:
+    """Format bytes as human-readable memory size."""
+    if bytes_val >= 1024**3:
+        return f"{bytes_val / 1024**3:.1f}GB"
+    elif bytes_val >= 1024**2:
+        return f"{bytes_val / 1024**2:.1f}MB"
+    else:
+        return f"{bytes_val / 1024:.1f}KB"
+
+
 def log_optimization_status(config: dict, rank: int = 0) -> None:
     """
-    Log the status of all optimization features at training start.
+    Log detailed status of all optimization features at training start.
 
     Provides visibility into which optimizations are enabled/disabled
-    to help diagnose performance issues.
+    with performance impact estimates and configuration details.
     """
     if rank != 0:
         return
@@ -68,66 +108,248 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
     double_config = config.get('double_checkpointing', {})
     fp8_config = config.get('fp8', {})
 
-    print("\n" + "=" * 60)
-    print("ACTIVE OPTIMIZATIONS STATUS")
-    print("=" * 60)
+    print_header("ACTIVE OPTIMIZATIONS STATUS", icon=Icons.GEAR)
 
-    # Model optimizations
-    print("\n[Model Optimizations]")
-    print(f"  use_flash_attention:     {'YES' if model_config.get('use_flash_attention', False) else 'NO'}")
-    print(f"  gradient_checkpointing:  {'YES' if model_config.get('gradient_checkpointing', False) else 'NO'}")
-    print(f"  use_grouped_gemm:        {'YES' if model_config.get('use_grouped_gemm', False) else 'NO'}")
-    print(f"  use_triton_kernels:      {'YES' if model_config.get('use_triton_kernels', False) else 'NO'}")
-    print(f"  use_torch_compile:       {'YES' if model_config.get('use_torch_compile', False) else 'NO'}")
-    print(f"  use_optimized_moe:       {'YES' if model_config.get('use_optimized_moe', False) else 'NO'}")
+    # ═══════════════════════════════════════════════════════════════════
+    # Model Architecture Summary
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.BRAIN} Model Architecture")
+    hidden_size = model_config.get('hidden_size', 768)
+    num_layers = model_config.get('num_layers', 12)
+    num_heads = model_config.get('num_attention_heads', 12)
+    num_experts = model_config.get('num_experts', 8)
+    experts_per_tok = model_config.get('num_experts_per_token', 2)
+    vocab_size = model_config.get('vocab_size', 50257)
+    intermediate_size = model_config.get('intermediate_size', hidden_size * 4)
 
-    # Dynamic batching
-    print("\n[Dynamic Batching]")
+    print(f"  {Colors.WHITE}hidden_size:{Colors.RESET}           {_format_value(hidden_size)}")
+    print(f"  {Colors.WHITE}num_layers:{Colors.RESET}            {_format_value(num_layers)}")
+    print(f"  {Colors.WHITE}attention_heads:{Colors.RESET}       {_format_value(num_heads)} {Colors.GRAY}(head_dim={hidden_size // num_heads}){Colors.RESET}")
+    print(f"  {Colors.WHITE}intermediate_size:{Colors.RESET}     {_format_value(intermediate_size)}")
+    print(f"  {Colors.WHITE}vocab_size:{Colors.RESET}            {_format_value(vocab_size)}")
+    print(f"  {Colors.WHITE}MoE experts:{Colors.RESET}           {_format_value(num_experts)} {Colors.GRAY}(top-{experts_per_tok} routing){Colors.RESET}")
+
+    router_type = model_config.get('router_type', 'mixtral')
+    activation = model_config.get('activation', 'swiglu')
+    print(f"  {Colors.WHITE}router_type:{Colors.RESET}           {_format_value(router_type)}")
+    print(f"  {Colors.WHITE}activation:{Colors.RESET}            {_format_value(activation)} {Colors.GRAY}(gated activation){Colors.RESET}")
+
+    # Estimate parameter count
+    # Rough estimate: embeddings + layers * (attention + ffn/experts)
+    embed_params = vocab_size * hidden_size * 2  # input + output embeddings
+    attn_params = num_layers * (4 * hidden_size * hidden_size)  # Q, K, V, O projections
+    expert_params = num_layers * num_experts * (2 * hidden_size * intermediate_size)  # up + down projections
+    total_params = embed_params + attn_params + expert_params
+    print(f"  {Colors.WHITE}estimated_params:{Colors.RESET}      {Colors.ORANGE}~{total_params / 1e6:.0f}M{Colors.RESET}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Model Optimizations (Memory & Speed)
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.LIGHTNING} Model Optimizations")
+
+    flash_attn = model_config.get('use_flash_attention', False)
+    print(f"  {Colors.WHITE}use_flash_attention:{Colors.RESET}   {_status_indicator(flash_attn, '40% mem savings, 2-4x faster')}")
+
+    grad_ckpt = model_config.get('gradient_checkpointing', False)
+    print(f"  {Colors.WHITE}gradient_checkpointing:{Colors.RESET} {_status_indicator(grad_ckpt, '70-80% mem savings')}")
+
+    grouped_gemm = model_config.get('use_grouped_gemm', False)
+    print(f"  {Colors.WHITE}use_grouped_gemm:{Colors.RESET}      {_status_indicator(grouped_gemm, '5-10x expert speedup')}")
+
+    triton = model_config.get('use_triton_kernels', False)
+    print(f"  {Colors.WHITE}use_triton_kernels:{Colors.RESET}    {_status_indicator(triton, 'fused ops, 10-20% faster')}")
+
+    torch_compile = model_config.get('use_torch_compile', False)
+    compile_mode = model_config.get('torch_compile_mode', 'reduce-overhead')
+    if torch_compile:
+        print(f"  {Colors.WHITE}use_torch_compile:{Colors.RESET}     {_status_indicator(torch_compile, '15-25% after warmup')}")
+        print(f"    {Colors.GRAY}└─ mode:{Colors.RESET} {_format_value(compile_mode)}")
+    else:
+        print(f"  {Colors.WHITE}use_torch_compile:{Colors.RESET}     {_status_indicator(torch_compile)}")
+
+    opt_moe = model_config.get('use_optimized_moe', False)
+    print(f"  {Colors.WHITE}use_optimized_moe:{Colors.RESET}     {_status_indicator(opt_moe, 'fused routing, 10-20% faster')}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Training Configuration
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.TARGET} Training Configuration")
+
+    batch_size = training_config.get('batch_size', 32)
+    grad_accum = training_config.get('gradient_accumulation_steps', 1)
+    effective_batch = batch_size * grad_accum
+    print(f"  {Colors.WHITE}batch_size:{Colors.RESET}            {_format_value(batch_size)}")
+    print(f"  {Colors.WHITE}grad_accumulation:{Colors.RESET}     {_format_value(grad_accum)} {Colors.GRAY}(effective: {effective_batch}){Colors.RESET}")
+
+    lr = training_config.get('learning_rate', 1e-4)
+    print(f"  {Colors.WHITE}learning_rate:{Colors.RESET}         {Colors.CYAN}{lr:.2e}{Colors.RESET}")
+
+    optimizer = training_config.get('optimizer', 'adamw')
+    weight_decay = training_config.get('weight_decay', 0.01)
+    print(f"  {Colors.WHITE}optimizer:{Colors.RESET}             {_format_value(optimizer)} {Colors.GRAY}(wd={weight_decay}){Colors.RESET}")
+
+    mixed_precision = training_config.get('mixed_precision', 'fp16')
+    print(f"  {Colors.WHITE}mixed_precision:{Colors.RESET}       {_format_value(mixed_precision, color=Colors.GREEN if mixed_precision in ['bf16', 'fp16'] else Colors.GRAY)}")
+
+    max_length = data_config.get('max_length', 512)
+    print(f"  {Colors.WHITE}max_seq_length:{Colors.RESET}        {_format_value(max_length)}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Dynamic Batching
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.CHART} Dynamic Batching")
     db_enabled = dynamic_batching.get('enabled', False)
-    print(f"  enabled:                 {'YES' if db_enabled else 'NO'}")
+    print(f"  {Colors.WHITE}enabled:{Colors.RESET}               {_status_indicator(db_enabled, '15-25% throughput gain')}")
     if db_enabled:
+        min_bs = dynamic_batching.get('min_batch_size', 16)
+        max_bs = dynamic_batching.get('max_batch_size', 256)
+        target_mem = dynamic_batching.get('target_memory_threshold', 0.7)
+        print(f"    {Colors.GRAY}├─{Colors.RESET} {Colors.WHITE}batch_range:{Colors.RESET}       {_format_value(f'{min_bs}-{max_bs}')}")
+        print(f"    {Colors.GRAY}├─{Colors.RESET} {Colors.WHITE}target_memory:{Colors.RESET}     {_format_value(f'{target_mem:.0%}')}")
+
         token_budget = dynamic_batching.get('token_budget', {})
-        print(f"  token_budget:            {'YES' if token_budget.get('enabled', False) else 'NO'}")
-        print(f"  predictive_memory:       {'YES' if dynamic_batching.get('predictive_memory_estimation', False) else 'NO'}")
-        print(f"  trend_detection:         {'YES' if dynamic_batching.get('trend_detection', False) else 'NO'}")
+        tb_enabled = token_budget.get('enabled', False)
+        if tb_enabled:
+            target_tokens = token_budget.get('target_tokens_per_batch', 4096)
+            print(f"    {Colors.GRAY}├─{Colors.RESET} {Colors.WHITE}token_budget:{Colors.RESET}      {_status_indicator(tb_enabled)} {Colors.GRAY}(target: {target_tokens:,} tokens/batch){Colors.RESET}")
+        else:
+            print(f"    {Colors.GRAY}├─{Colors.RESET} {Colors.WHITE}token_budget:{Colors.RESET}      {_status_indicator(tb_enabled)}")
 
-    # Data loading
-    print("\n[Data Loading]")
-    print(f"  use_pretokenized:        {'YES' if data_config.get('use_pretokenized', False) else 'NO'}")
-    print(f"  use_sequence_packing:    {'YES' if data_config.get('use_sequence_packing', False) else 'NO'}")
-    print(f"  lazy_file_discovery:     {'YES' if data_config.get('lazy_file_discovery', False) else 'NO'}")
+        warmup = dynamic_batching.get('warmup_steps', 100)
+        print(f"    {Colors.GRAY}└─{Colors.RESET} {Colors.WHITE}warmup_steps:{Colors.RESET}      {_format_value(warmup)}")
 
-    # Advanced optimizations
-    print("\n[Advanced Optimizations]")
-    print(f"  hybrid_caching:          {'YES' if hybrid_config.get('enabled', False) else 'NO'}")
-    print(f"  overlapped_checkpointing: {'YES' if overlapped_config.get('enabled', False) else 'NO'}")
-    print(f"  double_checkpointing:    {'YES' if double_config.get('enabled', False) else 'NO'}")
-    print(f"  fp8_training:            {'YES' if fp8_config.get('enabled', False) else 'NO'}")
+    # ═══════════════════════════════════════════════════════════════════
+    # Data Loading
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.DATA} Data Loading")
 
-    # Performance settings
-    print("\n[Performance Settings]")
-    print(f"  enable_torch_compile:    {'YES' if perf_config.get('enable_torch_compile', False) else 'NO'}")
-    print(f"  enable_tf32:             {'YES' if perf_config.get('enable_tf32', False) else 'NO'}")
-    print(f"  enable_cudnn_benchmark:  {'YES' if perf_config.get('enable_cudnn_benchmark', False) else 'NO'}")
+    pretokenized = data_config.get('use_pretokenized', False)
+    print(f"  {Colors.WHITE}use_pretokenized:{Colors.RESET}      {_status_indicator(pretokenized, '60x faster loading')}")
 
-    print("=" * 60 + "\n")
+    seq_packing = data_config.get('use_sequence_packing', False)
+    packing_strategy = data_config.get('packing_strategy', 'greedy')
+    if seq_packing:
+        print(f"  {Colors.WHITE}sequence_packing:{Colors.RESET}      {_status_indicator(seq_packing, '20-35% speedup')}")
+        print(f"    {Colors.GRAY}└─ strategy:{Colors.RESET} {_format_value(packing_strategy)}")
+    else:
+        print(f"  {Colors.WHITE}sequence_packing:{Colors.RESET}      {_status_indicator(seq_packing)}")
+
+    lazy_discovery = data_config.get('lazy_file_discovery', False)
+    print(f"  {Colors.WHITE}lazy_file_discovery:{Colors.RESET}   {_status_indicator(lazy_discovery, 'memory-efficient for large datasets')}")
+
+    num_workers = data_config.get('num_workers', 4)
+    print(f"  {Colors.WHITE}num_workers:{Colors.RESET}           {_format_value(num_workers)}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Advanced Memory Optimizations
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.FIRE} Advanced Memory Optimizations")
+
+    hybrid_enabled = hybrid_config.get('enabled', False)
+    if hybrid_enabled:
+        cache_size = hybrid_config.get('cache_size', '2GB')
+        print(f"  {Colors.WHITE}hybrid_caching:{Colors.RESET}        {_status_indicator(hybrid_enabled, '2.19x throughput')}")
+        print(f"    {Colors.GRAY}└─ cache_size:{Colors.RESET} {_format_value(cache_size)}")
+    else:
+        print(f"  {Colors.WHITE}hybrid_caching:{Colors.RESET}        {_status_indicator(hybrid_enabled)}")
+
+    overlapped_enabled = overlapped_config.get('enabled', False)
+    print(f"  {Colors.WHITE}overlapped_ckpt:{Colors.RESET}       {_status_indicator(overlapped_enabled, '10-20% speedup, parallel backward')}")
+
+    double_enabled = double_config.get('enabled', False)
+    print(f"  {Colors.WHITE}double_checkpointing:{Colors.RESET}  {_status_indicator(double_enabled, 'O(sqrt(n)) memory, 10x longer seqs')}")
+
+    fp8_enabled = fp8_config.get('enabled', False)
+    print(f"  {Colors.WHITE}fp8_training:{Colors.RESET}          {_status_indicator(fp8_enabled, '2x memory savings, requires H100+')}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Performance Backend Settings
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.ROCKET} Performance Backend")
+
+    perf_compile = perf_config.get('enable_torch_compile', False)
+    print(f"  {Colors.WHITE}torch_compile:{Colors.RESET}         {_status_indicator(perf_compile, '15-25% speedup')}")
+
+    tf32 = perf_config.get('enable_tf32', False)
+    print(f"  {Colors.WHITE}enable_tf32:{Colors.RESET}           {_status_indicator(tf32, '3x faster matmuls on Ampere+')}")
+
+    cudnn_bench = perf_config.get('enable_cudnn_benchmark', False)
+    print(f"  {Colors.WHITE}cudnn_benchmark:{Colors.RESET}       {_status_indicator(cudnn_bench, 'auto-tune convolutions')}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Summary with Recommendations
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.STAR} Optimization Summary")
+
+    # Count enabled optimizations
+    enabled_count = sum([
+        flash_attn, grad_ckpt, grouped_gemm, triton, torch_compile, opt_moe,
+        db_enabled, pretokenized, seq_packing, hybrid_enabled, overlapped_enabled,
+        double_enabled, fp8_enabled, tf32, cudnn_bench
+    ])
+    total_opts = 15
+
+    if enabled_count >= 10:
+        score_color = Colors.GREEN
+        score_text = "Highly optimized"
+    elif enabled_count >= 5:
+        score_color = Colors.YELLOW
+        score_text = "Moderately optimized"
+    else:
+        score_color = Colors.RED
+        score_text = "Minimal optimization"
+
+    print(f"  {Colors.WHITE}Enabled optimizations:{Colors.RESET} {score_color}{enabled_count}/{total_opts}{Colors.RESET} {Colors.GRAY}({score_text}){Colors.RESET}")
+
+    # Memory impact estimate
+    mem_savings = []
+    if flash_attn:
+        mem_savings.append("40%")
+    if grad_ckpt:
+        mem_savings.append("70-80%")
+    if mixed_precision in ['fp16', 'bf16']:
+        mem_savings.append("50%")
+    if mem_savings:
+        print(f"  {Colors.WHITE}Est. memory savings:{Colors.RESET}  {Colors.GREEN}{' + '.join(mem_savings)}{Colors.RESET}")
+
+    # Recommendations
+    recommendations = []
+    if not flash_attn:
+        recommendations.append("Enable flash_attention for 40% memory savings")
+    if not grad_ckpt and total_params > 100e6:
+        recommendations.append("Enable gradient_checkpointing for large models")
+    if not tf32 and torch.cuda.is_available():
+        try:
+            cap = torch.cuda.get_device_capability()
+            if cap[0] >= 8:
+                recommendations.append("Enable TF32 for 3x faster matmuls on Ampere+")
+        except Exception:
+            pass
+    if not pretokenized:
+        recommendations.append("Use pretokenized data for 60x faster loading")
+
+    if recommendations:
+        print(f"  {Colors.YELLOW}{Icons.WARNING} Recommendations:{Colors.RESET}")
+        for rec in recommendations[:3]:  # Show top 3 recommendations
+            print(f"    {Colors.GRAY}•{Colors.RESET} {rec}")
+
+    print()  # Extra newline at end
 
 
 def setup_logging(log_dir: Path, rank: int = 0) -> logging.Logger:
-    """Setup logging for training."""
+    """Setup logging for training with colorful output."""
     logger = logging.getLogger('train_pipeline')
     logger.setLevel(logging.INFO if rank == 0 else logging.WARNING)
+    logger.handlers.clear()  # Clear existing handlers
 
     if rank == 0:
-        # Console handler
+        # Console handler with colors
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(
-            logging.Formatter('[%(asctime)s] %(levelname)s - %(message)s', '%H:%M:%S')
-        )
+        console_handler.setFormatter(ColoredFormatter(show_level=False, show_icons=True))
         logger.addHandler(console_handler)
 
-        # File handler
+        # File handler (plain format)
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_dir / 'training.log')
         file_handler.setLevel(logging.DEBUG)
@@ -136,17 +358,86 @@ def setup_logging(log_dir: Path, rank: int = 0) -> logging.Logger:
         )
         logger.addHandler(file_handler)
 
+    logger.propagate = False
     return logger
+
+
+def select_best_gpu() -> int:
+    """
+    Select the best available GPU for single-GPU training.
+
+    Selection criteria (in order):
+    1. Most free memory
+    2. Highest compute capability (newer GPU)
+    3. Lowest GPU index as tiebreaker
+
+    Returns:
+        GPU index to use (0 if no GPU available or on error)
+    """
+    if not torch.cuda.is_available():
+        return 0
+
+    num_gpus = torch.cuda.device_count()
+    if num_gpus == 0:
+        return 0
+    if num_gpus == 1:
+        return 0
+
+    best_gpu = 0
+    best_score = -1
+
+    print_subheader(f"{Icons.GPU} GPU Selection - Found {num_gpus} GPUs")
+
+    for i in range(num_gpus):
+        try:
+            props = torch.cuda.get_device_properties(i)
+            # Get free memory
+            torch.cuda.set_device(i)
+            free_mem, total_mem = torch.cuda.mem_get_info(i)
+            free_gb = free_mem / (1024**3)
+            total_gb = total_mem / (1024**3)
+
+            # Compute capability as a tie-breaker
+            compute_cap = props.major * 10 + props.minor
+
+            # Score: prioritize free memory (in GB), then compute capability
+            score = free_gb * 100 + compute_cap
+
+            print(f"  {Colors.CYAN}GPU {i}:{Colors.RESET} {Colors.WHITE}{props.name}{Colors.RESET}")
+            print(f"         {Colors.GRAY}Memory:{Colors.RESET} {Colors.ORANGE}{free_gb:.1f}GB{Colors.RESET} free / {total_gb:.1f}GB total")
+            print(f"         {Colors.GRAY}Compute:{Colors.RESET} {props.major}.{props.minor}, {Colors.GRAY}Score:{Colors.RESET} {Colors.LIME}{score:.1f}{Colors.RESET}")
+
+            if score > best_score:
+                best_score = score
+                best_gpu = i
+
+        except Exception as e:
+            print_error(f"GPU {i}: Error querying - {e}")
+            continue
+
+    print_success(f"Selected GPU {best_gpu}")
+    return best_gpu
 
 
 def main(args):
     """Main training function using the Ava pipeline architecture."""
 
+    # Configure root logger early to prevent duplicate log messages
+    # This sets up proper formatting and prevents module loggers from propagating duplicates
+    configure_root_logger(level=logging.WARNING)
+
     # =========================================================================
     # Phase 1: Distributed Setup
     # =========================================================================
     rank, world_size = setup_distributed()
-    device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
+
+    # For single-GPU training, select the best available GPU
+    if world_size == 1 and torch.cuda.is_available():
+        best_gpu = select_best_gpu()
+        torch.cuda.set_device(best_gpu)
+        device = torch.device(f'cuda:{best_gpu}')
+    else:
+        device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
 
     # =========================================================================
     # Phase 2: Load Configuration
@@ -171,16 +462,16 @@ def main(args):
         )
         set_kernel_config(kernel_config)
         if rank == 0:
-            print(f"[Kernel Optimization] Triton kernels enabled:")
-            print(f"  - Fused softmax+topk: {kernel_config.use_fused_softmax_topk}")
-            print(f"  - Router block size: {kernel_config.router_block_size}")
-            print(f"  - Fused activations: {kernel_opt_config.get('use_fused_activations', True)}")
-            print(f"  - Vectorized capacity: {kernel_opt_config.get('use_vectorized_capacity', True)}")
+            print_subheader(f"{Icons.LIGHTNING} Triton Kernel Optimization")
+            print_config("Fused softmax+topk", str(kernel_config.use_fused_softmax_topk))
+            print_config("Router block size", str(kernel_config.router_block_size))
+            print_config("Fused activations", str(kernel_opt_config.get('use_fused_activations', True)))
+            print_config("Vectorized capacity", str(kernel_opt_config.get('use_vectorized_capacity', True)))
     elif rank == 0:
         if not TRITON_AVAILABLE:
-            print("[Kernel Optimization] Triton not available, using PyTorch fallbacks")
+            print_warning("Triton not available, using PyTorch fallbacks")
         else:
-            print("[Kernel Optimization] No kernel_optimization config found, using defaults")
+            print_info("No kernel_optimization config found, using defaults")
 
     # =========================================================================
     # Phase 2.2: Log Optimization Status (visibility into what's enabled)
@@ -332,7 +623,7 @@ def main(args):
         batch_controller = None
         if dynamic_batching_config.get('enabled', False):
             try:
-                from Ava.training.optimizations.batch_size_controller import (
+                from ava.optimizations.batch_controller import (
                     BatchSizeController,
                     create_batch_size_controller,
                 )
@@ -419,7 +710,7 @@ def main(args):
                 data_config.get('tokenizer_path') or
                 data_config.get('tokenizer_name') or
                 config.get('data', {}).get('tokenizer_name') or
-                '/project/code/data/Ava_Ai/tokenizer'
+                str(get_tokenizer_path())  # Use utility function for default path
             )
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
             context.tokenizer = tokenizer
@@ -517,6 +808,10 @@ def main(args):
             profile_dir = str(run_manager.run_dir / 'profiles') if hasattr(run_manager, 'run_dir') else './profiles'
 
         # Create training loop config
+        # Logging options: 'tqdm' = clean progress bar only, 'verbose' = both tqdm + INFO logs
+        log_mode = training_config.get('log_mode', 'tqdm')
+        verbose_log_interval = training_config.get('verbose_log_interval', 500)
+
         loop_config = TrainingLoopConfig(
             gradient_accumulation_steps=context.gradient_accumulation_steps,
             max_grad_norm=training_config.get('max_grad_norm', 1.0),
@@ -531,6 +826,9 @@ def main(args):
             profile_start_step=getattr(args, 'profile_start_step', 0),
             profile_end_step=getattr(args, 'profile_end_step', 999999),
             profile_dir=profile_dir,
+            # Logging options
+            log_mode=log_mode,
+            verbose_log_interval=verbose_log_interval,
         )
 
         # Setup profiler if enabled

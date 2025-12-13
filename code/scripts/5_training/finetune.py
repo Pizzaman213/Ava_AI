@@ -4,7 +4,7 @@
 
 Fine-tuning script that automatically discovers and uses:
 1. Latest checkpoint from previous training runs (for continued training)
-2. Latest data files from /project/code/data/fine-tuning directory
+2. Latest data files from /root/Ava_AI/code/data/fine-tuning directory
 
 Based on train.py but optimized for fine-tuning workflows with automatic
 checkpoint resumption and data management.
@@ -22,7 +22,7 @@ Usage:
     python finetune.py
 
     # Use specific checkpoint (config auto-discovered)
-    python finetune.py --checkpoint /project/code/outputs/runs/run_XXX/checkpoints/step_12345/model.pt
+    python finetune.py --checkpoint /root/Ava_AI/code/outputs/runs/run_XXX/checkpoints/step_12345/model.pt
 
     # Override config file
     python finetune.py --config ../../configs/gpu/small.yaml
@@ -100,8 +100,12 @@ except (ImportError, ModuleNotFoundError) as e:
         sys.exit(1)
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
-from pydantic.warnings import UnsupportedFieldAttributeWarning
-warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+    warnings.filterwarnings('ignore', category=UnsupportedFieldAttributeWarning)
+except ImportError:
+    # Pydantic v1 or older version without this warning class
+    pass
 
 import torch
 import yaml
@@ -133,34 +137,36 @@ sys.path.insert(0, str(project_root))
 from transformers import AutoTokenizer
 
 # Import all training components from train.py
-from src.Ava.config import EnhancedTrainingConfig, TrainingConfigManager
+from ava.config import EnhancedTrainingConfig, TrainingConfigManager
 # Feature compatibility module was removed
-# from src.Ava.config.feature_compatibility import (
+# from ava.config.feature_compatibility import (
 #     print_compatibility_report,
 #     validate_training_config,
 # )
-from src.Ava.data.dataloader import create_streaming_dataloaders
-from src.Ava.models.moe_model import EnhancedMoEConfig, EnhancedMoEModel
-from src.Ava.data.multi_column_data import create_multi_column_dataloader
+from ava.data.dataloader import create_streaming_dataloaders
+from ava.models.moe import EnhancedMoEConfig, EnhancedMoEModel
+from ava.data.multi_column import create_multi_column_dataloader
 # Observability modules are not yet implemented:
-# from src.Ava.observability.health_dashboard import HealthDashboard
-# from src.Ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
-# from src.Ava.observability.training_validator import TrainingValidator
-from src.Ava.optimization import AdaptiveLearningRateManager, AdaptiveLRConfig
-from src.Ava.training.strategies.progressive_training import (
+# from ava.observability.health_dashboard import HealthDashboard
+# from ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
+# from ava.observability.training_validator import TrainingValidator
+from ava.optimization import AdaptiveLearningRateManager, AdaptiveLRConfig
+from ava.strategies.progressive import (
     ProgressiveTrainingConfig,
     ProgressiveTrainingManager,
 )
-from src.Ava.training.orchestration.run_manager import RunManager
-from src.Ava.utils import register_cleanup_handlers
+from ava.training.run_manager import RunManager
+from ava.utils import register_cleanup_handlers
+from ava.core.paths import get_project_root, get_data_dir
 
 # Import the main training function from train.py
 # We'll reuse most of its logic but with custom data loading
 sys.path.insert(0, str(Path(__file__).parent))
+project_root = get_project_root()
 
 
 def find_latest_checkpoint(
-    outputs_dir: Path = Path("/project/code/outputs/runs"),
+    outputs_dir: Optional[Path] = None,
     checkpoint_name: str = "latest_model.pt",
     include_finetune: bool = False,
 ) -> Optional[Path]:
@@ -169,13 +175,16 @@ def find_latest_checkpoint(
     By default searches only in regular training runs directory.
 
     Args:
-        outputs_dir: Base outputs directory containing runs (default: /project/code/outputs/runs)
+        outputs_dir: Base outputs directory containing runs (default: auto-detected)
         checkpoint_name: Name of checkpoint file (default: latest_model.pt)
         include_finetune: Also search in finetune_runs directory (default: False)
 
     Returns:
         Path to latest checkpoint, or None if not found
     """
+    if outputs_dir is None:
+        outputs_dir = project_root / "code" / "outputs" / "runs"
+
     checkpoint_files = []
 
     # Search in regular training runs (primary/default location)
@@ -189,7 +198,7 @@ def find_latest_checkpoint(
 
     # Optionally also search in fine-tuning runs
     if include_finetune:
-        finetune_dir = Path("/project/code/outputs/finetune_runs")
+        finetune_dir = project_root / "code" / "outputs" / "finetune_runs"
         if finetune_dir.exists():
             checkpoint_files.extend(list(finetune_dir.rglob(checkpoint_name)))
             print(f"    Also searching in fine-tuning directory: {finetune_dir}", flush=True)
@@ -212,7 +221,7 @@ def find_config_for_checkpoint(checkpoint_path: Path) -> Optional[Path]:
 
     Searches in order:
     1. run_dir/configs/*.yaml
-    2. Fallback to default configs in /project/code/configs/gpu/
+    2. Fallback to default configs in project configs directory
 
     Args:
         checkpoint_path: Path to the checkpoint file
@@ -253,7 +262,7 @@ def find_config_for_checkpoint(checkpoint_path: Path) -> Optional[Path]:
             print(f"     Could not parse metadata: {e}", flush=True)
 
     # Final fallback: use small.yaml as default
-    default_config = Path("/project/code/configs/gpu/small.yaml")
+    default_config = project_root / "code" / "configs" / "moe" / "minimal_working.yaml"
     if default_config.exists():
         print(f"   ℹ  Using default config: {default_config}", flush=True)
         return default_config
@@ -379,7 +388,7 @@ def create_finetune_dataloaders(
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    from src.Ava.data.dataloader import create_streaming_dataloaders
+    from ava.data.dataloader import create_streaming_dataloaders
 
     # Create a temporary directory with symlinks/copies for streaming loader
     # Or use the first file's directory as base
@@ -423,7 +432,7 @@ def parse_args():
     parser.add_argument(
         "--data-dir",
         type=str,
-        default="/project/code/data/fine-tuning",
+        default=None,  # Will be set to project_root/code/data/fine-tuning in main()
         help="Directory containing fine-tuning data files",
     )
     parser.add_argument(
@@ -475,70 +484,6 @@ def parse_args():
         help="Weights & Biases project name",
     )
 
-    # QLoRA arguments (enabled by default for efficient fine-tuning)
-    parser.add_argument(
-        "--use-qlora",
-        action="store_true",
-        default=True,
-        help="Enable QLoRA (Quantized Low-Rank Adaptation) for efficient fine-tuning (default: True)",
-    )
-    parser.add_argument(
-        "--no-qlora",
-        action="store_true",
-        help="Disable QLoRA and use full fine-tuning instead",
-    )
-    parser.add_argument(
-        "--lora-r",
-        type=int,
-        default=16,
-        help="LoRA rank (default: 16)",
-    )
-    parser.add_argument(
-        "--lora-alpha",
-        type=int,
-        default=32,
-        help="LoRA alpha parameter (default: 32)",
-    )
-    parser.add_argument(
-        "--lora-dropout",
-        type=float,
-        default=0.1,
-        help="LoRA dropout (default: 0.1)",
-    )
-    parser.add_argument(
-        "--target-modules",
-        type=str,
-        nargs="+",
-        default=["q_proj", "v_proj", "k_proj", "o_proj"],
-        help="Target modules for LoRA (default: q_proj v_proj k_proj o_proj)",
-    )
-    parser.add_argument(
-        "--load-in-4bit",
-        action="store_true",
-        default=True,
-        help="Load model in 4-bit precision (requires bitsandbytes) (default: True)",
-    )
-    parser.add_argument(
-        "--bnb-4bit-compute-dtype",
-        type=str,
-        default="float16",
-        choices=["float16", "bfloat16", "float32"],
-        help="Compute dtype for 4-bit base model (default: float16)",
-    )
-    parser.add_argument(
-        "--bnb-4bit-quant-type",
-        type=str,
-        default="nf4",
-        choices=["fp4", "nf4"],
-        help="Quantization data type for 4-bit (default: nf4)",
-    )
-    parser.add_argument(
-        "--use-double-quant",
-        action="store_true",
-        default=True,
-        help="Enable double quantization for 4-bit (default: True)",
-    )
-
     # Checkpoint loading arguments
     parser.add_argument(
         "--checkpoint",
@@ -560,8 +505,8 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="/project/code/outputs/runs",
-        help="Directory to search for checkpoints (default: /project/code/outputs/runs - normal training runs)",
+        default=None,  # Will be set to project_root/code/outputs/runs in main()
+        help="Directory to search for checkpoints (default: auto-detected)",
     )
     parser.add_argument(
         "--include-finetune-checkpoints",
@@ -574,8 +519,8 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/project/code/outputs/finetune_runs",
-        help="Output directory for fine-tuning checkpoints and logs (default: /project/code/outputs/finetune_runs)",
+        default=None,  # Will be set to project_root/code/outputs/finetune_runs in main()
+        help="Output directory for fine-tuning checkpoints and logs (default: auto-detected)",
     )
 
     return parser.parse_args()
@@ -584,6 +529,14 @@ def parse_args():
 def main():
     """Main fine-tuning entry point."""
     args = parse_args()
+
+    # Set default paths if not provided
+    if args.data_dir is None:
+        args.data_dir = str(project_root / "code" / "data" / "fine-tuning")
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = str(project_root / "code" / "outputs" / "runs")
+    if args.output_dir is None:
+        args.output_dir = str(project_root / "code" / "outputs" / "finetune_runs")
 
     # Create timestamped run directory for this finetuning session
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -682,7 +635,7 @@ def main():
             )
     else:
         # No checkpoint and no config specified - use default
-        config_path = Path("/project/code/configs/gpu/small.yaml")
+        config_path = project_root / "code" / "configs" / "moe" / "minimal_working.yaml"
         print(f" Using default configuration: {config_path}", flush=True)
 
     if not config_path.exists():
@@ -787,8 +740,8 @@ def main():
 
     # CRITICAL FIX: Temporarily hide the processed data directory
     # to force train.py to use ONLY the fine-tuning directory
-    processed_dir = Path("/project/code/data/processed")
-    processed_backup = Path("/project/code/data/.processed_backup_for_finetuning")
+    processed_dir = project_root / "code" / "data" / "processed"
+    processed_backup = project_root / "code" / "data" / ".processed_backup_for_finetuning"
     renamed_processed = False
 
     try:
@@ -816,45 +769,13 @@ def main():
             renamed_processed = True
             print(f"    Renamed to {processed_backup.name}", flush=True)
 
-        # 5. Configure QLoRA (enabled by default unless --no-qlora is specified)
-        # Disable QLoRA if --no-qlora flag is set
-        if args.no_qlora:
-            args.use_qlora = False
-            args.load_in_4bit = False
-            print("\n  QLoRA disabled - using full fine-tuning", flush=True)
-
-        if args.use_qlora:
-            try:
-                from src.Ava.training.qlora_utils import print_qlora_summary, setup_qlora_config  # type: ignore[import-not-found]
-                print_qlora_summary(args)
-            except ImportError:
-                print("  qlora_utils not found, skipping QLoRA summary", flush=True)
-
-            # Add QLoRA configuration to config dict
-            if "qlora" not in config_dict:
-                config_dict["qlora"] = {}
-
-            config_dict["qlora"]["enabled"] = True
-            config_dict["qlora"]["lora_r"] = args.lora_r
-            config_dict["qlora"]["lora_alpha"] = args.lora_alpha
-            config_dict["qlora"]["lora_dropout"] = args.lora_dropout
-            config_dict["qlora"]["target_modules"] = args.target_modules
-            config_dict["qlora"]["load_in_4bit"] = args.load_in_4bit
-            config_dict["qlora"]["bnb_4bit_compute_dtype"] = args.bnb_4bit_compute_dtype
-            config_dict["qlora"]["bnb_4bit_quant_type"] = args.bnb_4bit_quant_type
-            config_dict["qlora"]["use_double_quant"] = args.use_double_quant
-
-            print(" QLoRA configuration added to training config", flush=True)
-
-        # 6. Import and call the main training function from train.py
+        # 5. Import and call the main training function from train.py
         print("\n Initializing fine-tuning with discovered data...", flush=True)
         print(f"   Using {len(latest_files)} data file(s) from fine-tuning directory ONLY", flush=True)
         print(f"   Base config: {config_path.name}", flush=True)
         print(f"   Data directory: {latest_files[0].parent}", flush=True)
         if checkpoint_path:
             print(f"   Resuming from: {checkpoint_path.name}", flush=True)
-        if args.use_qlora:
-            print(f"   QLoRA: Enabled (rank={args.lora_r}, 4-bit={args.load_in_4bit})", flush=True)
 
         # Import main from train.py and run it
         try:

@@ -111,13 +111,13 @@ def main():
     parser.add_argument(
         '--output',
         type=str,
-        default='/project/code/data/rlhf/prompts.json',
+        default='/root/Ava_AI/code/data/rlhf/prompts.json',
         help='Output path for prompts.json'
     )
     parser.add_argument(
         '--eval-output',
         type=str,
-        default='/project/code/data/rlhf/eval_prompts.json',
+        default='/root/Ava_AI/code/data/rlhf/eval_prompts.json',
         help='Output path for eval_prompts.json'
     )
     parser.add_argument(

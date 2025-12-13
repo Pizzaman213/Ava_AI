@@ -1,0 +1,175 @@
+"""
+Enhanced YAML loader that resolves relative paths automatically.
+
+This module provides a YAML loader that converts relative paths in config files
+to absolute paths based on the project root directory, allowing YAML configs
+to be portable across different installation locations.
+
+Usage:
+    from ava.config.yaml_loader import load_config_with_path_resolution
+
+    config = load_config_with_path_resolution("code/configs/gpu/small.yaml")
+    # Paths in YAML like "code/data/processed" are automatically resolved
+"""
+
+import os
+import re
+import yaml
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+try:
+    from ava.core.paths import get_project_root, resolve_path
+except ImportError:
+    def get_project_root() -> Path:
+        current = Path(__file__).resolve()
+        for parent in current.parents:
+            if (parent / ".git").exists() or (parent / ".project").exists():
+                return parent
+        return current.parents[4] if len(current.parts) > 4 else Path.cwd()
+
+    def resolve_path(relative_path: str, base: Optional[Path] = None) -> Path:
+        if base is None:
+            base = get_project_root()
+        return (base / relative_path).resolve()
+
+
+def resolve_paths_in_config(config: Dict[str, Any], project_root: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Recursively resolve relative paths in configuration dictionary.
+
+    Converts paths like "code/data/processed" to absolute paths based on
+    the project root. Handles nested dictionaries and lists.
+
+    Args:
+        config: Configuration dictionary (typically from YAML)
+        project_root: Project root directory (auto-detected if not provided)
+
+    Returns:
+        Configuration dictionary with resolved paths
+    """
+    if project_root is None:
+        project_root = get_project_root()
+
+    # List of config keys that typically contain paths
+    PATH_KEYS = {
+        'data_dir', 'output_dir', 'tokenizer_name', 'tokenizer_path',
+        'model_path', 'checkpoint_path', 'resume', 'cache_dir',
+        'knowledge_base_path', 'config_file', 'deepspeed_config',
+        'policy_model_path', 'judge_model_path', 'prompt_dataset_path',
+        'eval_prompt_dataset_path', 'plot_path'
+    }
+
+    def resolve_value(value: Any, key: str = '') -> Any:
+        """Recursively resolve paths in values."""
+        if isinstance(value, dict):
+            return {k: resolve_value(v, k) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [resolve_value(item, key) for item in value]
+        elif isinstance(value, str) and key.lower() in PATH_KEYS:
+            # Check if it looks like a relative path (doesn't start with /, ~ or have drive letter)
+            if value and not value.startswith(('/','~')) and not (len(value) > 1 and value[1] == ':'):
+                # Try to resolve as project-relative path
+                resolved = resolve_path(value, project_root)
+                return str(resolved)
+        return value
+
+    return resolve_value(config)
+
+
+def load_yaml_with_path_resolution(
+    config_path: str,
+    project_root: Optional[Path] = None
+) -> Dict[str, Any]:
+    """
+    Load YAML config file and resolve relative paths.
+
+    Automatically converts relative paths in the YAML to absolute paths
+    based on the project root.
+
+    Args:
+        config_path: Path to YAML configuration file (can be relative or absolute)
+        project_root: Project root directory (auto-detected if not provided)
+
+    Returns:
+        Loaded configuration dictionary with resolved paths
+
+    Raises:
+        FileNotFoundError: If config file cannot be found
+        yaml.YAMLError: If YAML parsing fails
+    """
+    if project_root is None:
+        project_root = get_project_root()
+
+    # Resolve config file path
+    config_file = Path(config_path)
+    if not config_file.is_absolute():
+        # Try as relative to current directory first
+        if (Path.cwd() / config_file).exists():
+            config_file = Path.cwd() / config_file
+        # Otherwise try relative to project root
+        elif (project_root / config_file).exists():
+            config_file = project_root / config_file
+
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    # Load YAML
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f) or {}
+
+    # Resolve paths in config
+    config = resolve_paths_in_config(config, project_root)
+
+    return config
+
+
+def make_paths_relative_in_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert absolute paths in config to relative paths (for saving to YAML).
+
+    This is useful when saving a config after loading and potentially modifying paths.
+
+    Args:
+        config: Configuration dictionary with absolute paths
+
+    Returns:
+        Configuration dictionary with relative paths
+    """
+    project_root = get_project_root()
+
+    # List of config keys that typically contain paths
+    PATH_KEYS = {
+        'data_dir', 'output_dir', 'tokenizer_name', 'tokenizer_path',
+        'model_path', 'checkpoint_path', 'resume', 'cache_dir',
+        'knowledge_base_path', 'config_file', 'deepspeed_config',
+        'policy_model_path', 'judge_model_path', 'prompt_dataset_path',
+        'eval_prompt_dataset_path', 'plot_path'
+    }
+
+    def make_relative_value(value: Any, key: str = '') -> Any:
+        """Recursively convert paths to relative."""
+        if isinstance(value, dict):
+            return {k: make_relative_value(v, k) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [make_relative_value(item, key) for item in value]
+        elif isinstance(value, str) and key.lower() in PATH_KEYS:
+            try:
+                path = Path(value).resolve()
+                relative = path.relative_to(project_root)
+                return str(relative)
+            except (ValueError, OSError):
+                # Path not under project root, keep as is
+                pass
+        return value
+
+    return make_relative_value(config)
+
+
+__all__ = [
+    'load_yaml_with_path_resolution',
+    'resolve_paths_in_config',
+    'make_paths_relative_in_config',
+    'get_project_root',
+    'resolve_path'
+]

@@ -64,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 from rlhf import RLHFTrainer
 from rlhf.ppo_trainer import PPOConfig
 from rlhf.rlhf_trainer import RLHFConfig
-from Ava.config.training_config import TrainingConfigManager
+from ava.config.training_config import TrainingConfigManager
 
 # Setup logging
 logging.basicConfig(
@@ -86,7 +86,7 @@ def load_model(model_path: str, config: dict, device: str) -> nn.Module:
     Returns:
         Loaded model
     """
-    from Ava.models import EnhancedMoEModel  # type: ignore[attr-defined]
+    from ava.models import EnhancedMoEModel  # type: ignore[attr-defined]
     from typing import cast, Type
 
     # Type narrowing: assert EnhancedMoEModel is available
@@ -250,7 +250,7 @@ def main():
     logger.info(f"Using device: {rlhf_config.device}")
 
     # Load tokenizer (custom tokenizer support)
-    tokenizer_path = config_dict.get('data', {}).get('tokenizer_name', '/project/code/models/tokenizer/enhanced-65536')
+    tokenizer_path = config_dict.get('data', {}).get('tokenizer_name', '/root/Ava_AI/code/models/tokenizer/enhanced-65536')
     logger.info(f"Loading tokenizer from {tokenizer_path}")
 
     try:

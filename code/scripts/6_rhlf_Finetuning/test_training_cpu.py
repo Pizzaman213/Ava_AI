@@ -59,7 +59,7 @@ def main():
         from transformers import PreTrainedTokenizerFast
 
         # Load custom tokenizer
-        tokenizer_path = "/project/code/models/tokenizer/enhanced-65536"
+        tokenizer_path = "/root/Ava_AI/code/models/tokenizer/enhanced-65536"
         logger.info(f"Loading custom tokenizer from {tokenizer_path}")
         tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
         logger.info(f" Loaded tokenizer with vocab size: {len(tokenizer)}")
@@ -70,7 +70,7 @@ def main():
         judge_model = create_tiny_test_model(vocab_size=len(tokenizer))
 
         # Verify prompts exist
-        prompts_path = "/project/code/data/rlhf/prompts.json"
+        prompts_path = "/root/Ava_AI/code/data/rlhf/prompts.json"
         if not Path(prompts_path).exists():
             logger.error(f"Prompts file not found: {prompts_path}")
             logger.info("Creating test prompts...")

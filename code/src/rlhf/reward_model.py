@@ -341,7 +341,11 @@ class EnsembleRewardModel:
         if weights is None:
             self.weights = [1.0 / len(reward_models)] * len(reward_models)
         else:
-            assert len(weights) == len(reward_models)
+            if len(weights) != len(reward_models):
+                raise ValueError(
+                    f"Number of weights ({len(weights)}) must match number of reward models "
+                    f"({len(reward_models)})"
+                )
             # Normalize weights
             total = sum(weights)
             self.weights = [w / total for w in weights]
@@ -369,12 +373,20 @@ class EnsembleRewardModel:
 
         for model, weight in zip(self.reward_models, self.weights):
             if isinstance(model, RewardModel):
-                assert input_ids is not None
+                if input_ids is None:
+                    raise ValueError(
+                        "input_ids is required for RewardModel but was None. "
+                        "Ensure input_ids are provided when using RewardModel in ensemble."
+                    )
                 rewards = model(input_ids, attention_mask)
                 if isinstance(rewards, dict):
                     rewards = rewards['rewards']
             elif isinstance(model, ModelToModelReward):
-                assert prompts is not None and responses is not None
+                if prompts is None or responses is None:
+                    raise ValueError(
+                        f"prompts and responses are required for ModelToModelReward but got "
+                        f"prompts={prompts is not None}, responses={responses is not None}"
+                    )
                 rewards = model.rate_responses(prompts, responses)
             else:
                 raise ValueError(f"Unknown reward model type: {type(model)}")

@@ -85,15 +85,15 @@ except ImportError:
     pass
 
 # Add project root to path
-sys.path.append('/project/code')
+sys.path.append('/root/Ava_AI/code')
 
-from src.Ava.models.moe_model import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
+from ava.models.moe import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
 from src.generation.generator import TextGenerator
 from transformers import AutoTokenizer  # type: ignore[import-not-found]
 from datetime import datetime
 
 
-def find_latest_run(base_dir: str = '/project/code/outputs/runs') -> Optional[Path]:
+def find_latest_run(base_dir: str = '/root/Ava_AI/code/outputs/runs') -> Optional[Path]:
     """Find the most recent training run directory."""
     runs_path = Path(base_dir)
     if not runs_path.exists():
@@ -108,7 +108,7 @@ def find_latest_run(base_dir: str = '/project/code/outputs/runs') -> Optional[Pa
     return run_dirs[0]
 
 
-def list_available_runs(base_dir: str = '/project/code/outputs/runs') -> List[Path]:
+def list_available_runs(base_dir: str = '/root/Ava_AI/code/outputs/runs') -> List[Path]:
     """List all available training run directories."""
     runs_path = Path(base_dir)
     if not runs_path.exists():
@@ -334,7 +334,7 @@ class GenerationPipeline:
                 65536: 'enhanced-65536'
             }
             tokenizer_name = tokenizer_map.get(model_vocab_size, 'enhanced-65536')
-            tokenizer_path = f'/project/code/models/tokenizer/{tokenizer_name}'
+            tokenizer_path = f'/root/Ava_AI/code/models/tokenizer/{tokenizer_name}'
             print(f" Auto-detected vocab_size={model_vocab_size}, using tokenizer: {tokenizer_name}")
         else:
             print(f" Using tokenizer from checkpoint config: {tokenizer_path}")
@@ -342,13 +342,13 @@ class GenerationPipeline:
         # Handle relative paths and fix duplicated project paths
         tokenizer_path_resolved = tokenizer_path
 
-        # Fix paths with /project/code/code/ (duplicated /code/)
+        # Fix paths with /root/Ava_AI/code/code/ (duplicated /code/)
         if tokenizer_path_resolved and '/code/code/' in tokenizer_path_resolved:
             tokenizer_path_resolved = tokenizer_path_resolved.replace('/code/code/', '/code/')
 
         if tokenizer_path_resolved and not tokenizer_path_resolved.startswith('/'):
             # Try to resolve as absolute path first
-            potential_path = Path('/project') / tokenizer_path_resolved if not tokenizer_path_resolved.startswith('/project') else Path(tokenizer_path_resolved)
+            potential_path = Path('/root/Ava_AI') / tokenizer_path_resolved if not tokenizer_path_resolved.startswith('/root/Ava_AI') else Path(tokenizer_path_resolved)
             if potential_path.exists():
                 tokenizer_path_resolved = str(potential_path)
 
@@ -633,7 +633,7 @@ Examples:
     if args.list_runs:
         runs = list_available_runs()
         if not runs:
-            print("No training runs found in /project/code/outputs/runs/")
+            print("No training runs found in /root/Ava_AI/code/outputs/runs/")
             return
 
         print("\nAvailable training runs:\n")
@@ -668,7 +668,7 @@ Examples:
     # Determine model path
     if args.run_id:
         # Load from specific run
-        run_dir = Path('/project/code/outputs/runs') / args.run_id
+        run_dir = Path('/root/Ava_AI/code/outputs/runs') / args.run_id
         if not run_dir.exists():
             print(f" Run not found: {args.run_id}")
             print("\nAvailable runs:")
@@ -696,7 +696,7 @@ Examples:
         print("No --model-path or --run-id specified, searching for latest run...")
         latest_run = find_latest_run()
         if not latest_run:
-            print(" No training runs found in /project/code/outputs/runs/")
+            print(" No training runs found in /root/Ava_AI/code/outputs/runs/")
             print("\nPlease specify --model-path or --run-id, or train a model first.")
             print("Use --list-runs to see available runs.")
             return

@@ -140,8 +140,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Efficiently download Pizzaman21/Ava_Ai dataset"
     )
-    parser.add_argument("--output-dir", default="/project/code/data",
-                       help="Output directory (default: /project/code/data)")
+    parser.add_argument("--output-dir", default="/root/Ava_AI/code/data",
+                       help="Output directory (default: /root/Ava_AI/code/data)")
     parser.add_argument("--workers", type=int, default=4,
                        help="Number of parallel download workers (default: 4)")
     parser.add_argument("--max-partitions", type=int, default=None,

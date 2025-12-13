@@ -72,12 +72,12 @@ training:
     gradient_accumulation_steps: 4  # Effective batch size = BS * 4
 
     # Dynamic batching - BALANCED for 24GB GPU with 446M MoE model
-    # Target: batch sizes 40-48 for good throughput without OOM
+    # Target: batch sizes 24-40 for good throughput without OOM
     dynamic_batching:
       enabled: true
       min_batch_size: 8         # Allow smaller batches
-      max_batch_size: 48        # Safe max for this model
-      initial_batch_size: 24    # Start a bit higher
+      max_batch_size: 40        # Reduced from 48 - safer for memory
+      initial_batch_size: 16    # Conservative start
 
       # Memory thresholds - balanced for throughput vs safety
       low_memory_threshold: 0.55    # Increase batch if < 55% VRAM
@@ -188,13 +188,13 @@ training:
 data:
   streaming: true
   buffer_size: 5000  # Large buffer - use all 61GB RAM
-  data_dir: /project/code/data/Ava_Ai/data
+  data_dir: code/data/Ava_Ai/data
   max_length: 512
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
   validation_split_ratio: 0.05  # Smaller validation split = more training data
-  tokenizer_name: /project/code/data/Ava_Ai/tokenizer
+  tokenizer_name: code/data/Ava_Ai/tokenizer
   padding_side: right
   truncation: true
 
@@ -224,7 +224,7 @@ data:
   shuffle_files: true  # Shuffle file order for variety
 
 output:
-  output_dir: /project/code/outputs
+  output_dir: code/outputs
   save_every: 500
   fresh_start: true
 
@@ -234,8 +234,12 @@ optimizations:
 # CUDA Stream Optimizations - reduces synchronization overhead
 # Uses StreamPool (reusable streams), CUDATimer (event-based timing),
 # efficient_sync (current-stream only), NonBlockingTransfer (async CPU<->GPU)
+#
+# WARNING: cuda_streams.enabled causes "CUDA illegal memory access" errors
+# around batch 9 due to race conditions in AsyncBatchPrefetcher. Keep disabled
+# until prefetch.py is fixed to properly synchronize pinned memory lifetimes.
 cuda_streams:
-  enabled: true
+  enabled: false              # DISABLED - causes illegal memory access errors
   num_streams: 4              # Stream pool size for recomputation
   use_event_timing: true      # Use CUDA events instead of synchronize+time
   use_stream_pool: true       # Reuse streams instead of creating new

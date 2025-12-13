@@ -198,18 +198,18 @@ evaluation:
 data:
   streaming: true
   buffer_size: 2000 # OPTIMIZED: Better prefetching
-  data_dir: /project/code/data/Ava_Ai/data
+  data_dir: code/data/Ava_Ai/data
   max_length: 128
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
   validation_split_ratio: 0.1
-  tokenizer_name: /project/code/data/Ava_Ai/tokenizer
+  tokenizer_name: code/data/Ava_Ai/tokenizer
   padding_side: right
   truncation: true
 
   # Data loading optimizations
-  num_workers: 16 # Parallel data loading
+  num_workers: 4 # RAM-SAFE: Reduced from 16 to prevent OOM with spawn context
   dataloader_drop_last: true
   dataloader_pin_memory: true
   dataloader_prefetch_factor: 4 # ✅ 4x batch buffering
@@ -223,7 +223,7 @@ data:
 
   use_dynamic_batching: false # Using our custom dynamic batching instead
   use_streaming_tokenization: false
-  use_pretokenized: false
+  use_pretokenized: true  # Use pretokenized Arrow/Parquet data (60x faster)
   use_all_data: true
   max_files_to_load: 10000
   multiprocessing_context: spawn
@@ -231,7 +231,7 @@ data:
   skip_validation: true # Skip data validation for 2-3% speedup
 
 output:
-  output_dir: /project/code/outputs
+  output_dir: code/outputs
   save_every: 500
   fresh_start: false
 

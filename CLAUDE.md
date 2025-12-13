@@ -30,67 +30,91 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 /project/
 ├── code/                           # Main codebase
 │   ├── src/                        # Source code
-│   │   ├── Ava/                    # Core framework package
+│   │   ├── ava/                    # Core framework package (lowercase, PEP8)
 │   │   │   ├── config/             # Configuration management
 │   │   │   │   ├── training_config.py   # Main config dataclasses (110+ params)
 │   │   │   │   ├── yaml_loader.py       # YAML parsing & validation
+│   │   │   │   ├── validator.py         # ConfigValidator
 │   │   │   │   └── constants.py         # DataPipelineConstants, TrainerConstants
 │   │   │   │
-│   │   │   ├── data/               # Data loading & processing
-│   │   │   │   ├── dataloader.py        # StreamingDataset, DynamicTokenBatcher
-│   │   │   │   ├── pretokenized_loader.py    # 60x faster Arrow loading
-│   │   │   │   ├── dynamic_batch_iterator.py # Memory-aware batch sizing
-│   │   │   │   ├── factory.py           # Data loader factory
-│   │   │   │   ├── multi_column_data.py      # Multi-modal data support
-│   │   │   │   └── conversation_turn_loader.py # Turn-aware dialogue loading
+│   │   │   ├── core/               # Core utilities
+│   │   │   │   ├── paths.py             # Path management
+│   │   │   │   ├── checkpoint.py        # Async checkpoint saving
+│   │   │   │   ├── mixed_precision.py   # AMP training utilities
+│   │   │   │   ├── data_utils.py        # Collation, data helpers
+│   │   │   │   ├── activations.py       # Activation factory
+│   │   │   │   ├── logging.py           # Colored logging
+│   │   │   │   └── script_utils.py      # Script helpers
 │   │   │   │
-│   │   │   ├── layers/             # Neural network components
+│   │   │   ├── cuda/               # CUDA utilities
+│   │   │   │   ├── streams.py           # StreamPool, CUDATimer
+│   │   │   │   ├── buffers.py           # Pinned buffer management
+│   │   │   │   ├── metrics.py           # Async metrics tracking
+│   │   │   │   └── profiler.py          # Nsight profiling
+│   │   │   │
+│   │   │   ├── data/               # Data loading & processing
+│   │   │   │   ├── streaming.py         # StreamingDataset
+│   │   │   │   ├── distributed.py       # DistributedStreamingDataset
+│   │   │   │   ├── bucketing.py         # DynamicTokenBatcher, LengthBasedBucketing
+│   │   │   │   ├── factory.py           # create_streaming_dataloaders
+│   │   │   │   ├── pretokenized.py      # 60x faster Arrow loading
+│   │   │   │   ├── batch_iterator.py    # DynamicBatchIterator
+│   │   │   │   ├── multi_column.py      # Multi-modal data support
+│   │   │   │   ├── conversation.py      # Turn-aware dialogue loading
+│   │   │   │   └── packing.py           # Sequence packing
+│   │   │   │
+│   │   │   ├── nn/                 # Neural network layers
 │   │   │   │   ├── experts.py           # HighPerformanceExpert, ExpertParallelGroup
-│   │   │   │   └── routing.py           # MixtralRouter, DeepSeekRouter
+│   │   │   │   └── routing.py           # MixtralRouter, DeepSeekRouter, UnifiedMoERouter
+│   │   │   │
+│   │   │   ├── kernels/            # Triton kernels
+│   │   │   │   ├── moe.py               # Fused gating/topk kernels
+│   │   │   │   └── activations.py       # Fused SwiGLU/GeGLU
 │   │   │   │
 │   │   │   ├── models/             # Model architectures
-│   │   │   │   ├── moe_model.py         # EnhancedMoEModel (main model)
+│   │   │   │   ├── moe.py               # EnhancedMoEModel, EnhancedMoEConfig
 │   │   │   │   └── moe_layer.py         # SparseMoELayer
 │   │   │   │
-│   │   │   ├── optimization/       # Optimizer & LR management
-│   │   │   │   └── learning_rate/
-│   │   │   │       └── managers.py      # AdaptiveLearningRateManager
+│   │   │   ├── optim/              # Optimizers & LR scheduling
+│   │   │   │   └── lr_managers.py       # AdaptiveLearningRateManager
 │   │   │   │
-│   │   │   ├── training/           # Training pipeline
-│   │   │   │   ├── train/          # Core components
-│   │   │   │   │   ├── base.py          # TrainingContext, TrainingComponent
-│   │   │   │   │   └── data_loader_manager.py
-│   │   │   │   │
-│   │   │   │   ├── optimizations/  # Training speedups
-│   │   │   │   │   ├── dynamic_batching.py       # 15-25% throughput gain
-│   │   │   │   │   ├── overlapped_recomputation.py
-│   │   │   │   │   ├── double_checkpointing.py   # 10x longer sequences
-│   │   │   │   │   ├── hybrid_cache.py           # 2.19x throughput
-│   │   │   │   │   └── fp8_training.py           # FP8 quantization
-│   │   │   │   │
-│   │   │   │   ├── strategies/     # Training strategies
-│   │   │   │   │   └── progressive_training.py   # Curriculum learning
-│   │   │   │   │
-│   │   │   │   └── orchestration/  # Run management
-│   │   │   │       └── run_manager.py    # Experiment tracking, logging
+│   │   │   ├── training/           # Training pipeline (flattened)
+│   │   │   │   ├── context.py           # TrainingContext, TrainingComponent
+│   │   │   │   ├── loop.py              # TrainingLoopManager
+│   │   │   │   ├── data_manager.py      # DataLoaderManager
+│   │   │   │   ├── model_builder.py     # ModelBuilder
+│   │   │   │   ├── optimizer.py         # OptimizerManager
+│   │   │   │   ├── validation.py        # ValidationManager
+│   │   │   │   ├── generation.py        # GenerationManager
+│   │   │   │   ├── metrics.py           # MetricsManager
+│   │   │   │   ├── run_manager.py       # Experiment tracking, logging
+│   │   │   │   ├── pipeline.py          # TrainingPipeline
+│   │   │   │   └── distributed.py       # DDP/FSDP setup
 │   │   │   │
-│   │   │   ├── evaluation/         # Model evaluation
-│   │   │   │   └── coherence.py         # Coherence evaluation
+│   │   │   ├── optimizations/      # Training speedups
+│   │   │   │   ├── dynamic_batching.py  # 15-25% throughput gain
+│   │   │   │   ├── checkpointing.py     # Double checkpointing (10x sequences)
+│   │   │   │   ├── overlapped_recomputation.py
+│   │   │   │   ├── hybrid_cache.py      # 2.19x throughput
+│   │   │   │   ├── fp8.py               # FP8 quantization
+│   │   │   │   ├── batch_controller.py  # Batch size control
+│   │   │   │   ├── prefetch.py          # Async batch prefetching
+│   │   │   │   ├── gradients.py         # Gradient utilities
+│   │   │   │   └── quantization.py      # Quantization helpers
 │   │   │   │
-│   │   │   └── utils/              # Utilities
-│   │   │       ├── paths.py             # Path management
-│   │   │       ├── checkpoint_manager.py # Async checkpoint saving
-│   │   │       ├── shared.py            # Mixed precision, collation
-│   │   │       ├── script_utils.py      # Script helpers
-│   │   │       └── colored_logging.py   # Formatted logging
+│   │   │   ├── strategies/         # Training strategies
+│   │   │   │   └── progressive.py       # Curriculum learning
+│   │   │   │
+│   │   │   └── eval/               # Model evaluation
+│   │   │       └── coherence.py         # Coherence metrics
 │   │   │
 │   │   ├── generation/             # Text generation
 │   │   │   └── generator.py             # Generation utilities
 │   │   │
 │   │   └── rlhf/                   # RLHF training
-│   │       ├── rlhf_trainer.py          # RLHF training loop
-│   │       ├── ppo_trainer.py           # PPO implementation
-│   │       └── reward_model.py          # Reward model
+│   │       ├── trainer.py               # RLHF training loop
+│   │       ├── ppo.py                   # PPO implementation
+│   │       └── reward.py                # Reward model
 │   │
 │   ├── scripts/                    # Executable scripts
 │   │   ├── 1_data_download/        # Data downloading
@@ -196,17 +220,18 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 | File | Purpose |
 |------|---------|
 | `code/scripts/5_training/train_pipeline.py` | Main training script |
-| `code/src/Ava/models/moe_model.py` | EnhancedMoEModel, EnhancedMoEConfig |
-| `code/src/Ava/models/moe_layer.py` | SparseMoELayer, routing strategies |
-| `code/src/Ava/layers/routing.py` | MixtralRouter, DeepSeekRouter, UnifiedMoERouter |
-| `code/src/Ava/layers/experts.py` | HighPerformanceExpert, ExpertParallelGroup |
-| `code/src/Ava/config/training_config.py` | All configuration dataclasses |
-| `code/src/Ava/config/constants.py` | DataPipelineConstants, TrainerConstants |
-| `code/src/Ava/data/dataloader.py` | StreamingDataset, DynamicTokenBatcher |
-| `code/src/Ava/data/pretokenized_loader.py` | PreTokenizedDataset (60x faster) |
-| `code/src/Ava/data/dynamic_batch_iterator.py` | DynamicBatchIterator |
-| `code/src/Ava/training/optimizations/dynamic_batching.py` | DynamicBatchScheduler |
-| `code/src/Ava/optimization/learning_rate/managers.py` | AdaptiveLearningRateManager |
+| `code/src/ava/models/moe.py` | EnhancedMoEModel, EnhancedMoEConfig |
+| `code/src/ava/models/moe_layer.py` | SparseMoELayer, routing strategies |
+| `code/src/ava/nn/routing.py` | MixtralRouter, DeepSeekRouter, UnifiedMoERouter |
+| `code/src/ava/nn/experts.py` | HighPerformanceExpert, ExpertParallelGroup |
+| `code/src/ava/config/training_config.py` | All configuration dataclasses |
+| `code/src/ava/config/constants.py` | DataPipelineConstants, TrainerConstants |
+| `code/src/ava/data/streaming.py` | StreamingDataset |
+| `code/src/ava/data/bucketing.py` | DynamicTokenBatcher, LengthBasedBucketing |
+| `code/src/ava/data/pretokenized.py` | PreTokenizedDataset (60x faster) |
+| `code/src/ava/data/batch_iterator.py` | DynamicBatchIterator |
+| `code/src/ava/optimizations/dynamic_batching.py` | DynamicBatchScheduler |
+| `code/src/ava/optim/lr_managers.py` | AdaptiveLearningRateManager |
 
 ## Common Tasks
 

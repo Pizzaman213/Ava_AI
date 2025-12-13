@@ -58,7 +58,7 @@ training:
 data:
   streaming: true
   buffer_size: 2000
-  data_dir: /project/code/data/Ava_Ai/data
+  data_dir: code/data/Ava_Ai/data
   max_length: 512
   train_split: train
   eval_split: validation
@@ -67,7 +67,7 @@ data:
   cache_size: 50  # RAM-optimized
 
 output:
-  output_dir: /project/code/outputs
+  output_dir: code/outputs
   save_every: 500
 
 # Additional memory optimizations
