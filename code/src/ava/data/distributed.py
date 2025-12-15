@@ -51,7 +51,8 @@ class DistributedStreamingDataset(IterableDataset):
         rank: int,
         load_aware: bool = False,
         memory_monitor: Any = None,
-        token_balanced: bool = True
+        token_balanced: bool = True,
+        enable_length_sorting: bool = True
     ):
         self.base_dataset = base_dataset
         self.world_size = world_size
@@ -59,6 +60,7 @@ class DistributedStreamingDataset(IterableDataset):
         self.load_aware = load_aware
         self.memory_monitor = memory_monitor
         self.token_balanced = token_balanced
+        self.enable_length_sorting = enable_length_sorting
 
         # PHASE 2 OPTIMIZATION: Load balancing state
         self._sample_count = 0
@@ -84,8 +86,10 @@ class DistributedStreamingDataset(IterableDataset):
                 self._batch_buffer.append(sample)
 
                 if len(self._batch_buffer) >= self._batch_buffer_size:
-                    # Sort buffer by sequence length for better packing
-                    self._batch_buffer.sort(key=lambda x: len(x.get('input_ids', [])), reverse=True)
+                    # Optionally sort buffer by sequence length for better packing
+                    if self.enable_length_sorting:
+                        self._batch_buffer.sort(key=lambda x: len(x.get('input_ids', [])), reverse=True)
+                    # else: keep original random order for maximum diversity
 
                     # Distribute to rank with fewest tokens
                     for buffered_sample in self._batch_buffer:

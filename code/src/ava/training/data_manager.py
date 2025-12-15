@@ -59,13 +59,23 @@ class DataLoaderManager(TrainingComponent):
         self._initialized = True
 
     def cleanup(self) -> None:
-        """Cleanup resources. Called on shutdown or error."""
-        if self.train_loader is not None:
-            if hasattr(self.train_loader, 'close'):
-                self.train_loader.close()
-        if self.val_loader is not None:
-            if hasattr(self.val_loader, 'close'):
-                self.val_loader.close()
+        """Cleanup resources - properly terminate DataLoader workers.
+
+        This fixes the semaphore leak issue by properly shutting down
+        DataLoader worker processes before distributed cleanup.
+        """
+        for loader in [self.train_loader, self.val_loader]:
+            if loader is not None:
+                try:
+                    # Shutdown worker processes to release semaphores
+                    # The _iterator holds references to worker processes
+                    if hasattr(loader, '_iterator') and loader._iterator is not None:
+                        loader._iterator._shutdown_workers()
+                except Exception as e:
+                    _logger.debug(f"DataLoader cleanup: {e}")
+        # Clear references
+        self.train_loader = None
+        self.val_loader = None
 
     def create_dataloaders(
         self,
@@ -255,7 +265,7 @@ class DataLoaderManager(TrainingComponent):
 
         # Create appropriate loaders
         if use_pretokenized:
-            _logger.info(" Using pretokenized Arrow data loader (60x faster)")
+            _logger.info(" Using pretokenized Arrow data loader")
             # Get cache size from config or use optimized default
             cache_size = getattr(training_config.data, "cache_size", 200)
 
@@ -264,6 +274,11 @@ class DataLoaderManager(TrainingComponent):
 
             # Get lazy_file_discovery from config for memory-efficient large datasets
             lazy_file_discovery = getattr(training_config.data, 'lazy_file_discovery', False)
+
+            # Get randomization control from config
+            shuffle_seed = getattr(training_config.data, 'shuffle_seed', None)
+            enable_length_sorting = getattr(training_config.data, 'enable_length_sorting', True)
+            disable_packing_length_sort = getattr(training_config.data, 'disable_packing_length_sort', False)
 
             # Handle tokenizer being None (pretokenized data doesn't need tokenizer)
             if tokenizer is not None:
@@ -298,6 +313,9 @@ class DataLoaderManager(TrainingComponent):
                 max_files_to_load=max_files_to_load,
                 lazy_file_discovery=lazy_file_discovery,
                 batch_controller=batch_controller,
+                shuffle_seed=shuffle_seed,
+                enable_length_sorting=enable_length_sorting,
+                disable_packing_length_sort=disable_packing_length_sort,
             )
         else:
             _logger.info(
@@ -327,6 +345,8 @@ class DataLoaderManager(TrainingComponent):
                 dataset_name=getattr(training_config.data, "dataset_name", None),
                 dev_log_config=getattr(training_config, "dev_log", None),
                 dynamic_batching_config=dynamic_batching_config,
+                shuffle_seed=shuffle_seed,
+                enable_length_sorting=enable_length_sorting,
             )
 
         # Validate dataloaders (skip if configured - useful for pretokenized data with spawn workers)
@@ -603,7 +623,7 @@ class DataLoaderManager(TrainingComponent):
         _logger.info("GPU I/O OPTIMIZATIONS ACTIVE")
         _logger.info("=" * 70)
         if use_pretokenized:
-            _logger.info("Ultra-fast pretokenized Arrow loader (60x speedup)")
+            _logger.info("Ultra-fast pretokenized Arrow loader")
         else:
             _logger.info("Streaming JSONL loader with on-the-fly tokenization")
         _logger.info(f"Multi-worker data loading: {num_workers} workers")
@@ -617,11 +637,11 @@ class DataLoaderManager(TrainingComponent):
         _logger.info(f"CUDA streams for async transfers: {stream_status}")
         if use_sequence_packing:
             _logger.info(
-                f"Sequence packing: ENABLED ({packing_strategy} strategy, 20-35% speedup)"
+                f"Sequence packing: ENABLED ({packing_strategy} strategy)"
             )
         else:
             _logger.info(
-                "Sequence packing: DISABLED (enable for 20-35% speedup)"
+                "Sequence packing: DISABLED"
             )
         _logger.info("=" * 70)
 

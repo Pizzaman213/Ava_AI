@@ -2,8 +2,8 @@
 Sequence Packing Collators for Training Optimization
 
 This module implements sequence packing to eliminate padding waste and improve
-GPU utilization by 20-35%. Multiple short sequences are packed into single
-training examples up to max_length, separated by EOS tokens.
+GPU utilization. Multiple short sequences are packed into single training
+examples up to max_length, separated by EOS tokens.
 
 Classes:
     SequencePackingCollator: Greedy bin-packing for fast, simple packing
@@ -23,7 +23,7 @@ class SequencePackingCollator:
     Uses greedy bin-packing: concatenates sequences with EOS separator
     until max_length is reached, then starts a new packed sequence.
 
-    This eliminates padding waste, improving throughput by 20-35%.
+    This eliminates padding waste and improves throughput.
 
     Args:
         max_length: Maximum sequence length for packed examples
@@ -38,11 +38,13 @@ class SequencePackingCollator:
         pad_token_id: int = 0,
         eos_token_id: int = 2,
         pack_sequences: bool = True,
+        sort_by_length: bool = True,
     ):
         self.max_length = max_length
         self.pad_token_id = pad_token_id
         self.eos_token_id = eos_token_id
         self.pack_sequences = pack_sequences
+        self.sort_by_length = sort_by_length
 
         # Statistics tracking
         self.total_tokens_before = 0
@@ -107,8 +109,11 @@ class SequencePackingCollator:
         if not sequences:
             return []
 
-        # Sort by length descending for better packing
-        sorted_indices = sorted(range(len(sequences)), key=lambda i: lengths[i], reverse=True)
+        # Optionally sort by length descending for better packing
+        if self.sort_by_length:
+            sorted_indices = sorted(range(len(sequences)), key=lambda i: lengths[i], reverse=True)
+        else:
+            sorted_indices = list(range(len(sequences)))  # Keep original order for randomness
 
         packed = []
         dtype = sequences[0].dtype

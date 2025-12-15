@@ -1,23 +1,16 @@
 """
 Ultra-Fast Memory-Mapped Pre-Tokenized Dataset Loader
 
-Zero-copy data loading for 60x speedup over text tokenization pipeline.
-Eliminates tokenization, parsing, and data copy overhead during training.
+Optimized zero-copy data loading that eliminates tokenization,
+parsing, and data copy overhead during training.
 
 Key Optimizations:
 - Memory-mapped Arrow reading with persistent handles (zero I/O overhead)
-- Batch vectorized tensor creation (30x faster than per-sample)
+- Batch vectorized tensor creation
 - Zero-copy numpy→torch conversion via torch.from_numpy()
 - Cached Arrow table handles (eliminates file open/close)
 - Direct buffer protocol access (bypasses Python objects)
 - Minimal validation (pre-validated during tokenization)
-
-Expected speedup breakdown:
-- No tokenization: 30x faster
-- Memory-mapped Arrow: 2x faster
-- Zero-copy tensors: 1.5x faster
-- Cached handles: 1.3x faster
-- Total: ~60x faster
 
 Usage:
     from ava.data.pretokenized import create_ultra_fast_dataloaders
@@ -35,9 +28,11 @@ import json
 import logging
 from pathlib import Path
 import signal
+import time
 from typing import Any, Dict, List, Optional, Iterator, Tuple, Union
 import numpy as np
 import torch
+import torch.distributed as dist
 from torch.utils.data import IterableDataset, Dataset, DataLoader
 import random
 import pyarrow as pa
@@ -161,9 +156,9 @@ def _worker_init_fn(worker_id: int):
 
 from ..core.data_utils import find_data_files, collate_batch
 
-# GPU SYNC FIX: Import pinned buffer pool for async GPU transfers
-# Only used when num_workers=0 (main process), as pinned memory doesn't
-# survive IPC from worker processes to main process
+# Import pinned buffer pool for async GPU transfers.
+# Only used when num_workers=0 (main process), as pinned memory
+# does not survive IPC from worker processes to main process.
 try:
     from ..cuda.buffers import PinnedBufferPool, get_buffer_pool, is_main_process_dataloader
     PINNED_BUFFERS_AVAILABLE = True
@@ -173,7 +168,7 @@ except ImportError:
     get_buffer_pool = None
     is_main_process_dataloader = None
 
-# Import sequence packing for 20-35% speedup
+# Import sequence packing for improved throughput
 try:
     from .packing import SequencePackingCollator, DynamicSequencePackingCollator
     SEQUENCE_PACKING_AVAILABLE = True
@@ -181,9 +176,8 @@ except ImportError as e:
     SEQUENCE_PACKING_AVAILABLE = False
     SequencePackingCollator = None
     DynamicSequencePackingCollator = None
-    # PERFORMANCE FIX: Warn user they're missing 20-35% speedup
     logger.warning("=" * 60)
-    logger.warning("⚠️  SEQUENCE PACKING UNAVAILABLE - 20-35% SPEEDUP LOST")
+    logger.warning("SEQUENCE PACKING UNAVAILABLE")
     logger.warning("=" * 60)
     logger.warning(f"Failed to import sequence_packing: {e}")
     logger.warning("If use_sequence_packing=true in config, it will be ignored!")
@@ -314,9 +308,10 @@ class PreTokenizedDataset(IterableDataset):
             num_workers = 1
             worker_id = 0
 
-        # Shuffle files
+        # Shuffle files with configurable seed
         shuffled_files = list(self.data_files)
-        random.Random(42 + worker_id).shuffle(shuffled_files)
+        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+        random.Random(base_seed + worker_id).shuffle(shuffled_files)
 
         # Open readers for all files
         readers = []
@@ -344,8 +339,9 @@ class PreTokenizedDataset(IterableDataset):
             for seq_idx in range(num_seqs):
                 all_indices.append((file_idx, seq_idx))
 
-        # Shuffle indices
-        random.Random(42 + worker_id).shuffle(all_indices)
+        # Shuffle indices with configurable seed
+        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+        random.Random(base_seed + worker_id).shuffle(all_indices)
 
         # Worker-level distribution
         worker_indices = []
@@ -391,9 +387,8 @@ class PreTokenizedDataset(IterableDataset):
 
         Uses shared collate_batch utility to eliminate code duplication.
 
-        CRITICAL FIX: Use fixed-length padding to prevent torch.compile recompilation.
-        Dynamic padding causes shape changes (e.g., 235→217) that trigger expensive
-        recompilation cycles and eventually fallback to slow eager mode.
+        Uses fixed-length padding to prevent torch.compile recompilation.
+        Dynamic padding causes shape changes that trigger recompilation.
         """
         return collate_batch(
             batch,
@@ -510,7 +505,7 @@ class PreTokenizedMapDataset(Dataset):
 
 
 # ============================================================================
-# ULTRA-FAST 60x OPTIMIZED IMPLEMENTATION
+# OPTIMIZED IMPLEMENTATION
 # ============================================================================
 
 
@@ -521,12 +516,10 @@ class ArrowTableCache:
     Keeps Arrow tables open and memory-mapped for instant access.
     Uses LRU eviction to prevent memory pressure.
 
-    Performance improvement: 1.3x faster than opening files repeatedly
-
-    BOTTLENECK FIX: Now uses adaptive sizing based on available system RAM.
+    Uses adaptive sizing based on available system RAM:
     - RAM < 32GB: cache_size = 30
-    - RAM 32-64GB: cache_size = 75 (was 50)
-    - RAM > 64GB: cache_size = 150 (was 100)
+    - RAM 32-64GB: cache_size = 75
+    - RAM > 64GB: cache_size = 150
 
     Memory tradeoff: Each cached table uses ~5-40MB RAM per worker.
     Set max_size explicitly to override adaptive sizing.
@@ -545,15 +538,15 @@ class ArrowTableCache:
             if mem_gb < 32:
                 return 30  # Conservative for low-memory systems
             elif mem_gb < 64:
-                return 75  # BOTTLENECK FIX: Increased from 50
+                return 75
             else:
-                return 150  # BOTTLENECK FIX: Increased from 100 for high-memory systems
+                return 150  # High-memory systems
         except ImportError:
             # psutil not available, use conservative default
             return 50
 
     def __init__(self, max_size: Optional[int] = None):
-        # BOTTLENECK FIX: Use adaptive sizing if max_size not explicitly set
+        # Use adaptive sizing if max_size not explicitly set
         if max_size is None:
             max_size = self._get_adaptive_cache_size()
         self.max_size = max_size
@@ -699,7 +692,7 @@ class LazyFileDiscovery:
         patterns: Optional[List[str]] = None,
         min_file_size: int = 10 * 1024,  # 10KB minimum
         max_files: Optional[int] = None,
-        shuffle_seed: int = 42,
+        shuffle_seed: Optional[int] = None,
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -781,7 +774,9 @@ class LazyFileDiscovery:
     def __iter__(self) -> Iterator[Path]:
         """Iterate over files, discovering them lazily."""
         self._files_yielded = 0
-        rng = random.Random(self.shuffle_seed)
+        # Get configurable seed (None = non-deterministic)
+        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+        rng = random.Random(base_seed)
 
         # Buffer for shuffling discovered files
         shuffle_buffer: List[Path] = []
@@ -839,13 +834,12 @@ class UltraFastPretokenizedDataset(IterableDataset):
     """
     Ultra-fast streaming dataset for pretokenized Arrow files.
 
-    60x faster than text tokenization pipeline due to:
-    - Zero-copy memory-mapped Arrow reading (2x faster)
-    - Batch vectorized data extraction (5x faster)
-    - Direct numpy buffer access (1.5x faster)
-    - Cached Arrow table handles (1.3x faster)
-    - No tokenization overhead (30x faster)
-    - Total speedup: ~60x
+    Optimizations:
+    - Zero-copy memory-mapped Arrow reading
+    - Batch vectorized data extraction
+    - Direct numpy buffer access
+    - Cached Arrow table handles
+    - No tokenization overhead
 
     Performance characteristics:
     - Memory: Low (memory-mapped, shared across workers)
@@ -862,7 +856,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
         max_samples: Optional[int] = None,
         buffer_size: int = 10000,
         samples_per_file: int = 1000,  # Read larger chunks from Arrow files
-        cache_size: int = 50,  # RAM-OPTIMIZED: Cache 50 Arrow tables (5-8% speedup, ~250MB per worker)
+        cache_size: int = 50,  # Cache Arrow tables (~250MB per worker)
         # Minimal validation (data pre-validated)
         min_sequence_length: int = 10,
         validation_rate: float = 0.0,  # No validation by default (already validated)
@@ -870,8 +864,9 @@ class UltraFastPretokenizedDataset(IterableDataset):
         use_dynamic_padding: bool = False,  # RAM-OPTIMIZED: Pad to batch max instead of global max
         max_files_to_load: Optional[int] = None,  # Limit number of files to prevent OOM
         lazy_file_discovery: bool = False,  # Enable lazy file discovery for large datasets
-        use_pinned_buffers: bool = True,  # GPU SYNC FIX: Use pinned buffers when in main process
+        use_pinned_buffers: bool = True,  # Use pinned buffers when in main process
         vocab_size: int = DEFAULT_VOCAB_SIZE,  # Vocab size for token ID validation
+        shuffle_seed: Optional[int] = None,  # Global shuffle seed (None = non-deterministic)
     ):
         self.data_dir = Path(data_dir)
         self.vocab_size = vocab_size  # Store for validation
@@ -887,12 +882,13 @@ class UltraFastPretokenizedDataset(IterableDataset):
         self.use_dynamic_padding = use_dynamic_padding
         self.max_files_to_load = max_files_to_load
         self.lazy_file_discovery = lazy_file_discovery
+        self.shuffle_seed = shuffle_seed
         self._validation_counter = 0
-        # GPU SYNC FIX: Enable pinned buffer pool for async GPU transfers
+        # Enable pinned buffer pool for async GPU transfers
         self.use_pinned_buffers = use_pinned_buffers and PINNED_BUFFERS_AVAILABLE
         self._pinned_buffer_pool: Optional[PinnedBufferPool] = None
 
-        # Arrow table cache for instant access (1.3x speedup)
+        # Arrow table cache for instant access
         self.table_cache = ArrowTableCache(max_size=cache_size)
 
         # File discovery - lazy or eager
@@ -1039,7 +1035,11 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # Eager mode: use pre-discovered files
         epoch_num = getattr(self, '_stream_epoch_number', 0)
         shuffled_files = list(self.data_files)
-        rng = random.Random(42 + epoch_num)
+        # Get configurable seed with distributed training support
+        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
+        rng = random.Random(combined_seed)
         rng.shuffle(shuffled_files)
 
         # Stream from files with efficient batching
@@ -1089,12 +1089,10 @@ class UltraFastPretokenizedDataset(IterableDataset):
 
                 batch_size = min(self.samples_per_file, remaining)
 
-                # ULTRA-FAST BATCH EXTRACTION (5x faster than per-row)
-                # Extract batch slice (zero-copy view)
+                # Batch extraction (zero-copy view)
                 batch_slice = table.slice(offset, batch_size)
 
-                # SPEED OPTIMIZATION: Vectorized batch extraction instead of per-row loops
-                # Convert entire batch to Python dict at once (10-15x faster than row-by-row)
+                # Vectorized batch extraction for efficiency
                 try:
                     # Use to_pydict for vectorized extraction (much faster than row iteration)
                     batch_dict = batch_slice.to_pydict()
@@ -1427,10 +1425,8 @@ class UltraFastPretokenizedDataset(IterableDataset):
         - Vectorized padding operations
         - Pre-allocated tensors
         - Minimal data movement
-        - PHASE 4: Memory pinning for faster CPU→GPU transfer (3-5% speedup)
-        - FIXED padding to self.max_length for torch.compile compatibility
-
-        Performance: 1.5x faster than standard collation
+        - Memory pinning for faster CPU→GPU transfer
+        - Fixed padding to self.max_length for torch.compile compatibility
         """
         if not batch:
             return {}
@@ -1514,7 +1510,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
         valid_batch_size = len(valid_items)
 
         # PADDING STRATEGY: Fixed vs Dynamic
-        # Dynamic padding saves 50-70% memory but may cause torch.compile recompilation
+        # Dynamic padding saves memory but may cause torch.compile recompilation
         if self.use_dynamic_padding:
             # Dynamic: pad to longest sequence in batch (RAM-optimized)
             actual_lengths = [len(item['input_ids']) for _, item in valid_items]
@@ -1524,10 +1520,9 @@ class UltraFastPretokenizedDataset(IterableDataset):
             max_len = self.max_length
 
         # Pre-allocate tensors on CPU
-        # GPU SYNC FIX: Use pinned buffers when in main process (num_workers=0)
-        # Pinned memory enables true async DMA transfers when using non_blocking=True
-        # NOTE: Do NOT use pinned memory with num_workers > 0 because pinned memory
-        # from worker processes gets copied to pageable memory during IPC.
+        # Use pinned buffers when in main process (num_workers=0).
+        # Pinned memory enables true async DMA transfers with non_blocking=True.
+        # Note: Do not use pinned memory with num_workers > 0 (IPC limitation).
         use_pinned = (
             self.use_pinned_buffers and
             PINNED_BUFFERS_AVAILABLE and
@@ -1661,23 +1656,25 @@ def create_ultra_fast_dataloaders(
     cache_size: int = 50,  # RAM-OPTIMIZED: 50 tables default (set higher if RAM > 64GB)
     pad_token_id: int = 0,
     eos_token_id: int = 2,
-    use_sequence_packing: bool = False,  # OPTIMIZATION: Enable for 20-35% speedup (eliminates padding waste)
+    use_sequence_packing: bool = False,  # Eliminates padding waste
     packing_strategy: str = 'greedy',  # 'greedy' or 'adaptive'
     dynamic_batching_config: Optional[Dict[str, Any]] = None,  # Dynamic batching configuration
     max_files_to_load: Optional[int] = None,  # Limit number of files to prevent OOM
     lazy_file_discovery: bool = False,  # Enable lazy file discovery for memory-efficient large datasets
     verbose: bool = False,  # Control verbose output (default False for cleaner logs)
     batch_controller: Optional[Any] = None,  # BatchSizeController for unified batch size management
+    shuffle_seed: Optional[int] = None,  # Global shuffle seed (None = non-deterministic)
+    enable_length_sorting: bool = True,  # Enable length sorting in distributed mode
+    disable_packing_length_sort: bool = False,  # Disable length sorting in packing
 ) -> Tuple[Any, Any]:  # Returns DataLoader or DynamicBatchIterator
     """
-    Create ultra-fast pretokenized dataloaders with 60x speedup.
+    Create ultra-fast pretokenized dataloaders.
 
-    Performance improvements over text tokenization:
-    - No tokenization overhead: 30x faster
-    - Memory-mapped Arrow: 2x faster
-    - Zero-copy tensors: 1.5x faster
-    - Cached table handles: 1.3x faster
-    - Total speedup: ~60x
+    Optimizations over text tokenization:
+    - No tokenization overhead
+    - Memory-mapped Arrow reading
+    - Zero-copy tensors
+    - Cached table handles
 
     Args:
         batch_size: Batch size per device
@@ -1693,7 +1690,7 @@ def create_ultra_fast_dataloaders(
         cache_size: Number of Arrow tables to cache in memory
         pad_token_id: Padding token ID (default 0)
         eos_token_id: End-of-sequence token ID for packing (default 2)
-        use_sequence_packing: Enable sequence packing for 20-35% speedup (default False)
+        use_sequence_packing: Enable sequence packing to eliminate padding waste (default False)
         packing_strategy: 'greedy' (faster) or 'adaptive' (better utilization)
 
     Returns:
@@ -1746,6 +1743,7 @@ def create_ultra_fast_dataloaders(
         'pad_token_id': pad_token_id,
         'max_files_to_load': max_files_to_load,
         'lazy_file_discovery': lazy_file_discovery,
+        'shuffle_seed': shuffle_seed,
     }
 
     # Training dataset
@@ -1791,10 +1789,9 @@ def create_ultra_fast_dataloaders(
     if use_sequence_packing and SEQUENCE_PACKING_AVAILABLE and SequencePackingCollator is not None and DynamicSequencePackingCollator is not None:
         if verbose:
             print(f"\n{'='*60}")
-            print(f" SEQUENCE PACKING OPTIMIZATION ENABLED")
+            print(f" SEQUENCE PACKING ENABLED")
             print(f"{'='*60}")
             print(f"   Strategy: {packing_strategy}")
-            print(f"   Expected speedup: 20-35% by eliminating padding waste")
             print(f"   Packing multiple short docs into single sequences")
             print(f"   Max length: {max_length}")
             print(f"{'='*60}\n")
@@ -1818,12 +1815,14 @@ def create_ultra_fast_dataloaders(
                 pad_token_id=pad_token_id,
                 eos_token_id=eos_token_id,
                 pack_sequences=True,
+                sort_by_length=not disable_packing_length_sort,
             )
             val_collate_fn = SequencePackingCollator(
                 max_length=max_length,
                 pad_token_id=pad_token_id,
                 eos_token_id=eos_token_id,
                 pack_sequences=True,
+                sort_by_length=not disable_packing_length_sort,
             )
     elif use_sequence_packing and not SEQUENCE_PACKING_AVAILABLE:
         if verbose:

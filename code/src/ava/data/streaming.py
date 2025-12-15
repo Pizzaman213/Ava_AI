@@ -36,6 +36,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
+import torch.distributed as dist
 from torch.utils.data import IterableDataset
 
 # Import centralized constants
@@ -379,6 +380,7 @@ class StreamingDataset(IterableDataset):
         max_tokens_per_batch: Optional[int] = None,
         dataset_name: Optional[str] = None,
         dev_log_config: Optional[Any] = None,
+        shuffle_seed: Optional[int] = None,
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -392,6 +394,7 @@ class StreamingDataset(IterableDataset):
             print(f"    Streaming tokenization enabled: buffer reduced to {streaming_buffer_size} samples")
         self.dynamic_length_fn = dynamic_length_fn
         self.samples_per_file = samples_per_file
+        self.shuffle_seed = shuffle_seed
 
         self.dev_log_config = dev_log_config
         self._file_timings: Dict[str, Dict[str, Any]] = {}
@@ -609,7 +612,13 @@ class StreamingDataset(IterableDataset):
 
         epoch_num = getattr(self, '_stream_epoch_number', 0)
         shuffled_files = list(files)
-        rng = random.Random(42 + epoch_num)
+        # Get configurable seed with distributed training support
+        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info else 0
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
+        rng = random.Random(combined_seed)
         rng.shuffle(shuffled_files)
 
         file_generators = []
@@ -692,7 +701,13 @@ class StreamingDataset(IterableDataset):
                 self._epoch_number = self._stream_epoch_number
 
                 epoch_num = self._stream_epoch_number
-                rng = random.Random(42 + epoch_num)
+                # Get configurable seed with distributed training support
+                base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+                worker_info = torch.utils.data.get_worker_info()
+                worker_id = worker_info.id if worker_info else 0
+                rank = dist.get_rank() if dist.is_initialized() else 0
+                combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
+                rng = random.Random(combined_seed)
                 shuffled_files = list(files)
                 rng.shuffle(shuffled_files)
 
@@ -942,7 +957,9 @@ class StreamingDataset(IterableDataset):
 
             if len(buffer) >= self.buffer_size:
                 buffer_list = list(buffer)
-                buffer_seed = 42 + epoch_number + (samples_processed // self.buffer_size)
+                # Get configurable seed for buffer shuffling
+                base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+                buffer_seed = base_seed + epoch_number * 10000 + (samples_processed // self.buffer_size)
                 rng = random.Random(buffer_seed)
                 rng.shuffle(buffer_list)
 
@@ -1026,7 +1043,9 @@ class StreamingDataset(IterableDataset):
         # Process remaining buffer
         if buffer:
             buffer_list = list(buffer)
-            buffer_seed = 42 + epoch_number + (samples_processed // max(self.buffer_size, 1))
+            # Get configurable seed for buffer shuffling
+            base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
+            buffer_seed = base_seed + epoch_number * 10000 + (samples_processed // max(self.buffer_size, 1))
             rng = random.Random(buffer_seed)
             rng.shuffle(buffer_list)
 

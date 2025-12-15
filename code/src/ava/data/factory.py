@@ -73,6 +73,8 @@ def create_streaming_dataloaders(
     dataset_name: Optional[str] = None,
     dev_log_config: Optional[Any] = None,
     dynamic_batching_config: Optional[Dict[str, Any]] = None,
+    shuffle_seed: Optional[int] = None,
+    enable_length_sorting: bool = True,
 ) -> Tuple[Any, Any]:
     """
     Create optimized streaming train and validation dataloaders.
@@ -208,6 +210,7 @@ def create_streaming_dataloaders(
         'dataset_name': dataset_name,
         'dev_log_config': dev_log_config,
         'validation_rate': 0.0,
+        'shuffle_seed': shuffle_seed,
     }
 
     # Training dataset
@@ -249,6 +252,7 @@ def create_streaming_dataloaders(
         mixing_temperature=1.0,
         data_mixer=None,
         samples_per_file=samples_per_file,
+        shuffle_seed=shuffle_seed,
     )
 
     # Use spawn method for multiprocessing with Arrow files
@@ -278,8 +282,8 @@ def create_streaming_dataloaders(
 
     # Apply distributed wrapping if needed
     if distributed and DISTRIBUTED_AVAILABLE:
-        train_dataset = DistributedStreamingDataset(train_dataset, world_size or 1, rank or 0)
-        val_dataset = DistributedStreamingDataset(val_dataset, world_size or 1, rank or 0)
+        train_dataset = DistributedStreamingDataset(train_dataset, world_size or 1, rank or 0, enable_length_sorting=enable_length_sorting)
+        val_dataset = DistributedStreamingDataset(val_dataset, world_size or 1, rank or 0, enable_length_sorting=enable_length_sorting)
 
     # Get base datasets for collate_fn
     base_train_dataset = train_dataset.base_dataset if isinstance(train_dataset, (InfiniteStreamingDataset, DistributedStreamingDataset)) else train_dataset

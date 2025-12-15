@@ -186,7 +186,7 @@ class ModelConfig:
     use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
     use_triton_kernels: bool = True           # Use Triton fused kernels
     use_torch_compile: bool = False           # Enable torch.compile
-    enable_cudagraphs_safe_routing: bool = False  # Enable CUDA graphs safe routing (20-30% speedup)
+    enable_cudagraphs_safe_routing: bool = False  # Enable CUDA graphs safe routing
     use_flash_attention: bool = True          # Use flash attention
     gradient_checkpointing: bool = True       # Enable gradient checkpointing
     use_optimized_moe: bool = True            # Use optimized MoE implementation
@@ -434,17 +434,12 @@ class MoEMemoryOptimizationConfig:
     Configuration for MoE memory optimization techniques.
 
     Enables advanced memory reduction strategies for sparse MoE models:
-    - LoRA expert sharing: Shared base + low-rank deltas (40-60% savings)
-    - CPU expert offloading: Keep inactive experts on CPU (50-80% savings)
-    - Hierarchical loading: Cluster-based expert organization (30-50% savings)
-    - Quantization: INT8/INT4 for inactive experts (50-75% savings)
+    - LoRA expert sharing: Shared base + low-rank deltas for memory efficiency
+    - CPU expert offloading: Keep inactive experts on CPU to reduce GPU memory
+    - Hierarchical loading: Cluster-based expert organization
+    - Quantization: INT8/INT4 for inactive experts
 
-    Combined savings: Up to 85-90% memory reduction!
-
-    HYBRID MODE (NEW):
-    - All three optimizations can now work together!
-    - LoRA + Offloading + Quantization = 99.9%+ memory savings
-    - Simply enable use_lora_experts, use_expert_offloading, and use_expert_quantization
+    These optimizations can be combined for greater memory savings.
     """
     # === LoRA Expert Sharing ===
     use_lora_experts: bool = False           # Enable LoRA-based expert parameter sharing
@@ -532,7 +527,7 @@ class DataConfig:
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = False                   # Streaming loader (YAML controls)
     buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
-    num_workers: int = 0                      # CRITICAL FIX: Default 0 to avoid multiprocessing deadlocks with Arrow files
+    num_workers: int = 0                      # Default 0 to avoid multiprocessing deadlocks with Arrow files
     prefetch_factor: int = 4                  # Batches to prefetch per worker
     persistent_workers: bool = False          # Keep workers alive between epochs (YAML controls)
     padding_side: str = 'right'               # Tokenizer padding side
@@ -543,8 +538,8 @@ class DataConfig:
     dataloader_pin_memory: bool = False       # Pin memory for faster GPU transfer
     default_tokenizer_name: str = 'Qwen/Qwen2.5-0.5B'  # Default tokenizer if none specified
 
-    # SPEED OPTIMIZATION: Sequence packing for 20-35% speedup
-    use_sequence_packing: bool = False        # Enable sequence packing (20-35% speedup)
+    # Sequence packing for improved throughput
+    use_sequence_packing: bool = False        # Enable sequence packing
     packing_strategy: str = 'greedy'          # Packing strategy: 'greedy' or 'adaptive'
     use_dynamic_batching: bool = False        # Enable dynamic batching
     max_tokens_per_batch: Optional[int] = None  # Max tokens per batch
@@ -564,6 +559,11 @@ class DataConfig:
     use_streaming_tokenization: bool = False  # Use streaming tokenization
     enable_bucketing: bool = True             # Enable sequence bucketing
     dataset_name: Optional[str] = None        # Dataset name
+
+    # Randomization control (NEW)
+    shuffle_seed: Optional[int] = None        # Global shuffle seed (None = non-deterministic)
+    enable_length_sorting: bool = True        # Enable length sorting in distributed mode
+    disable_packing_length_sort: bool = False # Disable length sorting in packing
 
 
 @dataclass
@@ -840,7 +840,7 @@ class PerformanceConfig:
     express_mode: bool = False                # Express mode
 
     # TF32 and hardware optimizations (NEW)
-    enable_tf32: bool = True                  # Enable TF32 on Ampere+ GPUs (8x faster matmul)
+    enable_tf32: bool = True                  # Enable TF32 on Ampere+ GPUs for faster matmul
     float32_matmul_precision: str = 'high'    # Options: 'highest', 'high', 'medium'
     enable_cudnn_benchmark: bool = True       # Auto-tune cuDNN kernels
     cudagraph_skip_dynamic_shapes: bool = True   # Skip dynamic shapes in CUDAGraph
@@ -853,7 +853,7 @@ class OptimizationsConfig:
     """Configuration for all training optimizations (Phase 1, 2, 3)."""
 
     # Phase 1: Quick Wins
-    torchinductor_autotune: int = 1            # 0=off, 1=basic, 2=aggressive (10-15% speedup)
+    torchinductor_autotune: int = 1            # 0=off, 1=basic, 2=aggressive
 
     # Memory Management
     memory_headroom_gb: float = 3.0            # Reserve headroom for safety
@@ -921,10 +921,10 @@ class LoggingConfig:
     file_level: str = 'debug'                 # File log level (more detailed)
 
     # Monitoring frequencies (in steps)
-    metrics_log_freq: int = 500               # GPU UTIL FIX: Reduced frequency to minimize .item() sync overhead (was 100)
-    memory_check_freq: int = 2000             # GPU UTIL FIX: Reduced frequency to minimize mem_get_info() sync overhead (was 50)
+    metrics_log_freq: int = 500               # Reduced frequency to minimize sync overhead
+    memory_check_freq: int = 2000             # Reduced frequency to minimize sync overhead
     health_summary_freq: int = 500            # How often to log training health summary
-    moe_metrics_freq: int = 5000              # GPU UTIL FIX: Reduced frequency to minimize expert metric sync overhead (was 2000)
+    moe_metrics_freq: int = 5000              # Reduced frequency to minimize sync overhead
 
     # Feature flags
     enable_timing_breakdown: bool = True      # Log step-level timing (data, forward, backward, optimizer)
@@ -958,7 +958,7 @@ class KernelOptimizationConfig:
     """Configuration for low-level kernel optimizations.
 
     Controls Triton kernel usage, dispatch strategies, and GPU optimizations.
-    These settings can provide 50-80% throughput improvement when properly tuned.
+    These settings can provide significant throughput improvement when properly tuned.
     """
     # Router/Gating kernel optimizations
     router_kernel_mode: str = 'auto'          # 'auto', 'triton', 'pytorch'
