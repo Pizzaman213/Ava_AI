@@ -38,13 +38,15 @@ class SequencePackingCollator:
         pad_token_id: int = 0,
         eos_token_id: int = 2,
         pack_sequences: bool = True,
-        sort_by_length: bool = True,
+        sort_by_length: bool = False,  # False preserves random order for better coherence
+        preserve_batch_size: bool = True,
     ):
         self.max_length = max_length
         self.pad_token_id = pad_token_id
         self.eos_token_id = eos_token_id
         self.pack_sequences = pack_sequences
         self.sort_by_length = sort_by_length
+        self.preserve_batch_size = preserve_batch_size  # Keep output batch size = input batch size
 
         # Statistics tracking
         self.total_tokens_before = 0
@@ -180,6 +182,55 @@ class SequencePackingCollator:
 
         return concatenated[:self.max_length]
 
+    def _adjust_to_batch_size(
+        self,
+        packed: List[torch.Tensor],
+        sequences: List[torch.Tensor],
+        lengths: List[int],
+        target_size: int
+    ) -> List[torch.Tensor]:
+        """
+        Adjust packed sequences to match target batch size.
+
+        - If too few packed: add unpacked sequences (padded to max_length)
+        - If too many packed: truncate to target size
+
+        This ensures consistent batch sizes during training when packing is enabled.
+        """
+        current_size = len(packed)
+
+        if current_size == target_size:
+            return packed
+
+        if current_size > target_size:
+            # Too many packed sequences - truncate (keeps most densely packed ones)
+            return packed[:target_size]
+
+        # Too few packed sequences - need to add more
+        # Add unpacked sequences (padded individually) to reach target size
+        needed = target_size - current_size
+        dtype = packed[0].dtype if packed else torch.long
+
+        # Find sequences not yet used (short ones that didn't fit well into packs)
+        # We'll pad them individually to max_length
+        for i in range(min(needed, len(sequences))):
+            seq = sequences[i]
+            seq_len = lengths[i]
+
+            # Create padded sequence
+            padded_seq = torch.full((self.max_length,), self.pad_token_id, dtype=dtype)
+            padded_seq[:seq_len] = seq[:seq_len]
+            packed.append(padded_seq)
+
+            if len(packed) >= target_size:
+                break
+
+        # If still not enough (rare), duplicate last packed sequence
+        while len(packed) < target_size:
+            packed.append(packed[-1].clone())
+
+        return packed[:target_size]
+
     def __call__(self, batch: List[Union[Dict, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         """
         Collate and pack a batch of sequences.
@@ -211,6 +262,11 @@ class SequencePackingCollator:
 
         if not packed:
             return self._standard_collate(batch)
+
+        # Preserve batch size if enabled (prevents BS fluctuation during training)
+        target_batch_size = len(batch)
+        if self.preserve_batch_size and len(packed) != target_batch_size:
+            packed = self._adjust_to_batch_size(packed, sequences, lengths, target_batch_size)
 
         # Stack into batch
         input_ids = torch.stack(packed)
@@ -297,12 +353,14 @@ class DynamicSequencePackingCollator(SequencePackingCollator):
         eos_token_id: int = 2,
         target_packing_ratio: float = 0.9,
         adaptive_binning: bool = True,
+        preserve_batch_size: bool = True,
     ):
         super().__init__(
             max_length=max_length,
             pad_token_id=pad_token_id,
             eos_token_id=eos_token_id,
             pack_sequences=True,
+            preserve_batch_size=preserve_batch_size,
         )
         self.target_packing_ratio = target_packing_ratio
         self.adaptive_binning = adaptive_binning
@@ -408,6 +466,11 @@ class DynamicSequencePackingCollator(SequencePackingCollator):
 
         if not packed:
             return self._standard_collate(batch)
+
+        # Preserve batch size if enabled (prevents BS fluctuation during training)
+        target_batch_size = len(batch)
+        if self.preserve_batch_size and len(packed) != target_batch_size:
+            packed = self._adjust_to_batch_size(packed, sequences, lengths, target_batch_size)
 
         # Stack into batch
         input_ids = torch.stack(packed)

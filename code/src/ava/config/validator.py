@@ -185,7 +185,9 @@ class ConfigValidator:
         Checks:
         - Required fields are present
         - Field types are correct (if specified)
-        - No unknown deprecated paths used
+        - Numeric ranges are valid
+        - Cross-field dependencies are satisfied
+        - Paths exist
 
         Args:
             raise_on_error: If True, raise ConfigValidationError on failure
@@ -194,6 +196,7 @@ class ConfigValidator:
             Tuple of (is_valid, list of error messages)
         """
         errors: List[str] = []
+        warnings: List[str] = []
 
         # Check required fields
         for field in self.REQUIRED_FIELDS:
@@ -213,6 +216,17 @@ class ConfigValidator:
                     f"got {type(value).__name__}"
                 )
 
+        # NEW: Comprehensive validation
+        self._validate_ranges(errors, warnings)
+        self._validate_cross_fields(errors, warnings)
+        self._validate_paths(errors, warnings)
+
+        # Log warnings
+        if warnings:
+            warning_msg = "\n".join(f"  - {w}" for w in warnings)
+            logger.warning(f"Configuration warnings:\n{warning_msg}")
+            self._warnings.extend(warnings)
+
         is_valid = len(errors) == 0
 
         if not is_valid and raise_on_error and self._strict:
@@ -222,6 +236,106 @@ class ConfigValidator:
             )
 
         return is_valid, errors
+
+    def _validate_ranges(self, errors: List[str], warnings: List[str]) -> None:
+        """Validate numeric field ranges."""
+        # Batch size
+        bs = self.get('training.batch_size')
+        if bs is not None:
+            if bs <= 0:
+                errors.append(f"training.batch_size must be > 0, got {bs}")
+            elif bs > 10000:
+                warnings.append(f"training.batch_size ({bs}) is very large, may cause OOM")
+
+        # Gradient accumulation steps
+        gas = self.get('training.gradient_accumulation_steps')
+        if gas is not None:
+            if gas <= 0:
+                errors.append(f"training.gradient_accumulation_steps must be > 0, got {gas}")
+            elif gas > 1000:
+                warnings.append(f"training.gradient_accumulation_steps ({gas}) is very large")
+
+        # Learning rate
+        lr = self.get('training.learning_rate')
+        if lr is not None:
+            if lr <= 0:
+                errors.append(f"training.learning_rate must be > 0, got {lr}")
+            elif lr > 1.0:
+                warnings.append(f"training.learning_rate ({lr}) is very high, may cause instability")
+
+        # Max grad norm
+        mgn = self.get('training.max_grad_norm')
+        if mgn is not None and mgn <= 0:
+            errors.append(f"training.max_grad_norm must be > 0, got {mgn}")
+
+        # Hidden size
+        hs = self.get('model.hidden_size')
+        if hs is not None:
+            if hs <= 0:
+                errors.append(f"model.hidden_size must be > 0, got {hs}")
+            elif hs % 64 != 0:
+                warnings.append(
+                    f"model.hidden_size ({hs}) not divisible by 64, "
+                    "may be inefficient for GPU"
+                )
+
+        # Num layers
+        nl = self.get('model.num_layers')
+        if nl is not None and nl <= 0:
+            errors.append(f"model.num_layers must be > 0, got {nl}")
+
+        # Attention heads
+        nah = self.get('model.num_attention_heads')
+        if nah is not None and nah <= 0:
+            errors.append(f"model.num_attention_heads must be > 0, got {nah}")
+
+    def _validate_cross_fields(self, errors: List[str], warnings: List[str]) -> None:
+        """Validate dependencies between fields."""
+        # Hidden size must be divisible by attention heads
+        hs = self.get('model.hidden_size')
+        nah = self.get('model.num_attention_heads')
+        if hs is not None and nah is not None:
+            if hs % nah != 0:
+                errors.append(
+                    f"model.hidden_size ({hs}) must be divisible by "
+                    f"model.num_attention_heads ({nah})"
+                )
+
+        # MoE validation
+        num_experts = self.get('model.num_experts')
+        if num_experts is not None and num_experts > 0:
+            nept = self.get('model.num_experts_per_token')
+            if nept is not None:
+                if nept <= 0:
+                    errors.append(f"model.num_experts_per_token must be > 0, got {nept}")
+                elif nept > num_experts:
+                    errors.append(
+                        f"model.num_experts_per_token ({nept}) cannot exceed "
+                        f"model.num_experts ({num_experts})"
+                    )
+
+        # Effective batch size warning
+        bs = self.get('training.batch_size')
+        gas = self.get('training.gradient_accumulation_steps')
+        if bs is not None and gas is not None:
+            effective_bs = bs * gas
+            if effective_bs > 10000:
+                warnings.append(
+                    f"Effective batch size ({effective_bs} = {bs} * {gas}) is very large"
+                )
+
+    def _validate_paths(self, errors: List[str], warnings: List[str]) -> None:
+        """Validate file/directory paths."""
+        from pathlib import Path
+
+        # Data directory
+        data_dir = self.get('data.data_dir')
+        if data_dir is not None:
+            data_path = Path(data_dir)
+            if not data_path.exists():
+                errors.append(f"data.data_dir does not exist: {data_dir}")
+            elif not data_path.is_dir():
+                errors.append(f"data.data_dir is not a directory: {data_dir}")
 
     def get_warnings(self) -> List[str]:
         """Get all deprecation warnings encountered."""

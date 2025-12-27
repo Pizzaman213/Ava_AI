@@ -48,9 +48,12 @@ class TextGenerator:
         self.tokenizer: "PreTrainedTokenizerBase" = tokenizer
         self.device = device or next(model.parameters()).device
 
-        # Special tokens
-        self.eos_token_id = tokenizer.eos_token_id
-        self.pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+        # Special tokens - critical for proper sequence handling
+        self.eos_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 1
+        self.bos_token_id = getattr(tokenizer, 'bos_token_id', None)
+        if self.bos_token_id is None:
+            self.bos_token_id = 2  # Default BOS token matching tokenizer vocab
+        self.pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
 
     @torch.no_grad()
     def generate(
@@ -58,10 +61,10 @@ class TextGenerator:
         prompt: Union[str, List[int]],
         max_length: int = 100,
         min_length: int = 1,
-        temperature: float = 1.2,  # COHERENCE FIX: Increased from 1.0 for more diversity
-        top_k: int = 50,
-        top_p: float = 0.95,  # COHERENCE FIX: Increased from 0.9 for better sampling
-        repetition_penalty: float = 1.1,  # COHERENCE FIX: Reduced from 1.2 to avoid forced diversity
+        temperature: float = 0.7,  # Match training config for consistent quality assessment
+        top_k: int = 40,           # Match training config
+        top_p: float = 0.9,        # Standard nucleus sampling
+        repetition_penalty: float = 1.2,  # Moderate repetition prevention
         eos_penalty: float = 1.0,
         length_penalty: float = 1.0,
         num_beams: int = 1,
@@ -94,12 +97,28 @@ class TextGenerator:
         Returns:
             Generated text(s) as string or list of strings
         """
-        # Encode prompt
+        # Encode prompt with BOS token prepended
+        # CRITICAL: The model was trained with BOS at the start of every sequence,
+        # so we must include it during generation for coherent output
         if isinstance(prompt, str):
             encoded = self.tokenizer.encode(prompt, return_tensors='pt')
             input_ids = torch.tensor(encoded) if not isinstance(encoded, torch.Tensor) else encoded
+            # Ensure 2D shape
+            if input_ids.dim() == 1:
+                input_ids = input_ids.unsqueeze(0)
+            # Prepend BOS token if not already present
+            if input_ids[0, 0].item() != self.bos_token_id:
+                bos_tensor = torch.tensor([[self.bos_token_id]], dtype=input_ids.dtype)
+                input_ids = torch.cat([bos_tensor, input_ids], dim=1)
         else:
             input_ids = torch.tensor([prompt]) if not isinstance(prompt, torch.Tensor) else prompt
+            # Ensure 2D shape
+            if input_ids.dim() == 1:
+                input_ids = input_ids.unsqueeze(0)
+            # Prepend BOS token if not already present
+            if input_ids[0, 0].item() != self.bos_token_id:
+                bos_tensor = torch.tensor([[self.bos_token_id]], dtype=input_ids.dtype)
+                input_ids = torch.cat([bos_tensor, input_ids], dim=1)
 
         input_ids = input_ids.to(self.device)
         batch_size = input_ids.shape[0]

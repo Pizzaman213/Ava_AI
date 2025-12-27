@@ -1,0 +1,225 @@
+# Minimal Working Configuration with 8-bit Optimizer
+# Based on minimal_working.yaml with AdamW8bit for reduced memory usage
+# Model Size: ~300M parameters (ultra-small for testing)
+# Memory: Fits comfortably in 11GB with headroom
+
+model:
+  vocab_size: 50680
+  pad_token_id: 0
+  eos_token_id: 3
+  hidden_size: 512  # MINIMAL: Very small for guaranteed fit
+  num_layers: 2  # MINIMAL: Only 2 layers
+  num_attention_heads: 4  # MINIMAL: 4 heads
+  intermediate_size: 2048  # MINIMAL: Small FFN
+  max_position_embeddings: 1024  # Increased from 512 for longer sequences
+  num_experts: 16  # 16 experts total
+  num_experts_per_token: 4  # 4 experts active per token (top-k routing)
+  router_type: mixtral
+  capacity_factor: 1
+  expert_dropout: 0
+  activation: swiglu
+  use_grouped_gemm: true  # 15-25% speedup for parallel expert computation
+  use_triton_kernels: true  # 2-3x speedup with fused routing ops
+  use_torch_compile: true  # 15% router speedup via compilation
+  use_flash_attention: true  # Still helps with attention
+  gradient_checkpointing: true  # Save memory
+  use_optimized_moe: true  # Fused MoE operations for 10-20% speedup
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.1
+  diversity_loss_coef: 0
+  expert_dropout_loss_coef: 0
+  router_jitter_noise: 0.01
+  use_lora_experts: false
+  use_expert_offloading: false
+  attention_dropout: 0
+  dropout: 0
+  layer_norm_eps: 0.00001
+  initializer_range: 0.02
+
+# No MoE memory optimizations needed - model fits in GPU
+moe_memory_optimization:
+  use_lora_experts: false
+  use_expert_offloading: false
+  use_hierarchical_experts: false
+  use_expert_quantization: false
+
+# Batch size calibration - now uses fresh model per test
+batch_size_calibration:
+  enabled: true
+  use_fresh_models: true  # NEW: Create fresh model for each batch size test
+  min_batch_size: 1
+  max_batch_size: 512
+  target_memory: 0.95  # Target 95% GPU memory utilization
+  perform_optimizer_step: true  # Include optimizer states in memory measurement
+  calibration_timeout_sec: 90  # Allow more time for fresh model creation
+
+training:
+  batch_size: 128  # Will be auto-calibrated
+  gradient_accumulation_steps: 4
+  optimizer:
+    type: adamw8bit  # 8-BIT OPTIMIZER: 50% less memory than AdamW
+  learning_rate: 0.0001
+  num_epochs: 2
+  max_steps: null
+  warmup_steps: 1000
+  weight_decay: 0.3
+  use_fused_optimizer: true
+  offload_optimizer_state: false
+  save_steps: 500
+  eval_steps: 50
+  logging_steps: 10
+  run_validation: true
+  validation_batch_size: 64
+  max_validation_batches: 10
+  compute_val_train_ratio: true
+  generate_every_n_steps: null  # DISABLED
+  num_generations_per_step: 0
+  generation_during_eval: false
+  test_generation_quality: false
+  generation_max_length: 256
+  generation_temperature: 0.85
+  generation_top_p: 0.92
+  generation_top_k: 50
+  generation_repetition_penalty: 1.15
+  generation_skip_special_tokens: true
+  generation_prompt: Once upon a time, in a land far away,
+  alternative_prompts:
+    - The quick brown fox
+    - In the beginning
+    - A long time ago
+
+evaluation:
+  moe_metrics:
+    track_expert_utilization: true
+    log_frequency: 50
+    track_routing_decisions: true
+    track_load_balance: true
+
+data:
+  streaming: true
+  buffer_size: 2000
+  data_dir: code/data/Ava_Ai/data/train/data
+  max_length: 128
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.1
+  tokenizer_name: code/data/Ava_Ai/tokenizer/tokenizer.json
+  padding_side: right
+  truncation: true
+  num_workers: 8
+  prefetch_factor: 2
+  persistent_workers: true
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  dataloader_prefetch_factor: 4
+  dataloader_persistent_workers: true
+  dataloader_samples_per_file: 500
+  use_streaming_tokenization: false
+  use_pretokenized: true  # 60x faster
+  use_sequence_packing: true  # 20-35% speedup
+  packing_strategy: adaptive
+  use_all_data: true
+  max_files_to_load: 10000
+  multiprocessing_context: spawn
+  cache_size: 200
+  skip_validation: true
+
+output:
+  output_dir: code/outputs
+  save_every: 500
+  fresh_start: false
+
+run_management:
+  run_name: mw_8bit_fresh_model_calibration
+  run_description: Minimal working config with 8-bit optimizer and fresh model per calibration test
+  run_tags: minimal,testing,8bit,adamw8bit,fresh_model_calibration
+
+performance:
+  enable_tf32: true
+  float32_matmul_precision: high
+  enable_cudnn_benchmark: true
+  torchinductor_max_autotune: 1
+  enable_torch_compile: true
+  torch_compile_mode: reduce-overhead
+  torch_compile_fullgraph: false
+  torch_compile_dynamic: true
+
+optimizations:
+  torchinductor_autotune: 1
+  use_overlapped_checkpointing: true
+
+  memory_headroom_gb: 1
+  memory_cleanup_thresholds:
+    warning: 0.75
+    critical: 0.85
+    emergency: 0.95
+
+  expert_prefetch:
+    enabled: false
+
+  expert_cache:
+    auto_limit: false
+    use_lru_eviction: false
+    cache_size: 0
+
+  checkpoint:
+    async_saving: true
+
+  memory_cleanup:
+    fast_mode: true
+    remove_sleep: true
+
+  dataloader:
+    adaptive_file_reading: false
+
+  gradient_checkpointing:
+    selective: false
+    checkpoint_attention: true
+    checkpoint_every_n_layers: 1
+
+  router:
+    cache_hash_on_gpu: true
+    compile_routers: true
+    enable_router_caching: true
+
+# CUDA Stream Optimizations
+cuda_streams:
+  enabled: true
+  num_streams: 4
+  use_event_timing: true
+  use_stream_pool: true
+  high_priority_transfers: true
+
+# Overlapped checkpointing
+overlapped_checkpointing:
+  enabled: true
+  stream_overlap: true
+  target_layers: "layers"
+
+# Double checkpointing - disabled for minimal config
+double_checkpointing:
+  enabled: false
+  coarse_checkpoint_interval: 8
+  fine_checkpoint_interval: 2
+  use_cuda_streams: true
+
+hardware:
+  device: cuda
+  mixed_precision: bf16
+  compile: false
+
+wandb:
+  use_wandb: true
+  project: ava-training
+  entity: null
+  tags:
+    - minimal
+    - testing
+    - moe
+    - 8bit
+    - fresh_model_calibration
+  notes: Minimal config with 8-bit optimizer and fresh model per calibration test
+
+deepspeed:
+  use_deepspeed: false

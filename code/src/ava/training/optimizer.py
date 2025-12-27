@@ -6,13 +6,19 @@ multiple optimizer types and proper fallback handling.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    CosineAnnealingWarmRestarts,
+    LinearLR,
+    SequentialLR,
+)
 
 from .context import ManagerInterface, TrainingContext
+from ava.config.training_config import get_mixed_precision
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +143,13 @@ class OptimizerManager(ManagerInterface):
         """
         self.assert_initialized()
 
+        # CRITICAL: Check if DeepSpeed already created optimizer
+        if hasattr(self.context, 'deepspeed_optimizer') and self.context.deepspeed_optimizer is not None:
+            self.logger.info("Using DeepSpeed-managed optimizer")
+            self.optimizer = self.context.deepspeed_optimizer
+            self.context.optimizer = self.optimizer
+            return self.optimizer
+
         # Get optimizer type from config (check both root level and training.optimizer)
         optimizer_config = config.get('optimizer', {}) or config.get('training', {}).get('optimizer', {})
         if isinstance(optimizer_config, dict):
@@ -167,6 +180,55 @@ class OptimizerManager(ManagerInterface):
         self.context.optimizer = optimizer
 
         return optimizer
+
+    def create_optimizer_factory(
+        self,
+        model: torch.nn.Module,
+        config: Dict[str, Any],
+        learning_rate: float,
+        weight_decay: float = 0.01,
+        support_model_arg: bool = False,
+    ) -> Callable[..., torch.optim.Optimizer]:
+        """
+        Create a factory function that produces optimizer instances.
+
+        This is useful for batch size calibration where we need to create temporary
+        optimizers for memory testing without affecting the main optimizer.
+
+        Args:
+            model: Model to optimize (used when factory is called without args)
+            config: Configuration dict with optimizer settings
+            learning_rate: Learning rate
+            weight_decay: Weight decay for regularization
+            support_model_arg: If True, factory accepts optional model parameter.
+                              When called with a model arg, uses that model.
+                              When called without args, uses the default model.
+                              This is required when using model_factory for fresh
+                              models per calibration test.
+
+        Returns:
+            Factory function that creates optimizer instances
+        """
+        if support_model_arg:
+            def factory(target_model: Optional[torch.nn.Module] = None) -> torch.optim.Optimizer:
+                """Create optimizer for given model or default model."""
+                use_model = target_model if target_model is not None else model
+                return self.create_optimizer(
+                    model=use_model,
+                    config=config,
+                    learning_rate=learning_rate,
+                    weight_decay=weight_decay
+                )
+        else:
+            def factory() -> torch.optim.Optimizer:
+                return self.create_optimizer(
+                    model=model,
+                    config=config,
+                    learning_rate=learning_rate,
+                    weight_decay=weight_decay
+                )
+
+        return factory
 
     def _try_create_optimizer(
         self,
@@ -233,7 +295,13 @@ class OptimizerManager(ManagerInterface):
                     )
                     return None
                 betas = optimizer_config.get('betas', (0.9, 0.95))
-                eps = optimizer_config.get('eps', 1e-8)
+                # FIX: Add BF16 epsilon detection for AdamW8bit
+                mixed_precision = get_mixed_precision(config)
+                if mixed_precision in ('bf16', 'bfloat16'):
+                    default_eps = 1e-6  # Safe for bfloat16
+                else:
+                    default_eps = 1e-8  # Standard for fp32/fp16
+                eps = optimizer_config.get('eps', default_eps)
                 return bnb.optim.AdamW8bit(
                     params,
                     lr=learning_rate,
@@ -259,7 +327,15 @@ class OptimizerManager(ManagerInterface):
 
             elif optimizer_type == 'adamw':
                 betas = optimizer_config.get('betas', (0.9, 0.999))
-                eps = optimizer_config.get('eps', 1e-8)
+                # FIX: Detect bfloat16 precision and use appropriate epsilon
+                # bfloat16 has ~7.8 bits mantissa, so eps=1e-8 is effectively zero
+                # Use 1e-6 as default for bfloat16, 1e-8 for fp32/fp16
+                mixed_precision = get_mixed_precision(config)
+                if mixed_precision in ('bf16', 'bfloat16'):
+                    default_eps = 1e-6  # Safe for bfloat16
+                else:
+                    default_eps = 1e-8  # Standard for fp32/fp16
+                eps = optimizer_config.get('eps', default_eps)
                 return torch.optim.AdamW(
                     params,
                     lr=learning_rate,
@@ -283,21 +359,32 @@ class OptimizerManager(ManagerInterface):
         total_steps: int,
         min_lr: float = 0.0,
         lr_decay_steps: Optional[int] = None,
+        scheduler_type: str = 'cosine',
+        num_cycles: int = 1,
     ) -> torch.optim.lr_scheduler.LRScheduler:
         """
-        Create learning rate scheduler with warmup and cosine decay.
+        Create learning rate scheduler with warmup and decay.
 
         Args:
             optimizer: Optimizer to schedule
             warmup_steps: Number of warmup steps
             total_steps: Total number of training steps
             min_lr: Minimum learning rate at end of decay
-            lr_decay_steps: Number of steps for LR decay (defaults to total_steps)
+            lr_decay_steps: Number of steps for LR decay (defaults to total_steps - warmup_steps)
+            scheduler_type: Type of decay scheduler ('cosine', 'cosine_with_restarts', 'linear')
+            num_cycles: Number of cycles for cosine_with_restarts (default 1)
 
         Returns:
-            Sequential LR scheduler with warmup and cosine decay
+            LR scheduler with warmup and decay
         """
         self.assert_initialized()
+
+        # CRITICAL: Check if DeepSpeed already created scheduler
+        if hasattr(self.context, 'deepspeed_scheduler') and self.context.deepspeed_scheduler is not None:
+            self.logger.info("Using DeepSpeed-managed scheduler")
+            self.scheduler = self.context.deepspeed_scheduler
+            self.context.scheduler = self.scheduler
+            return self.scheduler
 
         self._warmup_steps = warmup_steps
         self._total_steps = total_steps
@@ -305,20 +392,47 @@ class OptimizerManager(ManagerInterface):
         if lr_decay_steps is None:
             lr_decay_steps = total_steps - warmup_steps
 
-        # Warmup scheduler (linear increase)
+        # Ensure we have at least 1 decay step to avoid division by zero
+        lr_decay_steps = max(lr_decay_steps, 1)
+
+        # Warmup scheduler (linear increase from 1% to 100% of base LR)
+        # Using start_factor=0.01 for smoother warmup start
         warmup_scheduler = LinearLR(
             optimizer,
-            start_factor=0.1,
+            start_factor=0.01,
             end_factor=1.0,
             total_iters=warmup_steps
         )
 
-        # Decay scheduler (cosine annealing)
-        decay_scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=lr_decay_steps,
-            eta_min=min_lr
-        )
+        # Create decay scheduler based on type
+        if scheduler_type == 'cosine_with_restarts':
+            # CosineAnnealingWarmRestarts: T_0 is the period of the first restart
+            # After warmup, we want num_cycles restarts over lr_decay_steps
+            t_0 = max(lr_decay_steps // num_cycles, 1)
+            decay_scheduler = CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=t_0,
+                T_mult=1,  # Keep same period for each restart
+                eta_min=min_lr
+            )
+            self.logger.info(
+                f"Using CosineAnnealingWarmRestarts: T_0={t_0}, num_cycles={num_cycles}"
+            )
+        elif scheduler_type == 'linear':
+            # Linear decay from base LR to min_lr
+            decay_scheduler = LinearLR(
+                optimizer,
+                start_factor=1.0,
+                end_factor=min_lr / optimizer.param_groups[0]['lr'] if optimizer.param_groups[0]['lr'] > 0 else 0.01,
+                total_iters=lr_decay_steps
+            )
+        else:
+            # Default: cosine annealing (standard cosine decay)
+            decay_scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=lr_decay_steps,
+                eta_min=min_lr
+            )
 
         # Combine with sequential scheduler
         scheduler = SequentialLR(
@@ -331,22 +445,27 @@ class OptimizerManager(ManagerInterface):
         self.context.scheduler = scheduler
 
         self.logger.info(
-            f"Created LR scheduler: warmup={warmup_steps} steps, "
-            f"decay={lr_decay_steps} steps, min_lr={min_lr}"
+            f"Created LR scheduler: type={scheduler_type}, warmup={warmup_steps} steps, "
+            f"decay={lr_decay_steps} steps, min_lr={min_lr:.2e}"
         )
 
         return scheduler
 
     def on_step_end(self, step: int, loss: float) -> None:
         """
-        Update scheduler after optimizer step.
+        Callback after optimizer step completes.
+
+        NOTE: Scheduler stepping is handled in the training loop (loop.py line 841),
+        NOT here. This prevents double-stepping which would cause the LR schedule
+        to run 2x too fast. This method is kept for other post-step operations.
 
         Args:
             step: Current training step
             loss: Current loss value
         """
-        if self.scheduler is not None:
-            self.scheduler.step()
+        # FIX: Removed scheduler.step() - it's already called in the training loop
+        # Having it here caused LR warmup/decay to happen 2x too fast
+        pass
 
     def get_current_lr(self) -> float:
         """Get current learning rate."""

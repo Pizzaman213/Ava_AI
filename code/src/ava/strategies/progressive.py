@@ -56,13 +56,6 @@ class ProgressiveTrainingConfig:
     cache_dir: str = "/tmp/difficulty_cache"
     cache_version: str = "v1.0"
 
-    # Dynamic batch sizing
-    enable_dynamic_batch: bool = True
-    min_batch_size: int = 1
-    max_batch_size: int = 64
-    batch_size_adaptation_steps: int = 100
-    target_gpu_utilization: float = 0.85
-
     # Progressive model scaling
     enable_progressive_model: bool = False
     initial_layers: int = 6
@@ -788,173 +781,51 @@ class GrowLengthScheduler:
 
 class DynamicBatchSizer:
     """
-    Dynamic batch size optimization based on GPU utilization.
+    Batch size manager for progressive training.
 
-    Automatically adjusts batch size to maximize GPU utilization while
-    avoiding out-of-memory errors.
+    Note: Dynamic batch adjustment has been removed in favor of fixed batch sizes
+    with parallel workers. This class now returns the configured batch size.
     """
 
-    def __init__(self, config: ProgressiveTrainingConfig):
+    def __init__(self, config: ProgressiveTrainingConfig, batch_size: int = 32):
         self.config = config
-        self.current_batch_size = config.min_batch_size
+        self.batch_size = batch_size
         self.utilization_history = []
         self.oom_batch_sizes = set()
         self.successful_batch_sizes = {}
 
-        # Binary search state for OOM handling
-        self.binary_search_state = {}  # Maps (seq_length,) -> search state
-        self.max_viable_batch_sizes = {}  # Cache of maximum viable batch sizes per seq_length
-
     def get_batch_size(self, step: int, current_seq_length: int) -> int:
-        """Get optimal batch size for current step and sequence length."""
-        if not self.config.enable_dynamic_batch:
-            return self.config.max_batch_size
-
-        # Adjust batch size every N steps
-        if step % self.config.batch_size_adaptation_steps == 0 and step > 0:
-            self._adapt_batch_size(current_seq_length)
-
-        return self.current_batch_size
+        """Get batch size for current step and sequence length."""
+        return self.batch_size
 
     def _adapt_batch_size(self, seq_length: int):
-        """Adapt batch size based on recent performance."""
-        # Get recent GPU utilization
-        if len(self.utilization_history) < 5:
-            return  # Not enough data
-
-        avg_utilization = np.mean(self.utilization_history[-5:])
-
-        # Create a key for current configuration
-        config_key = (seq_length, self.current_batch_size)
-
-        # Decision logic
-        if avg_utilization < self.config.target_gpu_utilization - 0.1:
-            # Low utilization - try to increase batch size
-            new_batch_size = min(
-                self.current_batch_size * 2,
-                self.config.max_batch_size
-            )
-
-            # Check if this configuration has caused OOM before
-            oom_key = (seq_length, new_batch_size)
-            if oom_key not in self.oom_batch_sizes:
-                self.current_batch_size = new_batch_size
-                logger.info(f"Increased batch size to {self.current_batch_size} (utilization: {avg_utilization:.2%})")
-
-        elif avg_utilization > self.config.target_gpu_utilization + 0.05:
-            # High utilization - might want to decrease for stability
-            new_batch_size = max(
-                self.current_batch_size // 2,
-                self.config.min_batch_size
-            )
-            self.current_batch_size = new_batch_size
-            logger.info(f"Decreased batch size to {self.current_batch_size} (utilization: {avg_utilization:.2%})")
-
-        # Record successful configuration
-        self.successful_batch_sizes[config_key] = avg_utilization
+        """Batch size adaptation disabled - using fixed batch size."""
+        pass
 
     def report_oom(self, seq_length: int, batch_size: int):
-        """FIXED: Report OOM and use binary search to find maximum viable batch size."""
+        """Report OOM event - reduces batch size to half."""
         oom_key = (seq_length, batch_size)
         self.oom_batch_sizes.add(oom_key)
 
         logger.warning(f"OOM detected for seq_length={seq_length}, batch_size={batch_size}")
 
-        # Use binary search to find maximum viable batch size
-        new_batch_size = self._binary_search_max_batch_size(seq_length, batch_size)
-        self.current_batch_size = new_batch_size
+        # Simple recovery: halve batch size with minimum of 1
+        new_batch_size = max(1, batch_size // 2)
+        self.batch_size = new_batch_size
 
-        logger.info(f"Binary search found maximum viable batch size: {self.current_batch_size}")
-
-    def _binary_search_max_batch_size(self, seq_length: int, failed_batch_size: int) -> int:
-        """
-        Use binary search to find the maximum viable batch size for a given sequence length.
-
-        Args:
-            seq_length: Current sequence length
-            failed_batch_size: Batch size that caused OOM
-
-        Returns:
-            Maximum viable batch size
-        """
-        search_key = seq_length
-
-        # Check if we have a cached result
-        if search_key in self.max_viable_batch_sizes:
-            cached_max = self.max_viable_batch_sizes[search_key]
-            if cached_max < failed_batch_size:
-                # Use cached result with conservative margin
-                return max(int(cached_max * 0.9), self.config.min_batch_size)
-
-        # Initialize binary search bounds
-        if search_key not in self.binary_search_state:
-            self.binary_search_state[search_key] = {
-                'low': self.config.min_batch_size,
-                'high': failed_batch_size - 1,  # We know failed_batch_size doesn't work
-                'last_successful': self.config.min_batch_size,
-                'search_active': True
-            }
-        else:
-            # Update bounds based on new failure
-            state = self.binary_search_state[search_key]
-            state['high'] = min(state['high'], failed_batch_size - 1)
-
-        state = self.binary_search_state[search_key]
-
-        # If bounds have crossed, we found the maximum
-        if state['low'] > state['high']:
-            max_batch_size = state['last_successful']
-            self.max_viable_batch_sizes[search_key] = max_batch_size
-            state['search_active'] = False
-            logger.info(f"Binary search completed for seq_length={seq_length}: max_batch_size={max_batch_size}")
-            return max_batch_size
-
-        # Continue binary search - pick middle point
-        candidate_batch_size = (state['low'] + state['high']) // 2
-
-        # Conservative approach: if candidate is too close to known failure, reduce it
-        if candidate_batch_size >= failed_batch_size * 0.9:
-            candidate_batch_size = max(
-                int(failed_batch_size * 0.7),
-                self.config.min_batch_size
-            )
-
-        # Ensure candidate is within bounds and a valid batch size
-        candidate_batch_size = max(state['low'], min(candidate_batch_size, state['high']))
-
-        logger.info(f"Binary search: trying batch_size={candidate_batch_size} for seq_length={seq_length}")
-
-        return candidate_batch_size
+        logger.info(f"Reduced batch size to: {self.batch_size}")
 
     def report_successful_batch(self, seq_length: int, batch_size: int, utilization: float):
-        """Report a successful batch execution for binary search refinement."""
-        search_key = seq_length
-
-        # Update successful batch tracking
+        """Report a successful batch execution."""
         config_key = (seq_length, batch_size)
         self.successful_batch_sizes[config_key] = utilization
 
-        # Update binary search state if active
-        if search_key in self.binary_search_state and self.binary_search_state[search_key]['search_active']:
-            state = self.binary_search_state[search_key]
-            state['low'] = max(state['low'], batch_size)
-            state['last_successful'] = max(state['last_successful'], batch_size)
-
-            # Check if we can complete the search
-            if state['low'] > state['high']:
-                max_batch_size = state['last_successful']
-                self.max_viable_batch_sizes[search_key] = max_batch_size
-                state['search_active'] = False
-                logger.info(f"Binary search completed for seq_length={seq_length}: max_batch_size={max_batch_size}")
-
     def get_conservative_batch_size(self, seq_length: int) -> int:
         """Get a conservative batch size estimate based on history."""
-        search_key = seq_length
-
         # If we have a known maximum, use it with conservative margin
-        if search_key in self.max_viable_batch_sizes:
-            max_viable = self.max_viable_batch_sizes[search_key]
-            return max(int(max_viable * 0.8), self.config.min_batch_size)
+        if seq_length in self.max_viable_batch_sizes:
+            max_viable = self.max_viable_batch_sizes[seq_length]
+            return max(int(max_viable * 0.8), 1)
 
         # Look for similar sequence lengths in successful batches
         similar_configs = []
@@ -967,18 +838,10 @@ class DynamicBatchSizer:
             good_configs = [(bs, util) for bs, util in similar_configs if util >= 0.7]
             if good_configs:
                 max_similar_batch = max(bs for bs, util in good_configs)
-                return max(int(max_similar_batch * 0.9), self.config.min_batch_size)
+                return max(int(max_similar_batch * 0.9), 1)
 
-        # Fallback: estimate based on sequence length scaling
-        # Longer sequences typically need smaller batch sizes
-        base_batch_size = self.config.min_batch_size
-        seq_length_factor = min(seq_length / 512, 4.0)  # Cap scaling at 4x
-        estimated_batch_size = max(
-            int(base_batch_size * (2.0 / seq_length_factor)),
-            self.config.min_batch_size
-        )
-
-        return min(estimated_batch_size, self.config.max_batch_size)
+        # Return current batch size as default
+        return self.batch_size
 
     def dry_run_batch_size(self, seq_length: int, target_batch_size: int, model: Optional[nn.Module] = None) -> Dict[str, Any]:
         """

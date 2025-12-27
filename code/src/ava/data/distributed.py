@@ -16,6 +16,7 @@ Usage:
 """
 
 import logging
+from datetime import timedelta
 from typing import Any, Iterator
 
 import torch
@@ -23,6 +24,9 @@ from torch.utils.data import IterableDataset
 
 # Import centralized constants
 from ..config.constants import DATA_CONSTANTS
+
+# Default timeout for distributed barriers (30 minutes)
+_BARRIER_TIMEOUT = timedelta(minutes=30)
 
 # Check if distributed training is available
 try:
@@ -143,10 +147,10 @@ class DistributedStreamingDataset(IterableDataset):
             # This ensures all ranks finish main iteration before flushing
             if DISTRIBUTED_AVAILABLE and dist is not None and dist.is_initialized():
                 try:
-                    dist.barrier()
+                    dist.barrier(timeout=_BARRIER_TIMEOUT)
                     logger.debug(f"Rank {self.rank}: synchronized before buffer flush")
                 except Exception as e:
-                    logger.warning(f"Rank {self.rank}: barrier failed, continuing: {e}")
+                    logger.warning(f"Rank {self.rank}: barrier failed (timeout or process crash), continuing: {e}")
 
             # Process remaining buffer
             for buffered_sample in self._batch_buffer:

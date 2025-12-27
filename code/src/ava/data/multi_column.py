@@ -340,11 +340,17 @@ class MultiColumnDataset(Dataset):
 
         try:
             if file_path.suffix == '.arrow':
-                with pa.memory_map(str(file_path), 'r') as source:
-                    batch_reader = pa.ipc.open_file(source)
-                    table = batch_reader.read_all()
-                    df = table.to_pandas()
-                    data = df.to_dict('records')
+                # Try IPC File format first, then fall back to IPC Stream format
+                try:
+                    with pa.memory_map(str(file_path), 'r') as source:
+                        batch_reader = pa.ipc.open_file(source)
+                        table = batch_reader.read_all()
+                except pa.ArrowInvalid:
+                    # IPC Stream format (HuggingFace datasets)
+                    with open(str(file_path), 'rb') as f:
+                        table = pa.ipc.open_stream(f).read_all()
+                df = table.to_pandas()
+                data = df.to_dict('records')
 
             elif file_path.suffix == '.parquet':
                 df = pd.read_parquet(file_path)
@@ -894,11 +900,20 @@ class StreamingMultiColumnDataset(IterableDataset):
             elif file_path.suffix in ['.arrow', '.parquet']:
                 # Stream in batches
                 if file_path.suffix == '.arrow':
-                    with pa.memory_map(str(file_path), 'r') as source:
-                        batch_reader = pa.ipc.open_file(source)
-                        for i in range(batch_reader.num_record_batches):
-                            batch = batch_reader.get_batch(i)
-                            df = batch.to_pandas()
+                    # Try IPC File format first, then fall back to IPC Stream format
+                    try:
+                        with pa.memory_map(str(file_path), 'r') as source:
+                            batch_reader = pa.ipc.open_file(source)
+                            for i in range(batch_reader.num_record_batches):
+                                batch = batch_reader.get_batch(i)
+                                df = batch.to_pandas()
+                                for _, row in df.iterrows():
+                                    yield row.to_dict()
+                    except pa.ArrowInvalid:
+                        # IPC Stream format (HuggingFace datasets) - read all and iterate
+                        with open(str(file_path), 'rb') as f:
+                            table = pa.ipc.open_stream(f).read_all()
+                            df = table.to_pandas()
                             for _, row in df.iterrows():
                                 yield row.to_dict()
                 else:

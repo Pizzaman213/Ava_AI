@@ -41,7 +41,8 @@ PROFILE_NAME="nsys_profile_${TIMESTAMP}"
 
 # Output directories
 # RunManager creates runs in <base>/pretraining/<run_id>
-BASE_OUTPUT_DIR="${SCRIPT_DIR}/outputs"
+# Navigate to code/outputs (two levels up from scripts/5_training/)
+BASE_OUTPUT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)/outputs"
 RUNS_DIR="${BASE_OUTPUT_DIR}/pretraining"
 TEMP_NSYS_DIR="/tmp/nsys_profile_${TIMESTAMP}"
 mkdir -p "${TEMP_NSYS_DIR}"
@@ -50,8 +51,11 @@ mkdir -p "${RUNS_DIR}"
 echo "============================================================"
 echo "Ava Training Profiler"
 echo "============================================================"
-echo "Nsys output will be saved to the training run's profiles/ folder"
 echo "Timestamp: ${TIMESTAMP}"
+echo "Script dir: ${SCRIPT_DIR}"
+echo "Output dir: ${BASE_OUTPUT_DIR}"
+echo "Runs dir: ${RUNS_DIR}"
+echo "Temp nsys dir: ${TEMP_NSYS_DIR}"
 echo ""
 
 # Check if nsys is available
@@ -274,7 +278,8 @@ move_nsys_files() {
         rm -rf "${TEMP_NSYS_DIR}"
     fi
 
-    return $moved
+    # Return 0 (success) if files were moved, 1 (failure) if not
+    [ $moved -eq 1 ]
 }
 
 # If we found a run directory, move nsys output there
@@ -316,6 +321,18 @@ if [ ${NSYS_EXIT_CODE} -eq 0 ]; then
     echo "Quick Statistics Summary"
     echo "============================================================"
     nsys stats "${FINAL_PROFILE}" 2>/dev/null || true
+
+    echo ""
+    echo "============================================================"
+    echo "PROFILE OUTPUT PATHS"
+    echo "============================================================"
+    echo "NSys Report: ${FINAL_PROFILE}"
+    echo "SQLite DB:   ${FINAL_PROFILE%.nsys-rep}.sqlite"
+    if [ -n "${RUN_DIR}" ]; then
+        echo "Run Dir:     ${RUN_DIR}"
+        echo "Profiles:    ${PROFILE_DIR}/"
+    fi
+    echo "============================================================"
 else
     echo "ERROR: Profiling failed with exit code ${NSYS_EXIT_CODE}"
     exit ${NSYS_EXIT_CODE}

@@ -60,4 +60,4 @@ data/scratch/*
 wandb/
 **/wandb/
 nohup.out
-*.wandb
+*.wandbava_train.nsys-rep

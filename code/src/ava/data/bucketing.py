@@ -109,18 +109,12 @@ class LengthBasedBucketing:
         max_bucket_size: Optional[int] = None,
         min_bucket_size: Optional[int] = None,
         enable_bucketing: bool = True,
-        use_dynamic_batching: bool = False,
         max_tokens_per_batch: Optional[int] = None
     ):
         self.enable_bucketing = enable_bucketing
         self.max_bucket_size = max_bucket_size or DATA_CONSTANTS.MAX_BUCKET_SIZE
         self.min_bucket_size = min_bucket_size or DATA_CONSTANTS.MIN_BUCKET_SIZE
-        self.use_dynamic_batching = use_dynamic_batching
-
-        # OPTIMIZATION: Dynamic token batcher for reduced padding
-        if use_dynamic_batching:
-            max_tokens = max_tokens_per_batch or DATA_CONSTANTS.MAX_TOKENS_PER_BATCH
-            self.token_batcher = DynamicTokenBatcher(max_tokens=max_tokens)
+        self.max_tokens_per_batch = max_tokens_per_batch
 
         # Optimized default boundaries based on common sequence lengths
         if bucket_boundaries is None:
@@ -151,10 +145,6 @@ class LengthBasedBucketing:
         Returns:
             List of samples if bucket is full, None otherwise
         """
-        # OPTIMIZATION: Use dynamic token-based batching if enabled
-        if self.use_dynamic_batching and hasattr(self, 'token_batcher'):
-            return self.token_batcher.add_sample(sample)
-
         if not self.enable_bucketing:
             return [sample]
 

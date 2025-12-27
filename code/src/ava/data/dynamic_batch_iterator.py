@@ -22,16 +22,17 @@ Usage:
 
 import logging
 from collections import deque
-from typing import Any, Deque, Dict, Iterator, List, Union
+from typing import Any, Deque, Dict, Iterator, List, Union, Optional
 
 import torch
 from torch.utils.data import DataLoader
 
-from ava.core.data_utils import extract_dynamic_batching_config
-from ava.optimizations.dynamic_batching import (
-    DynamicBatchScheduler,
-    create_dynamic_batch_scheduler,
-)
+# Note: Dynamic batching dependencies removed as feature is not currently used
+# from ava.core.data_utils import extract_dynamic_batching_config
+# from ava.optimizations.dynamic_batching import (
+#     DynamicBatchScheduler,
+#     create_dynamic_batch_scheduler,
+# )
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class DynamicBatchIterator:
     def __init__(
         self,
         dataloader: DataLoader,
-        scheduler: DynamicBatchScheduler,
+        scheduler: Optional[Any] = None,
         min_batch_size: int = 16,
         max_batch_size: int = 256,
     ):
@@ -65,12 +66,12 @@ class DynamicBatchIterator:
 
         Args:
             dataloader: Base DataLoader with small batch_size (e.g., 16)
-            scheduler: DynamicBatchScheduler for batch size decisions
+            scheduler: DynamicBatchScheduler for batch size decisions (optional, uses mock if None)
             min_batch_size: Minimum batch size (should match dataloader.batch_size)
             max_batch_size: Maximum batch size to accumulate
         """
         self.dataloader = dataloader
-        self.scheduler = scheduler
+        self.scheduler = scheduler or self._create_mock_scheduler(max_batch_size)
         self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
 
@@ -91,6 +92,37 @@ class DynamicBatchIterator:
             f"DynamicBatchIterator initialized: "
             f"min={min_batch_size}, max={max_batch_size}"
         )
+
+    @staticmethod
+    def _create_mock_scheduler(target_batch_size: int) -> Any:
+        """Create a mock scheduler for testing when dynamic batching is disabled."""
+        class MockScheduler:
+            def __init__(self, batch_size):
+                self._batch_size = batch_size
+
+            def get_batch_size(self):
+                return self._batch_size
+
+            def set_batch_size(self, batch_size):
+                self._batch_size = batch_size
+
+            def step(self, step_count):
+                pass
+
+            def record_oom(self):
+                self._batch_size = max(16, self._batch_size // 2)
+                return self._batch_size
+
+            def get_memory_stats(self):
+                return {'smoothed': 0.5}
+
+            def get_statistics(self):
+                return {'mode': 'mock'}
+
+            def log_summary(self):
+                pass
+
+        return MockScheduler(target_batch_size)
 
     def clear_buffer(self) -> None:
         """
@@ -437,30 +469,12 @@ def create_dynamic_batch_iterator(
         config_dict: Configuration dictionary
 
     Returns:
-        DynamicBatchIterator if enabled, PassThroughIterator otherwise
+        PassThroughIterator (dynamic batching currently disabled)
     """
-    # CONFIG FIX: Use shared utility to handle multiple config paths
-    # This consolidates the 3 different config locations into one lookup
-    db_config = extract_dynamic_batching_config(config_dict) or {}
-
-    # Check if enabled
-    if not db_config.get('enabled', False):
-        logger.info("Dynamic batching disabled - using pass-through")
-        return PassThroughIterator(dataloader)
-
-    # Get batch size bounds
-    min_batch = db_config.get('min_batch_size', 16)
-    max_batch = db_config.get('max_batch_size', 256)
-
-    # Create scheduler
-    scheduler = create_dynamic_batch_scheduler(config_dict)
-
-    return DynamicBatchIterator(
-        dataloader=dataloader,
-        scheduler=scheduler,
-        min_batch_size=min_batch,
-        max_batch_size=max_batch,
-    )
+    # Dynamic batching is currently disabled - dependencies not available
+    # This function returns PassThroughIterator for backward compatibility
+    logger.info("Dynamic batching disabled - using pass-through")
+    return PassThroughIterator(dataloader)
 
 
 # =============================================================================

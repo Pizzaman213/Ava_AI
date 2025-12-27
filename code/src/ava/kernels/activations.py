@@ -4,7 +4,7 @@ Fused Activation Kernels for MoE Expert Computation
 This module provides high-performance fused kernels for gated activations:
 - Fused SwiGLU: silu(gate) * up in single kernel
 - Fused GeGLU: gelu(gate) * up in single kernel
-- 10-15% speedup by eliminating intermediate tensors
+- Eliminates intermediate tensors for improved performance
 
 Before (unfused - 3 operations):
     gate, up = gate_up.chunk(2, dim=-1)  # Operation 1: slice
@@ -44,9 +44,26 @@ except ImportError:
 
 if TRITON_AVAILABLE:
     # =========================================================================
+    # AUTOTUNE CONFIGURATIONS
+    # =========================================================================
+
+    # Configs for activation kernels - balanced for mixed GPU architectures
+    _activation_configs = [
+        triton.Config({'BLOCK_SIZE': 256}, num_warps=4, num_stages=2),
+        triton.Config({'BLOCK_SIZE': 512}, num_warps=4, num_stages=3),
+        triton.Config({'BLOCK_SIZE': 512}, num_warps=8, num_stages=2),
+        triton.Config({'BLOCK_SIZE': 1024}, num_warps=8, num_stages=2),
+        triton.Config({'BLOCK_SIZE': 1024}, num_warps=8, num_stages=4),
+    ]
+
+    # =========================================================================
     # Fused SwiGLU Kernel
     # =========================================================================
 
+    @triton.autotune(
+        configs=_activation_configs,
+        key=['intermediate_size'],
+    )
     @triton.jit
     def _fused_swiglu_kernel(
         # Input/Output pointers
@@ -102,6 +119,10 @@ if TRITON_AVAILABLE:
             output_offset = pid_batch * stride_output_batch + feat_idx * stride_output_feat
             tl.store(output_ptr + output_offset, output.to(gate.dtype), mask=feat_mask)
 
+    @triton.autotune(
+        configs=_activation_configs,
+        key=['intermediate_size'],
+    )
     @triton.jit
     def _fused_swiglu_backward_kernel(
         # Input pointers
@@ -170,6 +191,10 @@ if TRITON_AVAILABLE:
     # Fused GeGLU Kernel
     # =========================================================================
 
+    @triton.autotune(
+        configs=_activation_configs,
+        key=['intermediate_size'],
+    )
     @triton.jit
     def _fused_geglu_kernel(
         # Input/Output pointers
@@ -260,7 +285,6 @@ if TRITON_AVAILABLE:
         3. Down projection
 
         Eliminates all intermediate tensor allocations for expert computation.
-        Expected speedup: 20-30% over separate operations.
         """
         pid_batch = tl.program_id(0)
         batch_idx = pid_batch * BLOCK_BATCH + tl.arange(0, BLOCK_BATCH)
@@ -415,7 +439,7 @@ class FusedSwiGLUFunction(torch.autograd.Function):
         )
 
         if TRITON_AVAILABLE and gate_up.is_cuda:
-            BLOCK_SIZE = min(1024, intermediate_size)
+            # BLOCK_SIZE is auto-tuned based on intermediate_size
             grid = (batch_size,)
 
             _fused_swiglu_kernel[grid](
@@ -427,7 +451,6 @@ class FusedSwiGLUFunction(torch.autograd.Function):
                 gate_up.stride(1),
                 output.stride(0),
                 output.stride(1),
-                BLOCK_SIZE=BLOCK_SIZE,
             )
         else:
             # PyTorch fallback
@@ -448,7 +471,7 @@ class FusedSwiGLUFunction(torch.autograd.Function):
         grad_gate_up = torch.empty_like(gate_up)
 
         if TRITON_AVAILABLE and gate_up.is_cuda:
-            BLOCK_SIZE = min(1024, intermediate_size)
+            # BLOCK_SIZE is auto-tuned based on intermediate_size
             grid = (batch_size,)
 
             _fused_swiglu_backward_kernel[grid](
@@ -461,7 +484,6 @@ class FusedSwiGLUFunction(torch.autograd.Function):
                 grad_output.stride(1),
                 gate_up.stride(0),
                 gate_up.stride(1),
-                BLOCK_SIZE=BLOCK_SIZE,
             )
         else:
             # PyTorch fallback
@@ -498,7 +520,7 @@ class FusedGeGLUFunction(torch.autograd.Function):
         )
 
         if TRITON_AVAILABLE and gate_up.is_cuda:
-            BLOCK_SIZE = min(1024, intermediate_size)
+            # BLOCK_SIZE is auto-tuned based on intermediate_size
             grid = (batch_size,)
 
             _fused_geglu_kernel[grid](
@@ -510,7 +532,6 @@ class FusedGeGLUFunction(torch.autograd.Function):
                 gate_up.stride(1),
                 output.stride(0),
                 output.stride(1),
-                BLOCK_SIZE=BLOCK_SIZE,
             )
         else:
             # PyTorch fallback
@@ -553,8 +574,6 @@ def fused_swiglu(gate_up: torch.Tensor) -> torch.Tensor:
 
     Returns:
         output: [batch, intermediate_size]
-
-    Performance: 10-15% faster than separate operations
     """
     return FusedSwiGLUFunction.apply(gate_up)
 
@@ -568,8 +587,6 @@ def fused_geglu(gate_up: torch.Tensor) -> torch.Tensor:
 
     Returns:
         output: [batch, intermediate_size]
-
-    Performance: 10-15% faster than separate operations
     """
     return FusedGeGLUFunction.apply(gate_up)
 

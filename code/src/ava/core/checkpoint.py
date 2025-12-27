@@ -21,10 +21,13 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any, TYPE_CHECKING
 
 import torch
 import torch.nn as nn
+
+if TYPE_CHECKING:
+    from ava.training.quality_score import ModelQualityScore
 
 # Import optimized CUDA stream utilities
 try:
@@ -52,7 +55,8 @@ class CheckpointManager:
         save_dir: Path,
         max_keep: int = 3,
         config: Optional[Dict] = None,
-        async_save: bool = True
+        async_save: bool = True,
+        raise_on_failure: bool = False,
     ):
         """
         Initialize checkpoint manager.
@@ -62,6 +66,7 @@ class CheckpointManager:
             max_keep: Maximum number of checkpoints to keep (oldest deleted first)
             config: Optional config dict to save with checkpoints
             async_save: Enable async saving (recommended for GPU training)
+            raise_on_failure: If True, raise exceptions on save failures instead of logging
         """
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +74,8 @@ class CheckpointManager:
         self.checkpoints: list = []
         self.config = config
         self.async_save = async_save
+        self.raise_on_failure = raise_on_failure
+        self._save_errors: list = []  # Track errors for later inspection
 
         # Thread pool for async disk I/O
         self.save_executor = ThreadPoolExecutor(
@@ -86,6 +93,8 @@ class CheckpointManager:
         self._current_buffer = 0
         self._buffer_in_use = [False, False]
         self._buffer_lock = threading.Lock()  # Protects buffer selection
+        # FIX: Add per-buffer locks for proper synchronization during async saves
+        self._buffer_write_locks = [threading.Lock(), threading.Lock()]
 
     def save(
         self,
@@ -93,7 +102,8 @@ class CheckpointManager:
         optimizer: torch.optim.Optimizer,
         epoch: int,
         step: int,
-        metrics: Dict[str, float]
+        metrics: Dict[str, float],
+        quality_score: Optional['ModelQualityScore'] = None,
     ) -> Path:
         """
         Save checkpoint in format compatible with generate.py.
@@ -104,16 +114,17 @@ class CheckpointManager:
             epoch: Current epoch number
             step: Current step number
             metrics: Dictionary of metrics to save
+            quality_score: Optional ModelQualityScore for multi-metric selection
 
         Returns:
             Path to saved checkpoint
         """
         if self.async_save and self.save_executor is not None and torch.cuda.is_available():
-            return self._save_truly_async(model, optimizer, epoch, step, metrics)
+            return self._save_truly_async(model, optimizer, epoch, step, metrics, quality_score)
         elif self.async_save and self.save_executor is not None:
-            return self._save_async_cpu(model, optimizer, epoch, step, metrics)
+            return self._save_async_cpu(model, optimizer, epoch, step, metrics, quality_score)
         else:
-            return self._save_sync(model, optimizer, epoch, step, metrics)
+            return self._save_sync(model, optimizer, epoch, step, metrics, quality_score)
 
     def _save_sync(
         self,
@@ -121,7 +132,8 @@ class CheckpointManager:
         optimizer: torch.optim.Optimizer,
         epoch: int,
         step: int,
-        metrics: Dict[str, float]
+        metrics: Dict[str, float],
+        quality_score: Optional['ModelQualityScore'] = None,
     ) -> Path:
         """Synchronous checkpoint save (original behavior)."""
         # Handle DDP models
@@ -135,6 +147,7 @@ class CheckpointManager:
             'optimizer_state_dict': optimizer.state_dict(),  # Standardized key
             'metrics': metrics,
             'config': self.config,
+            'quality_score': quality_score.to_dict() if quality_score else None,
         }
 
         path = self.save_dir / f'checkpoint_epoch_{epoch}_step_{step}.pt'
@@ -145,11 +158,21 @@ class CheckpointManager:
         latest_path = self.save_dir / 'latest_model.pt'
         torch.save(checkpoint, latest_path)
 
-        # Save best if validation loss improved
-        if 'val_loss' in metrics:
-            best_path = self.save_dir / 'best_model.pt'
-            if not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path):
-                torch.save(checkpoint, best_path)
+        # Save best if quality score improved (or fallback to val_loss)
+        best_path = self.save_dir / 'best_model.pt'
+        should_save_best = False
+
+        if quality_score is not None:
+            # Use quality score for best model selection
+            current_quality = quality_score.quality_score
+            best_quality = self._get_best_quality_score(best_path)
+            should_save_best = current_quality > best_quality
+        elif 'val_loss' in metrics:
+            # Fallback to val_loss
+            should_save_best = not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path)
+
+        if should_save_best:
+            torch.save(checkpoint, best_path)
 
         # Cleanup old checkpoints
         if len(self.checkpoints) > self.max_keep:
@@ -165,7 +188,8 @@ class CheckpointManager:
         optimizer: torch.optim.Optimizer,
         epoch: int,
         step: int,
-        metrics: Dict[str, float]
+        metrics: Dict[str, float],
+        quality_score: Optional['ModelQualityScore'] = None,
     ) -> Path:
         """
         Truly asynchronous checkpoint save using CUDA streams and pinned memory.
@@ -194,9 +218,18 @@ class CheckpointManager:
                         try:
                             future.result(timeout=300)  # 5 minute timeout
                         except Exception as e:
-                            logger.warning(f"Previous checkpoint save failed: {e}")
+                            error_msg = f"Previous checkpoint save failed: {e}"
+                            self._save_errors.append(e)
+                            if self.raise_on_failure:
+                                raise RuntimeError(error_msg) from e
+                            logger.error(error_msg)
 
             self._buffer_in_use[buffer_idx] = True
+
+        # FIX: Acquire per-buffer write lock before accessing buffer
+        # This prevents race conditions where async save is still reading buffer
+        # while main thread starts writing new data
+        self._buffer_write_locks[buffer_idx].acquire()
         pinned_buffer = self._pinned_buffers[buffer_idx]
 
         path = self.save_dir / f'checkpoint_epoch_{epoch}_step_{step}.pt'
@@ -246,11 +279,16 @@ class CheckpointManager:
             'optimizer_state_dict': opt_state,  # Standardized key
             'metrics': metrics.copy(),
             'config': self.config,
+            'quality_score': quality_score.to_dict() if quality_score else None,
         }
 
         # Capture variables for closure
         save_dir = self.save_dir
         buffer_in_use = self._buffer_in_use
+        buffer_write_locks = self._buffer_write_locks
+
+        # Capture quality_score for closure
+        qs = quality_score
 
         def _async_save_worker():
             """Background worker: waits for GPU transfer, then saves to disk."""
@@ -266,8 +304,12 @@ class CheckpointManager:
                     'optimizer_state_dict': self._clone_optimizer_state(checkpoint_data['optimizer_state_dict']),
                     'metrics': checkpoint_data['metrics'],
                     'config': checkpoint_data['config'],
+                    'quality_score': checkpoint_data['quality_score'],
                 }
 
+                # FIX: Release write lock AFTER cloning from pinned buffer
+                # This ensures main thread can't overwrite buffer while we're reading
+                buffer_write_locks[buffer_idx].release()
                 buffer_in_use[buffer_idx] = False
 
                 # Save to disk
@@ -277,15 +319,31 @@ class CheckpointManager:
                 latest_path = save_dir / 'latest_model.pt'
                 torch.save(final_checkpoint, latest_path)
 
-                # Update best if needed
-                if 'val_loss' in metrics:
-                    best_path = save_dir / 'best_model.pt'
-                    if not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path):
-                        torch.save(final_checkpoint, best_path)
+                # Update best if needed (use quality score if available)
+                best_path = save_dir / 'best_model.pt'
+                should_save_best = False
+
+                if qs is not None:
+                    current_quality = qs.quality_score
+                    best_quality = self._get_best_quality_score(best_path)
+                    should_save_best = current_quality > best_quality
+                elif 'val_loss' in metrics:
+                    should_save_best = not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path)
+
+                if should_save_best:
+                    torch.save(final_checkpoint, best_path)
 
             except Exception as e:
+                # FIX: Always release lock on error
+                try:
+                    buffer_write_locks[buffer_idx].release()
+                except RuntimeError:
+                    pass  # Already released
                 buffer_in_use[buffer_idx] = False
+                self._save_errors.append(e)
                 logger.error(f"Async checkpoint save failed: {e}")
+                # Re-raise to propagate to future.result()
+                raise
 
         # Submit to background thread and return immediately
         future = self.save_executor.submit(_async_save_worker)
@@ -343,7 +401,8 @@ class CheckpointManager:
         optimizer: torch.optim.Optimizer,
         epoch: int,
         step: int,
-        metrics: Dict[str, float]
+        metrics: Dict[str, float],
+        quality_score: Optional['ModelQualityScore'] = None,
     ) -> Path:
         """Async save for CPU-only training."""
         self._cleanup_completed_saves()
@@ -358,22 +417,37 @@ class CheckpointManager:
             'optimizer_state_dict': optimizer.state_dict(),  # Standardized key
             'metrics': metrics.copy(),
             'config': self.config,
+            'quality_score': quality_score.to_dict() if quality_score else None,
         }
 
         path = self.save_dir / f'checkpoint_epoch_{epoch}_step_{step}.pt'
         save_dir = self.save_dir
+        qs = quality_score
 
         def _save_worker():
             try:
                 torch.save(checkpoint, path)
                 latest_path = save_dir / 'latest_model.pt'
                 torch.save(checkpoint, latest_path)
-                if 'val_loss' in metrics:
-                    best_path = save_dir / 'best_model.pt'
-                    if not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path):
-                        torch.save(checkpoint, best_path)
+
+                # Update best if needed (use quality score if available)
+                best_path = save_dir / 'best_model.pt'
+                should_save_best = False
+
+                if qs is not None:
+                    current_quality = qs.quality_score
+                    best_quality = self._get_best_quality_score(best_path)
+                    should_save_best = current_quality > best_quality
+                elif 'val_loss' in metrics:
+                    should_save_best = not best_path.exists() or metrics.get('val_loss', float('inf')) < self._get_best_loss(best_path)
+
+                if should_save_best:
+                    torch.save(checkpoint, best_path)
             except Exception as e:
+                self._save_errors.append(e)
                 logger.error(f"Async checkpoint save failed: {e}")
+                # Re-raise to propagate to future.result()
+                raise
 
         future = self.save_executor.submit(_save_worker)
         self.pending_saves.append((future, -1, path))
@@ -397,6 +471,81 @@ class CheckpointManager:
                 future.result()
         self.pending_saves = []
 
+    def flush_pending_saves(self, timeout: float = 60.0) -> bool:
+        """
+        Wait for all pending async checkpoint saves to complete with timeout.
+
+        This method ensures checkpoint durability by blocking until all async
+        save operations complete. Should be called before validation, training
+        termination, or any operation that depends on checkpoint consistency.
+
+        Args:
+            timeout: Maximum seconds to wait for all saves to complete (default: 60s)
+
+        Returns:
+            True if all saves completed successfully, False if timeout or errors
+
+        Example:
+            >>> checkpoint_manager.save(model, optimizer, epoch=1)
+            >>> # Ensure save completes before validation
+            >>> if not checkpoint_manager.flush_pending_saves(timeout=30.0):
+            ...     logger.error("Checkpoint save incomplete!")
+        """
+        import time
+
+        if not self.pending_saves:
+            return True  # No pending saves
+
+        start_time = time.time()
+        pending_count = len(self.pending_saves)
+
+        logger.info(f"Waiting for {pending_count} pending checkpoint saves...")
+
+        completed_saves = []
+        failed_saves = []
+
+        for future, buffer_idx, save_path in self.pending_saves:
+            remaining_time = timeout - (time.time() - start_time)
+
+            if remaining_time <= 0:
+                logger.error(
+                    f"Timeout waiting for checkpoint saves! "
+                    f"{len(completed_saves)}/{pending_count} completed, "
+                    f"{len(failed_saves)} failed"
+                )
+                return False
+
+            try:
+                # Wait for this save to complete with remaining timeout
+                future.result(timeout=remaining_time)
+                completed_saves.append(save_path)
+                logger.debug(f"Checkpoint save completed: {save_path}")
+            except TimeoutError:
+                logger.error(f"Checkpoint save timeout after {timeout}s: {save_path}")
+                failed_saves.append((save_path, "timeout"))
+            except Exception as e:
+                logger.error(f"Checkpoint save failed: {save_path} - {e}")
+                failed_saves.append((save_path, str(e)))
+
+        # Clear pending saves list
+        self.pending_saves = []
+
+        elapsed = time.time() - start_time
+
+        if failed_saves:
+            logger.error(
+                f"Checkpoint save failures: {len(failed_saves)}/{pending_count} failed, "
+                f"{len(completed_saves)} completed in {elapsed:.2f}s"
+            )
+            for save_path, error in failed_saves:
+                logger.error(f"  - {save_path}: {error}")
+            return False
+
+        logger.info(
+            f"All {pending_count} checkpoint saves completed successfully in {elapsed:.2f}s"
+        )
+        return True
+
     def shutdown(self):
         """Shutdown async save executor. Call this when training is complete."""
         if self.save_executor is not None:
@@ -407,11 +556,115 @@ class CheckpointManager:
 
     def _get_best_loss(self, best_path: Path) -> float:
         """Get best loss from existing checkpoint."""
+        if not best_path.exists():
+            return float('inf')
         try:
             checkpoint = torch.load(best_path, weights_only=False)
             return checkpoint.get('metrics', {}).get('val_loss', float('inf'))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not load best checkpoint for loss comparison: {e}")
             return float('inf')
+
+    def _get_best_quality_score(self, best_path: Path) -> float:
+        """Get best quality score from existing checkpoint.
+
+        Args:
+            best_path: Path to best checkpoint file
+
+        Returns:
+            Quality score (0-1, higher is better), or 0.0 if not available
+        """
+        if not best_path.exists():
+            return 0.0
+        try:
+            checkpoint = torch.load(best_path, weights_only=False)
+            qs = checkpoint.get('quality_score')
+            if qs and isinstance(qs, dict) and 'quality_score' in qs:
+                return qs['quality_score']
+            # Fallback: compute from val_loss if quality_score not stored
+            val_loss = checkpoint.get('metrics', {}).get('val_loss')
+            if val_loss is not None:
+                return max(0.0, 1.0 - min(val_loss / 10.0, 1.0))
+            return 0.0
+        except Exception as e:
+            logger.warning(f"Could not load best checkpoint for quality score comparison: {e}")
+            return 0.0
+
+    def get_save_errors(self) -> list:
+        """Get list of save errors that occurred during async saves."""
+        return list(self._save_errors)
+
+    def has_save_errors(self) -> bool:
+        """Check if any save errors occurred."""
+        return len(self._save_errors) > 0
+
+    def clear_save_errors(self) -> None:
+        """Clear the list of save errors."""
+        self._save_errors.clear()
+
+    def _validate_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        opt_state_dict: dict
+    ) -> bool:
+        """
+        Validate that optimizer state matches model parameters.
+
+        CRITICAL: This prevents the bug where optimizer state has different number
+        of parameters than the model, causing non-coherent generation.
+
+        Args:
+            model: The model being trained
+            optimizer: The optimizer
+            opt_state_dict: Optimizer state dict to validate
+
+        Returns:
+            True if validation passes, False otherwise
+        """
+        # Count model parameters that require gradients
+        model_params = [p for p in model.parameters() if p.requires_grad]
+        num_model_params = len(model_params)
+
+        # Count optimizer state entries
+        num_opt_states = len(opt_state_dict.get('state', {}))
+
+        # Check if counts match
+        if num_opt_states != num_model_params:
+            logger.error(
+                f"❌ OPTIMIZER STATE MISMATCH DETECTED:\n"
+                f"   Model parameters (requires_grad): {num_model_params}\n"
+                f"   Optimizer state entries: {num_opt_states}\n"
+                f"   Missing: {num_model_params - num_opt_states} parameters\n"
+                f"\n"
+                f"   This mismatch causes NON-COHERENT generation because:\n"
+                f"   - Missing parameters have no momentum buffers\n"
+                f"   - They train without gradient history\n"
+                f"   - Model becomes internally inconsistent\n"
+                f"\n"
+                f"   SOLUTION: Rejecting corrupted optimizer state and using fresh state."
+            )
+            return False
+
+        # Validate param_groups structure
+        if 'param_groups' not in opt_state_dict:
+            logger.error("❌ Optimizer state missing 'param_groups' - state is corrupted")
+            return False
+
+        # Check for NaN/Inf in optimizer state (8-bit optimizer corruption check)
+        state_dict = opt_state_dict.get('state', {})
+        for param_id, state in state_dict.items():
+            for key, value in state.items():
+                if isinstance(value, torch.Tensor):
+                    if torch.isnan(value).any():
+                        logger.error(f"❌ NaN detected in optimizer state[{param_id}][{key}]")
+                        return False
+                    if torch.isinf(value).any():
+                        logger.error(f"❌ Inf detected in optimizer state[{param_id}][{key}]")
+                        return False
+
+        logger.info(f"✓ Optimizer state validation passed ({num_opt_states} parameters)")
+        return True
 
     def load(
         self,
@@ -467,10 +720,30 @@ class CheckpointManager:
         # Handle both old and new checkpoint formats for optimizer
         # Standardized key is 'optimizer_state_dict', legacy key is 'optimizer_state'
         if 'optimizer_state_dict' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            opt_state = checkpoint['optimizer_state_dict']
+            # CRITICAL FIX: Validate optimizer state matches model before loading
+            if self._validate_optimizer_state(model, optimizer, opt_state):
+                try:
+                    optimizer.load_state_dict(opt_state)
+                    logger.info("✓ Optimizer state loaded and validated successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load optimizer state: {e}")
+                    logger.warning("⚠ Resetting optimizer state - training will continue with fresh optimizer")
+            else:
+                logger.warning("⚠ Optimizer state validation failed - using fresh optimizer state")
+                logger.warning("  This will cause the model to 'forget' momentum and require warmup")
         elif 'optimizer_state' in checkpoint:
             # Legacy format support
-            optimizer.load_state_dict(checkpoint['optimizer_state'])
+            opt_state = checkpoint['optimizer_state']
+            if self._validate_optimizer_state(model, optimizer, opt_state):
+                try:
+                    optimizer.load_state_dict(opt_state)
+                    logger.info("✓ Optimizer state loaded (legacy format) and validated successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load optimizer state: {e}")
+                    logger.warning("⚠ Resetting optimizer state - training will continue with fresh optimizer")
+            else:
+                logger.warning("⚠ Optimizer state validation failed - using fresh optimizer state")
 
         return checkpoint.get('epoch', 0), checkpoint.get('step', checkpoint.get('global_step', 0))
 

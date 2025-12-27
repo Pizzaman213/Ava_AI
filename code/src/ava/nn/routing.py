@@ -32,7 +32,7 @@ _TRITON_FALLBACK_WARNED = False
 try:
     from ..kernels.moe import (
         fused_gating_topk,
-        fused_softmax_topk,
+        fused_softmax_topk_renorm,  # FIX: Use renorm version to match PyTorch behavior
         KernelConfig,
         get_kernel_config,
         TRITON_AVAILABLE,
@@ -40,7 +40,7 @@ try:
 except ImportError:
     TRITON_AVAILABLE = False
     fused_gating_topk = None
-    fused_softmax_topk = None
+    fused_softmax_topk_renorm = None
     KernelConfig = None
     get_kernel_config = None
 
@@ -104,7 +104,8 @@ class UnifiedMoERouter(nn.Module):
         self.gate = nn.Linear(hidden_size, num_experts, bias=use_router_bias, dtype=dtype)
 
         # Initialize with proper scale to prevent expert collapse
-        nn.init.normal_(self.gate.weight, mean=0.0, std=0.1)
+        # Use small std (0.01) to prevent large logits that cause z-loss spikes
+        nn.init.normal_(self.gate.weight, mean=0.0, std=0.01)
         if use_router_bias:
             nn.init.zeros_(self.gate.bias)
 
@@ -132,7 +133,9 @@ class UnifiedMoERouter(nn.Module):
         # Z-loss: encourages router logits to stay small
         # z_loss = logsumexp(logits)^2
         # FIX: Remove .detach() to allow gradient flow for router learning
-        z_loss = torch.logsumexp(router_logits, dim=-1).pow(2).mean()
+        log_z = torch.logsumexp(router_logits, dim=-1)
+        log_z = torch.clamp(log_z, max=20.0)  # Prevent overflow when squared
+        z_loss = log_z.pow(2).mean()
         return z_loss
 
     def _compute_load_balance_loss(
@@ -141,7 +144,7 @@ class UnifiedMoERouter(nn.Module):
         expert_indices: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Load balancing auxiliary loss.
+        Load balancing auxiliary loss with adaptive weighting.
 
         Encourages uniform distribution of tokens across experts.
         From "Switch Transformers: Scaling to Trillion Parameter Models"
@@ -153,6 +156,10 @@ class UnifiedMoERouter(nn.Module):
         This is intentional - the gradient signal comes from prob_per_expert only.
         The tokens_per_expert term acts as a weighting factor that doesn't need gradients.
         This matches the original Switch Transformer implementation.
+
+        FIX: Added adaptive weighting when utilization variance is high.
+        This increases gradient magnitude for underutilized experts to help
+        the router learn to distribute tokens more evenly.
 
         Args:
             router_probs: Router probabilities [num_tokens, num_experts]
@@ -175,10 +182,25 @@ class UnifiedMoERouter(nn.Module):
             minlength=self.num_experts
         ).float() / (num_tokens * self.num_selected_experts)  # [num_experts]
 
-        # Load balance loss: product of these two fractions
-        # Minimizing this encourages both to be uniform (1/num_experts)
-        # Gradients flow through prob_per_expert only (by design)
-        load_balance_loss = self.num_experts * (prob_per_expert * tokens_per_expert).sum()
+        # FIX: Adaptive weighting based on utilization variance
+        # When some experts are significantly underutilized, increase their weight
+        # to provide stronger gradient signal for rebalancing
+        utilization_variance = tokens_per_expert.var()
+        use_adaptive = getattr(self, 'adaptive_load_balance', True)
+
+        if use_adaptive and utilization_variance > 0.01:  # Significant imbalance
+            # Weight inversely proportional to utilization (underutilized get higher weight)
+            # softmax ensures weights sum to 1 and are smooth
+            utilization_weight = torch.softmax(
+                1.0 / (tokens_per_expert + 1e-6),
+                dim=0
+            )
+            load_balance_loss = self.num_experts * (
+                prob_per_expert * tokens_per_expert * utilization_weight
+            ).sum()
+        else:
+            # Standard Switch Transformer loss
+            load_balance_loss = self.num_experts * (prob_per_expert * tokens_per_expert).sum()
 
         return load_balance_loss
 
@@ -353,24 +375,37 @@ class MixtralRouter(UnifiedMoERouter):
         # Compute router logits
         router_logits = self.gate(hidden_states)  # [num_tokens, num_experts]
 
+        # FIX: Check for NaN/Inf in router logits to prevent routing failures
+        # NaN/Inf can occur from gradient issues or numerical instability
+        if torch.isnan(router_logits).any() or torch.isinf(router_logits).any():
+            import warnings
+            warnings.warn(
+                "NaN or Inf detected in router logits. Replacing with zeros. "
+                "This may indicate gradient issues or numerical instability.",
+                RuntimeWarning
+            )
+            router_logits = torch.nan_to_num(router_logits, nan=0.0, posinf=10.0, neginf=-10.0)
+
         # TIER 3 OPTIMIZATION: Use Triton fused kernel for topk + softmax (15-25% speedup)
+        # FIX: Use renorm version to match PyTorch behavior (weights sum to 1)
         if (self.use_triton_kernels and TRITON_AVAILABLE and
-            fused_softmax_topk is not None):
+            fused_softmax_topk_renorm is not None):
             try:
-                # Triton fused path: single kernel launch for softmax + topk
-                top_k_weights, top_k_indices = fused_softmax_topk(
+                # Triton fused path: single kernel launch for softmax + topk + renorm
+                # This matches PyTorch behavior: topk(logits) → softmax (gives weights that sum to 1)
+                top_k_weights, top_k_indices = fused_softmax_topk_renorm(
                     router_logits,
                     top_k=self.num_selected_experts,
                     use_triton=True
                 )  # [num_tokens, k] for both
                 if log_kernel_path:
-                    log_kernel_path('router:triton', num_tokens, f'E={self.num_experts},k={self.num_selected_experts}')
+                    log_kernel_path('router:triton_renorm', num_tokens, f'E={self.num_experts},k={self.num_selected_experts}')
             except Exception as e:
                 # Log warning on first Triton failure, then fall back silently
                 global _TRITON_FALLBACK_WARNED
                 if not _TRITON_FALLBACK_WARNED:
                     logger.warning(
-                        f"Triton fused_softmax_topk failed: {e}. "
+                        f"Triton fused_softmax_topk_renorm failed: {e}. "
                         f"Falling back to PyTorch implementation. "
                         f"This may reduce performance by 15-25%."
                     )
@@ -513,17 +548,18 @@ class DeepSeekRouter(UnifiedMoERouter):
         """
         Forward pass through DeepSeek router.
 
-        Returns routing info for both shared and routed experts.
+        Returns routing info for ROUTED experts only.
+        Shared expert is applied separately in SparseMoELayer.forward().
 
         Args:
             hidden_states: [num_tokens, hidden_size] or [batch, seq, hidden_size]
             training: Whether in training mode
 
         Returns:
-            - expert_indices: [num_tokens, num_shared + k]
-            - expert_weights: [num_tokens, num_shared + k]
+            - expert_indices: [num_tokens, k] - routed expert indices only
+            - expert_weights: [num_tokens, k] - routed expert weights only
             - aux_loss: scalar
-            - metrics: routing metrics
+            - metrics: routing metrics (includes shared_expert_weight for logging)
         """
         # Handle both 2D and 3D inputs
         if hidden_states.dim() == 3:
@@ -541,16 +577,35 @@ class DeepSeekRouter(UnifiedMoERouter):
 
         # Shared expert routing
         shared_logits = self.shared_gate(hidden_states)  # [num_tokens, num_shared_experts]
-        shared_weights = (F.softmax(shared_logits, dim=-1) * self.shared_expert_weight)
 
-        # Create indices for shared experts (they come first in the expert list)
-        shared_indices = torch.arange(
-            self.num_shared_experts,
-            device=hidden_states.device
-        ).unsqueeze(0).expand(num_tokens, -1)  # [num_tokens, num_shared_experts]
+        # FIX: Check for NaN/Inf in shared expert logits
+        if torch.isnan(shared_logits).any() or torch.isinf(shared_logits).any():
+            import warnings
+            warnings.warn(
+                "NaN or Inf detected in shared expert logits. Replacing with zeros. "
+                "This may indicate gradient issues or numerical instability.",
+                RuntimeWarning
+            )
+            shared_logits = torch.nan_to_num(shared_logits, nan=0.0, posinf=10.0, neginf=-10.0)
+
+        # Note: Shared weights are used for metrics/logging only
+        # The actual shared expert computation is done separately in SparseMoELayer
+        shared_weights = (F.softmax(shared_logits, dim=-1) * self.shared_expert_weight)
 
         # Routed expert routing
         router_logits = self.gate(hidden_states)  # [num_tokens, num_experts]
+
+        # FIX: Check for NaN/Inf in router logits to prevent routing failures
+        # NaN/Inf can occur from gradient issues or numerical instability
+        if torch.isnan(router_logits).any() or torch.isinf(router_logits).any():
+            import warnings
+            warnings.warn(
+                "NaN or Inf detected in router logits. Replacing with zeros. "
+                "This may indicate gradient issues or numerical instability.",
+                RuntimeWarning
+            )
+            router_logits = torch.nan_to_num(router_logits, nan=0.0, posinf=10.0, neginf=-10.0)
+
         router_probs = F.softmax(router_logits, dim=-1)
 
         # Top-K selection for routed experts
@@ -561,13 +616,26 @@ class DeepSeekRouter(UnifiedMoERouter):
         # Clamp indices to valid range
         top_k_indices = torch.clamp(top_k_indices, 0, self.num_experts - 1)
 
-        # Normalize routed weights
-        routed_weight = 1.0 - self.shared_expert_weight
-        top_k_weights = (top_k_weights / (top_k_weights.sum(dim=-1, keepdim=True) + 1e-10) * routed_weight)
+        # CRITICAL FIX: DeepSeek architecture - shared expert is applied separately
+        # The router should return ONLY routed expert indices, not combined
+        # The shared expert is applied to ALL tokens in SparseMoELayer.forward()
+        # Returning combined indices causes index confusion because:
+        # 1. ExpertParallelGroup has num_experts-1 experts (routed only)
+        # 2. Shared expert indices would map to wrong experts
+        # 3. If use_shared_expert=True, shared expert would be double-counted
 
-        # Combine shared and routed
-        combined_indices = torch.cat([shared_indices, top_k_indices], dim=1)
-        combined_weights = torch.cat([shared_weights, top_k_weights], dim=1)
+        # Normalize routed weights (they get full weight since shared is separate)
+        weight_sum = top_k_weights.sum(dim=-1, keepdim=True)
+        # FIX: More robust normalization to handle edge cases
+        top_k_weights = torch.where(
+            weight_sum > 1e-8,
+            top_k_weights / weight_sum,
+            torch.full_like(top_k_weights, 1.0 / self.num_selected_experts)
+        )
+
+        # Return ONLY routed expert indices and weights
+        # Shared expert is handled separately in SparseMoELayer
+        # Note: We still track shared expert metrics for logging (added below)
 
         # Compute auxiliary losses (only for routed experts)
         aux_loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype)
@@ -586,7 +654,7 @@ class DeepSeekRouter(UnifiedMoERouter):
         metrics = self._compute_routing_metrics(router_probs, top_k_indices)
         metrics['shared_expert_weight'] = torch.tensor(self.shared_expert_weight)
 
-        return combined_indices, combined_weights, aux_loss, metrics
+        return top_k_indices, top_k_weights, aux_loss, metrics
 
 
 __all__ = [

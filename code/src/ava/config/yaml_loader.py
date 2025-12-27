@@ -12,11 +12,51 @@ Usage:
     # Paths in YAML like "code/data/processed" are automatically resolved
 """
 
+import logging
 import os
 import re
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
+
+# Issue #12 fix: Make PATH_KEYS configurable and extensible
+# Default path keys that should be resolved relative to project root
+DEFAULT_PATH_KEYS = {
+    'data_dir', 'val_data_dir', 'output_dir', 'tokenizer_name', 'tokenizer_path',
+    'model_path', 'checkpoint_path', 'resume', 'cache_dir',
+    'knowledge_base_path', 'config_file', 'deepspeed_config',
+    'policy_model_path', 'judge_model_path', 'prompt_dataset_path',
+    'eval_prompt_dataset_path', 'plot_path', 'log_dir', 'wandb_dir',
+    'profile_dir', 'calibration_cache_dir', 'input_dir', 'custom_data_path'
+}
+
+# Module-level setting for additional path keys (can be extended at runtime)
+_additional_path_keys: set = set()
+
+
+def add_path_key(key: str) -> None:
+    """Add a custom key to be treated as a path for resolution.
+
+    Args:
+        key: The config key name to treat as a path
+    """
+    _additional_path_keys.add(key.lower())
+
+
+def get_path_keys() -> set:
+    """Get current set of path keys (default + additional).
+
+    Returns:
+        Set of all path keys that will be resolved
+    """
+    return DEFAULT_PATH_KEYS | _additional_path_keys
+
+
+class ConfigurationError(Exception):
+    """Raised when configuration loading or parsing fails."""
+    pass
 
 try:
     from ava.core.paths import get_project_root, resolve_path
@@ -51,14 +91,8 @@ def resolve_paths_in_config(config: Dict[str, Any], project_root: Optional[Path]
     if project_root is None:
         project_root = get_project_root()
 
-    # List of config keys that typically contain paths
-    PATH_KEYS = {
-        'data_dir', 'output_dir', 'tokenizer_name', 'tokenizer_path',
-        'model_path', 'checkpoint_path', 'resume', 'cache_dir',
-        'knowledge_base_path', 'config_file', 'deepspeed_config',
-        'policy_model_path', 'judge_model_path', 'prompt_dataset_path',
-        'eval_prompt_dataset_path', 'plot_path'
-    }
+    # Issue #12 fix: Use dynamic PATH_KEYS that can be extended at runtime
+    PATH_KEYS = get_path_keys()
 
     def resolve_value(value: Any, key: str = '') -> Any:
         """Recursively resolve paths in values."""
@@ -114,9 +148,24 @@ def load_yaml_with_path_resolution(
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    # Load YAML
-    with open(config_file, 'r') as f:
-        config = yaml.safe_load(f) or {}
+    # Load YAML with explicit error handling
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        # Re-raise with more context about which file failed
+        error_msg = f"Failed to parse YAML config file '{config_file}': {e}"
+        logger.error(error_msg)
+        raise ConfigurationError(error_msg) from e
+    except IOError as e:
+        error_msg = f"Failed to read config file '{config_file}': {e}"
+        logger.error(error_msg)
+        raise ConfigurationError(error_msg) from e
+
+    # Handle empty config files
+    if config is None:
+        logger.warning(f"Config file '{config_file}' is empty, using empty dict")
+        config = {}
 
     # Resolve paths in config
     config = resolve_paths_in_config(config, project_root)

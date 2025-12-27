@@ -6,17 +6,14 @@ Based on research from:
 
 This module implements overlapped activation recomputation to reduce the overhead
 of gradient checkpointing. Traditional gradient checkpointing saves memory but adds
-~30% time overhead. This technique overlaps the recomputation with backward pass
-using CUDA streams, reducing overhead to <10%.
+time overhead. This technique overlaps the recomputation with backward pass using
+CUDA streams, significantly reducing overhead.
 
 Key features:
 - Asynchronous recomputation in parallel with backward pass
 - CUDA stream management for overlapping computation
 - Selective recomputation (only what's needed, when needed)
 - Compatible with existing gradient checkpointing
-
-Expected improvement: 30%+ reduction in checkpointing overhead
-(e.g., if checkpointing adds 30% time, this reduces it to ~10%)
 
 Architecture:
 1. Forward pass: Save minimal checkpoints (same as gradient checkpointing)
@@ -26,7 +23,7 @@ Architecture:
 
 Performance:
 - Memory: Same as gradient checkpointing (no increase)
-- Time: ~20% reduction in total training time vs. standard checkpointing
+- Time: Significant reduction in total training time vs. standard checkpointing
 - GPU utilization: Higher (more parallel work)
 """
 
@@ -49,13 +46,12 @@ logger = logging.getLogger(__name__)
 # Global stream pool for recomputation - avoids creating new streams each backward pass
 _recompute_stream_pool: Optional['StreamPool'] = None
 
-# GPU SYNC FIX: Track last recomputation event for proper ordering between layers
+# Track last recomputation event for proper ordering between layers.
 # Without this, different layers getting different streams from the pool could
-# interleave their recomputations in undefined order, causing race conditions
+# interleave their recomputations in undefined order.
 _last_recompute_event: Optional[torch.cuda.Event] = None
 
-# FIX: Initialize lock at module load time to prevent race condition
-# Previously, lazy initialization could cause multiple threads to create different locks
+# Initialize lock at module load time to prevent race conditions
 import threading
 _recompute_event_lock: threading.Lock = threading.Lock()
 
@@ -186,9 +182,9 @@ class StreamedCheckpointFunction(torch.autograd.Function):
 
         # Recompute activations (potentially on separate stream)
         if recompute_stream is not None:
-            # GPU SYNC FIX: Ensure proper ordering between layers using events
+            # Ensure proper ordering between layers using events.
             # Without this, different layers could interleave their recomputations
-            # in undefined order when using a stream pool with round-robin allocation
+            # in undefined order when using a stream pool with round-robin allocation.
             with _get_recompute_event_lock():
                 # Wait for any previous recomputation to complete before starting ours
                 if _last_recompute_event is not None:
@@ -205,7 +201,7 @@ class StreamedCheckpointFunction(torch.autograd.Function):
 
                     outputs = ctx.run_function(*detached_inputs)
 
-            # GPU SYNC FIX: Record completion event for next layer to wait on
+            # Record completion event for next layer to wait on
             with _get_recompute_event_lock():
                 _last_recompute_event = torch.cuda.Event()
                 _last_recompute_event.record(recompute_stream)
@@ -269,10 +265,10 @@ def overlapped_checkpoint(
         >>> def my_layer(x, weight):
         >>>     return F.linear(x, weight)
         >>>
-        >>> # Standard checkpointing (30% overhead)
+        >>> # Standard checkpointing
         >>> output = checkpoint(my_layer, x, weight)
         >>>
-        >>> # Overlapped checkpointing (~10% overhead)
+        >>> # Overlapped checkpointing (reduced overhead)
         >>> output = overlapped_checkpoint(my_layer, x, weight)
     """
     # If kwargs provided, wrap function

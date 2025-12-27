@@ -124,9 +124,9 @@ class FP8LinearWrapper(nn.Module):
     def _update_scales(self, input_amax: torch.Tensor, weight_amax: torch.Tensor):
         """Update scaling factors based on observed amax values.
 
-        GPU SYNC FIX: Operates entirely on GPU tensors, no .item() calls.
+        Operates entirely on GPU tensors to avoid synchronization.
         """
-        # GPU SYNC FIX: Use tensor indexing instead of .item() for idx
+        # Use tensor indexing to avoid .item() call
         idx = (self.history_idx % self.config.amax_history_len).long()
 
         self.input_amax_history[idx] = input_amax
@@ -154,7 +154,7 @@ class FP8LinearWrapper(nn.Module):
             # Fallback to regular forward
             return self.linear(x)
 
-        # GPU SYNC FIX: Keep amax values on GPU as tensors, no .item() calls
+        # Keep amax values on GPU as tensors to avoid synchronization
         with torch.no_grad():
             input_amax = x.abs().max()  # Returns tensor on GPU
             weight_amax = self.linear.weight.abs().max()  # Returns tensor on GPU

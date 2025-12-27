@@ -79,6 +79,7 @@ def auto_install_requirements():
 try:
     import argparse
     import logging
+    import os
     import warnings
     from datetime import datetime
     from typing import List, Optional, Tuple
@@ -90,6 +91,7 @@ except (ImportError, ModuleNotFoundError) as e:
         print("🔄 Retrying imports...")
         import argparse
         import logging
+        import os
         import warnings
         from datetime import datetime
         from typing import List, Optional, Tuple
@@ -110,18 +112,7 @@ except ImportError:
 import torch
 import yaml
 
-# Configure logging to always output to terminal
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ],
-    force=True
-)
-
-# Suppress only specific noisy loggers, not all output
-logging.getLogger("asyncio").setLevel(logging.ERROR)
+# Suppress socket warnings
 warnings.filterwarnings("ignore", message="socket.send()")
 
 # Ensure stdout/stderr are not buffered
@@ -133,6 +124,13 @@ if hasattr(sys.stderr, 'reconfigure'):
 # Add project root to path
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
+
+# Configure unified logging for Ava (colored output, tqdm-compatible)
+from ava.core.logging import setup_ava_logging
+setup_ava_logging(level=logging.INFO)
+
+# Suppress only specific noisy loggers
+logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 from transformers import AutoTokenizer
 
@@ -523,12 +521,32 @@ def parse_args():
         help="Output directory for fine-tuning checkpoints and logs (default: auto-detected)",
     )
 
+    # Dependency checking
+    parser.add_argument(
+        "--skip-dep-check",
+        action="store_true",
+        help="Skip dependency check at startup",
+    )
+
     return parser.parse_args()
 
 
 def main():
     """Main fine-tuning entry point."""
     args = parse_args()
+
+    # Dependency check
+    if not args.skip_dep_check:
+        try:
+            import importlib.util
+            dep_check_path = Path(__file__).parent.parent / "check_dependencies.py"
+            if dep_check_path.exists():
+                spec = importlib.util.spec_from_file_location("check_dependencies", dep_check_path)
+                dep_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(dep_module)
+                dep_module.quick_check(warn_only=True)
+        except Exception:
+            pass  # Don't fail if dependency checker unavailable
 
     # Set default paths if not provided
     if args.data_dir is None:
@@ -736,7 +754,10 @@ def main():
     import shutil
 
     # Create a temporary config file with our modifications
+    # FIX: Close the file descriptor immediately - we use open() to write, not the fd
     temp_config_fd, temp_config_path = tempfile.mkstemp(suffix=".yaml", prefix="finetune_config_")
+    os.close(temp_config_fd)  # Close fd immediately to prevent leak
+    temp_config_fd = None  # Mark as closed
 
     # CRITICAL FIX: Temporarily hide the processed data directory
     # to force train.py to use ONLY the fine-tuning directory
@@ -777,14 +798,14 @@ def main():
         if checkpoint_path:
             print(f"   Resuming from: {checkpoint_path.name}", flush=True)
 
-        # Import main from train.py and run it
+        # Import main from train_pipeline.py and run it
         try:
-            from train_100m_full import main as train_main  # type: ignore[import]
+            from train_pipeline import main as train_main  # type: ignore[import]
 
             # Monkey-patch sys.argv to pass our temporary config
             original_argv = sys.argv
             sys.argv = [
-                "train_100m_full.py",
+                "train_pipeline.py",
                 "--config", temp_config_path,
                 "--data-dir", fine_tuning_dir  # CRITICAL: Force data directory via command line
             ]
@@ -835,11 +856,11 @@ def main():
         # Clean up temporary config file
         import os
         try:
-            os.close(temp_config_fd)
+            # FIX: fd was already closed above, just unlink the file
             os.unlink(temp_config_path)
             print(f"  Cleaned up temporary config", flush=True)
         except OSError as e:
-            # File descriptor or file may already be closed/deleted - expected during cleanup
+            # File may already be deleted - expected during cleanup
             logging.debug(f"Temp config cleanup: {e}")
 
     print("\n Fine-tuning complete!", flush=True)

@@ -245,59 +245,65 @@ class DataValidator:
         lengths: List[int] = []
 
         try:
-            with pa.memory_map(str(file_path), 'r') as source:
-                reader = ipc.open_file(source)
-                table = reader.read_all()
+            # Try IPC File format first, then fall back to IPC Stream format
+            try:
+                with pa.memory_map(str(file_path), 'r') as source:
+                    reader = ipc.open_file(source)
+                    table = reader.read_all()
+            except pa.ArrowInvalid:
+                # IPC Stream format (HuggingFace datasets)
+                with open(str(file_path), 'rb') as f:
+                    table = ipc.open_stream(f).read_all()
 
-                # Check required columns
-                schema_names = table.schema.names
-                if 'input_ids' not in schema_names:
-                    return ValidationResult(
-                        is_valid=False,
-                        total_samples_checked=0,
-                        valid_samples=0,
-                        invalid_samples=0,
-                        errors=[f"Missing 'input_ids' column in {file_path.name}"]
-                    )
-
-                # Sample rows for validation
-                total_rows = len(table)
-                if total_rows == 0:
-                    return ValidationResult(
-                        is_valid=False,
-                        total_samples_checked=0,
-                        valid_samples=0,
-                        invalid_samples=0,
-                        errors=[f"No rows in {file_path.name}"]
-                    )
-
-                # Calculate sample size
-                sample_size = min(
-                    int(total_rows * self.sample_rate),
-                    self.max_samples
-                )
-                sample_size = max(sample_size, min(100, total_rows))  # At least 100 samples
-
-                # Random sample indices
-                sample_indices = np.random.choice(
-                    total_rows,
-                    size=sample_size,
-                    replace=False
+            # Check required columns
+            schema_names = table.schema.names
+            if 'input_ids' not in schema_names:
+                return ValidationResult(
+                    is_valid=False,
+                    total_samples_checked=0,
+                    valid_samples=0,
+                    invalid_samples=0,
+                    errors=[f"Missing 'input_ids' column in {file_path.name}"]
                 )
 
-                # Validate sampled rows
-                for idx in sample_indices:
-                    row = table.slice(int(idx), 1)
-                    input_ids = row['input_ids'][0].as_py()
+            # Sample rows for validation
+            total_rows = len(table)
+            if total_rows == 0:
+                return ValidationResult(
+                    is_valid=False,
+                    total_samples_checked=0,
+                    valid_samples=0,
+                    invalid_samples=0,
+                    errors=[f"No rows in {file_path.name}"]
+                )
 
-                    is_valid, error = self._validate_sequence(input_ids)
-                    if is_valid:
-                        valid_count += 1
-                        lengths.append(len(input_ids))
-                    else:
-                        invalid_count += 1
-                        if len(errors) < 10:
-                            errors.append(f"Row {idx}: {error}")
+            # Calculate sample size
+            sample_size = min(
+                int(total_rows * self.sample_rate),
+                self.max_samples
+            )
+            sample_size = max(sample_size, min(100, total_rows))  # At least 100 samples
+
+            # Random sample indices
+            sample_indices = np.random.choice(
+                total_rows,
+                size=sample_size,
+                replace=False
+            )
+
+            # Validate sampled rows
+            for idx in sample_indices:
+                row = table.slice(int(idx), 1)
+                input_ids = row['input_ids'][0].as_py()
+
+                is_valid, error = self._validate_sequence(input_ids)
+                if is_valid:
+                    valid_count += 1
+                    lengths.append(len(input_ids))
+                else:
+                    invalid_count += 1
+                    if len(errors) < 10:
+                        errors.append(f"Row {idx}: {error}")
 
         except Exception as e:
             return ValidationResult(

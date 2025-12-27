@@ -90,16 +90,49 @@ class TrainingContext:
         """
         Update context fields from a configuration dictionary.
 
+        FIX: Expanded to propagate all relevant config values to context.
+        Previously only handled gradient_accumulation_steps and mixed_precision.
+
         Args:
             config: Configuration dictionary with training settings
         """
         training = config.get('training', {})
 
-        # Update training settings
+        # Core training settings
         self.gradient_accumulation_steps = training.get(
             'gradient_accumulation_steps',
             self.gradient_accumulation_steps
         )
+
+        # FIX: Add missing training config propagation
+        # These were previously ignored, causing YAML changes to have no effect
+        if 'batch_size' in training:
+            self.metadata['batch_size'] = training['batch_size']
+        if 'learning_rate' in training:
+            self.metadata['learning_rate'] = training['learning_rate']
+        if 'warmup_steps' in training:
+            self.metadata['warmup_steps'] = training['warmup_steps']
+        if 'max_steps' in training:
+            self.metadata['max_steps'] = training['max_steps']
+        if 'num_epochs' in training:
+            self.metadata['num_epochs'] = training['num_epochs']
+        if 'weight_decay' in training:
+            self.metadata['weight_decay'] = training['weight_decay']
+        if 'max_grad_norm' in training:
+            self.metadata['max_grad_norm'] = training['max_grad_norm']
+        if 'log_interval' in training:
+            self.metadata['log_interval'] = training['log_interval']
+        if 'save_interval' in training:
+            self.metadata['save_interval'] = training['save_interval']
+        if 'eval_interval' in training:
+            self.metadata['eval_interval'] = training['eval_interval']
+
+        # Data config
+        data = config.get('data', {})
+        if 'max_length' in data:
+            self.metadata['max_length'] = data['max_length']
+        if 'num_workers' in data:
+            self.metadata['num_workers'] = data['num_workers']
 
         # Update precision settings
         precision = training.get('precision', {})
@@ -145,9 +178,10 @@ class TrainingComponent(ABC):
 
     @property
     def logger(self):
-        """Get logger for this component."""
+        """Get logger for this component (inherits from ava hierarchy)."""
         import logging
-        return logging.getLogger(self.__class__.__name__)
+        # Use full module path so loggers inherit config from 'ava' parent
+        return logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}")
 
     @property
     def model(self) -> nn.Module:

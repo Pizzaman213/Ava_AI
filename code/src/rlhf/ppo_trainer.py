@@ -110,11 +110,18 @@ class PPOTrainer:
 
         # Setup optimizer
         if optimizer is None:
+            # FIX: Use BF16-aware epsilon
+            # bfloat16 has ~1e-7 precision, so eps=1e-8 underflows to zero
+            if config.mixed_precision in ('bf16', 'bfloat16'):
+                eps = 1e-6  # Safe for bfloat16
+            else:
+                eps = 1e-8  # Standard for fp32/fp16
+
             self.optimizer = torch.optim.AdamW(
                 model.parameters(),
                 lr=config.learning_rate,
                 betas=(0.9, 0.999),
-                eps=1e-8,
+                eps=eps,
                 weight_decay=0.01
             )
         else:

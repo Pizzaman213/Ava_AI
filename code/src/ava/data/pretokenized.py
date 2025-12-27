@@ -44,7 +44,41 @@ import weakref
 logger = logging.getLogger(__name__)
 
 # Default vocab size for validation (can be overridden per-dataset)
-DEFAULT_VOCAB_SIZE = 100000
+DEFAULT_VOCAB_SIZE = 50680  # Match standard tokenizer vocab
+
+
+def read_arrow_table(file_path: Union[str, Path]) -> pa.Table:
+    """
+    Read Arrow table from file, supporting both IPC File and IPC Stream formats.
+
+    Some Arrow files (especially from HuggingFace datasets) use IPC Stream format
+    which requires open_stream() instead of open_file().
+
+    Args:
+        file_path: Path to the Arrow file
+
+    Returns:
+        PyArrow Table with the data
+
+    Raises:
+        ValueError: If file cannot be read as either format
+    """
+    file_path = str(file_path)
+
+    # Try IPC File format first (standard Arrow files)
+    try:
+        with pa.memory_map(file_path, 'r') as source:
+            return ipc.open_file(source).read_all()
+    except pa.ArrowInvalid:
+        pass  # Not IPC File format, try Stream
+
+    # Try IPC Stream format (HuggingFace datasets format)
+    try:
+        with open(file_path, 'rb') as f:
+            reader = ipc.open_stream(f)
+            return reader.read_all()
+    except Exception as e:
+        raise ValueError(f"Failed to read Arrow file {file_path}: not IPC File or Stream format. Error: {e}")
 
 
 class DataLoaderError(Exception):
@@ -116,11 +150,15 @@ _cache_registry: weakref.WeakSet = weakref.WeakSet()
 
 def _cleanup_all_caches():
     """Clean up all registered ArrowTableCache instances on shutdown."""
+    close_errors = 0
     for cache in list(_cache_registry):
         try:
             cache.close()
-        except Exception:
-            pass
+        except Exception as e:
+            close_errors += 1
+            logging.getLogger(__name__).debug(f"Cache cleanup warning: {e}")
+    if close_errors > 0:
+        logging.getLogger(__name__).debug(f"Cache cleanup completed with {close_errors} errors")
 
 
 # Register cleanup on normal exit
@@ -195,9 +233,8 @@ class PreTokenizedSequenceReader:
     def __init__(self, data_path: Path):
         self.data_path = data_path
 
-        # Open Arrow file with memory mapping
-        with pa.memory_map(str(data_path), 'r') as source:
-            self.table = ipc.open_file(source).read_all()
+        # Open Arrow file (supports both IPC File and Stream formats)
+        self.table = read_arrow_table(data_path)
 
         self.num_sequences = len(self.table)
 
@@ -212,9 +249,12 @@ class PreTokenizedSequenceReader:
         # Get row from Arrow table
         row = self.table.slice(idx, 1)
 
+        # Support both 'input_ids' and 'token_ids' column names
+        col_names = row.schema.names
+        token_col = 'input_ids' if 'input_ids' in col_names else 'token_ids'
         return {
-            'input_ids': np.array(row['input_ids'][0].as_py(), dtype=np.int32),
-            'attention_mask': np.array(row['attention_mask'][0].as_py(), dtype=np.int32)
+            'input_ids': np.array(row[token_col][0].as_py(), dtype=np.int32),
+            'attention_mask': np.array(row['attention_mask'][0].as_py(), dtype=np.int32) if 'attention_mask' in col_names else np.ones(len(row[token_col][0].as_py()), dtype=np.int32)
         }
 
     def close(self):
@@ -273,14 +313,10 @@ class PreTokenizedDataset(IterableDataset):
         self.total_sequences = 0
         self.file_sequences = []
         for file_path in self.data_files:
-            with pa.memory_map(str(file_path), 'r') as source:
-                reader = ipc.open_file(source)
-                num_sequences = reader.num_record_batches
-                # Get actual row count
-                table = reader.read_all()
-                num_sequences = len(table)
-                self.file_sequences.append(num_sequences)
-                self.total_sequences += num_sequences
+            table = read_arrow_table(file_path)
+            num_sequences = len(table)
+            self.file_sequences.append(num_sequences)
+            self.total_sequences += num_sequences
 
         logger.debug(f"Total sequences: {self.total_sequences:,}")
 
@@ -630,14 +666,10 @@ class ArrowTableCache:
                 # Cache table (no memory map for parquet)
                 self.cache[file_path] = table
             else:
-                # Use Arrow IPC reader for .arrow files
-                memory_map = pa.memory_map(str(file_path), 'r')
-                reader = pa.ipc.RecordBatchFileReader(memory_map)
-                table = reader.read_all()
-
-                # Cache table and memory map
+                # Use Arrow IPC reader for .arrow files (supports both File and Stream formats)
+                table = read_arrow_table(file_path)
+                # Cache table
                 self.cache[file_path] = table
-                self._memory_maps[file_path] = memory_map
 
             return table
         except Exception as e:
@@ -861,6 +893,9 @@ class UltraFastPretokenizedDataset(IterableDataset):
         min_sequence_length: int = 10,
         validation_rate: float = 0.0,  # No validation by default (already validated)
         pad_token_id: int = 0,
+        bos_token_id: int = 2,  # Beginning of sequence token ID
+        eos_token_id: int = 1,  # End of sequence token ID
+        add_special_tokens: bool = True,  # Add BOS/EOS if missing from data
         use_dynamic_padding: bool = False,  # RAM-OPTIMIZED: Pad to batch max instead of global max
         max_files_to_load: Optional[int] = None,  # Limit number of files to prevent OOM
         lazy_file_discovery: bool = False,  # Enable lazy file discovery for large datasets
@@ -879,6 +914,9 @@ class UltraFastPretokenizedDataset(IterableDataset):
         self.min_sequence_length = min_sequence_length
         self.validation_rate = validation_rate
         self.pad_token_id = pad_token_id
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
+        self.add_special_tokens = add_special_tokens
         self.use_dynamic_padding = use_dynamic_padding
         self.max_files_to_load = max_files_to_load
         self.lazy_file_discovery = lazy_file_discovery
@@ -986,16 +1024,23 @@ class UltraFastPretokenizedDataset(IterableDataset):
 
         # For smaller datasets, count exactly
         total = 0
+        load_errors = 0
         for file_path in self.data_files:
             try:
                 table = self.table_cache.get(file_path)
                 total += len(table)
-            except Exception:
+            except Exception as e:
+                load_errors += 1
+                logger.debug(f"Could not load table for counting from {file_path.name}: {e}")
                 # Estimate based on file size
                 try:
                     total += file_path.stat().st_size // BYTES_PER_SAMPLE_ESTIMATE
-                except Exception:
+                except Exception as stat_err:
+                    logger.debug(f"Could not stat file {file_path.name}: {stat_err}")
                     total += 1000  # Fallback estimate
+
+        if load_errors > 0:
+            logger.warning(f"Sample count: {load_errors} files used estimates instead of exact counts")
 
         self._total_samples_cache = total
         return total
@@ -1010,6 +1055,70 @@ class UltraFastPretokenizedDataset(IterableDataset):
             # Return a large estimate to prevent premature stopping
             return 10000000  # Will be refined during iteration
         return self._count_total_samples()
+
+    def _add_special_tokens(
+        self,
+        input_ids: np.ndarray,
+        attention_mask: np.ndarray,
+        labels: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Add BOS and EOS tokens to sequences if they're missing.
+
+        This is critical for coherent text generation - without proper
+        sequence boundaries, the model cannot learn when sequences start/end.
+
+        Args:
+            input_ids: Token IDs array
+            attention_mask: Attention mask array
+            labels: Labels array (same as input_ids for LM training)
+
+        Returns:
+            Tuple of (input_ids, attention_mask, labels) with special tokens added
+        """
+        if not self.add_special_tokens:
+            return input_ids, attention_mask, labels
+
+        needs_bos = len(input_ids) == 0 or input_ids[0] != self.bos_token_id
+        needs_eos = len(input_ids) == 0 or input_ids[-1] != self.eos_token_id
+
+        if not needs_bos and not needs_eos:
+            return input_ids, attention_mask, labels
+
+        # Calculate new length (accounting for truncation to max_length)
+        new_tokens = (1 if needs_bos else 0) + (1 if needs_eos else 0)
+        content_length = len(input_ids)
+
+        # If adding tokens would exceed max_length, truncate content to make room
+        if content_length + new_tokens > self.max_length:
+            # Truncate content to make room for special tokens
+            content_length = self.max_length - new_tokens
+            input_ids = input_ids[:content_length]
+            attention_mask = attention_mask[:content_length]
+            labels = labels[:content_length]
+
+        # Build new arrays with special tokens
+        new_length = content_length + new_tokens
+        new_input_ids = np.zeros(new_length, dtype=np.int64)
+        new_attention_mask = np.ones(new_length, dtype=np.int64)
+        new_labels = np.zeros(new_length, dtype=np.int64)
+
+        offset = 0
+        if needs_bos:
+            new_input_ids[0] = self.bos_token_id
+            new_labels[0] = self.bos_token_id  # Model should learn to predict BOS
+            offset = 1
+
+        # Copy content
+        new_input_ids[offset:offset + content_length] = input_ids
+        new_attention_mask[offset:offset + content_length] = attention_mask
+        new_labels[offset:offset + content_length] = labels
+
+        if needs_eos:
+            new_input_ids[-1] = self.eos_token_id
+            new_labels[-1] = self.eos_token_id  # Model should learn to predict EOS
+
+        return new_input_ids, new_attention_mask, new_labels
 
     def _stream_examples_ultra_fast(self) -> Iterator[Dict[str, np.ndarray]]:
         """
@@ -1096,7 +1205,13 @@ class UltraFastPretokenizedDataset(IterableDataset):
                 try:
                     # Use to_pydict for vectorized extraction (much faster than row iteration)
                     batch_dict = batch_slice.to_pydict()
-                    input_ids_list = batch_dict['input_ids']
+                    # Support both 'input_ids' and 'token_ids' column names
+                    # Use explicit None check (not `or`) to handle empty lists correctly
+                    input_ids_list = batch_dict.get('input_ids')
+                    if input_ids_list is None:
+                        input_ids_list = batch_dict.get('token_ids')
+                    if input_ids_list is None:
+                        raise KeyError("Neither 'input_ids' nor 'token_ids' column found")
                     attention_mask_list = batch_dict.get('attention_mask', None)
                     labels_list = batch_dict.get('labels', None)
 
@@ -1115,10 +1230,9 @@ class UltraFastPretokenizedDataset(IterableDataset):
                             else:
                                 # For other types, assume it needs conversion
                                 raw_len = len(list(raw_seq))
-                        except (TypeError, AttributeError):
+                        except (TypeError, AttributeError) as e:
                             # If we can't determine length, skip this item
-                            if should_print and i == 0:  # Print only once per file
-                                print(f"   [Worker {worker_id}] Skipping item {i}: Cannot determine sequence length")
+                            logger.debug(f"[Worker {worker_id}] Skipping item {i}: Cannot determine sequence length ({e})")
                             continue
 
                         # AGGRESSIVE SANITY CHECK: Detect corrupted sequences
@@ -1147,11 +1261,17 @@ class UltraFastPretokenizedDataset(IterableDataset):
                         else:
                             labels_np = input_ids_np.copy()
 
-                        # Truncate to max_length
-                        if len(input_ids_np) > self.max_length:
-                            input_ids_np = input_ids_np[:self.max_length]
-                            attention_mask_np = attention_mask_np[:self.max_length]
-                            labels_np = labels_np[:self.max_length]
+                        # Truncate to max_length (leave room for special tokens)
+                        max_content_len = self.max_length - 2 if self.add_special_tokens else self.max_length
+                        if len(input_ids_np) > max_content_len:
+                            input_ids_np = input_ids_np[:max_content_len]
+                            attention_mask_np = attention_mask_np[:max_content_len]
+                            labels_np = labels_np[:max_content_len]
+
+                        # Add BOS/EOS tokens for coherent text generation
+                        input_ids_np, attention_mask_np, labels_np = self._add_special_tokens(
+                            input_ids_np, attention_mask_np, labels_np
+                        )
 
                         # Minimal validation (only length check)
                         if len(input_ids_np) >= self.min_sequence_length:
@@ -1167,7 +1287,10 @@ class UltraFastPretokenizedDataset(IterableDataset):
                     warnings.warn(f"Batch extraction failed, falling back to per-row: {e}")
 
                     # Get columns as PyArrow arrays (zero-copy)
-                    input_ids_col = batch_slice.column('input_ids')
+                    # Support both 'input_ids' and 'token_ids' column names
+                    schema_names = batch_slice.schema.names
+                    token_col_name = 'input_ids' if 'input_ids' in schema_names else 'token_ids'
+                    input_ids_col = batch_slice.column(token_col_name)
                     attention_mask_col = batch_slice.column('attention_mask') if 'attention_mask' in batch_slice.schema.names else None
                     labels_col = batch_slice.column('labels') if 'labels' in batch_slice.schema.names else None
 
@@ -1222,11 +1345,17 @@ class UltraFastPretokenizedDataset(IterableDataset):
                         else:
                             labels_np = input_ids_np.copy()
 
-                        # Truncate to max_length
-                        if len(input_ids_np) > self.max_length:
-                            input_ids_np = input_ids_np[:self.max_length]
-                            attention_mask_np = attention_mask_np[:self.max_length]
-                            labels_np = labels_np[:self.max_length]
+                        # Truncate to max_length (leave room for special tokens)
+                        max_content_len = self.max_length - 2 if self.add_special_tokens else self.max_length
+                        if len(input_ids_np) > max_content_len:
+                            input_ids_np = input_ids_np[:max_content_len]
+                            attention_mask_np = attention_mask_np[:max_content_len]
+                            labels_np = labels_np[:max_content_len]
+
+                        # Add BOS/EOS tokens for coherent text generation
+                        input_ids_np, attention_mask_np, labels_np = self._add_special_tokens(
+                            input_ids_np, attention_mask_np, labels_np
+                        )
 
                         # Minimal validation (only length check)
                         if len(input_ids_np) >= self.min_sequence_length:
@@ -1286,7 +1415,13 @@ class UltraFastPretokenizedDataset(IterableDataset):
                     try:
                         # Vectorized batch extraction
                         batch_dict = batch_slice.to_pydict()
-                        input_ids_list = batch_dict['input_ids']
+                        # Support both 'input_ids' and 'token_ids' column names
+                        # Use explicit None check (not `or`) to handle empty lists correctly
+                        input_ids_list = batch_dict.get('input_ids')
+                        if input_ids_list is None:
+                            input_ids_list = batch_dict.get('token_ids')
+                        if input_ids_list is None:
+                            raise KeyError("Neither 'input_ids' nor 'token_ids' column found")
                         attention_mask_list = batch_dict.get('attention_mask', None)
                         labels_list = batch_dict.get('labels', None)
 
@@ -1311,11 +1446,17 @@ class UltraFastPretokenizedDataset(IterableDataset):
                             else:
                                 labels_np = input_ids_np.copy()
 
-                            # Truncate to max_length
-                            if len(input_ids_np) > self.max_length:
-                                input_ids_np = input_ids_np[:self.max_length]
-                                attention_mask_np = attention_mask_np[:self.max_length]
-                                labels_np = labels_np[:self.max_length]
+                            # Truncate to max_length (leave room for special tokens)
+                            max_content_len = self.max_length - 2 if self.add_special_tokens else self.max_length
+                            if len(input_ids_np) > max_content_len:
+                                input_ids_np = input_ids_np[:max_content_len]
+                                attention_mask_np = attention_mask_np[:max_content_len]
+                                labels_np = labels_np[:max_content_len]
+
+                            # Add BOS/EOS tokens for coherent text generation
+                            input_ids_np, attention_mask_np, labels_np = self._add_special_tokens(
+                                input_ids_np, attention_mask_np, labels_np
+                            )
 
                             # Yield if valid
                             if len(input_ids_np) >= self.min_sequence_length:
@@ -1434,7 +1575,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # CRITICAL FIX: Validate batch structure to prevent OOM
         # Sometimes DataLoader passes incorrect batch structure
         if not isinstance(batch, list):
-            print(f" ERROR: batch is not a list, got {type(batch)}")
+            logger.error(f"ERROR: batch is not a list, got {type(batch)}")
             raise TypeError(f"Expected batch to be a list, got {type(batch)}")
 
         batch_size = len(batch)
@@ -1655,18 +1796,18 @@ def create_ultra_fast_dataloaders(
     samples_per_file: int = 1000,
     cache_size: int = 50,  # RAM-OPTIMIZED: 50 tables default (set higher if RAM > 64GB)
     pad_token_id: int = 0,
-    eos_token_id: int = 2,
+    bos_token_id: int = 2,  # Beginning of sequence token ID
+    eos_token_id: int = 1,  # End of sequence token ID (fixed: was 2, should be 1)
+    add_special_tokens: bool = True,  # Add BOS/EOS if missing from data (critical for coherence)
     use_sequence_packing: bool = False,  # Eliminates padding waste
     packing_strategy: str = 'greedy',  # 'greedy' or 'adaptive'
-    dynamic_batching_config: Optional[Dict[str, Any]] = None,  # Dynamic batching configuration
     max_files_to_load: Optional[int] = None,  # Limit number of files to prevent OOM
     lazy_file_discovery: bool = False,  # Enable lazy file discovery for memory-efficient large datasets
     verbose: bool = False,  # Control verbose output (default False for cleaner logs)
-    batch_controller: Optional[Any] = None,  # BatchSizeController for unified batch size management
     shuffle_seed: Optional[int] = None,  # Global shuffle seed (None = non-deterministic)
     enable_length_sorting: bool = True,  # Enable length sorting in distributed mode
     disable_packing_length_sort: bool = False,  # Disable length sorting in packing
-) -> Tuple[Any, Any]:  # Returns DataLoader or DynamicBatchIterator
+) -> Tuple[Any, Any]:  # Returns DataLoader
     """
     Create ultra-fast pretokenized dataloaders.
 
@@ -1741,6 +1882,9 @@ def create_ultra_fast_dataloaders(
         'samples_per_file': samples_per_file,
         'cache_size': cache_size,
         'pad_token_id': pad_token_id,
+        'bos_token_id': bos_token_id,
+        'eos_token_id': eos_token_id,
+        'add_special_tokens': add_special_tokens,
         'max_files_to_load': max_files_to_load,
         'lazy_file_discovery': lazy_file_discovery,
         'shuffle_seed': shuffle_seed,
@@ -1843,90 +1987,8 @@ def create_ultra_fast_dataloaders(
 
         val_collate_fn = val_dataset.collate_fn  # type: ignore[assignment]
 
-    # Check if dynamic batching is enabled
-    use_dynamic_batching = (
-        dynamic_batching_config is not None
-        and dynamic_batching_config.get('enabled', False)
-    )
-
-    if use_dynamic_batching:
-        # Import dynamic batch iterator
-        from .dynamic_batch_iterator import DynamicBatchIterator, create_dynamic_batch_scheduler
-
-        db_config = dynamic_batching_config
-        min_batch_size = db_config.get('min_batch_size', 64)
-        max_batch_size = db_config.get('max_batch_size', 256)
-
-        # Extract token budget config
-        token_budget_config = db_config.get('token_budget', {})
-        token_budget_enabled = token_budget_config.get('enabled', False)
-        target_tokens = token_budget_config.get('target_tokens_per_batch', 4096)
-        max_tokens = token_budget_config.get('max_tokens_per_batch', 8192)
-
-        if verbose:
-            print(f"\n{'='*60}")
-            print(f" DYNAMIC BATCHING ENABLED")
-            print(f"{'='*60}")
-            print(f"   Min batch size: {min_batch_size}")
-            print(f"   Max batch size: {max_batch_size}")
-        low_thresh = db_config.get('low_memory_threshold') or 0.5
-        target_thresh = db_config.get('target_memory_threshold') or 0.7
-        high_thresh = db_config.get('high_memory_threshold') or 0.85
-        if verbose:
-            print(f"   Memory thresholds: low={low_thresh:.0%}, "
-                  f"target={target_thresh:.0%}, "
-                  f"high={high_thresh:.0%}")
-            print(f"   Adjustment frequency: every {db_config.get('adjustment_frequency') or 10} steps")
-            print(f"   Warmup steps: {db_config.get('warmup_steps') or 100}")
-            if token_budget_enabled:
-                print(f"   Token budget: ENABLED")
-                print(f"     Target tokens/batch: {target_tokens:,}")
-                print(f"     Max tokens/batch: {max_tokens:,}")
-            print(f"{'='*60}\n")
-
-        # Create base DataLoader with min_batch_size
-        dataloader_kwargs['batch_size'] = min_batch_size
-
-        train_loader_base = DataLoader(train_dataset, collate_fn=train_collate_fn, **dataloader_kwargs)
-        val_loader_base = DataLoader(val_dataset, collate_fn=val_collate_fn, **dataloader_kwargs)
-
-        # Create scheduler config dict for the factory function
-        scheduler_config = {
-            'dynamic_batching': db_config,
-            'training': {'batch_size': min_batch_size}
-        }
-
-        # Import the scheduler creation function from the optimizations module
-        from ..optimizations.dynamic_batching import create_dynamic_batch_scheduler
-
-        # Create schedulers for train and val
-        train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
-        val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
-
-        # Wrap with DynamicBatchIterator
-        train_loader = DynamicBatchIterator(
-            dataloader=train_loader_base,
-            scheduler=train_scheduler,
-            min_batch_size=min_batch_size,
-            max_batch_size=max_batch_size,
-        )
-        val_loader = DynamicBatchIterator(
-            dataloader=val_loader_base,
-            scheduler=val_scheduler,
-            min_batch_size=min_batch_size,
-            max_batch_size=max_batch_size,
-        )
-
-        # Connect BatchSizeController if provided
-        # This ensures scheduler respects OOM-learned batch size limits
-        if batch_controller is not None:
-            train_loader.set_batch_controller(batch_controller)
-            val_loader.set_batch_controller(batch_controller)
-            if verbose:
-                print(f"   BatchSizeController connected to dynamic batch iterators")
-    else:
-        # Standard DataLoader without dynamic batching
-        train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **dataloader_kwargs)
-        val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **dataloader_kwargs)
+    # Create DataLoaders with parallel workers
+    train_loader = DataLoader(train_dataset, collate_fn=train_collate_fn, **dataloader_kwargs)
+    val_loader = DataLoader(val_dataset, collate_fn=val_collate_fn, **dataloader_kwargs)
 
     return train_loader, val_loader

@@ -249,21 +249,31 @@ class ExpertParallelGroup(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        """Kaiming initialization for stable training."""
+        """
+        Proper initialization for gated activations (SwiGLU/GeGLU).
+
+        FIX: a=sqrt(5) is for LeakyReLU, not gated activations.
+        For SwiGLU/GeGLU, use a=0 (ReLU-like) since the gate controls activation magnitude.
+        Also use smaller std for down projection to prevent output explosion.
+        """
         if self.activation_type in ['swiglu', 'geglu']:
-            nn.init.kaiming_uniform_(self.gate_up_weights, a=math.sqrt(5))
+            # Gated activations: use a=0 since gate controls the signal magnitude
+            nn.init.kaiming_uniform_(self.gate_up_weights, a=0)
             if self.gate_up_bias is not None:
                 fan_in = self.hidden_size
                 bound = 1 / math.sqrt(fan_in)
                 nn.init.uniform_(self.gate_up_bias, -bound, bound)
         else:
-            nn.init.kaiming_uniform_(self.up_weights, a=math.sqrt(5))
+            # Non-gated: use a=0 for ReLU-like activations
+            nn.init.kaiming_uniform_(self.up_weights, a=0)
             if self.up_bias is not None:
                 fan_in = self.hidden_size
                 bound = 1 / math.sqrt(fan_in)
                 nn.init.uniform_(self.up_bias, -bound, bound)
 
-        nn.init.kaiming_uniform_(self.down_weights, a=math.sqrt(5))
+        # Down projection: use smaller scale to prevent output explosion
+        # with many experts (GPT-NeoX style: scale by 1/sqrt(2*num_layers))
+        nn.init.kaiming_uniform_(self.down_weights, a=0)
         if self.down_bias is not None:
             fan_in = self.intermediate_size
             bound = 1 / math.sqrt(fan_in)
@@ -386,9 +396,9 @@ class ExpertParallelGroup(nn.Module):
         expert_weights: Optional[torch.Tensor] = None,
         use_grouped_gemm: bool = True,
         use_sparse_dispatch: bool = False,
-        use_loop_experts: bool = True,  # D2D-optimized loop dispatch
+        use_loop_experts: bool = False,  # D2D-optimized loop dispatch (fallback)
         use_fused_triton: bool = False,  # Fused Triton - slower than async, disabled by default
-        use_async_pipeline: bool = False,  # DISABLED: Has race condition bug causing CUDA illegal memory access
+        use_async_pipeline: bool = True,  # ENABLED: Race condition fixed with per-stream buffers
     ) -> torch.Tensor:
         """
         Forward pass with multiple dispatch strategies.

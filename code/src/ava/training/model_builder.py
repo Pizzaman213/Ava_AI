@@ -6,7 +6,8 @@ Handles model creation, quantization, and optimization setup.
 
 import logging
 import traceback
-from typing import Any, Dict, Optional, Tuple
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -14,6 +15,13 @@ import torch.nn as nn
 from .context import TrainingComponent, TrainingContext
 
 logger = logging.getLogger(__name__)
+
+# Config key aliases for backwards compatibility
+# Format: canonical_name -> list of accepted aliases (first is canonical)
+CONFIG_KEY_ALIASES: Dict[str, List[str]] = {
+    'expert_capacity_factor': ['expert_capacity_factor', 'capacity_factor'],
+    'router_aux_loss_coef': ['router_aux_loss_coef', 'router_z_loss_coef', 'aux_loss_coef'],
+}
 
 # Check distributed availability
 try:
@@ -57,6 +65,9 @@ class ModelBuilder(TrainingComponent):
         self._built_model: Optional[nn.Module] = None
         self.model_config: Optional[Any] = None
         self._total_params: int = 0
+        # Fail-fast option for optimization errors
+        self._fail_on_optimization_error: bool = False
+        self._optimization_errors: List[Tuple[str, Exception]] = []
 
     def initialize(self) -> None:
         """Initialize the model builder."""
@@ -69,6 +80,133 @@ class ModelBuilder(TrainingComponent):
             del self._built_model
             self._built_model = None
             torch.cuda.empty_cache()
+
+    def set_fail_on_optimization_error(self, fail_fast: bool) -> None:
+        """
+        Configure whether to raise exceptions on optimization failures.
+
+        Args:
+            fail_fast: If True, raise exception on first optimization failure.
+                       If False (default), log error and continue.
+        """
+        self._fail_on_optimization_error = fail_fast
+
+    def get_optimization_errors(self) -> List[Tuple[str, Exception]]:
+        """Get list of (optimization_name, exception) for all failed optimizations."""
+        return self._optimization_errors.copy()
+
+    def _get_config_value(
+        self,
+        config: Dict[str, Any],
+        canonical_key: str,
+        default: Any,
+    ) -> Any:
+        """
+        Get config value with alias support for backwards compatibility.
+
+        Checks canonical key first, then aliases. Logs info if alias used.
+
+        Args:
+            config: Config dictionary to search
+            canonical_key: The canonical (preferred) key name
+            default: Default value if no key found
+
+        Returns:
+            Config value or default
+        """
+        aliases = CONFIG_KEY_ALIASES.get(canonical_key, [canonical_key])
+
+        for alias in aliases:
+            if alias in config:
+                if alias != canonical_key:
+                    self.logger.info(
+                        f"Config key '{alias}' is deprecated, use '{canonical_key}' instead."
+                    )
+                return config[alias]
+
+        return default
+
+    def _validate_model_config(self, model_config: Dict[str, Any]) -> None:
+        """
+        Validate model configuration values.
+
+        Raises ValueError for critical issues, logs warnings for minor ones.
+
+        Args:
+            model_config: The model configuration dictionary
+
+        Raises:
+            ValueError: If critical validation fails
+        """
+        issues = []
+
+        # Check for required fields (warn if missing)
+        required_fields = ['vocab_size', 'hidden_size', 'num_layers', 'num_attention_heads']
+        missing = [f for f in required_fields if f not in model_config]
+        if missing:
+            self.logger.warning(
+                f"Model config missing recommended fields: {missing}. "
+                f"Using defaults which may not be optimal."
+            )
+
+        # Validate hidden_size divisible by num_attention_heads
+        hidden_size = model_config.get('hidden_size', 512)
+        num_heads = model_config.get('num_attention_heads', 8)
+        if hidden_size % num_heads != 0:
+            raise ValueError(
+                f"hidden_size ({hidden_size}) must be divisible by "
+                f"num_attention_heads ({num_heads})"
+            )
+
+        # Validate num_experts_per_token <= num_experts
+        num_experts = model_config.get('num_experts', 2)
+        num_experts_per_token = model_config.get('num_experts_per_token', 1)
+        if num_experts_per_token > num_experts:
+            raise ValueError(
+                f"num_experts_per_token ({num_experts_per_token}) cannot exceed "
+                f"num_experts ({num_experts})"
+            )
+
+        # Warn about potentially problematic values
+        vocab_size = model_config.get('vocab_size', 50680)
+        if vocab_size < 1000:
+            issues.append(f"vocab_size={vocab_size} seems too small (typical: 30000-100000)")
+
+        capacity_factor = self._get_config_value(
+            model_config, 'expert_capacity_factor', 1.25
+        )
+        if capacity_factor < 1.0:
+            issues.append(
+                f"expert_capacity_factor={capacity_factor} < 1.0 will cause token dropping"
+            )
+
+        for issue in issues:
+            self.logger.warning(f"Config warning: {issue}")
+
+    def _report_optimization_status(
+        self,
+        phase: str,
+        applied: List[str],
+        failed: List[str],
+        is_main: bool,
+    ) -> None:
+        """Report optimization status with prominent warnings for failures."""
+        if is_main and failed:
+            self.logger.warning("=" * 60)
+            self.logger.warning(f"PERFORMANCE DEGRADATION WARNING ({phase} phase)")
+            self.logger.warning("=" * 60)
+            self.logger.warning("The following optimizations FAILED to apply:")
+            for opt in failed:
+                self.logger.warning(f"  - {opt}")
+            self.logger.warning("")
+            self.logger.warning("Your training will run SLOWER than expected!")
+            self.logger.warning("Check the error logs above for details.")
+            if not self._fail_on_optimization_error:
+                self.logger.warning("Set model_building.fail_on_optimization_error=true to fail fast.")
+            self.logger.warning("=" * 60)
+
+        if is_main and applied:
+            self.logger.info(f"Applied {phase} optimizations: {', '.join(applied)}")
 
     def build_model(
         self,
@@ -97,13 +235,34 @@ class ModelBuilder(TrainingComponent):
         except ImportError as e:
             raise RuntimeError(f"Failed to import MoE model: {e}")
 
-        model_config = config.get('model', {})
+        # Validate model config exists
+        model_config = config.get('model')
+        if model_config is None:
+            raise ValueError(
+                "Configuration missing required 'model' section. "
+                "Please ensure your YAML config includes a 'model:' block with "
+                "at minimum: vocab_size, hidden_size, num_layers, num_attention_heads"
+            )
+
+        if not isinstance(model_config, dict):
+            raise ValueError(
+                f"'model' config must be a dictionary, got {type(model_config).__name__}"
+            )
+
+        # Validate model config values
+        self._validate_model_config(model_config)
+
         is_main = self.context.metadata.get('is_main_process', True)
 
         if is_main:
             self.logger.info("Creating MoE model...")
 
-        # Build MoE config from YAML config
+        # FIX: Get label_smoothing from training.batching section (critical anti-overfitting)
+        training_config = config.get('training', {})
+        batching_config = training_config.get('batching', {})
+        label_smoothing = batching_config.get('label_smoothing', 0.0)
+
+        # Build MoE config from YAML config (using aliases for backwards compatibility)
         moe_config = EnhancedMoEConfig(
             vocab_size=model_config.get('vocab_size', 50680),
             hidden_size=model_config.get('hidden_size', 512),
@@ -115,11 +274,15 @@ class ModelBuilder(TrainingComponent):
             num_experts_per_token=model_config.get('num_experts_per_token', 1),
             max_position_embeddings=model_config.get('max_position_embeddings', 2048),
             router_type=model_config.get('router_type', 'switch'),
-            expert_capacity_factor=model_config.get('capacity_factor', 1.25),
+            expert_capacity_factor=self._get_config_value(
+                model_config, 'expert_capacity_factor', 1.25
+            ),
             attention_dropout=model_config.get('attention_dropout', 0.1),
             dropout=model_config.get('dropout', 0.1),
             use_flash_attention=model_config.get('use_flash_attention', False),
-            router_aux_loss_coef=model_config.get('router_z_loss_coef', 0.01),
+            router_aux_loss_coef=self._get_config_value(
+                model_config, 'router_aux_loss_coef', 0.01
+            ),
             router_jitter_noise=model_config.get('router_jitter_noise', 0.01),
             # Performance optimization flags (CRITICAL - these were missing!)
             gradient_checkpointing=model_config.get('gradient_checkpointing', False),
@@ -127,6 +290,14 @@ class ModelBuilder(TrainingComponent):
             use_triton_kernels=model_config.get('use_triton_kernels', False),
             use_torch_compile=model_config.get('use_torch_compile', False),
             use_optimized_moe=model_config.get('use_optimized_moe', False),
+            # Coherence regularization settings (fixes coherence issues)
+            entropy_regularization=model_config.get('entropy_regularization', 0.0),
+            output_diversity_weight=model_config.get('output_diversity_weight', 0.0),
+            eos_logit_bias=model_config.get('eos_logit_bias', 0.0),
+            eos_token_id=model_config.get('eos_token_id', 3),
+            min_sequence_length=model_config.get('min_sequence_length', 0),
+            # FIX: Label smoothing from training config (critical anti-overfitting)
+            label_smoothing=label_smoothing,
         )
 
         self.model_config = moe_config
@@ -172,16 +343,19 @@ class ModelBuilder(TrainingComponent):
 
         return model
 
-    def apply_optimizations(
+    def apply_pre_device_optimizations(
         self,
         model: nn.Module,
         config: Dict[str, Any],
     ) -> nn.Module:
         """
-        Apply all configured optimizations.
+        Apply optimizations that should happen BEFORE moving to device.
+
+        Currently includes:
+        - torch.compile (graph compilation works better on CPU)
 
         Args:
-            model: Model to optimize
+            model: Model to optimize (on CPU)
             config: Full configuration dict
 
         Returns:
@@ -189,7 +363,47 @@ class ModelBuilder(TrainingComponent):
         """
         is_main = self.context.metadata.get('is_main_process', True)
 
-        # Track failed optimizations for summary warning
+        failed_optimizations: list = []
+        applied_optimizations: list = []
+
+        # Apply torch.compile BEFORE device move for optimal performance
+        model, success = self._apply_torch_compile(model, config, is_main)
+        perf_config = config.get('performance', {})
+        if perf_config.get('enable_torch_compile', False):
+            if success:
+                applied_optimizations.append('torch.compile')
+            else:
+                failed_optimizations.append('torch.compile')
+
+        self._report_optimization_status(
+            'pre-device', applied_optimizations, failed_optimizations, is_main
+        )
+
+        return model
+
+    def apply_post_device_optimizations(
+        self,
+        model: nn.Module,
+        config: Dict[str, Any],
+    ) -> nn.Module:
+        """
+        Apply optimizations that require the model to be on device.
+
+        Includes:
+        - FP8 training (requires CUDA)
+        - Hybrid caching (device-specific)
+        - Overlapped checkpointing (CUDA streams)
+        - Double checkpointing (CUDA streams)
+
+        Args:
+            model: Model to optimize (on device)
+            config: Full configuration dict
+
+        Returns:
+            Optimized model
+        """
+        is_main = self.context.metadata.get('is_main_process', True)
+
         failed_optimizations: list = []
         applied_optimizations: list = []
 
@@ -227,31 +441,38 @@ class ModelBuilder(TrainingComponent):
             else:
                 failed_optimizations.append('Double Checkpointing')
 
-        # Apply torch.compile
-        model, success = self._apply_torch_compile(model, config, is_main)
-        perf_config = config.get('performance', {})
-        if perf_config.get('enable_torch_compile', False):
-            if success:
-                applied_optimizations.append('torch.compile')
-            else:
-                failed_optimizations.append('torch.compile')
+        self._report_optimization_status(
+            'post-device', applied_optimizations, failed_optimizations, is_main
+        )
 
-        # PERFORMANCE FIX: Emit prominent warning if any optimizations failed
-        if is_main and failed_optimizations:
-            self.logger.warning("=" * 60)
-            self.logger.warning("⚠️  PERFORMANCE DEGRADATION WARNING")
-            self.logger.warning("=" * 60)
-            self.logger.warning(f"The following optimizations FAILED to apply:")
-            for opt in failed_optimizations:
-                self.logger.warning(f"  ❌ {opt}")
-            self.logger.warning("")
-            self.logger.warning("Your training will run SLOWER than expected!")
-            self.logger.warning("Check the error logs above for details.")
-            self.logger.warning("=" * 60)
+        return model
 
-        if is_main and applied_optimizations:
-            self.logger.info(f"✅ Applied optimizations: {', '.join(applied_optimizations)}")
+    def apply_optimizations(
+        self,
+        model: nn.Module,
+        config: Dict[str, Any],
+    ) -> nn.Module:
+        """
+        Apply all configured optimizations (legacy method).
 
+        DEPRECATED: Use apply_pre_device_optimizations() before move_to_device()
+        and apply_post_device_optimizations() after for optimal performance.
+
+        Args:
+            model: Model to optimize
+            config: Full configuration dict
+
+        Returns:
+            Optimized model
+        """
+        warnings.warn(
+            "apply_optimizations() is deprecated. Use apply_pre_device_optimizations() "
+            "before move_to_device() and apply_post_device_optimizations() after.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        model = self.apply_pre_device_optimizations(model, config)
+        model = self.apply_post_device_optimizations(model, config)
         return model
 
     def _apply_fp8(
@@ -290,14 +511,21 @@ class ModelBuilder(TrainingComponent):
             model = apply_fp8_training(model, fp8_cfg)
 
             if is_main:
-                self.logger.info("  FP8 training enabled (2-3x speedup on Hopper/Ada GPUs)")
+                self.logger.info("  FP8 training enabled (optimized for Hopper/Ada GPUs)")
 
             return model, True
 
         except Exception as e:
+            self._optimization_errors.append(('FP8', e))
             if is_main:
                 self.logger.error(f"OPTIMIZATION FAILED - FP8 training: {e}")
                 self.logger.error(f"Stack trace:\n{traceback.format_exc()}")
+
+            if self._fail_on_optimization_error:
+                raise RuntimeError(
+                    f"Optimization 'FP8' failed and fail_on_optimization_error=True: {e}"
+                ) from e
+
             return model, False
 
     def _apply_hybrid_caching(
@@ -338,14 +566,21 @@ class ModelBuilder(TrainingComponent):
             model, _ = apply_hybrid_caching(model, cache_config)
 
             if is_main:
-                self.logger.info("  Hybrid caching applied (20-30% throughput improvement)")
+                self.logger.info("  Hybrid caching applied")
 
             return model, True
 
         except Exception as e:
+            self._optimization_errors.append(('Hybrid Caching', e))
             if is_main:
                 self.logger.error(f"OPTIMIZATION FAILED - Hybrid caching: {e}")
                 self.logger.error(f"Stack trace:\n{traceback.format_exc()}")
+
+            if self._fail_on_optimization_error:
+                raise RuntimeError(
+                    f"Optimization 'Hybrid Caching' failed and fail_on_optimization_error=True: {e}"
+                ) from e
+
             return model, False
 
     def _apply_overlapped_checkpointing(
@@ -395,14 +630,21 @@ class ModelBuilder(TrainingComponent):
             )
 
             if is_main:
-                self.logger.info("  Overlapped checkpointing applied (10-20% speedup)")
+                self.logger.info("  Overlapped checkpointing applied")
 
             return model, True
 
         except Exception as e:
+            self._optimization_errors.append(('Overlapped Checkpointing', e))
             if is_main:
                 self.logger.error(f"OPTIMIZATION FAILED - Overlapped checkpointing: {e}")
                 self.logger.error(f"Stack trace:\n{traceback.format_exc()}")
+
+            if self._fail_on_optimization_error:
+                raise RuntimeError(
+                    f"Optimization 'Overlapped Checkpointing' failed and fail_on_optimization_error=True: {e}"
+                ) from e
+
             return model, False
 
     def _apply_double_checkpointing(
@@ -444,14 +686,21 @@ class ModelBuilder(TrainingComponent):
             )
 
             if is_main:
-                self.logger.info("  Double checkpointing applied (10x longer sequences)")
+                self.logger.info("  Double checkpointing applied (enables longer sequences)")
 
             return model, True
 
         except Exception as e:
+            self._optimization_errors.append(('Double Checkpointing', e))
             if is_main:
                 self.logger.error(f"OPTIMIZATION FAILED - Double checkpointing: {e}")
                 self.logger.error(f"Stack trace:\n{traceback.format_exc()}")
+
+            if self._fail_on_optimization_error:
+                raise RuntimeError(
+                    f"Optimization 'Double Checkpointing' failed and fail_on_optimization_error=True: {e}"
+                ) from e
+
             return model, False
 
     def _apply_torch_compile(
@@ -486,15 +735,157 @@ class ModelBuilder(TrainingComponent):
             )
 
             if is_main:
-                self.logger.info("  torch.compile applied (15-25% speedup after warmup)")
+                self.logger.info("  torch.compile applied (speedup visible after warmup)")
 
             return model, True
 
         except Exception as e:
+            self._optimization_errors.append(('torch.compile', e))
             if is_main:
                 self.logger.error(f"OPTIMIZATION FAILED - torch.compile: {e}")
                 self.logger.error(f"Stack trace:\n{traceback.format_exc()}")
+
+            # Fail fast if configured
+            if self._fail_on_optimization_error:
+                raise RuntimeError(
+                    f"Optimization 'torch.compile' failed and fail_on_optimization_error=True: {e}"
+                ) from e
+
             return model, False
+
+    def _extract_optimizer_params(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract optimizer parameters for DeepSpeed from config.
+
+        Args:
+            config: Full Ava config dictionary
+
+        Returns:
+            Optimizer params dict compatible with DeepSpeed
+        """
+        training_cfg = config.get('training', {})
+        optimizer_cfg = training_cfg.get('optimizer', {})
+
+        # Handle optimizer config as dict or string
+        if isinstance(optimizer_cfg, dict):
+            opt_type = optimizer_cfg.get('type', 'AdamW')
+            opt_lr = optimizer_cfg.get('learning_rate') or training_cfg.get('learning_rate', 1e-4)
+            opt_betas = optimizer_cfg.get('betas', (0.9, 0.999))
+            opt_eps = optimizer_cfg.get('eps', 1e-8)
+            opt_wd = optimizer_cfg.get('weight_decay') or training_cfg.get('weight_decay', 0.01)
+        else:
+            # optimizer is a string like 'adamw'
+            opt_type = 'AdamW'
+            opt_lr = training_cfg.get('learning_rate', 1e-4)
+            opt_betas = (0.9, 0.999)
+            opt_eps = 1e-8
+            opt_wd = training_cfg.get('weight_decay', 0.01)
+
+        return {
+            'type': opt_type,
+            'params': {
+                'lr': opt_lr,
+                'weight_decay': opt_wd,
+                'betas': list(opt_betas) if isinstance(opt_betas, tuple) else opt_betas,
+                'eps': opt_eps,
+            }
+        }
+
+    def _extract_scheduler_params(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract scheduler parameters for DeepSpeed from config.
+
+        Args:
+            config: Full Ava config dictionary
+
+        Returns:
+            Scheduler params dict compatible with DeepSpeed
+        """
+        training_cfg = config.get('training', {})
+        scheduler_cfg = training_cfg.get('schedule', {}) or training_cfg.get('scheduler', {})
+
+        warmup_steps = scheduler_cfg.get('warmup_steps', training_cfg.get('warmup_steps', 1000))
+        total_steps = training_cfg.get('max_steps', training_cfg.get('total_steps', 100000))
+        learning_rate = training_cfg.get('learning_rate', 1e-4)
+        min_lr = scheduler_cfg.get('min_lr', training_cfg.get('min_lr', 0))
+
+        return {
+            'type': 'WarmupDecayLR',
+            'params': {
+                'warmup_min_lr': min_lr,
+                'warmup_max_lr': learning_rate,
+                'warmup_num_steps': warmup_steps,
+                'total_num_steps': total_steps,
+            }
+        }
+
+    def _wrap_with_deepspeed(
+        self,
+        model: nn.Module,
+        config: Dict[str, Any],
+        rank: int,
+        world_size: int,
+    ) -> tuple:
+        """
+        Initialize DeepSpeed engine with ZeRO optimization.
+
+        Args:
+            model: Model to wrap
+            config: Full Ava config dictionary
+            rank: Current process rank
+            world_size: Total number of processes
+
+        Returns:
+            Tuple of (model_engine, optimizer, scheduler)
+        """
+        try:
+            import deepspeed
+        except ImportError:
+            self.logger.error(
+                "DeepSpeed enabled but not installed! "
+                "Install with: pip install deepspeed"
+            )
+            self.logger.warning("Falling back to DDP")
+            # Fallback to DDP
+            wrapped_model = DistributedDataParallel(
+                model,
+                device_ids=[rank],
+                output_device=rank,
+                find_unused_parameters=False
+            )
+            return wrapped_model, None, None
+
+        from .deepspeed_config_builder import build_deepspeed_config, validate_deepspeed_config
+
+        deepspeed_cfg = config.get('deepspeed', {})
+
+        # Build DeepSpeed JSON config from YAML
+        try:
+            ds_config = build_deepspeed_config(config)
+            validate_deepspeed_config(ds_config)
+        except Exception as e:
+            self.logger.error(f"Failed to build DeepSpeed config: {e}")
+            raise
+
+        # Initialize DeepSpeed
+        # DeepSpeed will create optimizer and scheduler internally
+        model_engine, optimizer, _, scheduler = deepspeed.initialize(
+            model=model,
+            model_parameters=model.parameters(),
+            config=ds_config,
+        )
+
+        zero_stage = deepspeed_cfg.get('zero_stage', 2)
+        if rank == 0:
+            self.logger.info(
+                f"DeepSpeed initialized: ZeRO-{zero_stage}, world_size={world_size}"
+            )
+
+            # Log DeepSpeed info
+            from .deepspeed_utils import log_deepspeed_info
+            log_deepspeed_info(model_engine, rank)
+
+        return model_engine, optimizer, scheduler
 
     def wrap_distributed(
         self,
@@ -503,7 +894,7 @@ class ModelBuilder(TrainingComponent):
         world_size: int = 1,
     ) -> nn.Module:
         """
-        Wrap model in DDP for distributed training.
+        Wrap model in DDP or DeepSpeed for distributed training.
 
         Args:
             model: Model to wrap
@@ -511,14 +902,30 @@ class ModelBuilder(TrainingComponent):
             world_size: Total number of processes
 
         Returns:
-            DDP-wrapped model if distributed, original model otherwise
+            DDP-wrapped model or DeepSpeed engine, or original model if single-GPU
         """
-        if world_size > 1 and DISTRIBUTED_AVAILABLE:
+        # Check if DeepSpeed is enabled
+        deepspeed_config = self.context.config.get('deepspeed', {}) if self.context.config else {}
+
+        # Allow DeepSpeed even with world_size=1 (useful for CPU/NVMe offloading)
+        if deepspeed_config.get('enabled', False) and DISTRIBUTED_AVAILABLE:
+            # DeepSpeed path - returns engine + optimizer + scheduler
+            engine, optimizer, scheduler = self._wrap_with_deepspeed(
+                model, self.context.config, rank, world_size
+            )
+
+            # Store optimizer/scheduler in context for later retrieval
+            self.context.deepspeed_optimizer = optimizer
+            self.context.deepspeed_scheduler = scheduler
+
+            return engine
+        elif world_size > 1 and DISTRIBUTED_AVAILABLE:
+            # DDP path (existing code)
             model = DistributedDataParallel(
                 model,
                 device_ids=[rank],
                 output_device=rank,
-                find_unused_parameters=True  # Required for MoE - not all experts used every batch
+                find_unused_parameters=False  # Disabled - adds overhead, not needed for this model
             )
             if rank == 0:
                 self.logger.info(f"Model wrapped in DDP (world_size={world_size})")
@@ -529,6 +936,9 @@ class ModelBuilder(TrainingComponent):
         """
         Move model to target device.
 
+        Note: Does NOT set context.model. The caller (train_pipeline.py) is
+        responsible for setting context.model after ALL building steps complete.
+
         Args:
             model: Model to move
             device: Target device
@@ -537,7 +947,6 @@ class ModelBuilder(TrainingComponent):
             Model on target device
         """
         model = model.to(device)
-        self.context.model = model
         return model
 
     def load_checkpoint(

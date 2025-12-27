@@ -15,7 +15,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Any, List
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Any, List, Union
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -74,13 +75,26 @@ class EnhancedMoEConfig:
     intermediate_size: int = 3072
     max_position_embeddings: int = 2048
 
+    # Special token IDs (must match tokenizer)
+    pad_token_id: int = 0
+    eos_token_id: int = 1
+    bos_token_id: int = 2
+
     # MoE settings
     num_experts: int = 8
     num_experts_per_token: int = 2
     expert_capacity_factor: float = 1.25
+    capacity_factor: float = 1.25  # Alias for expert_capacity_factor (YAML compatibility)
     router_type: str = 'switch'  # 'switch', 'deepseek', etc.
     router_aux_loss_coef: float = 0.01
     router_jitter_noise: float = 0.01
+
+    # MoE auxiliary loss coefficients (for load balancing and stability)
+    router_z_loss_coef: float = 0.001  # Router z-loss for stability
+    load_balance_loss_coef: float = 0.01  # Load balancing loss
+    diversity_loss_coef: float = 0.0  # Expert diversity loss
+    expert_dropout_loss_coef: float = 0.0  # Expert dropout loss
+    expert_dropout: float = 0.0  # Expert dropout probability
 
     # Regularization
     attention_dropout: float = 0.1
@@ -94,6 +108,7 @@ class EnhancedMoEConfig:
     quantize_kv_cache: bool = False  # INT8 quantization for KV cache (75% memory savings)
     rope_theta: float = 10000.0
     hidden_act: str = 'gelu'
+    activation: str = 'gelu'  # Alias for hidden_act (YAML compatibility)
     initializer_range: float = 0.02
 
     # Performance optimization flags (must be passed from YAML config)
@@ -102,6 +117,10 @@ class EnhancedMoEConfig:
     use_triton_kernels: bool = False  # 20-30% routing speedup
     use_torch_compile: bool = False  # 15-25% overall speedup
     use_optimized_moe: bool = False  # Use optimized MoE implementation
+
+    # Memory optimization flags
+    use_lora_experts: bool = False  # Use LoRA for expert parameters
+    use_expert_offloading: bool = False  # Offload experts to CPU
 
     # Additional features
     use_moh: bool = False  # Mixture of Heads
@@ -117,16 +136,19 @@ class EnhancedMoEConfig:
     # Attention settings
     use_causal_attention: bool = True  # Causal masking for autoregressive LM (set False for bidirectional)
 
-    # Loss regularization features (disabled by default for speed, enable if needed for coherence)
-    entropy_regularization: float = 0.0  # Entropy bonus for diverse predictions (expensive, set 0.01 if needed)
-    output_diversity_weight: float = 0.0  # Penalty for low output diversity (expensive, set 0.001 if needed)
+    # Loss regularization features for coherence (small defaults that help most cases)
+    entropy_regularization: float = 0.005  # Entropy bonus for diverse predictions (reduces repetition)
+    output_diversity_weight: float = 0.0005  # Penalty for low output diversity (reduces "the the the" patterns)
     eos_logit_bias: float = 0.0  # Bias applied to EOS token logits (set 0.5 to reduce early termination)
-    eos_token_id: int = 3  # EOS token ID (tokenizer-specific, should match tokenizer)
     min_sequence_length: int = 0  # Minimum sequence length before allowing EOS
+    label_smoothing: float = 0.0  # CRITICAL: Label smoothing for cross-entropy loss (0.1 recommended for anti-overfitting)
+
+    # Weight tying
+    tie_word_embeddings: bool = False  # CRITICAL: Tie input/output embeddings (improves vocab learning, reduces parameters)
 
 
 class RoPEPositionalEmbedding(nn.Module):
-    """Rotary Position Embedding (RoPE) with caching for common sequence lengths."""
+    """Rotary Position Embedding (RoPE) with caching for position ranges."""
 
     # Type annotation for registered buffer
     inv_freq: torch.Tensor
@@ -141,38 +163,60 @@ class RoPEPositionalEmbedding(nn.Module):
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
 
-        # PHASE 3 OPTIMIZATION: Cache for common sequence lengths (5-8% speedup)
-        # BOTTLENECK FIX: Cache is now device-independent (key is seq_len only)
-        # This prevents cache bloat on multi-device setups and improves hit rate
-        self._cache: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
-        self._cache_max_size = 50  # Increased from 30 for better hit rate with dynamic batching
+        # Cache keyed by (position_offset, seq_len, device_str) tuple for correct position handling
+        # This ensures generation with KV cache gets correct position embeddings
+        # FIX: Cache on same device as request to avoid CPU<->GPU transfers every forward pass
+        self._cache: Dict[Tuple[int, int, str], Tuple[torch.Tensor, torch.Tensor]] = {}
+        self._cache_max_size = 20  # Limited to prevent memory bloat
 
-    def forward(self, seq_len: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute cos and sin for rotary embeddings with caching."""
-        # BOTTLENECK FIX: Device-independent cache lookup for >80% hit rate
-        if seq_len in self._cache:
-            cos_cached, sin_cached = self._cache[seq_len]
-            # Move to target device if needed (cheap operation for small tensors)
-            if cos_cached.device != device:
-                return cos_cached.to(device), sin_cached.to(device)
+    def forward(
+        self,
+        seq_len: int,
+        device: torch.device,
+        position_offset: int = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute cos and sin for rotary embeddings with caching.
+
+        Args:
+            seq_len: Number of positions to compute
+            device: Target device
+            position_offset: Starting position (for KV cache generation)
+
+        Returns:
+            cos, sin tensors for positions [position_offset, position_offset + seq_len)
+        """
+        # Include device in cache key to avoid cross-device transfers
+        cache_key = (position_offset, seq_len, str(device))
+
+        if cache_key in self._cache:
+            # Move to end for LRU (most recently used)
+            cos_cached, sin_cached = self._cache.pop(cache_key)
+            self._cache[cache_key] = (cos_cached, sin_cached)
             return cos_cached, sin_cached
 
-        # Compute if not cached - compute on target device
-        t = torch.arange(seq_len, device=device).type_as(self.inv_freq)
+        # Compute positions [position_offset, position_offset + seq_len)
+        t = torch.arange(position_offset, position_offset + seq_len, device=device)
+        t = t.type_as(self.inv_freq)
         freqs = torch.outer(t, self.inv_freq.to(device))
         emb = torch.cat((freqs, freqs), dim=-1)
         cos = emb.cos()
         sin = emb.sin()
 
-        # Cache for common sequence lengths (limit cache size to avoid OOM)
-        # BOTTLENECK FIX: Store on same device, LRU eviction for oldest entries
+        # LRU eviction - remove oldest entry if at capacity
         if len(self._cache) >= self._cache_max_size:
-            # Remove oldest entry (first key in dict)
             oldest_key = next(iter(self._cache))
             del self._cache[oldest_key]
-        self._cache[seq_len] = (cos, sin)
+
+        # Store on same device to avoid CPU<->GPU transfers every forward pass
+        # Trade-off: Uses more GPU memory but avoids repeated transfers
+        self._cache[cache_key] = (cos, sin)
 
         return cos, sin
+
+    def clear_cache(self) -> None:
+        """Clear the RoPE position embedding cache to free memory."""
+        self._cache.clear()
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -294,19 +338,16 @@ class MultiHeadAttention(nn.Module):
 
         # Apply RoPE if configured
         if self.rope is not None:
-            # For KV cache, we need to account for the position offset
+            # For KV cache, compute RoPE for correct position range
             if past_key_value is not None:
-                # past_key_value contains (past_k, past_v)
                 past_seq_len = past_key_value[0].shape[2]
-                # Apply RoPE with correct position offsets
-                cos, sin = self.rope(past_seq_len + seq_len, hidden_states.device)
-                # Only use RoPE embeddings for current sequence
-                cos = cos[past_seq_len:past_seq_len + seq_len].to(dtype=input_dtype)[None, None, :, :]
-                sin = sin[past_seq_len:past_seq_len + seq_len].to(dtype=input_dtype)[None, None, :, :]
+                # Compute RoPE only for current positions [past_seq_len, past_seq_len + seq_len)
+                cos, sin = self.rope(seq_len, hidden_states.device, position_offset=past_seq_len)
             else:
-                cos, sin = self.rope(seq_len, hidden_states.device)
-                cos = cos.to(dtype=input_dtype)[None, None, :, :]
-                sin = sin.to(dtype=input_dtype)[None, None, :, :]
+                # Standard case: positions [0, seq_len)
+                cos, sin = self.rope(seq_len, hidden_states.device, position_offset=0)
+            cos = cos.to(dtype=input_dtype)[None, None, :, :]
+            sin = sin.to(dtype=input_dtype)[None, None, :, :]
             q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # Concatenate with past key-values if provided (KV cache for generation)
@@ -314,8 +355,9 @@ class MultiHeadAttention(nn.Module):
             past_k, past_v = past_key_value
             # Dequantize if cache was quantized
             if self.quantize_kv_cache and past_k.dtype == torch.int8:
-                past_k = past_k.to(k.dtype) / 127.0
-                past_v = past_v.to(v.dtype) / 127.0
+                # FIX: Use symmetric scale 127.5 to utilize full INT8 range [-128, 127]
+                past_k = past_k.to(k.dtype) / 127.5
+                past_v = past_v.to(v.dtype) / 127.5
             k = torch.cat([past_k, k], dim=2)  # Concatenate on sequence dimension
             v = torch.cat([past_v, v], dim=2)
 
@@ -323,9 +365,10 @@ class MultiHeadAttention(nn.Module):
         if use_cache:
             if self.quantize_kv_cache:
                 # Quantize to INT8 for 75% memory savings
-                # Scale to [-127, 127] range and convert to int8
-                k_quantized = (k * 127.0).clamp(-127, 127).to(torch.int8)
-                v_quantized = (v * 127.0).clamp(-127, 127).to(torch.int8)
+                # FIX: Use symmetric scale 127.5 and round for better precision
+                # This uses full INT8 range [-128, 127] instead of just [-127, 127]
+                k_quantized = (k * 127.5).round().clamp(-128, 127).to(torch.int8)
+                v_quantized = (v * 127.5).round().clamp(-128, 127).to(torch.int8)
                 present_key_value = (k_quantized, v_quantized)
             else:
                 present_key_value = (k, v)
@@ -452,8 +495,10 @@ class MoEFeedForward(nn.Module):
         # Simple linear router
         self.router = nn.Linear(config.hidden_size, config.num_experts)
 
-        # Load balance loss coefficient
+        # Loss coefficients for MoE regularization
         self.load_balance_loss_coef = getattr(config, 'load_balance_loss_coef', 0.01)
+        self.diversity_loss_coef = getattr(config, 'diversity_loss_coef', 0.0)  # Expert diversity
+        self.router_z_loss_coef = getattr(config, 'router_z_loss_coef', 0.001)  # Router stability
 
         # Use ModuleList with SwiGLU experts (memory-efficient, fast)
         self.experts = nn.ModuleList([
@@ -475,7 +520,9 @@ class MoEFeedForward(nn.Module):
         router_probs = F.softmax(router_logits, dim=-1)
 
         # Auxiliary loss info
-        aux_info = {}
+        aux_info = {
+            'router_type': 'simple_topk',  # Track router type for logging
+        }
 
         # Calculate load balancing auxiliary loss (Switch Transformer formulation)
         # Expert utilization (fraction of tokens routed to each expert)
@@ -497,17 +544,45 @@ class MoEFeedForward(nn.Module):
         # Load balancing loss - gradient flows through expert_avg_prob
         # expert_fraction.detach() makes gradient flow explicit
         load_balance_loss = self.num_experts * (expert_fraction.detach() * expert_avg_prob).sum()
+        # CRITICAL FIX: Ensure load_balance_loss is a scalar
+        if load_balance_loss.numel() > 1:
+            load_balance_loss = load_balance_loss.mean()
         aux_info['load_balance_loss'] = load_balance_loss * self.load_balance_loss_coef
         aux_info['router_probs'] = router_probs.detach()
         aux_info['expert_utilization'] = expert_counts.detach()
 
+        # Add per-expert utilization for WandB logging
+        for expert_id in range(self.num_experts):
+            aux_info[f'expert_{expert_id}_utilization'] = expert_counts[expert_id].item()
+
+        # Router z-loss for stability (prevents router logits from becoming too large)
+        if self.router_z_loss_coef > 0:
+            log_z = torch.logsumexp(router_logits, dim=-1)
+            log_z = torch.clamp(log_z, max=20.0)  # Prevent overflow when squared
+            router_z_loss = log_z.pow(2).mean()
+            aux_info['load_balance_loss'] = aux_info['load_balance_loss'] + router_z_loss * self.router_z_loss_coef
+
+        # Expert diversity loss (encourages experts to specialize differently)
+        if self.diversity_loss_coef > 0:
+            # Compute variance of expert probabilities - low variance = all experts similar (bad)
+            # We want HIGH variance (each expert handles different types of tokens)
+            expert_prob_var = expert_avg_prob.var()
+            # Negative loss: bonus for high variance (diverse expert usage)
+            diversity_loss = -expert_prob_var
+            aux_info['load_balance_loss'] = aux_info['load_balance_loss'] + diversity_loss * self.diversity_loss_coef
+
         # Top-k routing
         top_k_probs, top_k_indices = torch.topk(router_probs, self.num_experts_per_token, dim=-1)
 
-        # Safe renormalization (bf16/fp16 compatible)
+        # FIX: Numerically stable renormalization with proper epsilon for low precision
+        # Only renormalize if sum deviates significantly (avoids unnecessary FP errors)
         top_k_sum = top_k_probs.sum(dim=-1, keepdim=True)
-        epsilon = 1e-6 if dtype in (torch.float16, torch.bfloat16) else 1e-9
-        top_k_probs = top_k_probs / (top_k_sum + epsilon)
+        # BF16 has ~3 decimal digits precision, FP16 has ~4, FP32 has ~7
+        epsilon = 1e-3 if dtype == torch.bfloat16 else (1e-4 if dtype == torch.float16 else 1e-7)
+        # Only renormalize if deviation exceeds epsilon (prevents accumulating FP errors)
+        needs_renorm = (top_k_sum - 1.0).abs() > epsilon
+        if needs_renorm.any():
+            top_k_probs = top_k_probs / top_k_sum.clamp(min=epsilon)
 
         # Process through experts using batched computation
         # D2D FIX: Use in-place index_add_ to avoid creating intermediate tensors
@@ -729,8 +804,9 @@ class EnhancedMoEModel(nn.Module):
         # TIER2 OPTIMIZATION: Cache for causal attention masks (5-10% speedup)
         # BOTTLENECK FIX: Cache is now device/dtype-independent (key is seq_len only)
         # This prevents cache bloat and improves hit rate with dynamic batching
+        # FIX: Reduced cache size to limit memory usage
         self._causal_mask_cache: Dict[int, torch.Tensor] = {}
-        self._causal_mask_cache_max_size = 50  # Increased from 8 for better hit rate
+        self._causal_mask_cache_max_size = 20  # Reduced from 50 to limit memory
 
         # Gradient checkpointing for 70-80% memory savings
         self.gradient_checkpointing = getattr(config, 'gradient_checkpointing', False)
@@ -794,11 +870,12 @@ class EnhancedMoEModel(nn.Module):
         causal_mask_bool = causal_mask_bool[None, None, :, :]
 
         # Cache the bool mask (limit cache size with LRU eviction)
+        # FIX: Store on CPU to save GPU memory
         if len(self._causal_mask_cache) >= self._causal_mask_cache_max_size:
             # Remove oldest entry
             oldest_key = next(iter(self._causal_mask_cache))
             del self._causal_mask_cache[oldest_key]
-        self._causal_mask_cache[seq_len] = causal_mask_bool
+        self._causal_mask_cache[seq_len] = causal_mask_bool.cpu()
 
         # Convert to target dtype for return
         causal_mask = torch.where(
@@ -899,11 +976,12 @@ class EnhancedMoEModel(nn.Module):
                 mask_value = torch.tensor(torch.finfo(hidden_states.dtype).min, dtype=hidden_states.dtype, device=device)
                 padding_mask = torch.where(padding_mask == 0, mask_value, torch.tensor(0.0, dtype=hidden_states.dtype, device=device))
 
-                # Combine causal and padding masks
-                # padding_mask: [batch, 1, 1, seq_len] - masks padding tokens
-                # causal_mask: [1, 1, seq_len, seq_len] - masks future tokens
-                # Broadcasting will handle the combination
-                attention_mask = causal_mask + padding_mask  # Broadcasting magic
+                # Combine causal and padding masks via broadcasting:
+                # - causal_mask: [1, 1, seq_len, seq_len] masks future tokens (K > Q positions)
+                # - padding_mask: [batch, 1, 1, seq_len] masks padding in KEY dimension
+                # - Result: [batch, 1, seq_len, seq_len] with both masks applied
+                # Broadcasting expands causal_mask to batch dim and padding_mask to query dim
+                attention_mask = causal_mask + padding_mask
             else:
                 # Just use causal mask
                 attention_mask = causal_mask
@@ -993,11 +1071,22 @@ class EnhancedMoEModel(nn.Module):
                     # via .any() calls. Use torch.autograd.detect_anomaly() during debugging instead.
                     # For production, cross_entropy will naturally produce NaN loss if inputs are bad.
 
+                    # FIX: Get label smoothing from config (critical anti-overfitting technique)
+                    label_smoothing = getattr(self.config, 'label_smoothing', 0.0) or 0.0
+
+                    # Use -100 for ignore_index (standard PyTorch convention)
+                    # The sequence packing collator sets padding labels to -100
                     loss = F.cross_entropy(
                         shift_logits.view(-1, self.config.vocab_size),
                         shift_labels.view(-1),
-                        ignore_index=-100
+                        ignore_index=-100,
+                        label_smoothing=label_smoothing,  # ADDED: critical for preventing overfitting
+                        reduction='mean'  # EXPLICIT: ensure scalar loss
                     )
+
+                    # CRITICAL FIX: Ensure loss is a scalar (safety check)
+                    if loss.numel() > 1:
+                        loss = loss.mean()
 
                 # CRITICAL FIX: Add MoE auxiliary loss for load balancing
                 # NOTE: aux losses are already scaled by their coefficients in MoEFeedForward.forward()
@@ -1012,8 +1101,32 @@ class EnhancedMoEModel(nn.Module):
                                 num_layers_with_aux += 1
 
                         if num_layers_with_aux > 0:
-                            avg_aux_loss = total_aux_loss / num_layers_with_aux
-                            loss = loss + avg_aux_loss
+                            # FIX: Normalize by number of layers to prevent amplification.
+                            # Without normalization, aux loss dominates cross-entropy loss
+                            # (e.g., 16 layers = 16x amplification of load balance loss).
+                            # Each layer's loss coefficient (e.g., 0.01) already controls magnitude.
+                            normalize_aux = getattr(self.config, 'normalize_aux_loss', True)
+                            if normalize_aux:
+                                total_aux_loss = total_aux_loss / num_layers_with_aux
+
+                            # CRITICAL FIX: Ensure total_aux_loss is a scalar tensor
+                            # If it has multiple elements, reduce it to mean
+                            if isinstance(total_aux_loss, torch.Tensor) and total_aux_loss.numel() > 1:
+                                total_aux_loss = total_aux_loss.mean()
+
+                            # Track loss component ratios for diagnosis
+                            ce_loss_value = float(loss.item())
+                            aux_loss_value = float(total_aux_loss.item())
+
+                            # Store in aux_info for logging by training loop
+                            if all_aux_info and len(all_aux_info) > 0:
+                                all_aux_info[0]['loss_components'] = {
+                                    'cross_entropy_loss': ce_loss_value,
+                                    'aux_loss': aux_loss_value,
+                                    'aux_loss_ratio': aux_loss_value / max(ce_loss_value, 1e-8)
+                                }
+
+                            loss = loss + total_aux_loss
 
                 # FIX #18: Add entropy regularization (encourages diverse predictions)
                 entropy_reg = getattr(self.config, 'entropy_regularization', 0.0) or 0.0
@@ -1022,8 +1135,14 @@ class EnhancedMoEModel(nn.Module):
                         # Calculate entropy of output distribution
                         output_probs = F.softmax(shift_logits, dim=-1)
                         # Entropy: -sum(p * log(p))
-                        entropy = -(output_probs * torch.log(output_probs + 1e-9)).sum(dim=-1).mean()
-                        # Subtract entropy (negative loss = bonus for high entropy/diversity)
+                        # FIX: Clamp probabilities to avoid log(0) and numerical instability
+                        safe_probs = torch.clamp(output_probs, min=1e-9, max=1.0)
+                        entropy = -(safe_probs * torch.log(safe_probs)).sum(dim=-1).mean()
+                        # CRITICAL FIX: Ensure entropy is a scalar
+                        if entropy.numel() > 1:
+                            entropy = entropy.mean()
+                        # CRITICAL FIX: Subtract entropy bonus (rewards high-entropy/diverse predictions)
+                        # Higher entropy = more diverse token distribution = lower loss = healthier training
                         loss = loss - entropy_reg * entropy
 
                 # FIX #19: Add differentiable output diversity penalty (penalizes repetitive outputs)
@@ -1049,7 +1168,15 @@ class EnhancedMoEModel(nn.Module):
                         # Diversity loss: penalize high similarity (repetition)
                         # Average similarity across sequence and batch
                         diversity_loss = similarity.mean()
+                        # CRITICAL FIX: Ensure diversity_loss is a scalar
+                        if diversity_loss.numel() > 1:
+                            diversity_loss = diversity_loss.mean()
                         loss = loss + diversity_weight * diversity_loss
+
+        # FINAL SAFETY CHECK: Ensure loss is always a scalar before returning
+        # This handles any edge cases where multi-element tensors might slip through
+        if loss is not None and isinstance(loss, torch.Tensor) and loss.numel() > 1:
+            loss = loss.mean()
 
         if return_dict:
             return {
@@ -1077,6 +1204,98 @@ class EnhancedMoEModel(nn.Module):
 
     def set_output_embeddings(self, value):
         self.lm_head = value
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        checkpoint_path: str,
+        config: Optional['EnhancedMoEConfig'] = None,
+        strict: bool = True,
+        device: Optional[Union[str, torch.device]] = None,
+        **kwargs
+    ) -> 'EnhancedMoEModel':
+        """
+        Load model from pretrained checkpoint.
+
+        Supports both .pt and .safetensors formats.
+
+        Args:
+            checkpoint_path: Path to checkpoint file
+            config: Optional config to override checkpoint config
+            strict: Whether to enforce strict state_dict loading
+            device: Device to load model on
+            **kwargs: Additional model constructor arguments
+
+        Returns:
+            EnhancedMoEModel with loaded weights
+
+        Example:
+            >>> model = EnhancedMoEModel.from_pretrained('/path/to/checkpoint.pt')
+            >>> model = EnhancedMoEModel.from_pretrained('/path/to/checkpoint.pt', device='cuda:0')
+        """
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        logger.info(f"Loading checkpoint from {checkpoint_path}")
+
+        # Load checkpoint (support multiple formats)
+        if checkpoint_path.suffix == '.safetensors':
+            try:
+                from safetensors.torch import load_file
+                state_dict = load_file(str(checkpoint_path))
+                checkpoint_config = None
+            except ImportError:
+                raise ImportError("safetensors required for .safetensors files")
+        else:
+            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+
+            # Extract state_dict (support multiple checkpoint formats)
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+                checkpoint_config = checkpoint.get('config', None)
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+                checkpoint_config = checkpoint.get('config', None)
+            elif 'model' in checkpoint and isinstance(checkpoint['model'], dict):
+                state_dict = checkpoint['model']
+                checkpoint_config = checkpoint.get('config', None)
+            else:
+                # Assume entire checkpoint is state_dict
+                state_dict = checkpoint
+                checkpoint_config = None
+
+        # Determine config (priority: user > checkpoint > error)
+        if config is not None:
+            model_config = config
+            logger.info("Using user-provided config")
+        elif checkpoint_config is not None:
+            if isinstance(checkpoint_config, dict):
+                model_config = EnhancedMoEConfig(**checkpoint_config)
+            else:
+                model_config = checkpoint_config
+            logger.info("Using config from checkpoint")
+        else:
+            raise ValueError(
+                "No config available. Provide config argument or ensure "
+                "checkpoint contains 'config' key"
+            )
+
+        # Create and load model
+        logger.info(f"Initializing model: vocab={model_config.vocab_size}, "
+                    f"hidden={model_config.hidden_size}, layers={model_config.num_layers}")
+        model = cls(model_config, **kwargs)
+
+        incompatible = model.load_state_dict(state_dict, strict=strict)
+        if not strict and (incompatible.missing_keys or incompatible.unexpected_keys):
+            logger.warning(f"Incompatible keys: missing={len(incompatible.missing_keys)}, "
+                          f"unexpected={len(incompatible.unexpected_keys)}")
+
+        if device is not None:
+            model = model.to(device)
+
+        logger.info(f"✓ Successfully loaded model from {checkpoint_path}")
+        return model
 
     @torch.no_grad()
     @torch.compiler.disable(recursive=True)  # CRITICAL: Disable compile for dynamic shapes in generation
@@ -1591,6 +1810,7 @@ class OptimizedMoETransformer(nn.Module):
             shift_labels = labels[..., 1:].contiguous()
 
             # Standard cross-entropy loss
+            # Use -100 as ignore_index (standard PyTorch convention)
             loss = F.cross_entropy(
                 shift_logits.view(-1, self.config.vocab_size),
                 shift_labels.view(-1),

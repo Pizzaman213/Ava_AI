@@ -15,7 +15,7 @@ import torch.nn as nn
 
 def test_coherence_metrics_import():
     """Test that coherence module imports correctly."""
-    from src.Ava.evaluation.coherence import (
+    from src.ava.eval.coherence import (
         CoherenceMetrics,
         CoherenceMeasurer,
         CoherenceConfig,
@@ -27,7 +27,7 @@ def test_coherence_metrics_import():
 
 def test_coherence_metrics_dataclass():
     """Test CoherenceMetrics dataclass."""
-    from src.Ava.evaluation.coherence import CoherenceMetrics
+    from src.ava.eval.coherence import CoherenceMetrics
 
     metrics = CoherenceMetrics(
         perplexity=25.5,
@@ -52,7 +52,7 @@ def test_coherence_metrics_dataclass():
 
 def test_coherence_config():
     """Test CoherenceConfig dataclass."""
-    from src.Ava.evaluation.coherence import CoherenceConfig
+    from src.ava.eval.coherence import CoherenceConfig
 
     # Default config
     config = CoherenceConfig()
@@ -110,7 +110,7 @@ class SimpleTransformer(nn.Module):
 
 def test_coherence_measurer_basic():
     """Test basic CoherenceMeasurer functionality."""
-    from src.Ava.evaluation.coherence import CoherenceMeasurer, CoherenceConfig
+    from src.ava.eval.coherence import CoherenceMeasurer, CoherenceConfig
 
     # Create simple model
     model = SimpleTransformer(vocab_size=1000, hidden_size=64)
@@ -148,7 +148,7 @@ def test_coherence_measurer_basic():
 
 def test_repetition_score():
     """Test repetition score calculation."""
-    from src.Ava.evaluation.coherence import CoherenceMeasurer, CoherenceConfig
+    from src.ava.eval.coherence import CoherenceMeasurer, CoherenceConfig
 
     model = SimpleTransformer(vocab_size=1000, hidden_size=64)
     config = CoherenceConfig()
@@ -171,7 +171,7 @@ def test_repetition_score():
 
 def test_perplexity_calculation():
     """Test perplexity calculation."""
-    from src.Ava.evaluation.coherence import CoherenceMeasurer, CoherenceConfig
+    from src.ava.eval.coherence import CoherenceMeasurer, CoherenceConfig
 
     model = SimpleTransformer(vocab_size=1000, hidden_size=64)
     config = CoherenceConfig()
@@ -189,7 +189,7 @@ def test_perplexity_calculation():
 
 def test_unique_ratio():
     """Test unique token ratio calculation."""
-    from src.Ava.evaluation.coherence import CoherenceMeasurer, CoherenceConfig
+    from src.ava.eval.coherence import CoherenceMeasurer, CoherenceConfig
 
     model = SimpleTransformer(vocab_size=1000, hidden_size=64)
     config = CoherenceConfig()
@@ -210,7 +210,7 @@ def test_unique_ratio():
 
 def test_config_from_training_config():
     """Test that CoherenceConfig works with training config."""
-    from src.Ava.config.training_config import CoherenceConfig as TrainingCoherenceConfig
+    from src.ava.config.training_config import CoherenceConfig as TrainingCoherenceConfig
 
     # Create config from training_config module
     config = TrainingCoherenceConfig(

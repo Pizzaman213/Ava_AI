@@ -33,11 +33,10 @@ model:
   deepspeed_moe_param_groups: true
 
 training:
-  batch_size: 64
-  gradient_accumulation_steps: 2
-  optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
-  learning_rate: 0.000017  # LION: 3x smaller than AdamW (5e-5 -> 0.000017)
-  lion_betas: [0.9, 0.99]  # Lion-specific betas (different from AdamW's [0.9, 0.999])
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  optimizer: adamw  # Standard AdamW (DeepSpeed compatible, was lion)
+  learning_rate: 0.00005  # Standard AdamW learning rate for large models
   max_gradient_norm: 1.0
   num_epochs: 3
   warmup_steps: 5000
@@ -48,35 +47,46 @@ training:
 # DeepSpeed Configuration (ZeRO-3 Focus)
 deepspeed:
   enabled: true
-  zero_stage: 3              # Full parameter sharding
-  cpu_offload: true          # Enable CPU offloading for ultra-large models
-  nvme_offload: false        # Can enable for even larger models
-  precision: "bf16"
-  gradient_accumulation_steps: 2
-  train_batch_size: 128      # 64 * 2
-  micro_batch_size: 64
-  activation_checkpointing: true
-  partition_activations: true
-  gradient_clipping: 1.0
+  zero_stage: 3                       # Full parameter sharding (opt + grad + params)
 
-  # ZeRO-3 specific settings
-  zero_allow_untested_optimizer: true
-  zero_reduce_scatter: true
-  zero_overlap_comm: true
-  zero_contiguous_gradients: true
-  zero_stage3_prefetch_bucket_size: 500000000      # 500MB
-  zero_stage3_param_persistence_threshold: 1000000 # 1M params
-  zero_stage3_max_live_parameters: 1000000000      # 1B params
-  zero_stage3_max_reuse_distance: 1000000000       # 1B params
-  zero_stage3_gather_16bit_weights_on_model_save: true
+  # Offloading (ZeRO-3 supports both optimizer and parameter offloading)
+  cpu_offload: true                   # Offload optimizer + params to CPU RAM
+  nvme_offload: false                 # Can enable for even larger models
+  nvme_path: "/local_nvme"            # NVMe mount point (if nvme_offload=true)
 
-  # CPU offloading configuration
-  offload_optimizer:
-    device: "cpu"
-    pin_memory: true
-  offload_param:
-    device: "cpu"
-    pin_memory: true
+  # Precision (DeepSpeed manages mixed precision internally)
+  # NOTE: Do NOT use torch.amp.autocast when DeepSpeed is enabled
+  # DeepSpeed handles mixed precision via this setting
+  precision_type: "bf16"              # Options: 'fp16', 'bf16', 'fp32'
+
+  # Batch Configuration
+  gradient_accumulation_steps: 4
+  train_batch_size: 128               # micro_batch_size * grad_accum * world_size (16 * 4 * 2 = 128)
+  micro_batch_size: 16                # Per-GPU batch size
+
+  # Activation Checkpointing
+  activation_checkpointing: true      # Enable activation checkpointing
+  partition_activations: true         # Partition activations across GPUs
+  cpu_checkpointing: false            # Checkpoint activations to CPU
+
+  # Gradient Clipping
+  gradient_clipping: 1.0              # Max gradient norm
+
+  # ZeRO-3 Specific Settings
+  zero_overlap_comm: true             # Overlap communication with computation
+  zero_contiguous_gradients: true     # Reduce memory fragmentation
+  zero_reduce_scatter: true           # Use reduce_scatter
+  zero_reduce_bucket_size: 500000000  # 500MB
+  zero_allgather_bucket_size: 500000000  # 500MB
+
+  # ZeRO-3 Parameter Sharding Settings
+  zero_stage3_prefetch_bucket_size: 500000000       # 500MB prefetch bucket
+  zero_stage3_param_persistence_threshold: 1000000  # 1M params persistence
+  zero_stage3_max_live_parameters: 1000000000       # 1B max live params
+  zero_stage3_max_reuse_distance: 1000000000        # 1B max reuse distance
+
+  # Monitoring
+  wall_clock_breakdown: false         # Enable detailed timing breakdown
 
 # Enhanced Features (Everything Enabled)
 enhanced_features:

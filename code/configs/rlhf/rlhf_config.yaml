@@ -1,0 +1,96 @@
+# RLHF Configuration - Reinforcement Learning from Human Feedback
+#
+# Usage:
+#   python code/scripts/6_rhlf_Finetuning/train_rlhf.py --config code/configs/rlhf/rlhf_config.yaml
+
+rlhf:
+  # Model paths (required)
+  policy_model_path: /root/Ava_AI/code/outputs/runs/latest/checkpoints/latest_model.pt
+  judge_model_path: /root/Ava_AI/code/outputs/runs/latest/checkpoints/latest_model.pt
+  reward_model_path: null
+
+  # Reward strategy
+  use_model_to_model_reward: true  # Use judge model to rate responses
+  freeze_reward_model: true
+
+  # Experience collection
+  rollout_batch_size: 64
+  num_rollouts_per_epoch: 500
+  max_prompt_length: 256
+
+  # Training
+  num_epochs: 3
+  save_dir: code/outputs/rlhf
+  log_dir: code/outputs/rlhf/logs
+  save_every: 500
+  eval_every: 250
+  num_eval_prompts: 50
+
+  # Data
+  prompt_dataset_path: code/data/prompts/rlhf_prompts.txt
+  eval_prompt_dataset_path: null
+
+  # Device
+  device: cuda
+
+  # Logging
+  use_wandb: true
+  wandb_project: ava-rlhf
+  wandb_name: null
+
+  # Reference model memory optimization
+  ref_model_strategy: cpu_snapshot  # Options: deepcopy, cpu_snapshot, disk_snapshot, shared_params
+
+  # PPO configuration
+  ppo:
+    learning_rate: 1.0e-6
+    batch_size: 64
+    mini_batch_size: 16
+    gradient_accumulation_steps: 4
+
+    ppo_epochs: 4
+    clip_range: 0.2
+    clip_range_value: 0.2
+    value_loss_coef: 0.5
+    entropy_coef: 0.01
+    max_grad_norm: 1.0
+
+    gamma: 1.0
+    lambda: 0.95
+
+    kl_penalty: kl
+    target_kl: 0.01
+    init_kl_coef: 0.2
+    adaptive_kl: true
+
+    max_gen_length: 128
+    temperature: 0.9
+    top_k: 50
+    top_p: 0.95
+
+    num_train_epochs: 1
+    max_steps: null
+    warmup_steps: 100
+    logging_steps: 10
+    save_steps: 500
+    eval_steps: 250
+
+    use_score_scaling: true
+    use_score_norm: true
+    whiten_rewards: true
+    clip_reward: 10.0
+
+    gradient_checkpointing: true
+    mixed_precision: bf16
+
+model:
+  vocab_size: 50680
+  hidden_size: 768
+  num_layers: 12
+  num_attention_heads: 12
+  intermediate_size: 3072
+  max_position_embeddings: 512
+
+data:
+  tokenizer_name: /root/Ava_AI/code/models/tokenizer/base_50680_whitespace
+  max_length: 512

@@ -1034,8 +1034,8 @@ class TensorStats:
         if compute_stats and tensor.numel() > 0:
             with torch.no_grad():
                 flat = tensor.float().flatten()
-                # GPU SYNC FIX: Batch all statistics computation on GPU, single .tolist() sync
-                # instead of 6 separate .item() calls (reduces 6 cudaStreamSynchronize to 1)
+                # Batch all statistics computation on GPU, single .tolist() sync
+                # to minimize synchronization overhead
                 stats = torch.stack([
                     flat.min(),
                     flat.max(),
@@ -1491,15 +1491,15 @@ class DetailedProfiler:
     ):
         """Record gradient statistics from model parameters.
 
-        GPU SYNC FIX: Batches all gradient statistics on GPU and syncs once,
-        instead of calling .item() and .any() per parameter (N syncs → 1 sync).
+        Batches all gradient statistics on GPU and syncs once
+        to minimize synchronization overhead.
         """
         if not self.enabled or not self.track_gradients:
             return
 
         stats = GradientStats(step=self.current_step)
 
-        # GPU SYNC FIX: Collect all tensors on GPU, sync once at end
+        # Collect all tensors on GPU, sync once at end
         param_names = []
         norm_tensors = []
         nan_tensors = []
@@ -1520,7 +1520,7 @@ class DetailedProfiler:
             self.gradient_stats.append(stats)
             return
 
-        # GPU SYNC FIX: Single sync - stack all and transfer with .tolist()
+        # Single sync - stack all and transfer with .tolist()
         all_norms_tensor = torch.stack(norm_tensors)
         all_nans_tensor = torch.stack(nan_tensors)
         all_infs_tensor = torch.stack(inf_tensors)
@@ -1782,7 +1782,7 @@ class DetailedProfiler:
                     category="attention",
                     severity="medium",
                     description="Flash Attention not detected",
-                    recommendation="Enable Flash Attention for 40% memory savings and faster attention",
+                    recommendation="Enable Flash Attention for improved memory efficiency and faster attention",
                     details={},
                 ))
 
@@ -2128,7 +2128,7 @@ class DetailedProfiler:
         non_flash = sum(1 for s in self.attention_stats if not s.using_flash_attention)
         if non_flash > 0:
             print(f"\n  ⚠ {non_flash} attention calls not using Flash Attention")
-            print(f"    Recommendation: Enable Flash Attention for ~40% memory savings")
+            print(f"    Recommendation: Enable Flash Attention for improved memory efficiency")
 
         print(f"{'='*100}\n")
 

@@ -15,8 +15,6 @@ Key features:
 - Predictive prefetching (loads what will be needed)
 - Configurable cache size and policies
 
-Expected improvement: 2.19× throughput improvement
-
 How it works:
 1. Score cache entries by reuse probability
 2. Keep high-scoring entries, evict low-scoring
@@ -84,7 +82,7 @@ class HybridCacheConfig:
     """Configuration for hybrid caching"""
     enabled: bool = True
     max_cache_size_gb: float = 4.0  # Maximum cache size in GB
-    kv_cache_ratio: float = 0.6  # 60% for KV cache, 40% for activations
+    kv_cache_ratio: float = 0.6  # Ratio of cache for KV vs activations
     eviction_policy: str = "hybrid"  # lru, lfu, hybrid, adaptive
     prefetch_enabled: bool = True
     prefetch_lookahead: int = 2  # Prefetch N layers ahead

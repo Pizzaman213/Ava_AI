@@ -7,4 +7,18 @@ This package provides:
 - Generation quality evaluation
 """
 
-__all__ = []
+from .coherence import (
+    CoherenceConfig,
+    CoherenceMetrics,
+    CoherenceMeasurer,
+    measure_coherence,
+    measure_batch_coherence,
+)
+
+__all__ = [
+    'CoherenceConfig',
+    'CoherenceMetrics',
+    'CoherenceMeasurer',
+    'measure_coherence',
+    'measure_batch_coherence',
+]

@@ -68,11 +68,9 @@ def create_streaming_dataloaders(
     samples_per_file: int = 500,
     use_streaming_tokenization: bool = False,
     streaming_buffer_size: int = 1000,
-    use_dynamic_batching: bool = False,
     max_tokens_per_batch: Optional[int] = None,
     dataset_name: Optional[str] = None,
     dev_log_config: Optional[Any] = None,
-    dynamic_batching_config: Optional[Dict[str, Any]] = None,
     shuffle_seed: Optional[int] = None,
     enable_length_sorting: bool = True,
 ) -> Tuple[Any, Any]:
@@ -110,19 +108,18 @@ def create_streaming_dataloaders(
         samples_per_file: Samples per file before rotation
         use_streaming_tokenization: Enable streaming tokenization mode
         streaming_buffer_size: Buffer size for streaming mode
-        use_dynamic_batching: Enable dynamic token-based batching
-        max_tokens_per_batch: Max tokens per batch for dynamic batching
+        max_tokens_per_batch: Max tokens per batch
         dataset_name: Optional dataset name to filter to a single file
         dev_log_config: Config for development logging
-        dynamic_batching_config: Dynamic batching configuration
 
     Returns:
         Tuple of (train_loader, val_loader)
     """
     # Safety checks
-    if batch_size is None:
+    if batch_size is None or batch_size <= 0:
+        original_batch_size = batch_size
         batch_size = 8
-        print_warning(f"batch_size was None, defaulting to {batch_size}")
+        print_warning(f"Invalid batch_size={original_batch_size}, using safe default=8. Consider setting explicitly in config.")
 
     # Auto-detect CPU cores
     if num_workers == -1:
@@ -205,7 +202,6 @@ def create_streaming_dataloaders(
         'samples_per_file': samples_per_file,
         'use_streaming_tokenization': use_streaming_tokenization,
         'streaming_buffer_size': streaming_buffer_size,
-        'use_dynamic_batching': use_dynamic_batching,
         'max_tokens_per_batch': max_tokens_per_batch,
         'dataset_name': dataset_name,
         'dev_log_config': dev_log_config,
@@ -282,8 +278,14 @@ def create_streaming_dataloaders(
 
     # Apply distributed wrapping if needed
     if distributed and DISTRIBUTED_AVAILABLE:
-        train_dataset = DistributedStreamingDataset(train_dataset, world_size or 1, rank or 0, enable_length_sorting=enable_length_sorting)
-        val_dataset = DistributedStreamingDataset(val_dataset, world_size or 1, rank or 0, enable_length_sorting=enable_length_sorting)
+        # Validate distributed parameters
+        actual_world_size = world_size if world_size and world_size > 0 else 1
+        actual_rank = rank if rank is not None and rank >= 0 else 0
+        if actual_rank >= actual_world_size:
+            print_warning(f"Rank {actual_rank} >= world_size {actual_world_size}, using rank=0")
+            actual_rank = 0
+        train_dataset = DistributedStreamingDataset(train_dataset, actual_world_size, actual_rank, enable_length_sorting=enable_length_sorting)
+        val_dataset = DistributedStreamingDataset(val_dataset, actual_world_size, actual_rank, enable_length_sorting=enable_length_sorting)
 
     # Get base datasets for collate_fn
     base_train_dataset = train_dataset.base_dataset if isinstance(train_dataset, (InfiniteStreamingDataset, DistributedStreamingDataset)) else train_dataset
@@ -292,41 +294,21 @@ def create_streaming_dataloaders(
     train_collate_fn = getattr(base_train_dataset, 'collate_fn', None)
     val_collate_fn = getattr(base_val_dataset, 'collate_fn', None)
 
-    # Check if dynamic batching is enabled
-    use_dynamic_batch_iterator = (
-        dynamic_batching_config is not None
-        and dynamic_batching_config.get('enabled', False)
-    )
-
-    if use_dynamic_batch_iterator:
-        from .dynamic_batch_iterator import DynamicBatchIterator
-        from ..optimizations.dynamic_batching import create_dynamic_batch_scheduler
-
-        db_config = dynamic_batching_config
-        min_batch_size = db_config.get('min_batch_size', 64)
-        max_batch_size = db_config.get('max_batch_size', 256)
-
-        print_header("DYNAMIC BATCHING ENABLED", icon=Icons.LIGHTNING)
-        print_config("Min batch size", str(min_batch_size))
-        print_config("Max batch size", str(max_batch_size))
-
-        dataloader_kwargs['batch_size'] = min_batch_size
-
     # Create DataLoaders
     try:
-        train_loader_base = DataLoader(
+        train_loader = DataLoader(
             train_dataset,
             collate_fn=train_collate_fn,
             **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'}
         )
-        val_loader_base = DataLoader(
+        val_loader = DataLoader(
             val_dataset,
             collate_fn=val_collate_fn,
             **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'}
         )
-    except (BrokenPipeError, OSError) as e:
+    except (BrokenPipeError, OSError, RuntimeError, TypeError, AttributeError) as e:
         print_error(f"DataLoader creation failed: {e}")
-        print_warning("Retrying with num_workers=0...")
+        print_warning("Retrying with num_workers=0 (single-process mode)...")
 
         dataloader_kwargs['num_workers'] = 0
         dataloader_kwargs['prefetch_factor'] = None
@@ -334,42 +316,16 @@ def create_streaming_dataloaders(
         dataloader_kwargs['multiprocessing_context'] = None
         dataloader_kwargs['worker_init_fn'] = None
 
-        train_loader_base = DataLoader(
+        train_loader = DataLoader(
             train_dataset,
             collate_fn=train_collate_fn,
             **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'}
         )
-        val_loader_base = DataLoader(
+        val_loader = DataLoader(
             val_dataset,
             collate_fn=val_collate_fn,
             **{k: v for k, v in dataloader_kwargs.items() if k != 'collate_fn'}
         )
-
-    # Wrap with DynamicBatchIterator if enabled
-    if use_dynamic_batch_iterator:
-        scheduler_config = {
-            'dynamic_batching': db_config,
-            'training': {'batch_size': min_batch_size}
-        }
-
-        train_scheduler = create_dynamic_batch_scheduler(scheduler_config)
-        val_scheduler = create_dynamic_batch_scheduler(scheduler_config)
-
-        train_loader = DynamicBatchIterator(
-            dataloader=train_loader_base,
-            scheduler=train_scheduler,
-            min_batch_size=min_batch_size,
-            max_batch_size=max_batch_size,
-        )
-        val_loader = DynamicBatchIterator(
-            dataloader=val_loader_base,
-            scheduler=val_scheduler,
-            min_batch_size=min_batch_size,
-            max_batch_size=max_batch_size,
-        )
-    else:
-        train_loader = train_loader_base
-        val_loader = val_loader_base
 
     return train_loader, val_loader
 

@@ -66,7 +66,6 @@ from .data_utils import (
     get_samples_per_file,
     get_enable_bucketing,
     get_val_split_ratio,
-    extract_dynamic_batching_config,
 )
 
 from .script_utils import (
@@ -125,7 +124,6 @@ __all__ = [
     'get_samples_per_file',
     'get_enable_bucketing',
     'get_val_split_ratio',
-    'extract_dynamic_batching_config',
     # script_utils
     'auto_install_requirements',
     'setup_training_logging',

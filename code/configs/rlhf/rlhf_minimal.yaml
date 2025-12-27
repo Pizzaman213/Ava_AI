@@ -1,0 +1,35 @@
+# Minimal RLHF config for testing
+rlhf:
+  policy_model_path: code/outputs/runs/latest/checkpoints/latest_model.pt
+  judge_model_path: code/outputs/runs/latest/checkpoints/latest_model.pt
+  use_model_to_model_reward: true
+  freeze_reward_model: true
+
+  rollout_batch_size: 8
+  num_rollouts_per_epoch: 10
+  num_epochs: 1
+  save_dir: code/outputs/rlhf_test
+  save_every: 50
+  eval_every: 25
+
+  prompt_dataset_path: code/data/prompts/rlhf_prompts.txt
+  device: cuda
+  use_wandb: false
+  ref_model_strategy: shared_params
+
+  ppo:
+    learning_rate: 1.0e-5
+    batch_size: 8
+    mini_batch_size: 4
+    ppo_epochs: 2
+    max_gen_length: 64
+    mixed_precision: bf16
+
+model:
+  vocab_size: 50680
+  hidden_size: 384
+  num_layers: 6
+
+data:
+  tokenizer_name: /root/Ava_AI/code/models/tokenizer/base_50680_whitespace
+  max_length: 256

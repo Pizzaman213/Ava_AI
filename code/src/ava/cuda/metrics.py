@@ -2,7 +2,7 @@
 Async Metrics Logger for non-blocking WandB/TensorBoard logging.
 
 Eliminates GPU starvation from blocking network I/O during metric logging.
-WandB log calls can take 5-50ms each, which blocks the training loop.
+WandB log calls can block the training loop if done synchronously.
 
 Key features:
 - Background thread for non-blocking log() calls
@@ -10,8 +10,6 @@ Key features:
 - Queue-based buffering with configurable depth
 - flush() method for epoch boundaries
 - Graceful shutdown with timeout
-
-Performance improvement: 5-10% throughput gain by eliminating logging stalls.
 
 Usage:
     from ava.cuda.metrics import AsyncMetricsLogger
@@ -88,6 +86,7 @@ class AsyncMetricsLogger:
         self._total_logged = 0
         self._total_batches = 0
         self._dropped_count = 0
+        self._last_logged_step = -1  # Track last logged step to ensure monotonic ordering
 
         # Backend setup
         self._wandb = None
@@ -170,6 +169,15 @@ class AsyncMetricsLogger:
                 )
             return False
 
+    def update_last_step(self, step: int) -> None:
+        """
+        Update the last logged step (call after synchronous wandb.log calls).
+
+        This ensures the async logger skips entries older than sync-logged steps.
+        """
+        if step > self._last_logged_step:
+            self._last_logged_step = step
+
     def _worker_loop(self) -> None:
         """Background worker that batches and sends metrics."""
         batch: List[MetricEntry] = []
@@ -219,25 +227,39 @@ class AsyncMetricsLogger:
         if not batch:
             return
 
+        # Sort batch by step to ensure monotonic ordering
+        batch = sorted(batch, key=lambda e: e.step)
+
         try:
+            logged_count = 0
+
             if self.custom_log_fn is not None:
                 # Custom logging function
                 for entry in batch:
-                    self.custom_log_fn(entry.metrics, entry.step)
+                    if entry.step > self._last_logged_step:
+                        self.custom_log_fn(entry.metrics, entry.step)
+                        self._last_logged_step = entry.step
+                        logged_count += 1
 
             elif self._wandb is not None:
-                # WandB: log each entry (wandb handles batching internally)
+                # WandB: log each entry, skip stale steps to avoid monotonic warning
                 for entry in batch:
-                    self._wandb.log(entry.metrics, step=entry.step)
+                    if entry.step > self._last_logged_step:
+                        self._wandb.log(entry.metrics, step=entry.step)
+                        self._last_logged_step = entry.step
+                        logged_count += 1
 
             elif self._tb_writer is not None:
                 # TensorBoard: log each metric
                 for entry in batch:
-                    for key, value in entry.metrics.items():
-                        if isinstance(value, (int, float)):
-                            self._tb_writer.add_scalar(key, value, entry.step)
+                    if entry.step > self._last_logged_step:
+                        for key, value in entry.metrics.items():
+                            if isinstance(value, (int, float)):
+                                self._tb_writer.add_scalar(key, value, entry.step)
+                        self._last_logged_step = entry.step
+                        logged_count += 1
 
-            self._total_logged += len(batch)
+            self._total_logged += logged_count
             self._total_batches += 1
 
         except Exception as e:

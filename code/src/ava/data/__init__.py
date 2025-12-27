@@ -34,6 +34,13 @@ from .bucketing import (
 )
 from .distributed import DistributedStreamingDataset
 from .factory import create_streaming_dataloaders
+from .indexed import (
+    ArrowTableLRUCache,
+    DynamicPaddingCollator,
+    IndexedArrowDataset,
+    LengthBinnedSampler,
+    create_indexed_dataloaders,
+)
 from .streaming import (
     FileReader,
     InfiniteStreamingDataset,
@@ -46,6 +53,7 @@ from .streaming import (
 __all__ = [
     # Factory
     'create_streaming_dataloaders',
+    'create_indexed_dataloaders',
     # Streaming
     'StreamingDataset',
     'InfiniteStreamingDataset',
@@ -53,6 +61,11 @@ __all__ = [
     'get_worker_context',
     'retry_on_error',
     '_worker_init_fn',
+    # Indexed (Map-style with true random shuffling)
+    'IndexedArrowDataset',
+    'LengthBinnedSampler',
+    'DynamicPaddingCollator',
+    'ArrowTableLRUCache',
     # Bucketing
     'DynamicTokenBatcher',
     'LengthBasedBucketing',

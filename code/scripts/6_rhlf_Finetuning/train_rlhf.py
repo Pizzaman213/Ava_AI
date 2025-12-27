@@ -61,17 +61,15 @@ except (ImportError, ModuleNotFoundError) as e:
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
+# Configure unified logging for Ava (colored output, tqdm-compatible)
+from ava.core.logging import setup_ava_logging
+setup_ava_logging(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from rlhf import RLHFTrainer
 from rlhf.ppo_trainer import PPOConfig
 from rlhf.rlhf_trainer import RLHFConfig
 from ava.config.training_config import TrainingConfigManager
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 def load_model(model_path: str, config: dict, device: str) -> nn.Module:

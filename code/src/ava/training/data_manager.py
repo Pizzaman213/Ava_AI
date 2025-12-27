@@ -10,6 +10,7 @@ Handles all data loading functionality including:
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -30,7 +31,6 @@ from ..core.data_utils import (
     get_samples_per_file,
     get_enable_bucketing,
     get_val_split_ratio,
-    extract_dynamic_batching_config,
 )
 from ..core.paths import get_code_dir
 
@@ -39,6 +39,7 @@ from .context import TrainingComponent, TrainingContext
 
 # Format detection cache to avoid repeated expensive file scans
 _format_detection_cache: Dict[str, Dict[str, Any]] = {}
+_format_cache_lock = threading.Lock()  # Thread-safe cache access
 
 
 class DataLoaderManager(TrainingComponent):
@@ -58,19 +59,65 @@ class DataLoaderManager(TrainingComponent):
         """Initialize component. Called once at startup."""
         self._initialized = True
 
-    def cleanup(self) -> None:
+    def cleanup(self, distributed_cleanup_started: bool = False) -> None:
         """Cleanup resources - properly terminate DataLoader workers.
 
         This fixes the semaphore leak issue by properly shutting down
         DataLoader worker processes before distributed cleanup.
+
+        If distributed cleanup has already started, workers may be blocked
+        on dist.barrier() calls, so we use aggressive termination.
+
+        Args:
+            distributed_cleanup_started: If True, use aggressive worker termination
+                to avoid deadlocks when distributed group is already destroyed
         """
+        import signal
+        import os
+
         for loader in [self.train_loader, self.val_loader]:
             if loader is not None:
                 try:
                     # Shutdown worker processes to release semaphores
                     # The _iterator holds references to worker processes
                     if hasattr(loader, '_iterator') and loader._iterator is not None:
-                        loader._iterator._shutdown_workers()
+                        iterator = loader._iterator
+
+                        if distributed_cleanup_started:
+                            # Aggressive cleanup: workers may be blocked on dist.barrier()
+                            # Force terminate them to prevent deadlocks
+                            if hasattr(iterator, '_workers') and iterator._workers:
+                                _logger.debug(f"Aggressively terminating {len(iterator._workers)} dataloader workers")
+                                for w in iterator._workers:
+                                    if w.is_alive():
+                                        try:
+                                            w.terminate()  # Send SIGTERM
+                                            w.join(timeout=1.0)  # Brief wait
+                                            if w.is_alive():
+                                                # Still alive? Send SIGKILL
+                                                try:
+                                                    os.kill(w.pid, signal.SIGKILL)
+                                                    _logger.debug(f"Force killed worker {w.pid}")
+                                                except ProcessLookupError:
+                                                    pass  # Already dead
+                                        except Exception as e:
+                                            _logger.debug(f"Error terminating worker: {e}")
+                        else:
+                            # Normal graceful shutdown
+                            # Issue #4 fix: Check method existence before calling (PyTorch version compat)
+                            if hasattr(iterator, '_shutdown_workers'):
+                                try:
+                                    iterator._shutdown_workers()
+                                except Exception as e:
+                                    _logger.warning(f"Error during graceful worker shutdown: {e}")
+                                    # Fallback to aggressive termination if graceful fails
+                                    if hasattr(iterator, '_workers') and iterator._workers:
+                                        for w in iterator._workers:
+                                            if w.is_alive():
+                                                w.terminate()
+                            else:
+                                # Fallback: delete iterator to trigger __del__ cleanup
+                                del loader._iterator
                 except Exception as e:
                     _logger.debug(f"DataLoader cleanup: {e}")
         # Clear references
@@ -105,9 +152,13 @@ class DataLoaderManager(TrainingComponent):
             # Try to get from training_config.training.batch_size
             if hasattr(training_config, 'training') and hasattr(training_config.training, 'batch_size'):
                 batch_size = training_config.training.batch_size
-            # Fallback to config_dict
+            # Fallback to config_dict - check both training.batching.batch_size and training.batch_size
             if batch_size is None:
-                batch_size = config_dict.get("training", {}).get("batch_size", 8)
+                training_dict = config_dict.get("training", {})
+                batch_size = (
+                    training_dict.get("batching", {}).get("batch_size") or
+                    training_dict.get("batch_size", 8)
+                )
 
         batch_size = int(batch_size) if batch_size is not None else 8
         if batch_size <= 0:
@@ -231,27 +282,62 @@ class DataLoaderManager(TrainingComponent):
         use_sequence_packing = getattr(training_config.data, "use_sequence_packing", False)
         packing_strategy = getattr(training_config.data, "packing_strategy", "greedy")
 
-        # Get dynamic batching config (token-based for less padding)
-        use_dynamic_batching = getattr(training_config.data, "use_dynamic_batching", False)
+        # Get max_tokens_per_batch config
         max_tokens_per_batch = getattr(training_config.data, "max_tokens_per_batch", None)
 
-        # Get memory-aware dynamic batching config using shared utility
-        # Checks: config.dynamic_batching, config.training.dynamic_batching, config.training.batching.dynamic_batching
-        dynamic_batching_config = extract_dynamic_batching_config(training_config)
+        # Check for indexed loader (map-style with true random shuffling)
+        use_indexed_loader = getattr(training_config.data, 'use_indexed_loader', False)
 
-        if dynamic_batching_config:
-            _logger.info(" Memory-aware dynamic batching enabled")
-            token_budget_config = dynamic_batching_config.get('token_budget', {})
-            predictive_config = dynamic_batching_config.get('predictive', {})
-            if token_budget_config.get('enabled'):
-                _logger.info(f"   Token budget: target={token_budget_config['target_tokens_per_batch']}, "
-                            f"max={token_budget_config['max_tokens_per_batch']}")
-            if predictive_config.get('enabled'):
-                backward_margin = predictive_config.get('backward_safety_margin')
-                if backward_margin is not None:
-                    _logger.info(f"   Predictive: backward_margin={backward_margin:.2f}")
+        # Get randomization control from config (used by all loader types)
+        shuffle_seed = getattr(training_config.data, 'shuffle_seed', None)
+        enable_length_sorting = getattr(training_config.data, 'enable_length_sorting', True)
+
+        if use_indexed_loader:
+            _logger.info("=" * 60)
+            _logger.info("INDEXED ARROW DATASET (Map-Style)")
+            _logger.info("=" * 60)
+            _logger.info("  True random shuffling at epoch start")
+            _logger.info("  Length-binned sampling for reduced padding")
+            _logger.info("  Sample-level train/val split")
+            _logger.info("  Parallel indexing for fast startup")
+            _logger.info("=" * 60)
+
+            from ..data.indexed import create_indexed_dataloaders
+
+            # Get indexed loader config
+            indexed_num_bins = getattr(training_config.data, 'indexed_num_bins', 8)
+            indexed_cache_size = getattr(training_config.data, 'indexed_cache_size', 50)
+            indexed_index_workers = getattr(training_config.data, 'indexed_index_workers', None)
+            max_files = getattr(training_config.data, 'max_files_to_load', None)
+
+            # Handle tokenizer for pad_token_id
+            # Issue #5 fix: Defensive tokenizer validation
+            if tokenizer is not None:
+                if not hasattr(tokenizer, 'pad_token_id'):
+                    _logger.warning("Tokenizer missing pad_token_id attribute, using default 0")
+                    pad_token_id = 0
                 else:
-                    _logger.info("   Predictive: enabled (using defaults)")
+                    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+            else:
+                pad_token_id = 0
+
+            train_loader, val_loader = create_indexed_dataloaders(
+                data_dir=data_dir,
+                batch_size=batch_size,
+                max_length=training_config.data.max_length,
+                val_split_ratio=val_split_ratio,
+                num_workers=num_workers,
+                cache_size=indexed_cache_size,
+                pad_token_id=pad_token_id,
+                num_bins=indexed_num_bins,
+                prefetch_factor=prefetch_factor,
+                persistent_workers=persistent_workers,
+                seed=shuffle_seed,
+                max_files=max_files,
+                index_workers=indexed_index_workers,
+            )
+
+            return train_loader, val_loader
 
         # Log GPU I/O optimizations
         self._log_io_optimizations(
@@ -275,23 +361,38 @@ class DataLoaderManager(TrainingComponent):
             # Get lazy_file_discovery from config for memory-efficient large datasets
             lazy_file_discovery = getattr(training_config.data, 'lazy_file_discovery', False)
 
-            # Get randomization control from config
-            shuffle_seed = getattr(training_config.data, 'shuffle_seed', None)
-            enable_length_sorting = getattr(training_config.data, 'enable_length_sorting', True)
+            # Get packing-specific sorting control
             disable_packing_length_sort = getattr(training_config.data, 'disable_packing_length_sort', False)
 
             # Handle tokenizer being None (pretokenized data doesn't need tokenizer)
-            if tokenizer is not None:
-                pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
-                eos_token_id = tokenizer.eos_token_id if hasattr(tokenizer, "eos_token_id") and tokenizer.eos_token_id is not None else 2
-            else:
-                _logger.info("Tokenizer not provided, using default pad_token_id=0, eos_token_id=2")
-                pad_token_id = 0
-                eos_token_id = 2
+            # First try to get token IDs from model config (most reliable source)
+            model_config = getattr(training_config, 'model', None)
+            pad_token_id = getattr(model_config, 'pad_token_id', None) if model_config else None
+            bos_token_id = getattr(model_config, 'bos_token_id', None) if model_config else None
+            eos_token_id = getattr(model_config, 'eos_token_id', None) if model_config else None
 
-            # Get batch_controller from context if available
-            # This connects the scheduler to the central batch size authority
-            batch_controller = getattr(self.context, 'batch_controller', None)
+            # Fall back to tokenizer if config doesn't have them
+            if tokenizer is not None:
+                if pad_token_id is None:
+                    pad_token_id = getattr(tokenizer, 'pad_token_id', 0)
+                if bos_token_id is None:
+                    bos_token_id = getattr(tokenizer, 'bos_token_id', 2)
+                if eos_token_id is None:
+                    eos_token_id = getattr(tokenizer, 'eos_token_id', 1)
+
+            # Final fallback to defaults matching the tokenizer vocab
+            # Default special tokens: <|pad|>=0, <|eos|>=1, <|bos|>=2
+            if pad_token_id is None:
+                pad_token_id = 0
+            if bos_token_id is None:
+                bos_token_id = 2
+            if eos_token_id is None:
+                eos_token_id = 1
+
+            # Get add_special_tokens from data config (default True for coherent generation)
+            add_special_tokens = getattr(training_config.data, 'add_special_tokens', True)
+
+            _logger.info(f"Special tokens: pad={pad_token_id}, bos={bos_token_id}, eos={eos_token_id}, add_special_tokens={add_special_tokens}")
 
             train_loader, val_loader = create_ultra_fast_dataloaders(
                 batch_size=batch_size,
@@ -304,15 +405,15 @@ class DataLoaderManager(TrainingComponent):
                 samples_per_file=samples_per_file,
                 cache_size=cache_size,
                 pad_token_id=pad_token_id,
+                bos_token_id=bos_token_id,
                 eos_token_id=eos_token_id,
+                add_special_tokens=add_special_tokens,
                 max_samples=getattr(training_config.data, 'max_samples', None),
                 val_split_ratio=val_split_ratio,
                 use_sequence_packing=use_sequence_packing,
                 packing_strategy=packing_strategy,
-                dynamic_batching_config=dynamic_batching_config,
                 max_files_to_load=max_files_to_load,
                 lazy_file_discovery=lazy_file_discovery,
-                batch_controller=batch_controller,
                 shuffle_seed=shuffle_seed,
                 enable_length_sorting=enable_length_sorting,
                 disable_packing_length_sort=disable_packing_length_sort,
@@ -334,7 +435,6 @@ class DataLoaderManager(TrainingComponent):
                 max_samples=getattr(training_config.data, 'max_samples', None),
                 val_split_ratio=val_split_ratio,
                 enable_bucketing=enable_bucketing,
-                use_dynamic_batching=use_dynamic_batching,
                 max_tokens_per_batch=max_tokens_per_batch,
                 use_streaming_tokenization=getattr(
                     training_config.data, "use_streaming_tokenization", False
@@ -344,7 +444,6 @@ class DataLoaderManager(TrainingComponent):
                 ),
                 dataset_name=getattr(training_config.data, "dataset_name", None),
                 dev_log_config=getattr(training_config, "dev_log", None),
-                dynamic_batching_config=dynamic_batching_config,
                 shuffle_seed=shuffle_seed,
                 enable_length_sorting=enable_length_sorting,
             )
@@ -479,20 +578,27 @@ class DataLoaderManager(TrainingComponent):
             except Exception as e:
                 _logger.warning(f"     Could not read {jsonl_file.name}: {e}")
 
-        # Count Arrow files
+        # Count Arrow files (supports both IPC File and Stream formats)
         for arrow_file in data_path.glob("*.arrow"):
             try:
                 import pyarrow as pa
                 import pyarrow.ipc as ipc
 
-                with pa.memory_map(str(arrow_file), "r") as source:
-                    table = ipc.open_file(source).read_all()
-                    file_rows = len(table)
-                    total_examples += file_rows
-                    file_count += 1
-                    _logger.info(
-                        f"    {arrow_file.name}: {file_rows:,} examples (pre-tokenized)"
-                    )
+                # Try IPC File format first, then fall back to IPC Stream format
+                try:
+                    with pa.memory_map(str(arrow_file), "r") as source:
+                        table = ipc.open_file(source).read_all()
+                except pa.ArrowInvalid:
+                    # IPC Stream format (HuggingFace datasets)
+                    with open(str(arrow_file), 'rb') as f:
+                        table = ipc.open_stream(f).read_all()
+
+                file_rows = len(table)
+                total_examples += file_rows
+                file_count += 1
+                _logger.info(
+                    f"    {arrow_file.name}: {file_rows:,} examples (pre-tokenized)"
+                )
             except Exception as e:
                 _logger.warning(f"     Could not read {arrow_file.name}: {e}")
 
@@ -555,15 +661,26 @@ class DataLoaderManager(TrainingComponent):
             gradient_acc_steps = getattr(
                 training_config.training.batching,
                 "gradient_accumulation_steps",
-                getattr(training_config.training, "gradient_accumulation_steps",
-                        getattr(training_config.training, "gradient_accumulation", 4)),
+                None
             )
+            # If None or not found, try fallbacks
+            if gradient_acc_steps is None:
+                gradient_acc_steps = getattr(training_config.training, "gradient_accumulation_steps", None)
+            if gradient_acc_steps is None:
+                gradient_acc_steps = getattr(training_config.training, "gradient_accumulation", 4)
         else:
             gradient_acc_steps = getattr(
                 training_config.training,
                 "gradient_accumulation_steps",
-                getattr(training_config.training, "gradient_accumulation", 4),
+                None
             )
+            if gradient_acc_steps is None:
+                gradient_acc_steps = getattr(training_config.training, "gradient_accumulation", 4)
+
+        # Final safety check
+        if gradient_acc_steps is None:
+            gradient_acc_steps = 4
+
         effective_batch_size = batch_size * gradient_acc_steps
 
         val_split_ratio = self._get_val_split_ratio(training_config)
@@ -695,14 +812,15 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Format detection results
         """
-        # Check cache first
+        # Check cache first (thread-safe)
         cache_key = str(data_dir.absolute())
-        if cache_key in _format_detection_cache:
-            cached_result = _format_detection_cache[cache_key]
-            _logger.info(
-                f"Using cached format detection: {cached_result['detected_format']}"
-            )
-            return cached_result
+        with _format_cache_lock:
+            if cache_key in _format_detection_cache:
+                cached_result = _format_detection_cache[cache_key]
+                _logger.info(
+                    f"Using cached format detection: {cached_result['detected_format']}"
+                )
+                return cached_result
 
         # Get max_samples from config with fallback
         if max_samples is None:
@@ -737,12 +855,23 @@ class DataLoaderManager(TrainingComponent):
             try:
                 if format_type == ".arrow":
                     import pyarrow as pa
+                    import pyarrow.ipc as ipc
 
-                    with pa.ipc.open_file(file_path) as reader:
-                        if reader.num_record_batches > 0:
-                            format_scores[format_type] = (
-                                format_scores.get(format_type, 0) + 1
-                            )
+                    # Try IPC File format first, then fall back to IPC Stream format
+                    try:
+                        with pa.ipc.open_file(file_path) as reader:
+                            if reader.num_record_batches > 0:
+                                format_scores[format_type] = (
+                                    format_scores.get(format_type, 0) + 1
+                                )
+                    except pa.ArrowInvalid:
+                        # IPC Stream format (HuggingFace datasets)
+                        with open(str(file_path), 'rb') as f:
+                            table = ipc.open_stream(f).read_all()
+                            if len(table) > 0:
+                                format_scores[format_type] = (
+                                    format_scores.get(format_type, 0) + 1
+                                )
                 elif format_type == ".parquet":
                     import pyarrow.parquet as pq
 
@@ -767,7 +896,8 @@ class DataLoaderManager(TrainingComponent):
                 "confidence": 0.0,
                 "files_checked": total_files_checked,
             }
-            _format_detection_cache[cache_key] = result
+            with _format_cache_lock:
+                _format_detection_cache[cache_key] = result
             return result
 
         best_format = max(format_scores.keys(), key=lambda k: format_scores[k])
@@ -780,7 +910,8 @@ class DataLoaderManager(TrainingComponent):
             "format_distribution": format_scores,
         }
 
-        _format_detection_cache[cache_key] = result
+        with _format_cache_lock:
+            _format_detection_cache[cache_key] = result
         return result
 
     # Config getter methods - delegating to shared utilities

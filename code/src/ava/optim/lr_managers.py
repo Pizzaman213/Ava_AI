@@ -63,8 +63,8 @@ class AdaptiveLRConfig:
 class LRConfig:
     """Configuration for learning rate management."""
     # Warmup configuration
-    warmup_ratio: float = 0.03  # 3% of total steps for warmup
-    warmup_min_ratio: float = 0.01  # Start at 1% of target LR
+    warmup_ratio: float = 0.03  # Fraction of total steps for warmup
+    warmup_min_ratio: float = 0.01  # Starting LR as fraction of target LR
     warmup_schedule: str = "linear"  # "linear", "cosine", "polynomial"
 
     # Main scheduler configuration
@@ -387,7 +387,7 @@ class AdaptiveLearningRateManager:
         # Update recent_best_loss to prevent stale values
         self.recent_best_loss = min(self.recent_best_loss, current_loss)
 
-        # CRITICAL FIX: Add grace period after warmup before reducing LR
+        # Add grace period after warmup before reducing LR
         # Allow 2x plateau_patience steps after warmup for model to start learning
         grace_period = self.config.warmup_steps + (2 * self.config.plateau_patience)
         in_post_warmup_grace = self.step_count < grace_period
@@ -1138,8 +1138,8 @@ class AdvancedWarmupScheduler:
         """
         Compute gradient norm for adaptive warmup completion.
 
-        GPU SYNC FIX: Accumulate norms on GPU with single .item() call at the end
-        instead of calling .item() per parameter (which caused N cudaStreamSynchronize calls).
+        Accumulates norms on GPU with single .item() call at the end
+        to avoid synchronization overhead.
         """
         try:
             # Collect all gradient norms on GPU first

@@ -1,6 +1,6 @@
 # Ava LLM Training Framework
 
-Advanced LLM training framework with Mixture of Experts (MoE++), optimized for high performance and memory efficiency.
+Advanced LLM training framework with Mixture of Experts (MoE++) architecture, optimized for memory efficiency and scalability.
 
 ## Quick Start
 
@@ -8,8 +8,8 @@ Advanced LLM training framework with Mixture of Experts (MoE++), optimized for h
 # Main training (single GPU)
 python code/scripts/5_training/train_pipeline.py --config code/configs/moe/large.yaml
 
-# Multi-GPU training (4 GPUs)
-torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py --config code/configs/moe/4x_a6000_max_speed.yaml
+# Multi-GPU training
+torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py --config code/configs/moe/large_Multy.yaml
 
 # Fine-tuning from checkpoint
 python code/scripts/5_training/finetune.py
@@ -22,12 +22,15 @@ python code/scripts/1_data_download/unified_download.py
 
 # Text generation
 python code/scripts/7_generation/generate.py --prompt "Once upon a time"
+
+# Check dependencies
+python code/scripts/check_dependencies.py
 ```
 
 ## Project Structure
 
 ```
-/project/
+/root/Ava_AI/
 ├── code/                           # Main codebase
 │   ├── src/                        # Source code
 │   │   ├── ava/                    # Core framework package (lowercase, PEP8)
@@ -55,13 +58,14 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   │   ├── data/               # Data loading & processing
 │   │   │   │   ├── streaming.py         # StreamingDataset
 │   │   │   │   ├── distributed.py       # DistributedStreamingDataset
-│   │   │   │   ├── bucketing.py         # DynamicTokenBatcher, LengthBasedBucketing
+│   │   │   │   ├── bucketing.py         # LengthBasedBucketing
 │   │   │   │   ├── factory.py           # create_streaming_dataloaders
-│   │   │   │   ├── pretokenized.py      # 60x faster Arrow loading
-│   │   │   │   ├── batch_iterator.py    # DynamicBatchIterator
+│   │   │   │   ├── pretokenized.py      # Memory-mapped Arrow loading
 │   │   │   │   ├── multi_column.py      # Multi-modal data support
 │   │   │   │   ├── conversation.py      # Turn-aware dialogue loading
-│   │   │   │   └── packing.py           # Sequence packing
+│   │   │   │   ├── packing.py           # Sequence packing
+│   │   │   │   ├── validation.py        # Data validation utilities
+│   │   │   │   └── dataloader.py        # DataLoader utilities
 │   │   │   │
 │   │   │   ├── nn/                 # Neural network layers
 │   │   │   │   ├── experts.py           # HighPerformanceExpert, ExpertParallelGroup
@@ -69,7 +73,8 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   │   │
 │   │   │   ├── kernels/            # Triton kernels
 │   │   │   │   ├── moe.py               # Fused gating/topk kernels
-│   │   │   │   └── activations.py       # Fused SwiGLU/GeGLU
+│   │   │   │   ├── activations.py       # Fused SwiGLU/GeGLU
+│   │   │   │   └── fused_experts.py     # Fused expert computation
 │   │   │   │
 │   │   │   ├── models/             # Model architectures
 │   │   │   │   ├── moe.py               # EnhancedMoEModel, EnhancedMoEConfig
@@ -78,7 +83,7 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   │   ├── optim/              # Optimizers & LR scheduling
 │   │   │   │   └── lr_managers.py       # AdaptiveLearningRateManager
 │   │   │   │
-│   │   │   ├── training/           # Training pipeline (flattened)
+│   │   │   ├── training/           # Training pipeline
 │   │   │   │   ├── context.py           # TrainingContext, TrainingComponent
 │   │   │   │   ├── loop.py              # TrainingLoopManager
 │   │   │   │   ├── data_manager.py      # DataLoaderManager
@@ -91,11 +96,10 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   │   │   ├── pipeline.py          # TrainingPipeline
 │   │   │   │   └── distributed.py       # DDP/FSDP setup
 │   │   │   │
-│   │   │   ├── optimizations/      # Training speedups
-│   │   │   │   ├── dynamic_batching.py  # 15-25% throughput gain
-│   │   │   │   ├── checkpointing.py     # Double checkpointing (10x sequences)
-│   │   │   │   ├── overlapped_recomputation.py
-│   │   │   │   ├── hybrid_cache.py      # 2.19x throughput
+│   │   │   ├── optimizations/      # Training optimizations
+│   │   │   │   ├── checkpointing.py     # Gradient checkpointing
+│   │   │   │   ├── overlapped_recomputation.py  # Parallel backward pass
+│   │   │   │   ├── hybrid_cache.py      # KV + activation caching
 │   │   │   │   ├── fp8.py               # FP8 quantization
 │   │   │   │   ├── batch_controller.py  # Batch size control
 │   │   │   │   ├── prefetch.py          # Async batch prefetching
@@ -112,9 +116,9 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   │   └── generator.py             # Generation utilities
 │   │   │
 │   │   └── rlhf/                   # RLHF training
-│   │       ├── trainer.py               # RLHF training loop
-│   │       ├── ppo.py                   # PPO implementation
-│   │       └── reward.py                # Reward model
+│   │       ├── rlhf_trainer.py          # RLHF training loop
+│   │       ├── ppo_trainer.py           # PPO implementation
+│   │       └── reward_model.py          # Reward model
 │   │
 │   ├── scripts/                    # Executable scripts
 │   │   ├── 1_data_download/        # Data downloading
@@ -128,18 +132,23 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   │
 │   │   ├── 6_rhlf_Finetuning/      # RLHF training
 │   │   │   ├── train_rlhf.py            # RLHF training script
-│   │   │   └── prepare_prompts.py       # Prompt preparation
+│   │   │   ├── prepare_prompts.py       # Prompt preparation
+│   │   │   ├── test_rlhf_cpu.py         # RLHF CPU testing
+│   │   │   └── test_training_cpu.py     # Training CPU testing
 │   │   │
-│   │   └── 7_generation/           # Text generation
-│   │       └── generate.py              # Generation interface
+│   │   ├── 7_generation/           # Text generation
+│   │   │   └── generate.py              # Generation interface
+│   │   │
+│   │   └── check_dependencies.py   # Dependency checker
 │   │
 │   ├── configs/                    # Configuration files
 │   │   ├── moe/                    # MoE configurations
-│   │   │   ├── large.yaml               # 200M+ params, production
-│   │   │   ├── minimal_working.yaml     # 62M params, testing
-│   │   │   ├── 4x_a6000_max_speed.yaml  # Multi-GPU optimized
-│   │   │   ├── finetune_from_checkpoint.yaml
-│   │   │   └── optimized_batching.yaml
+│   │   │   ├── large.yaml               # Production config (200M+ params)
+│   │   │   ├── minimal_working.yaml     # Testing/development (62M params)
+│   │   │   ├── large_Multy.yaml         # Multi-GPU configuration
+│   │   │   ├── mw_8bit.yaml             # 8-bit quantized training
+│   │   │   ├── max_randomness.yaml      # Maximum data randomization
+│   │   │   └── deterministic.yaml       # Deterministic training
 │   │   │
 │   │   ├── distributed/            # Distributed training
 │   │   │   ├── deepspeed_zero1.yaml
@@ -154,18 +163,20 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 │   │   └── Ava_Ai/                 # Tokenizer & processed data
 │   │
 │   ├── outputs/                    # Training outputs
-│   │   ├── runs/                   # Training runs
-│   │   └── finetune_runs/          # Fine-tuning runs
+│   │   └── pretraining/            # Pre-training runs
 │   │
-│   ├── docs/                       # Documentation (50+ guides)
+│   ├── docs/                       # Documentation (28 guides)
 │   │
 │   └── tests/                      # Test suite
-│       ├── test_dynamic_batch_iterator.py
-│       └── test_coherence.py
+│       ├── test_coherence.py
+│       ├── test_data_loader_fixes.py
+│       ├── test_kernel_diagnostics.py
+│       ├── test_triton_softmax_topk.py
+│       └── test_triton_topk_fix.py
 │
 ├── data/                           # Root data directory
 ├── models/                         # Root model checkpoints
-├── wandb/                          # WandB tracking (152+ runs)
+├── wandb/                          # WandB tracking
 ├── CLAUDE.md                       # This file
 ├── requirements.txt                # Python dependencies
 └── apt.txt                         # System dependencies
@@ -173,40 +184,66 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 
 ## Configuration Files
 
-| Config | Model Size | GPU Memory | Use Case |
-|--------|-----------|------------|----------|
-| `moe/minimal_working.yaml` | 62M params | 11GB | Development, testing |
-| `moe/large.yaml` | 200M+ params | 24GB | Production training |
-| `moe/4x_a6000_max_speed.yaml` | 200M+ params | 4x 48GB | Multi-GPU maximum speed |
-| `moe/finetune_from_checkpoint.yaml` | Variable | Variable | Fine-tuning |
-| `moe/optimized_batching.yaml` | Variable | Variable | Sequence packing |
+| Config | Use Case |
+|--------|----------|
+| `moe/large.yaml` | Production training (200M+ params) |
+| `moe/minimal_working.yaml` | Development and testing (62M params) |
+| `moe/large_Multy.yaml` | Multi-GPU distributed training |
+| `moe/mw_8bit.yaml` | 8-bit quantized training |
+| `moe/max_randomness.yaml` | Maximum data randomization |
+| `moe/deterministic.yaml` | Reproducible deterministic training |
+| `distributed/deepspeed_zero*.yaml` | DeepSpeed ZeRO configurations |
+| `memory/memory_efficient_optimizers.yaml` | Memory-optimized optimizer settings |
 
 ## Key Features
 
 ### Model Architecture
-- **MoE++ Architecture**: 8-32 experts with top-k routing
+- **MoE++ Architecture**: 8-32 experts with configurable top-k routing
 - **Router Types**: Mixtral, DeepSeek (hybrid), Switch
-- **Attention**: Flash Attention v2+, MQA, GQA
+- **Attention**: Flash Attention v2+, Multi-Query Attention (MQA), Grouped-Query Attention (GQA)
 - **Embeddings**: Rotary Position Embeddings (RoPE)
 - **Activations**: SwiGLU/GeGLU gated activations
 - **Auxiliary Losses**: Load balancing, router z-loss, diversity loss
 
+### Special Token Configuration
+
+All models use token IDs from config (not from tokenizer):
+
+```yaml
+model:
+  vocab_size: 50680
+  pad_token_id: 0    # Padding token
+  eos_token_id: 1    # End-of-sequence
+  bos_token_id: 2    # Beginning-of-sequence
+```
+
+**Important**: These IDs must match your tokenizer's vocabulary.
+
+**Verification**:
+```python
+from transformers import AutoTokenizer
+tokenizer = AutoTokenizer.from_pretrained("path/to/tokenizer")
+print(tokenizer.convert_tokens_to_ids(['[PAD]', '[EOS]', '[BOS]']))
+# Should match: [0, 1, 2]
+```
+
+The training scripts automatically handle missing tokenizer special tokens by using model config IDs as fallback.
+
 ### Training Optimizations
-- **Dynamic Batching**: Memory-aware batch sizing (15-25% throughput gain)
-- **Gradient Checkpointing**: 70-80% memory reduction
+- **Parallel Data Loading**: 8 workers for optimal throughput
+- **Gradient Checkpointing**: Memory reduction for longer sequences
 - **Mixed Precision**: FP16/BF16/FP8 support
-- **Double Checkpointing**: O(sqrt(n)) memory for 10x longer sequences
-- **Hybrid Caching**: KV + activation caching (2.19x throughput)
-- **Overlapped Recomputation**: Parallel backward pass
+- **Double Checkpointing**: O(sqrt(n)) memory for extended sequences
+- **Hybrid Caching**: KV + activation caching
+- **Overlapped Recomputation**: Parallel backward pass computation
 - **Progressive Training**: Curriculum learning, sequence length scaling
-- **Grouped GEMM**: 5-10x expert computation speedup
+- **Grouped GEMM**: Efficient expert computation
 
 ### Data Loading
-- **Pre-tokenized Loading**: 60x speedup with memory-mapped Arrow files
+- **Pre-tokenized Loading**: Memory-mapped Arrow files
 - **Turn-Aware Conversation**: Preserves dialogue structure
-- **Dynamic Batch Iterator**: Variable batch sizes based on GPU memory
-- **Sequence Packing**: 20-35% speedup by eliminating padding
-- **Multi-Column Datasets**: Text, numeric, categorical, image, tensor
+- **Sequence Packing**: Efficient utilization by eliminating padding
+- **Multi-Column Datasets**: Text, numeric, categorical, image, tensor support
 - **Streaming**: Memory-efficient large dataset processing
 
 ### Distributed Training
@@ -227,11 +264,11 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 | `code/src/ava/config/training_config.py` | All configuration dataclasses |
 | `code/src/ava/config/constants.py` | DataPipelineConstants, TrainerConstants |
 | `code/src/ava/data/streaming.py` | StreamingDataset |
-| `code/src/ava/data/bucketing.py` | DynamicTokenBatcher, LengthBasedBucketing |
-| `code/src/ava/data/pretokenized.py` | PreTokenizedDataset (60x faster) |
-| `code/src/ava/data/batch_iterator.py` | DynamicBatchIterator |
-| `code/src/ava/optimizations/dynamic_batching.py` | DynamicBatchScheduler |
+| `code/src/ava/data/bucketing.py` | LengthBasedBucketing |
+| `code/src/ava/data/pretokenized.py` | PreTokenizedDataset |
 | `code/src/ava/optim/lr_managers.py` | AdaptiveLearningRateManager |
+| `code/src/ava/training/loop.py` | TrainingLoopManager |
+| `code/src/ava/training/pipeline.py` | TrainingPipeline |
 
 ## Common Tasks
 
@@ -240,9 +277,9 @@ python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 # Single GPU
 python code/scripts/5_training/train_pipeline.py --config code/configs/moe/large.yaml
 
-# Multi-GPU (4 GPUs)
+# Multi-GPU
 torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py \
-  --config code/configs/moe/4x_a6000_max_speed.yaml
+  --config code/configs/moe/large_Multy.yaml
 
 # Resume from checkpoint
 python code/scripts/5_training/train_pipeline.py \
@@ -290,33 +327,14 @@ python code/scripts/1_data_download/unified_download.py --max-partitions 10
 
 ### Testing
 ```bash
-python code/tests/test_dynamic_batch_iterator.py
 python code/tests/test_coherence.py
+python code/tests/test_kernel_diagnostics.py
 ```
 
 ## Outputs Location
-- **Training Runs**: `code/outputs/runs/run_YYYYMMDD_HHMMSS/`
-- **Checkpoints**: `code/outputs/runs/*/checkpoints/`
-- **Fine-tune Runs**: `code/outputs/finetune_runs/`
+- **Training Runs**: `code/outputs/pretraining/run_YYYYMMDD_HHMMSS/`
+- **Checkpoints**: `code/outputs/pretraining/*/checkpoints/`
 - **WandB Logs**: `code/scripts/5_training/wandb/`
-
-## Performance Benchmarks
-
-| Configuration | Hardware | Throughput |
-|--------------|----------|------------|
-| Minimal (62M) | Single 24GB GPU | 800-1,200 samples/sec |
-| Large (200M) | Single 24GB GPU | 1,600-3,000 samples/sec |
-| Multi-GPU | 4x A6000 | 15,000-25,000 samples/sec |
-
-| Optimization | Improvement |
-|-------------|-------------|
-| Pre-tokenized Loading | 60x faster |
-| Dynamic Batching | 15-25% throughput |
-| Hybrid Caching | 2.19x throughput |
-| Sequence Packing | 20-35% speedup |
-| Grouped GEMM Experts | 5-10x computation |
-| Gradient Checkpointing | 70-80% memory savings |
-| Flash Attention | 40% memory savings |
 
 ## Configuration Examples
 
@@ -347,16 +365,22 @@ training:
   mixed_precision: 'bf16'
 ```
 
-### Dynamic Batching
+### Data Loading
 ```yaml
-dynamic_batching:
-  enabled: true
-  min_batch_size: 32
-  max_batch_size: 512
-  target_memory_threshold: 0.7
-  token_budget:
-    enabled: true
-    target_tokens_per_batch: 8192
+data:
+  num_workers: 8
+  prefetch_factor: 2
+  persistent_workers: true
+  use_pretokenized: true
+```
+
+### Data Randomization
+```yaml
+data:
+  randomization:
+    shuffle_buffer_size: 10000
+    seed: null  # null for random seed each run
+    deterministic: false
 ```
 
 ## Dependencies
@@ -372,7 +396,7 @@ Comprehensive guides in `code/docs/`:
 - `01_ARCHITECTURE.md` - System design
 - `02_TRAINING_GUIDE.md` - Training procedures
 - `03_MEMORY_OPTIMIZATION.md` - Memory techniques
-- `05_OPTIMIZATION_GUIDE.md` - Performance optimization
+- `05_OPTIMIZATION_GUIDE.md` - Optimization strategies
 - `07_CONFIGURATION_SYSTEM.md` - Config reference
 - `TURN_AWARE_DATA_LOADING.md` - Conversation handling
-- `DYNAMIC_BATCHING.md` - Memory-aware batching
+- `AVA_MODEL_API.md` - Model API reference

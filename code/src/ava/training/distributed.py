@@ -4,7 +4,7 @@ Distributed training utilities for the Ava pipeline.
 Provides setup and cleanup functions for multi-GPU training with proper
 error handling and graceful degradation.
 
-GPU SYNC FIX: Also provides OverlappedGradientSync for overlapping gradient
+Also provides OverlappedGradientSync for overlapping gradient
 all-reduce with backward computation in DDP scenarios.
 """
 
@@ -12,6 +12,7 @@ import datetime
 import logging
 import os
 import threading
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
@@ -29,21 +30,39 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for distributed barriers (shorter for cleanup)
+_CLEANUP_BARRIER_TIMEOUT = timedelta(minutes=5)
 
-def setup_distributed() -> Tuple[int, int]:
+
+class DistributedSetupError(Exception):
+    """Raised when distributed training setup fails in strict mode."""
+    pass
+
+
+def setup_distributed(strict: bool = False) -> Tuple[int, int]:
     """
     Setup distributed training if available.
+
+    Args:
+        strict: If True, raise DistributedSetupError on failure instead of falling back.
+                Default is False for backward compatibility.
 
     Returns:
         Tuple of (rank, world_size). Returns (0, 1) for single-GPU training.
 
+    Raises:
+        DistributedSetupError: If strict=True and distributed setup fails.
+
     Note:
         - Requires RANK and WORLD_SIZE environment variables for distributed mode
         - Sets NCCL_TIMEOUT to 30 minutes if not already set
-        - Falls back to single-GPU training on failure
+        - Falls back to single-GPU training on failure (unless strict=True)
     """
     if not DISTRIBUTED_AVAILABLE:
-        logger.debug("Distributed training not available (torch.distributed not importable)")
+        msg = "Distributed training not available (torch.distributed not importable)"
+        if strict:
+            raise DistributedSetupError(msg)
+        logger.debug(msg)
         return 0, 1
 
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
@@ -65,16 +84,28 @@ def setup_distributed() -> Tuple[int, int]:
 
         except Exception as e:
             # CRITICAL WARNING: User may not realize distributed training failed
-            logger.error(
+            error_msg = (
                 f"\n{'='*60}\n"
-                f"DISTRIBUTED TRAINING FALLBACK WARNING\n"
+                f"DISTRIBUTED TRAINING FAILURE\n"
                 f"{'='*60}\n"
                 f"Distributed setup failed with error: {e}\n"
                 f"Expected: world_size={world_size}, rank={rank}\n"
+            )
+
+            if strict:
+                logger.error(error_msg + f"{'='*60}")
+                raise DistributedSetupError(
+                    f"Distributed setup failed: {e}. "
+                    f"Expected world_size={world_size}, rank={rank}"
+                ) from e
+
+            logger.error(
+                error_msg +
                 f"Actual: Falling back to SINGLE-GPU training (world_size=1)\n"
                 f"\n"
                 f"This means your training will NOT use multiple GPUs!\n"
                 f"Check your distributed setup if this was unexpected.\n"
+                f"Set strict=True to raise an exception instead of falling back.\n"
                 f"{'='*60}"
             )
             return 0, 1
@@ -85,7 +116,10 @@ def setup_distributed() -> Tuple[int, int]:
 
 def cleanup_distributed(rank: int, world_size: int) -> None:
     """
-    Cleanup distributed training resources.
+    Cleanup distributed training resources with proper synchronization.
+
+    This ensures all CUDA operations complete and all processes synchronize
+    before destroying the process group, preventing NCCL errors on shutdown.
 
     Args:
         rank: Current process rank
@@ -96,8 +130,23 @@ def cleanup_distributed(rank: int, world_size: int) -> None:
     """
     if DISTRIBUTED_AVAILABLE and world_size > 1:
         try:
-            destroy_process_group()
-            logger.debug(f"[Rank {rank}] Distributed cleanup complete")
+            if dist.is_initialized():
+                # Sync CUDA first to ensure all GPU operations complete
+                if torch.cuda.is_available():
+                    try:
+                        torch.cuda.synchronize()
+                    except Exception as e:
+                        logger.debug(f"[Rank {rank}] CUDA sync during cleanup failed: {e}")
+
+                # Barrier to sync all processes before cleanup
+                # May fail if other processes already crashed or timeout occurs
+                try:
+                    dist.barrier(timeout=_CLEANUP_BARRIER_TIMEOUT)
+                except Exception as e:
+                    logger.debug(f"[Rank {rank}] Barrier during cleanup failed (timeout or other processes may have exited): {e}")
+
+                destroy_process_group()
+                logger.debug(f"[Rank {rank}] Distributed cleanup complete")
         except Exception as e:
             logger.warning(f"[Rank {rank}] Error during distributed cleanup: {e}")
 
@@ -141,7 +190,7 @@ def get_rank() -> int:
 
 class OverlappedGradientSync:
     """
-    GPU SYNC FIX: Overlap gradient all-reduce with backward computation.
+    Overlap gradient all-reduce with backward computation.
 
     In standard DDP, gradient synchronization happens after the backward pass
     completes, leaving the GPU idle during network communication. This class
@@ -151,8 +200,6 @@ class OverlappedGradientSync:
     2. Bucketing gradients by size for efficient communication
     3. Starting async all-reduce as soon as each bucket is full
     4. Overlapping communication with remaining backward computation
-
-    Expected improvement: 10-15% throughput gain on multi-GPU setups.
 
     Usage:
         # Create and attach to model BEFORE DDP wrapping
@@ -337,8 +384,9 @@ class OverlappedGradientSync:
         """Cleanup on deletion."""
         try:
             self.unregister_hooks()
-        except Exception:
-            pass
+        except Exception as e:
+            # Log at DEBUG level since __del__ errors are expected during shutdown
+            logger.debug(f"OverlappedGradientSync cleanup warning: {e}")
 
 
 def create_overlapped_gradient_sync(

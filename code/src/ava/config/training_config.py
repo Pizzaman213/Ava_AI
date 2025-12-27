@@ -8,10 +8,39 @@ enhanced feature flags, parameter validation, and configuration inheritance.
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Set
 from pathlib import Path
 import yaml
+
+logger = logging.getLogger(__name__)
+
+
+def get_mixed_precision(config: Dict[str, Any]) -> str:
+    """
+    Get mixed_precision setting with backward compatibility.
+
+    Supports both:
+    - training.precision.mixed_precision (new, recommended)
+    - training.mixed_precision (legacy fallback)
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        Mixed precision mode: 'bf16', 'fp16', or 'fp32'
+    """
+    training = config.get('training', {})
+    precision = training.get('precision', {})
+
+    # Try nested path first (new structure)
+    if 'mixed_precision' in precision:
+        return precision['mixed_precision']
+
+    # Fallback to legacy flat path
+    return training.get('mixed_precision', 'bf16')
+
 
 # Import path utilities for relative path resolution
 try:
@@ -44,7 +73,50 @@ class DynamicConfig:
         config = DynamicConfig({'training': {'batch_size': 32}})
         config.training.batch_size  # Returns 32
         config['training']['batch_size']  # Also returns 32
+
+    Strict Mode:
+        By default, missing attributes return None. Enable strict mode to raise
+        AttributeError for missing keys (helps catch typos):
+
+        DynamicConfig.enable_strict_mode()
+        config.typo_key  # Raises AttributeError instead of returning None
     """
+
+    # Class-level settings for strict mode and tracking
+    _strict_mode: bool = False
+    _accessed_missing: Set[str] = set()
+
+    @classmethod
+    def enable_strict_mode(cls) -> None:
+        """Enable strict mode - raises AttributeError for missing config keys."""
+        cls._strict_mode = True
+        logger.info("DynamicConfig strict mode enabled - missing keys will raise AttributeError")
+
+    @classmethod
+    def disable_strict_mode(cls) -> None:
+        """Disable strict mode - missing keys return None (default behavior)."""
+        cls._strict_mode = False
+        logger.debug("DynamicConfig strict mode disabled")
+
+    @classmethod
+    def get_accessed_missing_keys(cls) -> Set[str]:
+        """Get set of missing keys that were accessed."""
+        return cls._accessed_missing.copy()
+
+    @classmethod
+    def clear_accessed_missing_keys(cls) -> None:
+        """Clear the set of accessed missing keys."""
+        cls._accessed_missing.clear()
+
+    @classmethod
+    def report_missing_keys(cls) -> None:
+        """Log a warning about any missing keys that were accessed."""
+        if cls._accessed_missing:
+            keys_list = sorted(cls._accessed_missing)
+            logger.warning(
+                f"Config accessed {len(keys_list)} missing key(s): {keys_list[:10]}"
+                + (f"... and {len(keys_list) - 10} more" if len(keys_list) > 10 else "")
+            )
 
     def __init__(self, data: Optional[Dict[str, Any]] = None):
         """
@@ -53,11 +125,15 @@ class DynamicConfig:
         Args:
             data: Dictionary of configuration values
         """
+        # Initialize instance attributes dict directly to avoid __setattr__ issues
+        object.__setattr__(self, '_config_name', '')
         if data:
             for key, value in data.items():
                 if isinstance(value, dict):
                     # Recursively convert nested dicts to DynamicConfig
-                    setattr(self, key, DynamicConfig(value))
+                    nested = DynamicConfig(value)
+                    object.__setattr__(nested, '_config_name', key)
+                    setattr(self, key, nested)
                 else:
                     setattr(self, key, value)
 
@@ -65,11 +141,35 @@ class DynamicConfig:
         """
         Allow accessing any attribute dynamically.
 
-        Returns None for missing attributes to allow safe access to optional
-        config fields. Use .get() with a default or hasattr() if you need
-        to distinguish between None values and missing attributes.
+        In default mode, returns None for missing attributes to allow safe access
+        to optional config fields. In strict mode, raises AttributeError.
+
+        Args:
+            name: Attribute name to access
+
+        Returns:
+            None if attribute not found (in non-strict mode)
+
+        Raises:
+            AttributeError: If strict mode enabled and attribute not found
         """
-        # Return None for missing attributes - allows safe optional config access
+        # Avoid recursion for internal attributes
+        if name.startswith('_'):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        # Track the missing key access
+        config_name = object.__getattribute__(self, '_config_name') if hasattr(self, '_config_name') else ''
+        full_key = f"{config_name}.{name}" if config_name else name
+        DynamicConfig._accessed_missing.add(full_key)
+
+        if DynamicConfig._strict_mode:
+            raise AttributeError(
+                f"Config key '{full_key}' not found (strict mode enabled). "
+                f"Check for typos or add the key to your config file."
+            )
+
+        # Log at debug level for troubleshooting
+        logger.debug(f"Config accessed missing key: {full_key}")
         return None
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -140,6 +240,76 @@ class DynamicConfig:
             return True
         except RecursionError:
             raise ValueError("Configuration contains circular references")
+
+    def validate_required_fields(self, required: List[str]) -> List[str]:
+        """
+        Issue #18 fix: Validate that required fields exist.
+
+        Args:
+            required: List of dot-notation paths like 'training.batch_size'
+
+        Returns:
+            List of missing field paths
+        """
+        missing = []
+        for path in required:
+            parts = path.split('.')
+            current = self
+            for part in parts:
+                if not hasattr(current, part) or getattr(current, part) is None:
+                    missing.append(path)
+                    break
+                current = getattr(current, part)
+        return missing
+
+    def validate_schema(self, schema: Dict[str, Any]) -> List[str]:
+        """
+        Issue #18 fix: Validate config against a schema definition.
+
+        Args:
+            schema: Dict with field names and expected types/constraints.
+                    Each value can be:
+                    - A type (e.g., int, str, float)
+                    - A dict with 'type', 'required', 'min', 'max' keys
+
+        Returns:
+            List of validation error messages
+
+        Example:
+            errors = config.validate_schema({
+                'training.batch_size': {'type': int, 'required': True, 'min': 1},
+                'training.learning_rate': {'type': float, 'min': 0.0},
+                'model.hidden_size': int,  # Simple type check
+            })
+        """
+        errors = []
+        for field, constraints in schema.items():
+            # Get value using dot notation
+            parts = field.split('.')
+            value = self
+            for part in parts:
+                if hasattr(value, part):
+                    value = getattr(value, part)
+                else:
+                    value = None
+                    break
+
+            if isinstance(constraints, type):
+                # Simple type check
+                if value is not None and not isinstance(value, constraints):
+                    errors.append(f"{field}: expected {constraints.__name__}, got {type(value).__name__}")
+            elif isinstance(constraints, dict):
+                # Complex constraint
+                if 'required' in constraints and constraints['required'] and value is None:
+                    errors.append(f"{field}: required field is missing")
+                if value is not None:
+                    if 'type' in constraints and not isinstance(value, constraints['type']):
+                        errors.append(f"{field}: expected {constraints['type'].__name__}, got {type(value).__name__}")
+                    if 'min' in constraints and value < constraints['min']:
+                        errors.append(f"{field}: value {value} is below minimum {constraints['min']}")
+                    if 'max' in constraints and value > constraints['max']:
+                        errors.append(f"{field}: value {value} exceeds maximum {constraints['max']}")
+        return errors
 
     def __repr__(self) -> str:
         """String representation of DynamicConfig"""
@@ -225,16 +395,48 @@ class ModelConfig:
     rope_scaling: Optional[Dict[str, float]] = None  # RoPE scaling configuration
 
     def __post_init__(self):
-        """Validate configuration values to prevent division by zero."""
+        """Validate configuration values to catch invalid configs early.
+
+        FIX: Added comprehensive validations to catch errors at config load time
+        rather than deep in training with cryptic errors.
+        """
+        # Basic positive value checks
+        if self.hidden_size <= 0:
+            raise ValueError(f"hidden_size must be > 0, got {self.hidden_size}")
+        if self.intermediate_size <= 0:
+            raise ValueError(f"intermediate_size must be > 0, got {self.intermediate_size}")
+        if self.num_layers <= 0:
+            raise ValueError(f"num_layers must be > 0, got {self.num_layers}")
         if self.num_attention_heads <= 0:
             raise ValueError(f"num_attention_heads must be > 0, got {self.num_attention_heads}")
         if self.num_experts <= 0:
             raise ValueError(f"num_experts must be > 0, got {self.num_experts}")
+
+        # Divisibility check
         if self.hidden_size % self.num_attention_heads != 0:
             raise ValueError(
                 f"hidden_size ({self.hidden_size}) must be divisible by "
                 f"num_attention_heads ({self.num_attention_heads})"
             )
+
+        # MoE-specific validations
+        if self.num_experts_per_token > self.num_experts:
+            raise ValueError(
+                f"num_experts_per_token ({self.num_experts_per_token}) cannot exceed "
+                f"num_experts ({self.num_experts})"
+            )
+        if self.num_experts_per_token <= 0:
+            raise ValueError(f"num_experts_per_token must be > 0, got {self.num_experts_per_token}")
+        if self.capacity_factor <= 0:
+            raise ValueError(f"capacity_factor must be > 0, got {self.capacity_factor}")
+
+        # Auxiliary loss coefficient validations (must be non-negative)
+        if self.router_z_loss_coef < 0:
+            raise ValueError(f"router_z_loss_coef cannot be negative, got {self.router_z_loss_coef}")
+        if self.load_balance_loss_coef < 0:
+            raise ValueError(f"load_balance_loss_coef cannot be negative, got {self.load_balance_loss_coef}")
+        if self.diversity_loss_coef < 0:
+            raise ValueError(f"diversity_loss_coef cannot be negative, got {self.diversity_loss_coef}")
 
 
 @dataclass
@@ -242,10 +444,10 @@ class GenerationConfig:
     """Configuration for text generation."""
     max_length: int = 512                     # Maximum generation length
     min_length: int = 10                      # Minimum generation length
-    temperature: float = 1.2                  # Sampling temperature
-    top_p: float = 0.95                       # Nucleus sampling threshold
+    temperature: float = 0.8                  # Sampling temperature (lower = more coherent)
+    top_p: float = 0.9                        # Nucleus sampling threshold
     top_k: Optional[int] = 50                 # Top-k sampling (None = disabled)
-    repetition_penalty: float = 1.1           # Repetition penalty (>1.0 discourages)
+    repetition_penalty: float = 1.2           # Repetition penalty (>1.0 discourages)
     no_repeat_ngram_size: int = 3             # Block n-gram repetitions
     do_sample: bool = True                    # Enable sampling (vs greedy)
     num_beams: int = 1                        # Beam search width (1 = no beam search)
@@ -565,6 +767,12 @@ class DataConfig:
     enable_length_sorting: bool = True        # Enable length sorting in distributed mode
     disable_packing_length_sort: bool = False # Disable length sorting in packing
 
+    # Indexed loader (map-style with true random shuffling)
+    use_indexed_loader: bool = False          # Enable IndexedArrowDataset (true random access)
+    indexed_num_bins: int = 8                 # Number of length bins for sampling
+    indexed_cache_size: int = 50              # Arrow table LRU cache size per worker
+    indexed_index_workers: Optional[int] = None  # Parallel workers for indexing (None = auto)
+
 
 @dataclass
 class MultiColumnDataConfig:
@@ -719,6 +927,41 @@ class TrainingConfig:
     # Dynamic batching
     dynamic_batching: Optional[DynamicBatchingConfig] = None
 
+    def __post_init__(self):
+        """Validate training configuration values.
+
+        FIX: Added comprehensive validations to catch config errors early.
+        """
+        # Batch size validation (if specified)
+        if self.batch_size is not None and self.batch_size <= 0:
+            raise ValueError(f"batch_size must be > 0, got {self.batch_size}")
+
+        # Gradient accumulation must be positive
+        if self.gradient_accumulation_steps <= 0:
+            raise ValueError(f"gradient_accumulation_steps must be > 0, got {self.gradient_accumulation_steps}")
+        if self.gradient_accumulation <= 0:
+            raise ValueError(f"gradient_accumulation must be > 0, got {self.gradient_accumulation}")
+
+        # Learning rate validation (if specified)
+        if self.learning_rate is not None and self.learning_rate <= 0:
+            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+
+        # Warmup steps must be non-negative
+        if self.warmup_steps < 0:
+            raise ValueError(f"warmup_steps cannot be negative, got {self.warmup_steps}")
+
+        # Max steps validation (if specified)
+        if self.max_steps is not None and self.max_steps <= 0:
+            raise ValueError(f"max_steps must be > 0 if specified, got {self.max_steps}")
+
+        # Epochs validation (if specified)
+        if self.epochs is not None and self.epochs <= 0:
+            raise ValueError(f"epochs must be > 0 if specified, got {self.epochs}")
+
+        # Max gradient norm must be positive
+        if self.max_gradient_norm <= 0:
+            raise ValueError(f"max_gradient_norm must be > 0, got {self.max_gradient_norm}")
+
 
 @dataclass
 class OutputConfig:
@@ -755,7 +998,7 @@ class WandBConfig:
 @dataclass
 class CoherenceConfig:
     """Configuration for coherence measurement during training evaluation."""
-    enabled: bool = False                     # Enable coherence measurement
+    enabled: bool = True                      # Enable coherence measurement (detect issues early)
     eval_every_n_steps: int = 500             # Measure coherence every N steps
     num_samples: int = 10                     # Number of samples to generate for evaluation
     max_generation_length: int = 256          # Max tokens to generate
@@ -779,6 +1022,86 @@ class CoherenceConfig:
     # Logging
     log_to_wandb: bool = True                 # Log coherence metrics to WandB
     log_to_console: bool = True               # Log coherence metrics to console
+
+    def __post_init__(self):
+        """Validate configuration values."""
+        weights_sum = (
+            self.perplexity_weight +
+            self.repetition_weight +
+            self.flow_weight +
+            self.topic_weight
+        )
+        if not (0.99 <= weights_sum <= 1.01):  # Allow small floating point tolerance
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"CoherenceConfig weights sum to {weights_sum:.4f}, not 1.0. "
+                f"Coherence scores may be outside [0,1] range."
+            )
+
+
+@dataclass
+class ModelSelectionConfig:
+    """Configuration for multi-metric model selection.
+
+    Combines val_loss, coherence_score, and perplexity into a weighted
+    quality score for determining the best model checkpoint.
+    """
+    # Enable/disable multi-metric selection
+    enabled: bool = True
+
+    # Metric weights (should sum to 1.0 for normalized scoring)
+    val_loss_weight: float = 0.5              # Weight for validation loss (lower is better)
+    coherence_score_weight: float = 0.3       # Weight for coherence (higher is better)
+    perplexity_weight: float = 0.2            # Weight for perplexity (lower is better)
+
+    # Normalization settings
+    perplexity_cap: float = 100.0             # Cap perplexity for normalization
+    val_loss_cap: float = 10.0                # Cap val_loss for normalization
+
+    # Selection behavior
+    higher_is_better: bool = True             # Quality score interpretation
+    require_all_metrics: bool = False         # Require all metrics present
+    fallback_to_val_loss: bool = True         # Use val_loss alone if others missing
+
+
+@dataclass
+class DiagnosticsConfig:
+    """Configuration for detailed diagnostic logging.
+
+    Enables per-layer gradients, expert routing stats, memory breakdown,
+    and timing profiling for in-depth training analysis.
+    """
+    # Master enable
+    enabled: bool = False
+
+    # Per-layer gradient statistics
+    enable_per_layer_gradients: bool = False
+    per_layer_log_freq: int = 500             # Steps between per-layer logs
+    layer_name_patterns: List[str] = field(default_factory=lambda: ['layers', 'experts'])
+
+    # Expert routing diagnostics
+    enable_routing_diagnostics: bool = False
+    routing_log_freq: int = 100
+    track_per_expert_load: bool = True
+    track_routing_entropy: bool = True
+    track_expert_capacity_usage: bool = True
+
+    # Memory breakdown
+    enable_memory_breakdown: bool = False
+    memory_log_freq: int = 500
+    track_activation_memory: bool = True
+    track_gradient_memory: bool = True
+    track_optimizer_state_memory: bool = True
+    track_parameter_memory: bool = True
+
+    # Timing profiling
+    enable_timing_profiling: bool = False
+    timing_log_freq: int = 100
+    profile_forward: bool = True
+    profile_backward: bool = True
+    profile_optimizer_step: bool = True
+    profile_data_loading: bool = True
 
 
 @dataclass
@@ -1013,6 +1336,10 @@ class EnhancedTrainingConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     dev_log: DevLogConfig = field(default_factory=DevLogConfig)
     optimizations: OptimizationsConfig = field(default_factory=OptimizationsConfig)
+
+    # Model selection and diagnostics
+    model_selection: ModelSelectionConfig = field(default_factory=ModelSelectionConfig)
+    diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
 
     # Enhanced features (supports both losses and enhanced_features.losses paths)
     enhanced_features: Optional[Dict[str, Any]] = None  # type: ignore[assignment]

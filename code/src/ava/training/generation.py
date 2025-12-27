@@ -61,8 +61,10 @@ class GenerationManager(ManagerInterface):
         self._generation_history: List[Dict[str, Any]] = []
         self._generation_queue: Queue = Queue()
         self._log_dir: Optional[Path] = None
-        # FIX: Add lock to prevent TOCTOU race conditions on shared state
+        # Lock to prevent race conditions on shared state
         self._lock = threading.Lock()
+        # Generation config storage
+        self._generation_config: Dict[str, Any] = {}
 
     def initialize(self) -> None:
         """Initialize thread pool executor for async generation."""
@@ -89,6 +91,15 @@ class GenerationManager(ManagerInterface):
         """Set directory for generation output files."""
         self._log_dir = Path(log_dir)
 
+    def set_generation_config(self, config: Dict[str, Any]) -> None:
+        """Set generation configuration for async generation."""
+        self._generation_config = config or {}
+        self.logger.debug(f"Generation config set: {list(self._generation_config.keys())}")
+
+    def get_generation_config(self) -> Dict[str, Any]:
+        """Get current generation configuration."""
+        return self._generation_config.copy()
+
     def generate_sample(
         self,
         model: nn.Module,
@@ -101,6 +112,9 @@ class GenerationManager(ManagerInterface):
         repetition_penalty: float = 1.0,
         prompt: Optional[str] = None,
         skip_special_tokens: bool = True,
+        eos_token_id: Optional[int] = None,
+        no_repeat_ngram_size: int = 0,
+        banned_tokens: Optional[List[int]] = None,
     ) -> str:
         """
         Generate sample text synchronously.
@@ -116,46 +130,109 @@ class GenerationManager(ManagerInterface):
             repetition_penalty: Repetition penalty
             prompt: Optional prompt text
             skip_special_tokens: Skip special tokens in output
+            eos_token_id: End-of-sequence token ID (auto-detected from tokenizer if None)
+            no_repeat_ngram_size: Block repeated n-grams of this size (0 = disabled)
+            banned_tokens: List of token IDs to never generate (e.g., [23] blocks '/')
 
         Returns:
             Generated text string
         """
+        # Default banned tokens: block rare punctuation not in typical training data
+        # Token 23 = '/' which appears in "/" repetition issues
+        if banned_tokens is None:
+            banned_tokens = [23]  # Block '/' by default
         self.assert_initialized()
 
+        # Get EOS token ID from tokenizer if not provided
+        if eos_token_id is None and tokenizer is not None:
+            eos_token_id = getattr(tokenizer, 'eos_token_id', None)
+
+        # Get BOS token ID for proper sequence start (critical for coherent generation)
+        bos_token_id = getattr(tokenizer, 'bos_token_id', None) if tokenizer else None
+        if bos_token_id is None:
+            bos_token_id = 2  # Default BOS token ID matching tokenizer vocab
+
         model.eval()
-        device = self.device
+        # Get device from model, not self.device (supports CPU generation)
+        device = next(model.parameters()).device
 
         with torch.no_grad():
-            # Prepare input
+            # Prepare input - ALWAYS start with BOS token for coherent generation
+            # The model was trained with BOS at position 0, so we must include it
             if prompt is not None and tokenizer is not None:
                 try:
-                    encoded = tokenizer.encode(prompt, return_tensors='pt')
-                    generated_ids = encoded.to(device)
+                    # Handle both HuggingFace tokenizers and tokenizers library
+                    if hasattr(tokenizer, 'encode'):
+                        enc_result = tokenizer.encode(prompt)
+                        # tokenizers library returns Encoding object with .ids attribute
+                        if hasattr(enc_result, 'ids'):
+                            token_ids = enc_result.ids
+                        # HuggingFace returns tensor or list directly
+                        elif isinstance(enc_result, torch.Tensor):
+                            token_ids = enc_result.squeeze(0).tolist()
+                        else:
+                            token_ids = list(enc_result)
+                    else:
+                        token_ids = [bos_token_id]
+
+                    # Prepend BOS token if not already present
+                    if token_ids[0] != bos_token_id:
+                        token_ids = [bos_token_id] + token_ids
+                    generated_ids = torch.tensor([token_ids], dtype=torch.long).to(device)
                 except Exception as e:
                     self.logger.warning(f"Failed to encode prompt: {e}")
-                    generated_ids = torch.randint(0, vocab_size, (1, 1)).to(device)
+                    # Start with just BOS token
+                    generated_ids = torch.tensor([[bos_token_id]], dtype=torch.long).to(device)
             else:
-                generated_ids = torch.randint(0, vocab_size, (1, 1)).to(device)
+                # No prompt: start with BOS token (not random!)
+                generated_ids = torch.tensor([[bos_token_id]], dtype=torch.long).to(device)
 
             # Get max position embeddings
             max_pos = getattr(model, 'max_position_embeddings', 256)
             effective_max = min(max_length, max_pos)
+
+            # Initialize attention mask (all 1s = attend to all tokens)
+            attention_mask = torch.ones_like(generated_ids, dtype=torch.long)
 
             # Generate tokens
             for _ in range(effective_max - 1):
                 if generated_ids.shape[1] >= max_pos:
                     break
 
-                outputs = model(generated_ids)
+                # Pass attention mask to model for proper masking
+                outputs = model(generated_ids, attention_mask=attention_mask)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
 
                 # Get next token logits
                 next_logits = logits[:, -1, :] / max(temperature, 1e-5)
 
-                # Apply repetition penalty
+                # Apply repetition penalty (proper implementation for both positive and negative logits)
                 if repetition_penalty > 1.0 and generated_ids.shape[1] > 0:
                     recent = generated_ids[0, -50:]
-                    next_logits[:, recent] /= repetition_penalty
+                    for token_id in recent:
+                        token_id_int = token_id.item()
+                        if next_logits[0, token_id_int] < 0:
+                            next_logits[0, token_id_int] *= repetition_penalty
+                        else:
+                            next_logits[0, token_id_int] /= repetition_penalty
+
+                # Apply n-gram blocking to prevent repeated patterns
+                if no_repeat_ngram_size > 0 and generated_ids.shape[1] >= no_repeat_ngram_size:
+                    gen_list = generated_ids[0].tolist()
+                    ngram_prefix = gen_list[-(no_repeat_ngram_size - 1):]
+                    ngram_banned = set()
+                    for j in range(len(gen_list) - no_repeat_ngram_size + 1):
+                        if gen_list[j:j + no_repeat_ngram_size - 1] == ngram_prefix:
+                            banned_token = gen_list[j + no_repeat_ngram_size - 1]
+                            ngram_banned.add(banned_token)
+                    for token_id in ngram_banned:
+                        next_logits[0, token_id] = float('-inf')
+
+                # Apply banned tokens filter (blocks rare/problematic tokens like '/')
+                if banned_tokens:
+                    for token_id in banned_tokens:
+                        if token_id < next_logits.shape[-1]:
+                            next_logits[0, token_id] = float('-inf')
 
                 # Top-k filtering
                 probs = torch.softmax(next_logits, dim=-1)
@@ -171,7 +248,22 @@ class GenerationManager(ManagerInterface):
                 mask = cum_probs > top_p
                 mask[..., 0] = False
                 sorted_probs[mask] = 0.0
-                sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+
+                # Safeguard: ensure valid probability distribution
+                # GPU SYNC FIX: Use torch.where to avoid CPU sync for condition check
+                prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                # Normalize with epsilon to prevent division by zero
+                safe_prob_sum = prob_sum + 1e-10
+                normalized_probs = sorted_probs / safe_prob_sum
+                normalized_probs = normalized_probs + 1e-8
+                normalized_probs = normalized_probs / normalized_probs.sum(dim=-1, keepdim=True)
+
+                # Uniform fallback for invalid distributions
+                uniform_probs = torch.ones_like(sorted_probs) / sorted_probs.shape[-1]
+
+                # Select valid or uniform without CPU sync
+                is_invalid = (prob_sum == 0) | torch.isnan(prob_sum)
+                sorted_probs = torch.where(is_invalid.expand_as(sorted_probs), uniform_probs, normalized_probs)
 
                 # Sample
                 next_token = torch.multinomial(sorted_probs, num_samples=1)
@@ -179,20 +271,23 @@ class GenerationManager(ManagerInterface):
 
                 generated_ids = torch.cat([generated_ids, next_token], dim=1)
 
-                # GPU SYNC FIX: Batch EOS checks to reduce sync frequency
-                # Check for EOS every 8 tokens instead of every token
-                # This reduces syncs from N to N/8 during generation
-                seq_len = generated_ids.shape[1]
-                if seq_len % 8 == 0 or seq_len >= effective_max - 1:
-                    # Check if any of the last 8 tokens (or fewer) is EOS
-                    check_start = max(0, seq_len - 8)
-                    if (generated_ids[0, check_start:] == 0).any().item():
-                        break
+                # Update attention mask for the new token
+                attention_mask = torch.cat([
+                    attention_mask,
+                    torch.ones((attention_mask.shape[0], 1), device=device, dtype=attention_mask.dtype)
+                ], dim=-1)
 
-        # Decode
-        # GPU SYNC FIX: Use single sync instead of double sync from .cpu().tolist()
-        # .cpu() triggers a sync, then .tolist() triggers another sync
-        # Instead: transfer to CPU with explicit sync, then tolist() is just CPU operation
+            # GPU SYNC FIX: Single EOS check after generation loop completes
+            # Instead of checking every 8 tokens with .item() sync, find EOS once at end
+            if eos_token_id is not None:
+                eos_mask = (generated_ids[0] == eos_token_id)
+                eos_positions = eos_mask.nonzero(as_tuple=True)[0]
+                if eos_positions.numel() > 0:
+                    # Single sync only when truncating at EOS
+                    first_eos_idx = eos_positions[0].item()
+                    generated_ids = generated_ids[:, :first_eos_idx + 1]
+
+        # Decode with single sync point
         generated_cpu = generated_ids[0].cpu()
         if torch.cuda.is_available():
             torch.cuda.current_stream().synchronize()
@@ -215,6 +310,7 @@ class GenerationManager(ManagerInterface):
         global_step: int,
         vocab_size: int,
         tokenizer: Any = None,
+        eos_token_id: Optional[int] = None,
         **generation_kwargs
     ) -> Optional[Future]:
         """
@@ -225,6 +321,7 @@ class GenerationManager(ManagerInterface):
             global_step: Current training step
             vocab_size: Vocabulary size
             tokenizer: Optional tokenizer
+            eos_token_id: End-of-sequence token ID (auto-detected from tokenizer if None)
             **generation_kwargs: Generation parameters
 
         Returns:
@@ -232,50 +329,49 @@ class GenerationManager(ManagerInterface):
         """
         self.assert_initialized()
 
-        # FIX: Use lock to prevent TOCTOU race condition
-        # Without lock, another thread could start generation between check and assignment
+        # Auto-detect EOS token ID from tokenizer if not provided
+        if eos_token_id is None and tokenizer is not None:
+            eos_token_id = getattr(tokenizer, 'eos_token_id', None)
+
+        # Use lock to prevent race conditions
         with self._lock:
             # Check if previous generation is still running
             if self._pending_future is not None and not self._pending_future.done():
                 return None
 
+            # CRITICAL: Capture state_dict on main thread to avoid race conditions
+            # during deepcopy. The model's internal caches (RoPE, causal mask) can
+            # change during training, causing "dictionary keys changed during iteration"
+            # errors if we deepcopy from the background thread.
+            with torch.no_grad():
+                base_model = model.module if hasattr(model, 'module') else model
+                # Copy state dict to CPU immediately on main thread
+                state_dict_cpu = {k: v.cpu().clone() for k, v in base_model.state_dict().items()}
+                # Also capture the model class and config for reconstruction
+                model_class = type(base_model)
+                model_config = getattr(base_model, 'config', None)
+
             def _run_generation():
                 try:
-                    # Create CPU copy
-                    # GPU SYNC FIX: Use non_blocking=True transfers to overlap GPU->CPU DMA
-                    # with CPU work. All transfers are enqueued first, then we sync once.
+                    # Debug: confirm async thread started
+                    try:
+                        from tqdm import tqdm
+                        tqdm.write(f"  [Gen] Async thread started for step {global_step}")
+                    except ImportError:
+                        pass
+
+                    # Reconstruct model on CPU using captured state_dict
+                    # This avoids deepcopy race conditions with model caches
                     with torch.no_grad():
-                        # First, transfer all tensors with non_blocking=True
-                        # This enqueues all GPU->CPU DMA transfers in parallel
-                        model_state = {}
-                        for k, v in model.state_dict().items():
-                            if v.is_cuda:
-                                # non_blocking=True allows GPU to continue while DMA runs
-                                model_state[k] = v.to('cpu', non_blocking=True)
-                            else:
-                                model_state[k] = v.clone()
-
-                        # Single sync after all transfers are enqueued
-                        # This waits for all non_blocking transfers to complete
-                        if torch.cuda.is_available():
-                            torch.cuda.current_stream().synchronize()
-
-                        # Get model class
-                        if hasattr(model, 'module'):
-                            model_class = type(model.module)
-                            config = getattr(model.module, 'config', None)
+                        if model_config is not None:
+                            cpu_model = model_class(model_config)
                         else:
-                            model_class = type(model)
-                            config = getattr(model, 'config', None)
+                            # Fallback to deepcopy if no config available
+                            cpu_model = copy.deepcopy(base_model)
 
-                        # Create CPU model
-                        if config is not None:
-                            cpu_model = model_class(config)
-                            cpu_model.load_state_dict(model_state)
-                        else:
-                            cpu_model = copy.deepcopy(model)
-                            cpu_model.cpu()
-
+                        # Load the pre-captured state dict
+                        cpu_model.load_state_dict(state_dict_cpu, strict=False)
+                        cpu_model = cpu_model.to('cpu')
                         cpu_model.eval()
 
                         # Generate
@@ -283,6 +379,7 @@ class GenerationManager(ManagerInterface):
                             cpu_model,
                             tokenizer,
                             vocab_size,
+                            eos_token_id=eos_token_id,
                             **generation_kwargs
                         )
 
@@ -296,7 +393,7 @@ class GenerationManager(ManagerInterface):
                             'prompt': generation_kwargs.get('prompt', ''),
                         }
 
-                        # FIX: Use lock when modifying shared state
+                        # Use lock when modifying shared state
                         with self._lock:
                             self._add_to_history(result)
                         self._generation_queue.put(result)
@@ -313,12 +410,24 @@ class GenerationManager(ManagerInterface):
 
                         # Cleanup
                         del cpu_model
-                        del model_state
+
+                        # Debug: confirm generation completed
+                        try:
+                            from tqdm import tqdm
+                            tqdm.write(f"  [Gen] Async generation completed for step {global_step}")
+                        except ImportError:
+                            pass
 
                         return text
 
                 except Exception as e:
                     self.logger.error(f"Async generation failed: {e}")
+                    # Also print to console for visibility
+                    try:
+                        from tqdm import tqdm
+                        tqdm.write(f"  [Gen ERROR] Async generation failed: {e}")
+                    except ImportError:
+                        print(f"  [Gen ERROR] Async generation failed: {e}")
                     return None
 
             self._pending_future = self.executor.submit(_run_generation)
@@ -358,6 +467,10 @@ class GenerationManager(ManagerInterface):
         model: nn.Module,
         global_step: int,
         config: Dict[str, Any],
+        use_fast: bool = None,  # Now reads from config
+        use_fp16: bool = None,  # Now reads from config
+        use_bf16: bool = None,  # Now reads from config
+        micro_batch_size: int = None,  # Now reads from config
     ) -> Optional[Dict[str, float]]:
         """
         Measure generation coherence.
@@ -366,6 +479,10 @@ class GenerationManager(ManagerInterface):
             model: Model to evaluate
             global_step: Current training step
             config: Coherence configuration
+            use_fast: Use FastCoherenceMeasurer (default: from config or True)
+            use_fp16: Use FP16 precision (default: from config or False)
+            use_bf16: Use BF16 precision (default: from config or True)
+            micro_batch_size: Batch size for micro-batching (default: from config or 8)
 
         Returns:
             Dictionary of coherence metrics, or None if unavailable
@@ -373,30 +490,101 @@ class GenerationManager(ManagerInterface):
         if not config.get('enabled', False):
             return None
 
+        # Read settings from config (with fallback to parameters, then defaults)
+        use_fast = config.get('use_fast', use_fast if use_fast is not None else True)
+        use_fp16 = config.get('use_fp16', use_fp16 if use_fp16 is not None else False)
+        use_bf16 = config.get('use_bf16', use_bf16 if use_bf16 is not None else True)
+        micro_batch_size = config.get('micro_batch_size', micro_batch_size if micro_batch_size is not None else 8)
+
         try:
-            from ava.eval.coherence import CoherenceMeasurer, CoherenceConfig
+            from ava.eval.coherence import (
+                CoherenceMeasurer,
+                FastCoherenceMeasurer,
+                CoherenceConfig,
+            )
 
-            if self.coherence_measurer is None:
-                coherence_config = CoherenceConfig(
-                    num_samples=config.get('num_samples', 5),
-                    max_length=config.get('max_length', 100),
-                    temperature=config.get('temperature', 0.8),
+            # Build config with correct parameter names
+            # Check for both 'max_generation_length' (YAML) and 'max_length' (fallback)
+            coherence_config = CoherenceConfig(
+                num_samples=config.get('num_samples', 5),
+                max_generation_length=config.get('max_generation_length', config.get('max_length', 100)),
+                temperature=config.get('temperature', 0.8),
+                top_p=config.get('top_p', 0.9),
+                top_k=config.get('top_k', 50),
+            )
+
+            if use_fast:
+                # Use optimized FastCoherenceMeasurer
+                measurer = FastCoherenceMeasurer(
+                    model=model,
+                    tokenizer=self.context.tokenizer,
+                    config=coherence_config,
+                    device=self.device,
+                    micro_batch_size=micro_batch_size,
                 )
-                self.coherence_measurer = CoherenceMeasurer(coherence_config)
 
-            metrics = self.coherence_measurer.measure(model, self.device)
+                # Generate samples first (use original measurer for generation)
+                orig_measurer = CoherenceMeasurer(
+                    model=model,
+                    tokenizer=self.context.tokenizer,
+                    config=coherence_config,
+                    device=self.device,
+                )
+                input_ids, _ = orig_measurer._generate_samples()
+
+                # Measure with fast path
+                metrics = measurer.measure_fast(
+                    input_ids,
+                    use_fp16=use_fp16,
+                    use_bf16=use_bf16,
+                )
+            else:
+                # Use original CoherenceMeasurer
+                measurer = CoherenceMeasurer(
+                    model=model,
+                    tokenizer=self.context.tokenizer,
+                    config=coherence_config,
+                    device=self.device,
+                )
+                metrics = measurer.measure(generate_samples=True)
 
             return {
-                'coherence_score': metrics.overall_score,
-                'fluency': metrics.fluency,
-                'repetition_ratio': metrics.repetition_ratio,
+                'coherence_score': metrics.coherence_score,
+                'perplexity': metrics.perplexity,
+                'repetition_score': metrics.repetition_score,
+                'sentence_flow': metrics.sentence_flow_score,
+                'topic_consistency': metrics.topic_consistency,
+                'num_samples': metrics.num_samples,
+                'avg_sequence_length': metrics.avg_sequence_length,
+                'unique_token_ratio': metrics.unique_token_ratio,
             }
 
-        except ImportError:
-            self.logger.debug("Coherence measurement not available")
+        except ImportError as e:
+            # Track first occurrence to avoid spam
+            if not hasattr(self, '_coherence_import_error_logged'):
+                self._coherence_import_error_logged = True
+                self.logger.error(
+                    "Coherence measurement not available: missing 'ava.eval.coherence' module. "
+                    "This will disable coherence tracking for the entire run. "
+                    f"Import error: {e}"
+                )
+            else:
+                self.logger.info("Coherence measurement skipped (module not available)")
             return None
         except Exception as e:
-            self.logger.warning(f"Coherence measurement failed: {e}")
+            # Full context for debugging
+            self.logger.warning(
+                f"Coherence measurement failed at step {global_step}: {e}. "
+                f"This will result in missing coherence metrics. "
+                f"Config: {config}",
+                exc_info=True  # Include stack trace
+            )
+            # Console output for visibility
+            try:
+                from tqdm import tqdm
+                tqdm.write(f"  [WARNING] Coherence measurement failed at step {global_step}: {e}")
+            except ImportError:
+                print(f"  [WARNING] Coherence measurement failed at step {global_step}: {e}")
             return None
 
     def is_generation_pending(self) -> bool:

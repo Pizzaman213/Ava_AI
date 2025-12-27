@@ -6,4 +6,19 @@ This package provides:
 - SparseMoELayer: Sparse mixture of experts layer
 """
 
-__all__ = []
+from .moe import EnhancedMoEModel, EnhancedMoEConfig
+from .moe_layer import SparseMoELayer
+
+try:
+    from .moe import OptimizedMoETransformer, OptimizedMoEConfig
+except ImportError:
+    OptimizedMoETransformer = None
+    OptimizedMoEConfig = None
+
+__all__ = [
+    'EnhancedMoEModel',
+    'EnhancedMoEConfig',
+    'SparseMoELayer',
+    'OptimizedMoETransformer',
+    'OptimizedMoEConfig',
+]

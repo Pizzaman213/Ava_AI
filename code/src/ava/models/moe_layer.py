@@ -24,7 +24,7 @@ from ..nn.routing import MixtralRouter, DeepSeekRouter
 @torch.jit.script
 def fused_expert_combine(expert_outputs: torch.Tensor, weights: Optional[torch.Tensor] = None) -> torch.Tensor:
     """
-    OPTIMIZATION: JIT-compiled fused expert combination (15-25% faster).
+    JIT-compiled fused expert combination for efficient output aggregation.
 
     Fuses the weighted sum operation for expert outputs into a single kernel.
     Further optimized with memory-efficient sum operation.
@@ -103,9 +103,9 @@ class SparseMoELayer(nn.Module):
         use_grouped_gemm: bool = True,
         use_triton_kernels: bool = True,
         use_torch_compile: bool = True,
-        compile_router: bool = False,  # NEW: Separately compile router for 20-30% speedup
+        compile_router: bool = False,  # Separately compile router (deprecated)
         router_compile_mode: str = 'default',  # 'default' or 'reduce-overhead'
-        enable_cudagraphs_safe_routing: bool = False,  # OPTIMIZATION: Enable CUDAGraphs-compatible routing (20-30% speedup)
+        enable_cudagraphs_safe_routing: bool = False,  # Enable CUDAGraphs-compatible routing (deprecated)
         router_z_loss_coef: float = 0.001,
         load_balance_loss_coef: float = 0.01,
         diversity_loss_coef: float = 0.001,
@@ -156,8 +156,8 @@ class SparseMoELayer(nn.Module):
         self.lora_rank = lora_rank
         self.lora_alpha = lora_alpha
 
-        # SPEED OPTIMIZATION: Step counter for adaptive loss computation frequency
-        # FIX: Use Python int instead of torch.tensor to avoid torch.compile graph breaks
+        # Step counter for adaptive loss computation frequency
+        # Use Python int instead of torch.tensor to avoid torch.compile graph breaks
         self._training_step = 0
 
         # Create router
@@ -217,25 +217,28 @@ class SparseMoELayer(nn.Module):
             warnings.warn(
                 "compile_router parameter is deprecated. "
                 "ALTERNATIVE: Use enable_torch_compile=true in config for whole-model compilation, "
-                "which provides equivalent router optimization (15-30% speedup) without module conflicts.",
+                "which provides equivalent router optimization without module conflicts.",
                 DeprecationWarning
             )
 
-        # Create expert group with grouped GEMM (5-10x faster)
+        # Create expert group with grouped GEMM for parallel computation
         if use_grouped_gemm:
             expert_count = num_experts if router_type == 'mixtral' else num_experts - 1
 
-            # Note: LoRA experts, offloading, and quantization features were removed
-            # as they were never used in training. Use standard ExpertParallelGroup.
+            # Note: LoRA experts, offloading, and quantization features were never implemented.
+            # These parameters are kept for config backwards compatibility but have no effect.
             if use_expert_offloading or use_expert_quantization or use_lora_experts:
                 import warnings
                 warnings.warn(
-                    "use_expert_offloading, use_expert_quantization, and use_lora_experts "
-                    "are deprecated and have no effect. "
-                    "ALTERNATIVES: For memory efficiency, use gradient_checkpointing=true, "
-                    "mixed_precision='bf16', or DeepSpeed ZeRO stages. For expert parallelism, "
-                    "use torchrun with FSDP or DeepSpeed.",
-                    DeprecationWarning
+                    "DEPRECATED: use_expert_offloading, use_expert_quantization, and use_lora_experts "
+                    "were never implemented and have NO EFFECT. These parameters will be removed in a future version. "
+                    "ALTERNATIVES for memory efficiency:\n"
+                    "  - gradient_checkpointing: true  (reduces activation memory)\n"
+                    "  - mixed_precision: 'bf16'  (halves parameter memory)\n"
+                    "  - DeepSpeed ZeRO-2/3  (shards optimizer state)\n"
+                    "  - torchrun with FSDP  (shards model across GPUs)",
+                    DeprecationWarning,
+                    stacklevel=2
                 )
 
             # Standard experts: Full weight matrices with grouped GEMM
@@ -270,7 +273,7 @@ class SparseMoELayer(nn.Module):
 
     def _compute_diversity_loss_approx(self, expert_indices: torch.Tensor) -> torch.Tensor:
         """
-        OPTIMIZATION: Approximate diversity loss using hash-based similarity (60-80% faster).
+        Approximate diversity loss using hash-based similarity for efficiency.
 
         Uses a simple hash-based approach to estimate expert diversity without
         computing full pairwise similarity matrix.
@@ -325,16 +328,14 @@ class SparseMoELayer(nn.Module):
         """
         num_tokens = expert_indices.shape[0]
 
-        # SPEED OPTIMIZATION: Use fast approximation earlier to avoid O(N²) complexity
-        # Lowered threshold from 512→128→64 tokens for additional 2-3% speedup
-        # The approximation is accurate enough and much faster for batches >64 tokens
+        # Use fast approximation for larger batches to avoid O(N²) complexity
+        # The approximation is accurate enough for batches >64 tokens
         if num_tokens > 64:
             return self._compute_diversity_loss_approx(expert_indices)
 
         # For small batches, use exact computation
         # For large batches (>64), use sampling to avoid O(N²) complexity
-        # SPEED OPTIMIZATION: Reduced sample size from 128 to 64 for faster computation
-        # Sample size of 64 provides sufficient accuracy while being 4x faster than full O(N²)
+        # Sample size of 64 provides sufficient accuracy while remaining efficient
         max_sample_size = 64
 
         if num_tokens <= max_sample_size:
@@ -353,7 +354,7 @@ class SparseMoELayer(nn.Module):
             mask = 1 - torch.eye(num_tokens, device=expert_indices.device)
             diversity_loss = (similarity * mask).sum() / (num_tokens * (num_tokens - 1) + 1e-10)
         else:
-            # Sampling-based approximation for large batches (10-15% faster)
+            # Sampling-based approximation for large batches
             # Randomly sample pairs to estimate diversity
             sample_indices = torch.randperm(num_tokens, device=expert_indices.device)[:max_sample_size]
             sampled_indices = expert_indices[sample_indices]
@@ -413,7 +414,7 @@ class SparseMoELayer(nn.Module):
         4. Create capacity mask based on position < capacity
         5. Scatter mask back to original positions
 
-        This eliminates the for loop over experts, achieving 10-15x speedup.
+        This eliminates the for loop over experts for significant speedup.
 
         Args:
             expert_indices: Expert assignments [num_tokens, k]
@@ -509,9 +510,7 @@ class SparseMoELayer(nn.Module):
         original_shape = hidden_states.shape
 
         # Normalize input
-        # OPTIMIZATION: Removed .clone() for 2-3% speedup
-        # Clone was added for CUDA graphs but causes unnecessary overhead
-        # The tensor is immediately used and not modified in-place
+        # Note: clone() removed since tensor is immediately used and not modified in-place
         hidden_states = self.norm(hidden_states)
 
         # Flatten for routing
@@ -526,9 +525,8 @@ class SparseMoELayer(nn.Module):
             # expert_indices: [num_tokens, k]
             # expert_weights: [num_tokens, k]
 
-            # GPU SYNC FIX: Removed periodic validation to avoid GPU sync
-            # Expert indexing will naturally raise IndexError if indices are out of bounds
-            # This eliminates .item() calls that were causing cudaStreamSynchronize
+            # Rely on natural IndexError for out-of-bounds expert indices
+            # Avoids explicit validation that would require GPU synchronization
 
             # CAPACITY PLANNING: Limit tokens per expert to prevent overload
             if training and self.capacity_factor < float('inf'):
@@ -603,26 +601,30 @@ class SparseMoELayer(nn.Module):
             # Reshape back to original
             output = output.view(*original_shape)  # [batch_size, seq_len, hidden_size]
 
-        # If using DeepSeek-style shared expert, add it
-        if self.use_shared_expert and self.router_type == 'deepseek':
+        # CRITICAL FIX: DeepSeek routing always uses shared expert
+        # The shared expert is applied to ALL tokens (not routed)
+        # This provides a stable baseline that prevents expert collapse
+        if self.router_type == 'deepseek':
             shared_output = self.shared_expert(hidden_states)
+            # Shared expert is added with its configured weight (default 0.5)
+            # The output already has routed expert contributions
             output = output + shared_output
 
         # Compute auxiliary losses
         aux_loss = routing_aux_loss
 
-        # SPEED OPTIMIZATION: Increment step counter and compute diversity loss less frequently
+        # Increment step counter and compute diversity loss less frequently
         # Diversity loss is primarily for monitoring, computing every 10 steps is sufficient
         if training:
             self._training_step += 1
 
-        # SPEED OPTIMIZATION: Skip auxiliary loss computation when disabled (5-8% speedup)
+        # Skip auxiliary loss computation when disabled for efficiency
         # Many speed-optimized configs set these coefficients to 0.0
-        # Completely skip computation to avoid any overhead from function calls
+        # Completely skip computation to avoid overhead from function calls
 
-        # PERFORMANCE FIX: Only compute losses when coefficients are non-zero
-        # Avoid creating GPU tensors for zero values (2-3% overhead)
-        # Use None for disabled metrics vs 0.0 for computed-as-zero (clearer distinction)
+        # Only compute losses when coefficients are non-zero
+        # Avoid creating GPU tensors for zero values
+        # Use None for disabled metrics vs 0.0 for computed-as-zero
         diversity_loss: float | None = None
         expert_dropout_loss: float | None = None
 
@@ -639,8 +641,8 @@ class SparseMoELayer(nn.Module):
             aux_loss = aux_loss + self.expert_dropout_loss_coef * expert_dropout_loss
 
         # Collect all metrics
-        # PERFORMANCE FIX: Only convert to tensor if needed for metrics
-        # None = disabled, 0.0 = computed as zero (clearer distinction for debugging)
+        # Only convert to tensor if needed for metrics
+        # None = disabled, 0.0 = computed as zero
         metrics = {
             **routing_metrics,
             'aux_loss_total': aux_loss,
@@ -648,7 +650,16 @@ class SparseMoELayer(nn.Module):
             'aux_loss_diversity': diversity_loss,  # None if disabled
             'aux_loss_expert_dropout': expert_dropout_loss,  # None if disabled
             'num_tokens': num_tokens,  # Keep as int, avoid tensor creation
+            'router_type': self.router_type,  # Track which router is being used
         }
+
+        # Add per-expert utilization if available in routing metrics
+        if 'expert_utilization' in routing_metrics:
+            expert_util = routing_metrics['expert_utilization']
+            if isinstance(expert_util, torch.Tensor):
+                # Convert to individual metrics for WandB logging
+                for expert_id in range(min(expert_util.shape[0], self.num_experts)):
+                    metrics[f'expert_{expert_id}_utilization'] = expert_util[expert_id].item()
 
         return output, aux_loss, metrics
 
@@ -668,7 +679,7 @@ class SparseMoELayer(nn.Module):
         if not hasattr(self.router, 'expert_counts'):
             return {}
 
-        # GPU SYNC FIX: This is called infrequently for stats reporting,
+        # This is called infrequently for stats reporting,
         # so a single sync here is acceptable (not in hot training loop)
         total_calls_tensor = self.router.total_routing_calls  # type: ignore[attr-defined]
         total_calls = int(total_calls_tensor.item()) if hasattr(total_calls_tensor, 'item') else int(total_calls_tensor)

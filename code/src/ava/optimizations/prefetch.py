@@ -9,7 +9,7 @@ import logging
 import threading
 from collections import deque
 from queue import Empty, Queue
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterator, List, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader
@@ -62,13 +62,9 @@ class AsyncBatchPrefetcher:
         self._error: Optional[Exception] = None
         self._pinned_buffers: List[torch.Tensor] = []  # Track pinned buffers for cleanup
         self._initialized = threading.Event()  # Initialization barrier
-        # RACE CONDITION FIX: Track recent pinned sources in a deque instead of
-        # synchronizing immediately. This allows DMA to complete naturally without
-        # blocking the CPU. Use prefetch_count * 10 for large safety margin - this
-        # ensures pinned memory stays alive even with slow batch processing or
-        # variable GPU computation times. The previous value of *3 was insufficient
-        # and caused "illegal memory access" errors around batch 9.
-        self._pinned_history: deque = deque(maxlen=prefetch_count * 10)
+        # Store (pinned_sources, event) tuples and synchronize on the CUDA event
+        # before evicting. This guarantees DMA completion before freeing pinned memory.
+        self._pinned_history: Deque[Tuple[List[torch.Tensor], Optional[torch.cuda.Event]]] = deque(maxlen=prefetch_count + 2)
 
         # Start prefetch thread
         self.thread = threading.Thread(target=self._prefetch_loop, daemon=True)
@@ -139,9 +135,9 @@ class AsyncBatchPrefetcher:
             Tuple of (gpu_batch dict, list of pinned source tensors to keep alive)
         """
         gpu_batch = {}
-        # CRITICAL FIX: Keep pinned source tensors alive until DMA completes
-        # Without this, the pinned tensor can be GC'd while async transfer is in progress,
-        # causing "illegal memory access" CUDA errors.
+        # Keep pinned source tensors alive until DMA completes.
+        # Without this, the pinned tensor can be garbage collected while async
+        # transfer is in progress, causing CUDA errors.
         pinned_sources: List[torch.Tensor] = []
 
         for key, value in batch.items():
@@ -156,10 +152,8 @@ class AsyncBatchPrefetcher:
                         value = value.pin_memory()
                     # Keep reference to pinned source until transfer completes
                     pinned_sources.append(value)
-                    # CRITICAL FIX: .to() enqueues DMA on the CURRENT stream, not the
-                    # surrounding context. We must explicitly use transfer_stream context
-                    # so that record_stream() matches the actual DMA stream.
-                    # Without this, the allocator may free GPU memory while DMA is in progress.
+                    # Enqueue DMA on the transfer_stream with record_stream() to ensure
+                    # the allocator does not free GPU memory while transfer is in progress.
                     if self.transfer_stream is not None:
                         with torch.cuda.stream(self.transfer_stream):
                             gpu_tensor = value.to(self.device, non_blocking=True)
@@ -190,23 +184,25 @@ class AsyncBatchPrefetcher:
 
         batch_idx, gpu_batch, event, pinned_sources = item
 
-        # GPU SYNC FIX: Use stream.wait_event() instead of event.synchronize()
-        # event.synchronize() blocks the CPU until the transfer completes (bad!)
-        # current_stream().wait_event() makes GPU wait for transfer without blocking CPU
+        # Use stream.wait_event() instead of event.synchronize() to avoid blocking CPU.
+        # current_stream().wait_event() makes GPU wait for transfer without blocking CPU.
         if event is not None:
             torch.cuda.current_stream().wait_event(event)
-            # SAFETY SYNC: When deque is about to evict entries, ensure the oldest
-            # DMA transfers have completed by syncing the transfer stream. This only
-            # happens when we're at capacity, avoiding constant sync overhead.
-            if self.transfer_stream is not None and len(self._pinned_history) >= self._pinned_history.maxlen - 1:
-                self.transfer_stream.synchronize()
 
-        # RACE CONDITION FIX: Instead of blocking with synchronize(), keep pinned
-        # sources alive in a deque. The deque's maxlen ensures old entries are
-        # automatically cleaned up after enough batches have passed (DMA complete).
-        # This avoids CPU blocking while still preventing premature GC of pinned memory.
+        # RACE CONDITION FIX: Event-based eviction guarantees DMA completion before freeing pinned memory.
+        # CRITICAL: Must synchronize BEFORE deque evicts to prevent accessing freed memory.
+        # The issue: deque.append() with maxlen can evict oldest item DURING the append,
+        # so we must synchronize the oldest event BEFORE appending to prevent race condition.
         if pinned_sources:
-            self._pinned_history.append(pinned_sources)
+            # Check if deque is full and will evict on next append
+            if len(self._pinned_history) >= self._pinned_history.maxlen - 1:
+                # Deque will evict on next append - sync the oldest event NOW
+                if self._pinned_history and self._pinned_history[0][1] is not None:
+                    oldest_event = self._pinned_history[0][1]
+                    # CRITICAL: Synchronize BEFORE append to ensure DMA complete before eviction
+                    oldest_event.synchronize()
+            # Now safe to append - either not full, or oldest DMA is complete
+            self._pinned_history.append((pinned_sources, event))
 
         return batch_idx, gpu_batch
 
@@ -291,7 +287,14 @@ class AsyncBatchPrefetcher:
 
         # Clear references to pinned tensors
         self._pinned_buffers.clear()
-        self._pinned_history.clear()  # Clear the deque tracking recent pinned sources
+        # Sync all pending events before clearing to ensure DMA is complete
+        for item in self._pinned_history:
+            if item[1] is not None:  # item[1] is the CUDA event
+                try:
+                    item[1].synchronize()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+        self._pinned_history.clear()
         for item in drained_items:
             # item format: (batch_idx, gpu_batch, event, pinned_sources)
             if len(item) >= 4 and item[3] is not None:

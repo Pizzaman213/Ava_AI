@@ -33,11 +33,10 @@ model:
   deepspeed_moe_param_groups: true
 
 training:
-  batch_size: 64
-  gradient_accumulation_steps: 2
-  optimizer: lion  # Lion optimizer: 50% memory reduction vs AdamW
-  learning_rate: 0.000027  # LION: 3x smaller than AdamW (8e-5 -> 0.000027)
-  lion_betas: [0.9, 0.99]  # Lion-specific betas (different from AdamW's [0.9, 0.999])
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  optimizer: adamw  # Standard AdamW (DeepSpeed compatible, was lion)
+  learning_rate: 0.0001  # Standard AdamW learning rate
   max_gradient_norm: 1.0
   num_epochs: 5
   warmup_steps: 2000
@@ -48,24 +47,40 @@ training:
 # DeepSpeed Configuration (ZeRO-2 Focus)
 deepspeed:
   enabled: true
-  zero_stage: 2              # Optimizer + gradient sharding
-  cpu_offload: false
-  nvme_offload: false
-  precision: "bf16"
-  gradient_accumulation_steps: 2
-  train_batch_size: 128      # 64 * 2
-  micro_batch_size: 64
-  activation_checkpointing: true
-  partition_activations: true
-  gradient_clipping: 1.0
+  zero_stage: 2                       # Optimizer + gradient sharding
 
-  # ZeRO-2 specific settings
-  zero_allow_untested_optimizer: true
-  zero_reduce_scatter: true
-  zero_overlap_comm: true
-  zero_contiguous_gradients: true
-  zero_reduce_bucket_size: 500000000    # 500MB
-  zero_allgather_bucket_size: 500000000
+  # Offloading
+  cpu_offload: false                  # Set true to offload optimizer to CPU RAM
+  nvme_offload: false                 # Set true to offload to NVMe (requires nvme_path)
+  nvme_path: "/local_nvme"            # NVMe mount point (if nvme_offload=true)
+
+  # Precision (DeepSpeed manages mixed precision internally)
+  # NOTE: Do NOT use torch.amp.autocast when DeepSpeed is enabled
+  # DeepSpeed handles mixed precision via this setting
+  precision_type: "bf16"              # Options: 'fp16', 'bf16', 'fp32'
+
+  # Batch Configuration
+  gradient_accumulation_steps: 4
+  train_batch_size: 128               # micro_batch_size * grad_accum * world_size (16 * 4 * 2 = 128)
+  micro_batch_size: 16                # Per-GPU batch size
+
+  # Activation Checkpointing
+  activation_checkpointing: true      # Enable activation checkpointing
+  partition_activations: true         # Partition activations across GPUs
+  cpu_checkpointing: false            # Checkpoint activations to CPU
+
+  # Gradient Clipping
+  gradient_clipping: 1.0              # Max gradient norm
+
+  # ZeRO-2 Advanced Settings
+  zero_overlap_comm: true             # Overlap communication with computation
+  zero_contiguous_gradients: true     # Reduce memory fragmentation
+  zero_reduce_scatter: true           # Use reduce_scatter instead of allreduce
+  zero_reduce_bucket_size: 500000000  # 500MB bucket size
+  zero_allgather_bucket_size: 500000000  # 500MB bucket size
+
+  # Monitoring
+  wall_clock_breakdown: false         # Enable detailed timing breakdown
 
 # Enhanced Features (Full Suite)
 enhanced_features:
