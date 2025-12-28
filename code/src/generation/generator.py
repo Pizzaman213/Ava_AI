@@ -186,6 +186,7 @@ class TextGenerator:
 
         This method generates text token by token, either greedily selecting
         the most probable token or sampling based on the probability distribution.
+        Uses KV caching for efficient generation.
         """
         batch_size = input_ids.shape[0]
         cur_len = input_ids.shape[1]
@@ -194,9 +195,32 @@ class TextGenerator:
         generated = input_ids.clone()
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
+        # Initialize KV cache and position tracking
+        past_key_values = None
+        current_position = cur_len  # Track position for RoPE
+
         while cur_len < max_length:
-            # Get model predictions
-            outputs = self.model(generated)
+            # Get model predictions with KV caching
+            if past_key_values is None:
+                # First pass: process entire input sequence
+                position_ids = torch.arange(cur_len, device=self.device).unsqueeze(0).expand(batch_size, -1)
+                outputs = self.model(
+                    input_ids=generated,
+                    position_ids=position_ids,
+                    use_cache=True
+                )
+            else:
+                # Subsequent passes: only process new token with cached KV
+                position_ids = torch.tensor([[current_position - 1]], device=self.device).expand(batch_size, -1)
+                outputs = self.model(
+                    input_ids=generated[:, -1:],
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True
+                )
+
+            # Update KV cache
+            past_key_values = outputs.get('past_key_values', None)
             next_token_logits = outputs['logits'][:, -1, :]
 
             # Apply EOS penalty
@@ -249,6 +273,7 @@ class TextGenerator:
             # Update generated sequence
             generated = torch.cat([generated, next_tokens.unsqueeze(1)], dim=1)
             cur_len += 1
+            current_position += 1  # Increment position for next token's RoPE
 
             # Check for completion
             not_eos_mask = (next_tokens != self.eos_token_id).long()  # type: ignore[attr-defined]
@@ -281,6 +306,7 @@ class TextGenerator:
 
         Beam search maintains multiple hypotheses (beams) and explores the most
         promising sequences in parallel, leading to higher quality outputs.
+        Uses KV caching for efficient generation.
         """
         batch_size = input_ids.shape[0]
         cur_len = input_ids.shape[1]
@@ -288,6 +314,7 @@ class TextGenerator:
         # Expand input for beam search
         expanded_input = input_ids.unsqueeze(1).expand(batch_size, num_beams, -1)
         expanded_input = expanded_input.contiguous().view(batch_size * num_beams, -1)
+        effective_batch_size = batch_size * num_beams
 
         # Initialize beam scores
         beam_scores = torch.zeros(batch_size, num_beams, device=self.device)
@@ -297,9 +324,32 @@ class TextGenerator:
         generated = expanded_input.clone()
         done = [False] * batch_size
 
+        # Initialize KV cache and position tracking
+        past_key_values = None
+        current_position = cur_len  # Track position for RoPE
+
         while cur_len < max_length:
-            # Get model predictions
-            outputs = self.model(generated)
+            # Get model predictions with KV caching
+            if past_key_values is None:
+                # First pass: process entire input sequence
+                position_ids = torch.arange(cur_len, device=self.device).unsqueeze(0).expand(effective_batch_size, -1)
+                outputs = self.model(
+                    input_ids=generated,
+                    position_ids=position_ids,
+                    use_cache=True
+                )
+            else:
+                # Subsequent passes: only process new token with cached KV
+                position_ids = torch.tensor([[current_position - 1]], device=self.device).expand(effective_batch_size, -1)
+                outputs = self.model(
+                    input_ids=generated[:, -1:],
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True
+                )
+
+            # Update KV cache
+            past_key_values = outputs.get('past_key_values', None)
             next_token_logits = outputs['logits'][:, -1, :]
 
             # Apply EOS penalty
@@ -389,7 +439,21 @@ class TextGenerator:
             generated = generated[beam_idx, :]
             generated = torch.cat([generated, beam_tokens.unsqueeze(1)], dim=-1)
 
+            # Reorder KV cache to match beam reordering
+            if past_key_values is not None:
+                reordered_past = []
+                for layer_past in past_key_values:
+                    # Each layer_past is a tuple of (key, value) tensors
+                    # Shape: (batch * num_beams, num_heads, seq_len, head_dim)
+                    reordered_layer = tuple(
+                        past_state.index_select(0, beam_idx)
+                        for past_state in layer_past
+                    )
+                    reordered_past.append(reordered_layer)
+                past_key_values = tuple(reordered_past)
+
             cur_len += 1
+            current_position += 1  # Increment position for next token's RoPE
 
             # Check early stopping
             if early_stopping and all(done):
