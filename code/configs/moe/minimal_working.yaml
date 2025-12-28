@@ -14,10 +14,11 @@
 
 
 model:
-  vocab_size: 50680
+  vocab_size: 16000  # FIXED: Match 16K tokenizer (was 50680 - wasting capacity)
   pad_token_id: 0
   eos_token_id: 1  # Fixed: <|eos|> is token ID 1, not 3
   bos_token_id: 2  # <|bos|>
+  tokenizer_path: /root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/transformers  # 16K vocab tokenizer
   hidden_size: 384           # SMALLER: faster training, enough for TinyStories
   num_layers: 6              # Keep depth for pattern learning
   num_attention_heads: 6     # Match hidden_size divisibility
@@ -28,11 +29,11 @@ model:
   router_type: mixtral
   capacity_factor: 1.25  # Slightly increased for better expert utilization
   quantize_kv_cache: true  # INT8 KV cache - 75% memory savings
-  expert_dropout: 0.0
+  expert_dropout: 0.05    # ADDED - prevents expert memorization
   activation: swiglu
 
-  # CRITICAL FIX: Tie input/output embeddings (reduces params, improves training)
-  tie_word_embeddings: true
+  # CRITICAL: Tied embeddings incompatible with DeepSpeed ZeRO-2/3 (gradient reduction conflict)
+  tie_word_embeddings: false  # DISABLED for DeepSpeed compatibility
 
   # GPU Optimizations for RTX 3090 Ti (Ampere)
   use_grouped_gemm: true      # 15-25% speedup for expert computation
@@ -42,17 +43,18 @@ model:
   gradient_checkpointing: true  # Enabled - 70-80% activation memory savings
   use_optimized_moe: true     # 10-20% speedup
 
-  # MoE loss coefficients (tuned for coherence)
+  # MoE loss coefficients (tuned for convergence)
   router_z_loss_coef: 0.001       # Standard value - prevents z-loss dominating
   load_balance_loss_coef: 0.01    # Standard value - balanced expert usage
-  diversity_loss_coef: 0.02       # INCREASED - stronger expert specialization
+  diversity_loss_coef: 0.01       # REDUCED from 0.04 - was too aggressive
   expert_dropout_loss_coef: 0.0
-  router_jitter_noise: 0.00      # Slight increase for exploration
+  router_jitter_noise: 0.00       # No jitter for stable routing
 
-  # Coherence regularization - CRITICAL FOR QUALITY OUTPUT
-  entropy_regularization: 0.025   # ENABLED - prevents low-entropy (repetitive) predictions
-  output_diversity_weight: 0.01   # ENABLED - penalizes consecutive similar outputs
-  eos_logit_bias: 0.8             # INCREASED - encourages proper sentence endings
+  # Coherence regularization - DISABLED (was preventing learning)
+  # These settings SUBTRACT from loss, rewarding random predictions - BAD for convergence!
+  entropy_regularization: 0.0     # DISABLED - was fighting cross-entropy loss
+  output_diversity_weight: 0.0    # DISABLED - was hurting coherence
+  eos_logit_bias: 0.0             # DISABLED - was disrupting sentence structure
 
   # Regularization - BALANCED (too much = can't learn, too little = overfits)
   use_lora_experts: false
@@ -92,15 +94,15 @@ training:
     mixed_precision: bf16  # Native BF16 on Ampere - no loss scaling needed
 
   batching:
-    batch_size: 16  # Will auto-calibrate to optimal size
-    gradient_accumulation_steps: 8  # Effective batch size = 128
-    label_smoothing: 0.0  # DISABLED - adds regularization, prefer entropy_regularization
+    batch_size: 32  # FIXED: aligned with DeepSpeed micro_batch_size
+    gradient_accumulation_steps: 1  # FIXED: no accumulation for simpler debugging
+    label_smoothing: 0.1  # ENABLED - softer probability targets
 
   optimizer:
-    type: adamw_8bit # 8-bit AdamW for memory efficiency
-    learning_rate: 3.0e-4  # INCREASED - small model needs faster learning
-    betas: [0.9, 0.95]  # Standard betas
-    weight_decay: 0.01   # Light regularization
+    type: adamw  # Standard AdamW (DeepSpeed compatible)
+    learning_rate: 1.0e-4  # REDUCED from 2e-4 - more stable convergence
+    betas: [0.9, 0.98]  # Standard betas
+    weight_decay: 0.1   # INCREASED - stronger regularization
     use_fused: true  # 5-10% speedup
     # eps: AUTO-DETECTED based on mixed_precision setting
     #      bf16 → 1e-6 (safe for bfloat16 mantissa precision ~1e-7)
@@ -109,12 +111,15 @@ training:
     max_grad_norm: 1.0  # Standard clipping
 
   schedule:
-    num_epochs: 5  # More epochs with lower LR
+    num_epochs: 5
     max_steps: null
-    warmup_steps: 1000  # SHORTER - reach full LR faster
+    # CRITICAL: total_steps must be set for DeepSpeed scheduler
+    total_steps: 1000000  # Estimated: 5 epochs * ~200K steps/epoch
+    steps_per_epoch: 200000  # Approximate for scheduler estimation
+    warmup_steps: 2000  # INCREASED from 1000 - longer warmup for stable learning
     scheduler_type: cosine  # Simple cosine decay (no restarts)
     num_cycles: 1
-    min_lr: 3.0e-5  # 10% of peak LR
+    min_lr: 1.0e-5  # 10% of peak LR
 
   logging:
     save_steps: 500
@@ -146,7 +151,7 @@ training:
     temperature: 0.7  # INCREASED: less greedy, test true model quality
     top_p: 0.85      # SLIGHTLY LOOSER: more realistic sampling
     top_k: 40        # INCREASED: allow more diversity in testing
-    repetition_penalty: 1.3  # MODERATE: catch repetition but don't over-constrain
+    repetition_penalty: 1.5  # INCREASED - stronger anti-repetition in generation
     no_repeat_ngram_size: 3  # ADDED: block 3-gram repetitions
     skip_special_tokens: true
     prompt: "Once upon a time"
@@ -195,15 +200,15 @@ data:
   # - For reproducibility: Set shuffle_seed to 42 (no throughput impact)
   # =====================================================================
 
-  data_dir: code/data/tinystories_clean/train  # Fresh TinyStories with BOS/EOS
-  val_data_dir: code/data/tinystories_clean/val  # Separate validation set
+  data_dir: code/data/tinystories_16k/train  # 16K tokenized TinyStories
+  val_data_dir: code/data/tinystories_16k/val  # Separate validation set
   max_length: 512  # Data is pre-padded to 512
   add_special_tokens: false  # Data already has BOS/EOS tokens
   train_split: train
   eval_split: validation
   auto_create_validation_split: false  # Using separate val set
   validation_split_ratio: 0.05
-  tokenizer_name: code/data/Ava_Ai/tokenizer/tokenizer.json
+  tokenizer_name: /root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/transformers  # 16K vocab tokenizer
   padding_side: right
   truncation: false
 
@@ -237,9 +242,9 @@ data:
   #   ❌ Debugging specific sequence issues
   #   ❌ Very short sequences (<64 tokens average)
   #
-  # Recommendation: ENABLE for 20-35% free speedup
+  # FIXED: Now uses 2D attention masks that block cross-document attention
   # =====================================================================
-  use_sequence_packing: true  # Enable for 20-35% throughput gain
+  use_sequence_packing: true  # ENABLED with document boundary masking fix
   packing_strategy: greedy
   packing_target_ratio: 0.95
 
@@ -494,9 +499,9 @@ deepspeed:
   # Precision (matches training.precision.mixed_precision)
   precision_type: "bf16"              # BF16 for Ampere GPUs
 
-  # Batch Configuration (matches training.batching)
-  gradient_accumulation_steps: 4      # Same as training config
-  train_batch_size: 128               # For 2 GPUs: 32 * 4 * 2 = 256 (single GPU: 128)
+  # Batch Configuration (ALIGNED with training.batching)
+  gradient_accumulation_steps: 1      # FIXED: aligned with training config
+  train_batch_size: 32                # FIXED: single GPU BS=32, no accumulation
   micro_batch_size: 32                # Same as training.batching.batch_size
 
   # Activation Checkpointing (disabled - minimal model doesn't need it)

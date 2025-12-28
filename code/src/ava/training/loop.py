@@ -935,6 +935,8 @@ class TrainingLoopManager(ManagerInterface):
         input_ids = gpu_batch['input_ids']
         labels = gpu_batch['labels']
         attention_mask = gpu_batch['attention_mask']
+        # Get position_ids if provided (from sequence packing with per-document positions)
+        position_ids = gpu_batch.get('position_ids', None)
 
         # Detect DeepSpeed engine
         from ..training.deepspeed_utils import is_deepspeed_engine
@@ -966,7 +968,13 @@ class TrainingLoopManager(ManagerInterface):
                     autocast_ctx = torch.autocast(device_type='cuda', dtype=config.amp_dtype)
                 with autocast_ctx:
                     with get_range_context("forward/model_forward"):
-                        outputs = model(input_ids, attention_mask, labels)
+                        # Use keyword args to support position_ids from sequence packing
+                        outputs = model(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            labels=labels,
+                            position_ids=position_ids,
+                        )
                     with get_range_context("forward/loss_scale"):
                         # CRITICAL DEBUG: Check what model returns
                         raw_loss = outputs['loss']
@@ -982,7 +990,13 @@ class TrainingLoopManager(ManagerInterface):
             else:
                 # No autocast: either AMP disabled OR DeepSpeed manages mixed precision
                 with get_range_context("forward/model_forward"):
-                    outputs = model(input_ids, attention_mask, labels)
+                    # Use keyword args to support position_ids from sequence packing
+                    outputs = model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        labels=labels,
+                        position_ids=position_ids,
+                    )
                 with get_range_context("forward/loss_scale"):
                     # CRITICAL DEBUG: Check what model returns
                     raw_loss = outputs['loss']
@@ -1063,6 +1077,13 @@ class TrainingLoopManager(ManagerInterface):
                             model.parameters(), config.max_grad_norm
                         )
 
+                    # TRAINING HEALTH: Detect gradient issues early
+                    grad_norm_val = grad_norm.item() if hasattr(grad_norm, 'item') else float(grad_norm)
+                    if grad_norm_val < 1e-7:
+                        logger.warning(f"Step {self._global_step + 1}: VANISHING gradients (norm={grad_norm_val:.2e}) - model may not be learning")
+                    elif grad_norm_val > 1e4:
+                        logger.warning(f"Step {self._global_step + 1}: EXPLODING gradients (norm={grad_norm_val:.2e}) - consider reducing LR")
+
                     # Log gradients - only sync grad_norm at log intervals
                     if self._metrics_manager and should_sync:
                         with get_range_context("optimizer_step/grad_stats"):
@@ -1082,6 +1103,14 @@ class TrainingLoopManager(ManagerInterface):
                             self.scaler.step(optimizer)
                         with get_range_context("optimizer_step/scaler_update"):
                             self.scaler.update()
+                        # TRAINING HEALTH: Detect when scaler skips optimizer step due to NaN/Inf
+                        if hasattr(self.scaler, '_found_inf_per_device'):
+                            found_inf = any(v.item() for v in self.scaler._found_inf_per_device.values())
+                            if found_inf:
+                                if not hasattr(self, '_skipped_steps'):
+                                    self._skipped_steps = 0
+                                self._skipped_steps += 1
+                                logger.warning(f"Step {self._global_step + 1}: Optimizer step SKIPPED (gradient overflow, total skipped: {self._skipped_steps})")
                     else:
                         with get_range_context("optimizer_step/optimizer_update"):
                             optimizer.step()
@@ -1340,15 +1369,38 @@ class TrainingLoopManager(ManagerInterface):
 
         if show_info_log:
             # Use tqdm.write() for clean output that doesn't conflict with progress bar
+            # Add training health info
+            health_info = ""
+            if hasattr(self, '_skipped_steps') and self._skipped_steps > 0:
+                health_info = f" | Skipped: {self._skipped_steps}"
+
             msg = (
                 f"Step {self._global_step}/{total} | "
                 f"BS: {current_bs} | Loss: {loss_value:.4f} | "
-                f"LR: {lr:.2e}{mem_info}"
+                f"LR: {lr:.2e}{mem_info}{health_info}"
             )
             if pbar is not None:
                 tqdm.write(f"[Epoch {epoch + 1}] {msg}")
             else:
                 self.logger.info(f"Epoch {epoch + 1} | {msg}")
+
+            # Log expert utilization summary (helps diagnose expert collapse)
+            if self._last_aux_info is not None and len(self._last_aux_info) > 0:
+                # Get expert utilization from first layer (representative)
+                first_layer = self._last_aux_info[0]
+                expert_utils = []
+                for key, value in first_layer.items():
+                    if key.startswith('expert_') and key.endswith('_utilization'):
+                        if isinstance(value, (int, float)):
+                            expert_utils.append(value)
+                        elif hasattr(value, 'item'):
+                            expert_utils.append(value.item() if value.numel() == 1 else value.mean().item())
+                if expert_utils:
+                    # Check for expert collapse (one expert getting > 50% of tokens)
+                    max_util = max(expert_utils)
+                    total_tokens = sum(expert_utils)
+                    if total_tokens > 0 and max_util / total_tokens > 0.5:
+                        tqdm.write(f"  [WARN] Expert collapse detected: max expert has {max_util/total_tokens*100:.0f}% of tokens")
 
     def _maybe_generate(
         self,

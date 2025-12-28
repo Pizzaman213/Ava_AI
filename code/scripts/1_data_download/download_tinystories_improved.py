@@ -97,8 +97,8 @@ def get_fuzzy_hash(text, ngram=50):
 
 def main():
     # Configuration
-    output_dir = Path("/root/Ava_AI/code/data/tinystories_improved")
-    tokenizer_path = "/root/Ava_AI/code/data/Ava_Ai/tokenizer_v3/tokenizer.json"  # Using custom tokenizer (v3 with space fix)
+    output_dir = Path("/root/Ava_AI/code/data/tinystories_16k")
+    tokenizer_path = "/root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/tokenizer.json"  # Using 16K vocab tokenizer for better model capacity
     max_length = 512
     samples_per_file = 50000
 

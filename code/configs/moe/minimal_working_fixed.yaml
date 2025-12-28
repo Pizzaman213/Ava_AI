@@ -22,11 +22,11 @@
 
 
 model:
-  vocab_size: 50680  # Updated for tokenizer v3 (space-aware)
+  vocab_size: 16000  # REDUCED: 16K tokenizer for better model capacity (was 50680)
   pad_token_id: 0
   eos_token_id: 1  # Fixed: <|eos|> is token ID 1, not 3
   bos_token_id: 2  # <|bos|>
-  tokenizer_path: /root/Ava_AI/code/data/Ava_Ai/tokenizer_v3/transformers  # NEW: tokenizer v3 with space fix
+  tokenizer_path: /root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/transformers  # 16K vocab tokenizer
   hidden_size: 384           # SMALLER: faster training, enough for TinyStories
   num_layers: 6              # Keep depth for pattern learning
   num_attention_heads: 6     # Match hidden_size divisibility
@@ -37,7 +37,7 @@ model:
   router_type: mixtral
   capacity_factor: 1.25  # Slightly increased for better expert utilization
   quantize_kv_cache: true  # INT8 KV cache - 75% memory savings
-  expert_dropout: 0.0
+  expert_dropout: 0.05    # ADDED - prevents expert memorization
   activation: swiglu
 
   # CRITICAL: Tied embeddings incompatible with DeepSpeed ZeRO-2/3 (gradient reduction conflict)
@@ -54,20 +54,20 @@ model:
   # MoE loss coefficients (tuned for coherence)
   router_z_loss_coef: 0.001       # Standard value - prevents z-loss dominating
   load_balance_loss_coef: 0.01    # Standard value - balanced expert usage
-  diversity_loss_coef: 0.02       # INCREASED - stronger expert specialization
+  diversity_loss_coef: 0.01       # REDUCED from 0.04 - was too aggressive
   expert_dropout_loss_coef: 0.0
   router_jitter_noise: 0.00      # Slight increase for exploration
 
-  # Coherence regularization - CRITICAL FOR QUALITY OUTPUT
-  entropy_regularization: 0.01    # REDUCED from 0.025 (sign fix makes it stronger)
-  output_diversity_weight: 0.01   # ENABLED - penalizes consecutive similar outputs
-  eos_logit_bias: 0.8             # INCREASED - encourages proper sentence endings
+  # Coherence regularization - DISABLED (was preventing learning)
+  entropy_regularization: 0.0     # DISABLED - was hurting coherence
+  output_diversity_weight: 0.0    # DISABLED - was hurting coherence
+  eos_logit_bias: 0.0             # DISABLED - was hurting sentence structure
 
   # Regularization - BALANCED (too much = can't learn, too little = overfits)
   use_lora_experts: false
   use_expert_offloading: false
-  attention_dropout: 0.15         # INCREASED from 0.1 - prevent overfitting
-  dropout: 0.15                   # INCREASED from 0.1 - prevent overfitting
+  attention_dropout: 0.1          # REDUCED from 0.15 - was too aggressive
+  dropout: 0.1                    # REDUCED from 0.15 - was preventing learning
   layer_norm_eps: 1.0e-5
   initializer_range: 0.02
 
@@ -102,34 +102,37 @@ training:
     mixed_precision: bf16  # Native BF16 on Ampere - no loss scaling needed
 
   batching:
-    batch_size: 32  # REDUCED for DeepSpeed ZeRO-2 memory efficiency (was 64)
-    gradient_accumulation_steps: 4  # INCREASED: maintain effective BS=64 (was 2)
-    label_smoothing: 0.1  # ENABLED - prevents overconfident predictions
+    batch_size: 32  # REDUCED: smaller batch for better generalization
+    gradient_accumulation_steps: 1  # No accumulation - true BS = 32
+    label_smoothing: 0.1  # ENABLED: prevents overconfident predictions
 
   optimizer:
-    type: adamw  # Standard AdamW (DeepSpeed compatible, was adamw_8bit)
-    learning_rate: 1.0e-4  # REDUCED from 3.0e-4 - appropriate for 62M model
-    betas: [0.9, 0.95]  # Standard betas
-    weight_decay: 0.01   # Light regularization
-    use_fused: true  # 5-10% speedup (DeepSpeed uses its own fused optimizer)
+    type: adamw  # Standard AdamW (DeepSpeed compatible)
+    learning_rate: 1.0e-4  # REDUCED: slower learning for better generalization
+    betas: [0.9, 0.98]  # Standard betas
+    weight_decay: 0.1   # INCREASED: stronger regularization
+    use_fused: true  # 5-10% speedup
     # eps: AUTO-DETECTED based on mixed_precision setting
-    #      bf16 → 1e-6 (safe for bfloat16 mantissa precision ~1e-7)
-    #      fp16/fp32 → 1e-8 (standard Adam epsilon)
-    #      Override only if you need custom epsilon behavior
     max_grad_norm: 1.0  # Standard clipping
 
   schedule:
-    num_epochs: 5  # More epochs with lower LR
+    num_epochs: 5
     max_steps: null
-    warmup_steps: 2000  # INCREASED from 1000 - stable training
-    scheduler_type: cosine  # Simple cosine decay (no restarts)
+    # CRITICAL: total_steps must be set for DeepSpeed scheduler
+    # TinyStories has ~6M samples, with BS=32 that's ~187,500 steps/epoch
+    # 5 epochs * 187,500 = 937,500 total steps
+    # Setting to 1,000,000 to be safe (slightly over-estimate is fine)
+    total_steps: 1000000
+    steps_per_epoch: 200000  # Approximate steps per epoch for scheduler estimation
+    warmup_steps: 2000  # INCREASED: longer warmup for stable learning
+    scheduler_type: cosine  # Cosine decay
     num_cycles: 1
-    min_lr: 1.0e-5  # Adjusted to 10% of peak LR
+    min_lr: 1.0e-5  # 10% of peak LR
 
   logging:
     save_steps: 1000
     eval_steps: 1000  # INCREASED FREQUENCY: catch overfitting early
-    logging_steps: 25  # OPTIMIZED: reduce GPU sync overhead (was 1)
+    logging_steps: 1  # OPTIMIZED: reduce GPU sync overhead (was 1)
     # Logging backends (WandB only for performance)
     use_tensorboard: false  # Disabled - using WandB only
     use_wandb: true         # Cloud logging (requires: wandb login)
@@ -144,15 +147,15 @@ training:
 
   generation:
     enabled: true  # Enable for quality monitoring
-    generate_every_n_steps: 2000   # OPTIMIZED: reduce overhead (was 1000)
+    generate_every_n_steps: 1000   # OPTIMIZED: reduce overhead (was 1000)
     num_per_step: 2   # INCREASED: test multiple samples
     during_eval: true
     test_quality: true
     max_length: 128  # INCREASED: longer generation with 256 context
-    temperature: 0.7  # Match inference defaults for consistent assessment
+    temperature: 0.4  # Match inference defaults for consistent assessment
     top_p: 0.9       # ADJUSTED from 0.85 - standard nucleus sampling
     top_k: 40        # Match inference defaults
-    repetition_penalty: 1.2  # ADJUSTED from 1.3 - match inference defaults
+    repetition_penalty: 1.5  # INCREASED - stronger anti-repetition in generation
     no_repeat_ngram_size: 3  # ADDED: block 3-gram repetitions
     skip_special_tokens: true
     prompt: "Once upon a time"
@@ -202,15 +205,15 @@ data:
   # - For reproducibility: Set shuffle_seed to 42 (no throughput impact)
   # =====================================================================
 
-  data_dir: code/data/tinystories_improved/train  # Quality-filtered TinyStories with correct tokenizer
-  val_data_dir: code/data/tinystories_improved/val  # Separate validation set
+  data_dir: code/data/tinystories_16k/train  # 16K tokenized TinyStories
+  val_data_dir: code/data/tinystories_16k/val  # Separate validation set
   max_length: 512  # Data is pre-padded to 512
   add_special_tokens: false  # Data already has BOS/EOS tokens
   train_split: train
   eval_split: validation
   auto_create_validation_split: false  # Using separate val set
   validation_split_ratio: 0.05
-  tokenizer_name: /root/Ava_AI/code/data/Ava_Ai/tokenizer_v3/transformers  # Tokenizer v3 with space fix
+  tokenizer_name: /root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/transformers  # 16K vocab tokenizer
   padding_side: right
   truncation: false
 
@@ -225,8 +228,10 @@ data:
   dataloader_samples_per_file: 4000  # INCREASED: fewer file opens, more RAM caching (was 2000)
   skip_dataloader_validation: true
 
-  # Sequence packing - ENABLED for efficiency
-  use_sequence_packing: true   # ENABLED: eliminates padding waste
+  # Sequence packing - FIXED with document boundary masking
+  # Packing concatenates multiple sequences with 2D attention mask that blocks
+  # cross-document attention, preventing broken grammar pattern learning
+  use_sequence_packing: true  # ENABLED: document boundary masking implemented
   packing_strategy: greedy
   packing_target_ratio: 0.95
 
@@ -458,8 +463,8 @@ deepspeed:
   precision_type: "bf16"              # BF16 for Ampere GPUs
 
   # Batch Configuration (matches training.batching)
-  gradient_accumulation_steps: 4      # Same as training config
-  train_batch_size: 128               # For 2 GPUs: 32 * 4 * 2 = 256 (single GPU: 128)
+  gradient_accumulation_steps: 1      # No accumulation
+  train_batch_size: 32                # Single GPU: 32 * 1 = 32
   micro_batch_size: 32                # Same as training.batching.batch_size
 
   # Activation Checkpointing (disabled - minimal model doesn't need it)

@@ -11,6 +11,7 @@ A production-ready transformer with Mixture of Experts layers, supporting:
 
 import math
 import logging
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,6 +21,56 @@ from typing import Dict, Optional, Tuple, Any, List, Union
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_attention_mask_shape(
+    attention_mask: torch.Tensor,
+    batch_size: int,
+    seq_len: int,
+    name: str = "attention_mask"
+) -> None:
+    """
+    Validate attention mask has expected shape for model forward pass.
+
+    Args:
+        attention_mask: The mask tensor to validate
+        batch_size: Expected batch size
+        seq_len: Expected sequence length
+        name: Name for error messages
+    """
+    if attention_mask is None:
+        return
+
+    dim = attention_mask.dim()
+
+    if dim == 2:
+        # 1D padding mask: [batch, seq_len]
+        expected = (batch_size, seq_len)
+        if attention_mask.shape != expected:
+            raise ValueError(
+                f"{name} has shape {attention_mask.shape}, expected {expected} for 1D mask"
+            )
+    elif dim == 3:
+        # 2D document boundary mask: [batch, seq_len, seq_len]
+        expected = (batch_size, seq_len, seq_len)
+        if attention_mask.shape != expected:
+            raise ValueError(
+                f"{name} has shape {attention_mask.shape}, expected {expected} for 2D mask"
+            )
+    elif dim == 4:
+        # 4D ready mask: [batch, 1, seq_len, seq_len] or [batch, heads, seq_len, seq_len]
+        if attention_mask.shape[0] != batch_size:
+            raise ValueError(
+                f"{name} batch dim is {attention_mask.shape[0]}, expected {batch_size}"
+            )
+        if attention_mask.shape[2] != seq_len or attention_mask.shape[3] != seq_len:
+            raise ValueError(
+                f"{name} seq dims are {attention_mask.shape[2:]}, expected ({seq_len}, {seq_len})"
+            )
+    else:
+        raise ValueError(
+            f"{name} has {dim} dimensions, expected 2, 3, or 4. Shape: {attention_mask.shape}"
+        )
 
 # NVTX annotations for Nsight profiling
 _nvtx_available = False
@@ -218,6 +269,45 @@ class RoPEPositionalEmbedding(nn.Module):
         """Clear the RoPE position embedding cache to free memory."""
         self._cache.clear()
 
+    def forward_with_position_ids(
+        self,
+        position_ids: torch.Tensor,
+        device: torch.device
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute cos and sin for rotary embeddings using arbitrary position_ids.
+
+        This is critical for sequence packing where positions reset per document.
+        Unlike forward() which assumes sequential positions, this method supports
+        per-token position IDs that can restart at 0 for each document.
+
+        Args:
+            position_ids: [batch, seq_len] tensor of position IDs
+            device: Target device
+
+        Returns:
+            cos, sin tensors of shape [batch, seq_len, head_dim] for the given positions
+        """
+        # position_ids: [batch, seq_len] -> compute per-token frequencies
+        # inv_freq: [head_dim/2]
+        # Result: [batch, seq_len, head_dim]
+
+        # Expand position_ids for broadcasting: [batch, seq_len, 1]
+        position_ids = position_ids.float().unsqueeze(-1)
+        # inv_freq: [1, 1, head_dim/2]
+        inv_freq = self.inv_freq.to(device).unsqueeze(0).unsqueeze(0)
+
+        # Compute frequencies: [batch, seq_len, head_dim/2]
+        freqs = position_ids * inv_freq
+
+        # Double the frequencies for full head_dim: [batch, seq_len, head_dim]
+        emb = torch.cat((freqs, freqs), dim=-1)
+
+        cos = emb.cos()
+        sin = emb.sin()
+
+        return cos, sin
+
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     """Rotate half the hidden dims of the input."""
@@ -319,6 +409,7 @@ class MultiHeadAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[tuple] = None,
         use_cache: bool = False,
+        position_ids: Optional[torch.Tensor] = None,
         **kwargs
     ) -> tuple:
         batch_size, seq_len, _ = hidden_states.shape
@@ -338,16 +429,24 @@ class MultiHeadAttention(nn.Module):
 
         # Apply RoPE if configured
         if self.rope is not None:
-            # For KV cache, compute RoPE for correct position range
-            if past_key_value is not None:
+            # CRITICAL FIX: Use document-relative position_ids for sequence packing
+            # This ensures each document in a packed sequence gets correct positional encoding
+            if position_ids is not None:
+                # Use per-token position IDs (resets at document boundaries)
+                cos, sin = self.rope.forward_with_position_ids(position_ids, hidden_states.device)
+                cos = cos.to(dtype=input_dtype)[:, None, :, :]  # [batch, 1, seq, head_dim]
+                sin = sin.to(dtype=input_dtype)[:, None, :, :]
+            elif past_key_value is not None:
+                # KV cache case: compute RoPE for correct position range
                 past_seq_len = past_key_value[0].shape[2]
-                # Compute RoPE only for current positions [past_seq_len, past_seq_len + seq_len)
                 cos, sin = self.rope(seq_len, hidden_states.device, position_offset=past_seq_len)
+                cos = cos.to(dtype=input_dtype)[None, None, :, :]
+                sin = sin.to(dtype=input_dtype)[None, None, :, :]
             else:
                 # Standard case: positions [0, seq_len)
                 cos, sin = self.rope(seq_len, hidden_states.device, position_offset=0)
-            cos = cos.to(dtype=input_dtype)[None, None, :, :]
-            sin = sin.to(dtype=input_dtype)[None, None, :, :]
+                cos = cos.to(dtype=input_dtype)[None, None, :, :]
+                sin = sin.to(dtype=input_dtype)[None, None, :, :]
             q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
         # Concatenate with past key-values if provided (KV cache for generation)
@@ -378,10 +477,25 @@ class MultiHeadAttention(nn.Module):
         # SPEED OPTIMIZATION: Try Flash Attention 3 → xformers → FA2 → standard
         # Flash Attention 3 is 1.5-2x faster than FA2 for most sequence lengths
         # xformers provides 20-30% speedup for long sequences when Flash Attn unavailable
+        #
+        # CRITICAL: Document boundary masking for sequence packing
+        # When attention_mask is 4D (from packing), it contains document boundaries that MUST
+        # be respected to prevent cross-document attention. In this case:
+        # - We cannot use simple causal=True (ignores document boundaries)
+        # - We must pass the full attention mask to the attention function
+        # - The mask already includes causal masking, so is_causal should be False
+        has_document_mask = attention_mask is not None and attention_mask.dim() == 4
+        use_causal_only = self.is_causal and not has_document_mask
+
         if self.use_flash_attention:
             try:
                 # Try Flash Attention 3 from official repo (fastest)
                 from flash_attn import flash_attn_func  # type: ignore[import-untyped]
+
+                # Flash Attention 3 DOES NOT support custom attention masks with causal=True
+                # If we have document boundaries, we must fall back to SDPA or standard attention
+                if has_document_mask:
+                    raise RuntimeError("Flash Attention 3 does not support document boundary masks")
 
                 # flash_attn_func expects [batch, seq, heads, head_dim]
                 # Need to transpose from [batch, heads, seq, head_dim]
@@ -392,7 +506,7 @@ class MultiHeadAttention(nn.Module):
                 attn_output = flash_attn_func(
                     q_fa, k_fa, v_fa,
                     dropout_p=self.dropout if self.training else 0.0,
-                    causal=self.is_causal
+                    causal=use_causal_only
                 )
                 # flash_attn_func returns [batch, seq, heads, head_dim]
                 attn_output = attn_output.transpose(1, 2)  # Back to [batch, heads, seq, head_dim]
@@ -416,8 +530,14 @@ class MultiHeadAttention(nn.Module):
                     k_xf = k.transpose(1, 2).to(target_dtype)
                     v_xf = v.transpose(1, 2).to(target_dtype)
 
-                    # Use causal mask for autoregressive LM
-                    if self.is_causal:
+                    # CRITICAL: Use document boundary mask if provided, otherwise causal
+                    # Document boundary mask already includes causal masking
+                    if has_document_mask:
+                        # xformers expects [batch, heads, seq, seq] but our mask is [batch, 1, seq, seq]
+                        # Need to squeeze or expand appropriately
+                        attn_bias = attention_mask.squeeze(1) if attention_mask.size(1) == 1 else attention_mask
+                        attn_bias = attn_bias.to(target_dtype)
+                    elif use_causal_only:
                         attn_bias = LowerTriangularMask()
                     else:
                         attn_bias = attention_mask
@@ -432,23 +552,40 @@ class MultiHeadAttention(nn.Module):
 
                     if not MultiHeadAttention._attention_backend_logged:
                         import logging
-                        logging.info("✓ Using xformers memory-efficient attention (20-30% speedup)")
+                        if has_document_mask:
+                            logging.info("✓ Using xformers with document boundary masking (sequence packing safe)")
+                        else:
+                            logging.info("✓ Using xformers memory-efficient attention (20-30% speedup)")
                         MultiHeadAttention._attention_backend_logged = True
 
                 except (ImportError, RuntimeError, AttributeError, ValueError):
-                    # Fallback to PyTorch's Flash Attention 2 (still very fast)
+                    # Fallback to PyTorch's Flash Attention 2 (SDPA)
                     # F.scaled_dot_product_attention expects [batch, heads, seq, head_dim]
                     # Our tensors are already in this format
-                    attn_output = F.scaled_dot_product_attention(
-                        q, k, v,
-                        attn_mask=attention_mask if not self.is_causal else None,
-                        dropout_p=self.dropout if self.training else 0.0,
-                        is_causal=self.is_causal
-                    )
+                    #
+                    # CRITICAL: When we have document boundary mask (4D), we MUST use it
+                    # and set is_causal=False (the mask already contains causal masking)
+                    if has_document_mask:
+                        attn_output = F.scaled_dot_product_attention(
+                            q, k, v,
+                            attn_mask=attention_mask,  # Use full document boundary mask
+                            dropout_p=self.dropout if self.training else 0.0,
+                            is_causal=False  # Mask already includes causal
+                        )
+                    else:
+                        attn_output = F.scaled_dot_product_attention(
+                            q, k, v,
+                            attn_mask=attention_mask if not use_causal_only else None,
+                            dropout_p=self.dropout if self.training else 0.0,
+                            is_causal=use_causal_only
+                        )
 
                     if not MultiHeadAttention._attention_backend_logged:
                         import logging
-                        logging.info("✓ Using PyTorch Flash Attention 2 (SDPA)")
+                        if has_document_mask:
+                            logging.info("✓ Using PyTorch SDPA with document boundary masking (sequence packing safe)")
+                        else:
+                            logging.info("✓ Using PyTorch Flash Attention 2 (SDPA)")
                         MultiHeadAttention._attention_backend_logged = True
         else:
             # Standard attention implementation
@@ -715,6 +852,7 @@ class TransformerBlock(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         past_key_value: Optional[tuple] = None,
         use_cache: bool = False,
+        position_ids: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Tuple[torch.Tensor, Dict, Optional[tuple]]:
         # Self-attention with residual
@@ -728,7 +866,8 @@ class TransformerBlock(nn.Module):
                     hidden_states,
                     attention_mask,
                     past_key_value=past_key_value,
-                    use_cache=use_cache
+                    use_cache=use_cache,
+                    position_ids=position_ids
                 )
             with nvtx_range("block/attention/residual"):
                 hidden_states = residual + self.dropout(attn_output)
@@ -927,6 +1066,7 @@ class EnhancedMoEModel(nn.Module):
         past_key_values: Optional[List[tuple]] = None,
         use_cache: bool = False,
         return_dict: bool = True,
+        position_ids: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Any:
         batch_size, seq_len = input_ids.shape
@@ -950,8 +1090,13 @@ class EnhancedMoEModel(nn.Module):
 
             if self.position_embedding is not None:
                 with nvtx_range("model/embedding/position"):
-                    position_ids = torch.arange(seq_len, dtype=torch.long, device=device)
-                    position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
+                    # Use provided position_ids (e.g., from sequence packing with per-doc positions)
+                    # or create standard sequential positions
+                    if position_ids is None:
+                        position_ids = torch.arange(seq_len, dtype=torch.long, device=device)
+                        position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
+                    else:
+                        position_ids = position_ids.to(device)
                     position_embeds = self.position_embedding(position_ids)
                     hidden_states = token_embeds + position_embeds
             else:
@@ -961,30 +1106,49 @@ class EnhancedMoEModel(nn.Module):
 
         # TIER2 OPTIMIZATION: Use cached causal attention mask (5-10% speedup)
         with nvtx_range("model/attention_mask"):
-            # Get causal mask from cache instead of recreating every forward pass
-            causal_mask = self._get_causal_mask(seq_len, device, hidden_states.dtype)
+            # Handle different attention mask formats:
+            # - None: Use standard causal mask
+            # - [batch, seq_len]: 1D padding mask, combine with causal
+            # - [batch, seq_len, seq_len]: 2D document-boundary mask from sequence packing
+            # - [batch, 1, seq_len, seq_len]: 4D mask (already ready)
 
-            # Combine with padding mask if provided
-            if attention_mask is not None:
-                # attention_mask shape: [batch_size, seq_len]
-                # Convert to [batch_size, 1, 1, seq_len] for broadcasting
-                padding_mask = attention_mask[:, None, None, :]  # [batch, 1, 1, seq_len]
+            # Validate mask shape early to catch bugs (only in debug mode)
+            if attention_mask is not None and logger.isEnabledFor(logging.DEBUG):
+                _validate_attention_mask_shape(attention_mask, batch_size, seq_len)
 
-                # DTYPE FIX: Create mask directly in hidden_states.dtype to prevent recompilation
-                # Invert: 1 = attend, 0 = don't attend
-                # Convert 0s to -inf
-                mask_value = torch.tensor(torch.finfo(hidden_states.dtype).min, dtype=hidden_states.dtype, device=device)
-                padding_mask = torch.where(padding_mask == 0, mask_value, torch.tensor(0.0, dtype=hidden_states.dtype, device=device))
+            if attention_mask is not None and attention_mask.dim() >= 3:
+                # 2D or 4D mask provided (e.g., from sequence packing with document boundaries)
+                # This already includes causal masking and document boundaries
+                if attention_mask.dim() == 3:
+                    # [batch, seq_len, seq_len] -> [batch, 1, seq_len, seq_len]
+                    attention_mask = attention_mask[:, None, :, :]
 
-                # Combine causal and padding masks via broadcasting:
-                # - causal_mask: [1, 1, seq_len, seq_len] masks future tokens (K > Q positions)
-                # - padding_mask: [batch, 1, 1, seq_len] masks padding in KEY dimension
-                # - Result: [batch, 1, seq_len, seq_len] with both masks applied
-                # Broadcasting expands causal_mask to batch dim and padding_mask to query dim
-                attention_mask = causal_mask + padding_mask
+                # Convert to model dtype
+                attention_mask = attention_mask.to(dtype=hidden_states.dtype, device=device)
             else:
-                # Just use causal mask
-                attention_mask = causal_mask
+                # Standard case: create causal mask and optionally combine with 1D padding mask
+                causal_mask = self._get_causal_mask(seq_len, device, hidden_states.dtype)
+
+                if attention_mask is not None:
+                    # attention_mask shape: [batch_size, seq_len]
+                    # Convert to [batch_size, 1, 1, seq_len] for broadcasting
+                    padding_mask = attention_mask[:, None, None, :]  # [batch, 1, 1, seq_len]
+
+                    # DTYPE FIX: Create mask directly in hidden_states.dtype to prevent recompilation
+                    # Invert: 1 = attend, 0 = don't attend
+                    # Convert 0s to -inf
+                    mask_value = torch.tensor(torch.finfo(hidden_states.dtype).min, dtype=hidden_states.dtype, device=device)
+                    padding_mask = torch.where(padding_mask == 0, mask_value, torch.tensor(0.0, dtype=hidden_states.dtype, device=device))
+
+                    # Combine causal and padding masks via broadcasting:
+                    # - causal_mask: [1, 1, seq_len, seq_len] masks future tokens (K > Q positions)
+                    # - padding_mask: [batch, 1, 1, seq_len] masks padding in KEY dimension
+                    # - Result: [batch, 1, seq_len, seq_len] with both masks applied
+                    # Broadcasting expands causal_mask to batch dim and padding_mask to query dim
+                    attention_mask = causal_mask + padding_mask
+                else:
+                    # Just use causal mask
+                    attention_mask = causal_mask
 
         # Apply transformer blocks with KV caching
         all_aux_info = []
@@ -1000,14 +1164,15 @@ class EnhancedMoEModel(nn.Module):
                     # NOTE: Checkpointing is incompatible with KV caching during training
                     if self.gradient_checkpointing and self.training and not use_cache:
                         # Wrapper function for checkpoint - must return tuple
-                        def create_custom_forward(module):
+                        # CRITICAL FIX: Pass position_ids for correct RoPE in sequence packing
+                        def create_custom_forward(module, pos_ids):
                             def custom_forward(hidden, mask, past_kv, cache_flag):
-                                return module(hidden, mask, past_key_value=past_kv, use_cache=cache_flag)
+                                return module(hidden, mask, past_key_value=past_kv, use_cache=cache_flag, position_ids=pos_ids)
                             return custom_forward
 
                         # checkpoint requires use_reentrant=False for newer PyTorch
                         hidden_states, aux_info, present_key_value = torch.utils.checkpoint.checkpoint(
-                            create_custom_forward(layer),
+                            create_custom_forward(layer, position_ids),
                             hidden_states,
                             attention_mask,
                             past_key_value,
@@ -1015,11 +1180,13 @@ class EnhancedMoEModel(nn.Module):
                             use_reentrant=False,
                         )
                     else:
+                        # CRITICAL FIX: Pass position_ids for correct RoPE in sequence packing
                         hidden_states, aux_info, present_key_value = layer(
                             hidden_states,
                             attention_mask,
                             past_key_value=past_key_value,
-                            use_cache=use_cache
+                            use_cache=use_cache,
+                            position_ids=position_ids
                         )
                     all_aux_info.append(aux_info)
 
@@ -1042,8 +1209,8 @@ class EnhancedMoEModel(nn.Module):
             if eos_logit_bias > 0:
                 with nvtx_range("model/eos_bias"):
                     # CRITICAL FIX: Get EOS token ID from config (tokenizer-specific)
-                    # Default to 3 for enhanced-500 tokenizer, not Qwen's 151643!
-                    eos_token_id = getattr(self.config, 'eos_token_id', 3)
+                    # Default to 1 which is the standard EOS token for our tokenizers
+                    eos_token_id = getattr(self.config, 'eos_token_id', 1)
                     # Subtract bias from EOS logits (makes EOS less likely to be predicted)
                     logits[:, :, eos_token_id] = logits[:, :, eos_token_id] - eos_logit_bias
 

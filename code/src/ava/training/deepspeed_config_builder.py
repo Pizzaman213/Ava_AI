@@ -113,17 +113,42 @@ def build_deepspeed_config(config: Dict[str, Any]) -> Dict[str, Any]:
     # Scheduler (DeepSpeed manages it)
     scheduler_cfg = training_cfg.get('schedule', {}) or training_cfg.get('scheduler', {})
     warmup_steps = scheduler_cfg.get('warmup_steps', training_cfg.get('warmup_steps', 1000))
-    total_steps = training_cfg.get('max_steps', training_cfg.get('total_steps', 100000))
+
+    # FIX: Calculate total_steps properly instead of using broken default
+    # Priority: 1) explicit max_steps, 2) explicit total_steps, 3) estimate from epochs
+    total_steps = training_cfg.get('max_steps') or scheduler_cfg.get('total_steps')
+
+    if total_steps is None:
+        # Estimate from num_epochs and data size
+        # Use a conservative estimate: assume ~10K steps per epoch for typical datasets
+        # This can be overridden by setting explicit max_steps or total_steps in config
+        num_epochs = scheduler_cfg.get('num_epochs', training_cfg.get('num_epochs', 5))
+        steps_per_epoch = scheduler_cfg.get('steps_per_epoch', training_cfg.get('steps_per_epoch', 200000))
+        batch_size = training_cfg.get('batching', {}).get('batch_size', training_cfg.get('batch_size', 32))
+        grad_accum = training_cfg.get('batching', {}).get('gradient_accumulation_steps',
+                                                          training_cfg.get('gradient_accumulation_steps', 1))
+
+        # Calculate: total_steps = num_epochs * steps_per_epoch / grad_accum
+        total_steps = (num_epochs * steps_per_epoch) // max(grad_accum, 1)
+
+        logger.info(f"DeepSpeed scheduler: estimated total_steps={total_steps} "
+                    f"(epochs={num_epochs}, steps_per_epoch={steps_per_epoch}, grad_accum={grad_accum})")
+
+    # Get min_lr for end of training
+    min_lr = scheduler_cfg.get('min_lr', training_cfg.get('min_lr', opt_lr * 0.1))
 
     ds_config['scheduler'] = {
         'type': 'WarmupDecayLR',
         'params': {
-            'warmup_min_lr': scheduler_cfg.get('warmup_min_lr', training_cfg.get('min_lr', 0)),
+            'warmup_min_lr': min_lr,  # End at min_lr, not 0
             'warmup_max_lr': opt_lr,
             'warmup_num_steps': warmup_steps,
             'total_num_steps': total_steps,
         }
     }
+
+    logger.info(f"DeepSpeed scheduler config: warmup={warmup_steps}, total={total_steps}, "
+                f"lr={opt_lr:.2e} -> {min_lr:.2e}")
 
     return ds_config
 

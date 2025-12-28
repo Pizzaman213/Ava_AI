@@ -32,7 +32,7 @@ class AdaptiveLRConfig:
     """Configuration for adaptive learning rate management."""
     # Warmup configuration
     warmup_steps: int = 0                  # Number of warmup steps (0 = no warmup)
-    warmup_start_lr: float = 1e-8          # Starting LR for warmup
+    warmup_start_lr: float = 1e-5          # Starting LR for warmup (must be >= optimizer epsilon for BF16)
 
     # Loss tracking
     batch_loss_window: int = 100           # Window size for loss averaging
@@ -55,7 +55,7 @@ class AdaptiveLRConfig:
     increase_min_gap: int = 1000           # Minimum steps between increases
 
     # General limits
-    min_lr: float = 1e-7                   # Minimum learning rate
+    min_lr: float = 1e-6                   # Minimum learning rate (must be >= optimizer epsilon for BF16)
     max_reductions: int = 5                # Maximum number of reductions
 
 
