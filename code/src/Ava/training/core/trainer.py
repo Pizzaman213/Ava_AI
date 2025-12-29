@@ -309,13 +309,6 @@ class EnhancedModularTrainer:
             elif isinstance(config.memory, dict) and 'emergency_threshold' in config.memory:
                 emergency_thresh = config.memory['emergency_threshold']
 
-        # DEBUG: Print actual threshold values being used
-        print(f"🔧 Memory Monitor Configuration:")
-        print(f"   Target utilization: {target_util:.1%}")
-        print(f"   Warning threshold:  {warning_thresh:.1%}")
-        print(f"   Critical threshold: {critical_thresh:.1%}")
-        print(f"   Emergency threshold: {emergency_thresh:.1%}")
-
         self.memory_monitor = MemoryMonitor(
             target_utilization=target_util,
             warning_threshold=warning_thresh,
@@ -329,37 +322,24 @@ class EnhancedModularTrainer:
 
         # Initialize dynamic batch sizer if enabled
         self.dynamic_batch_sizer = None
-        print("🔍 DEBUG: Initializing dynamic batch sizer...")
-        print(f"🔍 DEBUG: config type = {type(config)}")
-        print(f"🔍 DEBUG: config.training type = {type(config.training)}")
-        if hasattr(config.training, '__dict__'):
-            print(f"🔍 DEBUG: config.training.__dict__ keys = {list(config.training.__dict__.keys())[:20]}")  # First 20 keys
-        if hasattr(config.training, 'keys') and callable(getattr(config.training, 'keys')):
-            print(f"🔍 DEBUG: config.training.keys() = {list(config.training.keys())[:20]}")  # If it's a dict  # type: ignore[attr-defined]
         try:
             # Check if dynamic_batching is configured
             dynamic_batching = None
             if hasattr(config.training, "dynamic_batching"):
                 dynamic_batching = config.training.dynamic_batching
-                print(f"🔍 DEBUG: Found dynamic_batching in config.training")
             elif hasattr(config, "dynamic_batching"):
                 dynamic_batching = config.dynamic_batching  # type: ignore[attr-defined]
-                print(f"🔍 DEBUG: Found dynamic_batching in config")
             else:
-                print(f"🔍 DEBUG: dynamic_batching not found in config")
                 # Try direct dict access
                 if isinstance(config.training, dict) and 'dynamic_batching' in config.training:
                     dynamic_batching = config.training['dynamic_batching']
-                    print(f"🔍 DEBUG: Found dynamic_batching via dict access!")
                 elif hasattr(config, '__dict__') and 'training' in config.__dict__:
                     training_dict = config.__dict__['training']
                     if isinstance(training_dict, dict) and 'dynamic_batching' in training_dict:
                         dynamic_batching = training_dict['dynamic_batching']
-                        print(f"🔍 DEBUG: Found dynamic_batching via __dict__ access!")
 
             if dynamic_batching:
                 enabled = getattr(dynamic_batching, "enabled", False)
-                print(f"🔍 DEBUG: dynamic_batching.enabled = {enabled}")
 
                 if enabled:
                     try:

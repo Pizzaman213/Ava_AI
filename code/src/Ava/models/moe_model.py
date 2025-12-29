@@ -37,13 +37,26 @@ class EnhancedMoEConfig:
     intermediate_size: int = 3072
     max_position_embeddings: int = 2048
 
+    # Special token IDs (must match tokenizer)
+    pad_token_id: int = 0
+    eos_token_id: int = 1
+    bos_token_id: int = 2
+
     # MoE settings
     num_experts: int = 8
     num_experts_per_token: int = 2
     expert_capacity_factor: float = 1.25
+    capacity_factor: float = 1.25  # Alias for YAML compatibility
     router_type: str = 'switch'  # 'switch', 'deepseek', etc.
     router_aux_loss_coef: float = 0.01
     router_jitter_noise: float = 0.01
+
+    # MoE auxiliary loss coefficients (COHERENCE FIX: reduced defaults)
+    router_z_loss_coef: float = 0.0001  # Router z-loss for stability
+    load_balance_loss_coef: float = 0.001  # Load balancing loss
+    diversity_loss_coef: float = 0.0  # Expert diversity loss
+    expert_dropout_loss_coef: float = 0.0  # Expert dropout loss
+    expert_dropout: float = 0.0  # Expert dropout probability
 
     # Regularization
     attention_dropout: float = 0.1
@@ -69,12 +82,15 @@ class EnhancedMoEConfig:
     deepspeed_partition_activations: bool = False
     deepspeed_moe_param_groups: bool = False
 
-    # Loss regularization features
-    entropy_regularization: float = 0.0  # Entropy bonus for diverse predictions
-    output_diversity_weight: float = 0.0  # Penalty for low output diversity
+    # Loss regularization features (COHERENCE FIX: safer defaults)
+    entropy_regularization: float = 0.001  # Entropy bonus for diverse predictions (reduced)
+    output_diversity_weight: float = 0.0  # DISABLED - can cause incoherent outputs
     eos_logit_bias: float = 0.0  # Bias applied to EOS token logits
-    eos_token_id: int = 3  # EOS token ID (tokenizer-specific)
     min_sequence_length: int = 0  # Minimum sequence length before allowing EOS
+    label_smoothing: float = 0.1  # COHERENCE FIX: prevents overfitting
+
+    # Weight tying
+    tie_word_embeddings: bool = True  # COHERENCE FIX: improves vocab learning
 
 
 class RoPEPositionalEmbedding(nn.Module):
