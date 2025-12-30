@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ..core.checkpoint import load_state_dict_with_remapping
 from .context import TrainingComponent, TrainingContext
 
 logger = logging.getLogger(__name__)
@@ -972,13 +973,16 @@ class ModelBuilder(TrainingComponent):
 
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
 
-        # Handle different checkpoint formats
+        # Handle different checkpoint formats with automatic key remapping
         if 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
+            state_dict = checkpoint['model_state_dict']
         elif 'state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['state_dict'])
+            state_dict = checkpoint['state_dict']
         else:
-            model.load_state_dict(checkpoint)
+            state_dict = checkpoint
+
+        # Load with automatic key remapping for backwards compatibility
+        load_state_dict_with_remapping(model, state_dict, strict=True)
 
         self.logger.info(f"Loaded checkpoint from {checkpoint_path}")
 

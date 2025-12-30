@@ -364,7 +364,9 @@ class CachedAttention(nn.Module):
         layer_idx: int,
     ):
         super().__init__()
-        self.attention = attention_module
+        # Use _wrapped_attn instead of attention to avoid double-nesting in state dict keys
+        # This prevents keys like layers.X.attention.attention.q_proj.weight
+        self._wrapped_attn = attention_module
         self.cache = cache
         self.layer_idx = layer_idx
 
@@ -382,7 +384,7 @@ class CachedAttention(nn.Module):
                 return cached_kv
 
         # Compute attention
-        output = self.attention(*args, **kwargs)
+        output = self._wrapped_attn(*args, **kwargs)
 
         # Store in cache
         if use_cache:
@@ -412,27 +414,39 @@ def apply_hybrid_caching(
 
     cache = HybridCache(config)
 
-    # Apply to attention layers
-    layer_idx = 0
+    # Collect modules to wrap first (to avoid modifying dict during iteration)
+    modules_to_wrap = []
+
     for name, module in model.named_modules():
-        is_target = (target_modules is None and "attention" in name.lower()) or \
-                    (target_modules is not None and any(t in name for t in target_modules))
+        # Only wrap top-level attention modules, not their children
+        # e.g., wrap "layers.0.attention" but not "layers.0.attention.q_proj"
+        attr_name = name.split(".")[-1] if name else ""
+
+        if target_modules is not None:
+            # Use explicit target list
+            is_target = any(t == attr_name for t in target_modules)
+        else:
+            # Auto-detect: only wrap modules named exactly "attention"
+            # This avoids wrapping children like q_proj, k_proj, etc.
+            is_target = attr_name == "attention"
 
         if is_target:
-            # Wrap with caching
-            parent_name = ".".join(name.split(".")[:-1])
-            attr_name = name.split(".")[-1]
-            
-            parent = model
-            for part in parent_name.split("."):
-                if part:
-                    parent = getattr(parent, part)
-            
-            cached_module = CachedAttention(module, cache, layer_idx)
-            setattr(parent, attr_name, cached_module)
-            
-            layer_idx += 1
-            logger.info(f"Applied hybrid caching to {name}")
+            modules_to_wrap.append((name, module))
+
+    # Now apply wrapping
+    for layer_idx, (name, module) in enumerate(modules_to_wrap):
+        parent_name = ".".join(name.split(".")[:-1])
+        attr_name = name.split(".")[-1]
+
+        parent = model
+        for part in parent_name.split("."):
+            if part:
+                parent = getattr(parent, part)
+
+        cached_module = CachedAttention(module, cache, layer_idx)
+        setattr(parent, attr_name, cached_module)
+
+        logger.info(f"Applied hybrid caching to {name}")
 
     return model, cache
 

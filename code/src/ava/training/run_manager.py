@@ -114,6 +114,9 @@ class RunManager:
             'loss_curves': {'train_loss': [], 'val_loss': [], 'steps': []}
         }
 
+        # Store config for checkpoint saving (populated by save_config with config_type='full')
+        self._config: Optional[Dict[str, Any]] = None
+
         # Save initial run metadata
         self._save_run_metadata()
 
@@ -217,12 +220,16 @@ class RunManager:
 
         Args:
             config: Configuration dictionary to save
-            config_type: Type of config ('model', 'training', 'data', etc.)
+            config_type: Type of config ('model', 'training', 'data', 'full', etc.)
         """
         config_file = self.run_dir / f'configs/{config_type}_config.yaml'
 
         with open(config_file, 'w') as f:
             yaml.dump(config, f, default_flow_style=False, indent=2)
+
+        # Store full config for inclusion in checkpoints (needed by generate.py)
+        if config_type == 'full':
+            self._config = config
 
         self.log('training', f"Saved {config_type} config to {config_file}")
 
@@ -335,6 +342,7 @@ class RunManager:
             'loss': loss,
             'model_state_dict': model_state,
             'optimizer_state_dict': optimizer_state,
+            'config': self._config,  # Include full config for generate.py compatibility
             'timestamp': datetime.now().isoformat(),
             'run_directory': str(self.run_dir)
         }

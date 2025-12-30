@@ -1484,7 +1484,7 @@ def main(args: argparse.Namespace) -> None:
             amp_dtype=context.amp_dtype,
             log_interval=log_interval,
             generate_every_n_steps=generation_config.get('generate_every_n_steps', 500),
-            save_steps=training_config.get('save_steps', 0),
+            save_steps=training_config.get('logging', {}).get('save_steps', 500),
             max_steps=getattr(args, 'max_steps', None),
             # Profiling options (disabled by default)
             enable_profiling=getattr(args, 'enable_profiling', False),

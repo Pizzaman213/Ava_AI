@@ -149,6 +149,14 @@ class MetricsManager(ManagerInterface):
         self.logger.info(f"WandB setup: use_wandb={use_wandb}, WANDB_AVAILABLE={WANDB_AVAILABLE}, "
                         f"wandb_config={'provided' if wandb_config else 'None'}, _use_wandb={self._use_wandb}")
 
+        # Debug info for generation logging
+        if wandb_config and not WANDB_AVAILABLE:
+            self.logger.error(
+                "⚠️  GENERATION LOGGING ISSUE: WandB was requested but is NOT installed! "
+                "Generation samples will NOT be logged to the table. "
+                "Install with: pip install wandb"
+            )
+
         if self._use_wandb:
             try:
                 wandb_config = wandb_config or {}
@@ -207,7 +215,19 @@ class MetricsManager(ManagerInterface):
                     )
 
             except Exception as e:
-                self.logger.warning(f"Failed to initialize WandB: {e}")
+                import traceback
+                tb_str = traceback.format_exc()
+                self.logger.error(
+                    f"⚠️  GENERATION LOGGING ISSUE: Failed to initialize WandB!\n"
+                    f"Error: {e}\n"
+                    f"Traceback:\n{tb_str}\n"
+                    f"Generation samples will NOT be logged to the table. "
+                    f"Common fixes:\n"
+                    f"  1. Check WandB is installed: pip install wandb\n"
+                    f"  2. Authenticate with: wandb login\n"
+                    f"  3. Check network connectivity\n"
+                    f"  4. Check wandb_config in training config"
+                )
                 self._use_wandb = False
         elif use_wandb and not WANDB_AVAILABLE:
             self.logger.warning(
@@ -581,6 +601,16 @@ class MetricsManager(ManagerInterface):
             log_step: Current training step (for wandb.log to avoid monotonic warning)
             generation_data: Dictionary with generation details (includes 'step' for table)
         """
+        # Debug: Check if WandB is enabled
+        try:
+            from tqdm import tqdm
+            if not self._use_wandb:
+                tqdm.write(f"  [Gen DEBUG] log_generation called but _use_wandb={self._use_wandb} - skipping WandB log")
+            else:
+                tqdm.write(f"  [Gen DEBUG] log_generation called with _use_wandb=True, WANDB_AVAILABLE={WANDB_AVAILABLE}")
+        except ImportError:
+            pass
+
         if not self._use_wandb:
             return
 

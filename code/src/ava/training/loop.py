@@ -338,6 +338,11 @@ class TrainingLoopManager(ManagerInterface):
                 'labels': torch.empty_like(sample_batch['labels']),
             }
 
+            # COHERENCE FIX: Include position_ids in CUDA graph for sequence packing
+            # Without this, document-relative positions are lost, causing cross-document attention
+            if 'position_ids' in sample_batch:
+                self._graph_static_input['position_ids'] = torch.empty_like(sample_batch['position_ids'])
+
             # Copy sample data into static buffers
             for key in self._graph_static_input:
                 self._graph_static_input[key].copy_(sample_batch[key])
@@ -371,10 +376,13 @@ class TrainingLoopManager(ManagerInterface):
             for _ in range(3):
                 optimizer.zero_grad()
                 with torch.autocast(device_type='cuda', dtype=config.amp_dtype, enabled=config.use_amp):
+                    # COHERENCE FIX: Use keyword args to ensure position_ids and 2D attention_mask
+                    # are properly forwarded for sequence packing with document boundaries
                     outputs = model(
-                        self._graph_static_input['input_ids'],
-                        self._graph_static_input['attention_mask'],
-                        self._graph_static_input['labels'],
+                        input_ids=self._graph_static_input['input_ids'],
+                        attention_mask=self._graph_static_input['attention_mask'],
+                        labels=self._graph_static_input['labels'],
+                        position_ids=self._graph_static_input.get('position_ids'),
                     )
                     loss = outputs['loss'] / config.gradient_accumulation_steps
                 if use_scaler:
@@ -407,10 +415,13 @@ class TrainingLoopManager(ManagerInterface):
             optimizer.zero_grad()
             with torch.cuda.graph(self._cuda_graph):
                 with torch.autocast(device_type='cuda', dtype=config.amp_dtype, enabled=config.use_amp):
+                    # COHERENCE FIX: Use keyword args to ensure position_ids and 2D attention_mask
+                    # are properly forwarded for sequence packing with document boundaries
                     outputs = model(
-                        self._graph_static_input['input_ids'],
-                        self._graph_static_input['attention_mask'],
-                        self._graph_static_input['labels'],
+                        input_ids=self._graph_static_input['input_ids'],
+                        attention_mask=self._graph_static_input['attention_mask'],
+                        labels=self._graph_static_input['labels'],
+                        position_ids=self._graph_static_input.get('position_ids'),
                     )
                     loss = outputs['loss'] / config.gradient_accumulation_steps
 
@@ -451,7 +462,12 @@ class TrainingLoopManager(ManagerInterface):
             RuntimeError: If batch shapes don't match captured graph shapes
         """
         # Validate shapes before copy to prevent silent CUDA errors
-        for key in ['input_ids', 'attention_mask', 'labels']:
+        # COHERENCE FIX: Include position_ids in validation for sequence packing
+        keys_to_validate = ['input_ids', 'attention_mask', 'labels']
+        if 'position_ids' in self._graph_static_input:
+            keys_to_validate.append('position_ids')
+
+        for key in keys_to_validate:
             if key in gpu_batch and key in self._graph_static_input:
                 expected_shape = self._graph_static_input[key].shape
                 actual_shape = gpu_batch[key].shape
@@ -464,9 +480,12 @@ class TrainingLoopManager(ManagerInterface):
                     )
 
         # Copy new data into static buffers
+        # COHERENCE FIX: Copy position_ids for proper document-relative positions
         self._graph_static_input['input_ids'].copy_(gpu_batch['input_ids'])
         self._graph_static_input['attention_mask'].copy_(gpu_batch['attention_mask'])
         self._graph_static_input['labels'].copy_(gpu_batch['labels'])
+        if 'position_ids' in self._graph_static_input and 'position_ids' in gpu_batch:
+            self._graph_static_input['position_ids'].copy_(gpu_batch['position_ids'])
 
         # Replay the graph
         self._cuda_graph.replay()
@@ -1435,7 +1454,10 @@ class TrainingLoopManager(ManagerInterface):
             # Log to WandB using current step (not generation start step)
             # to avoid "step less than current step" warning
             if self._metrics_manager:
+                tqdm.write(f"  [Gen] Logging to metrics manager (use_wandb={getattr(self._metrics_manager, '_use_wandb', '?')})")
                 self._metrics_manager.log_generation(self._global_step, gen_data)
+            else:
+                tqdm.write(f"  [Gen] WARNING: No metrics manager available! Generation will not be logged to WandB")
 
         # Check if we should start a new generation
         if self._global_step <= 0:
@@ -1455,20 +1477,32 @@ class TrainingLoopManager(ManagerInterface):
             return
 
         # Launch async CPU generation
+        # Get special token IDs from model config for consistency
+        base_model = model.module if hasattr(model, 'module') else model
+        model_config = getattr(base_model, 'config', None)
+
+        model_eos_token_id = getattr(model_config, 'eos_token_id', None) if model_config else None
+        model_bos_token_id = getattr(model_config, 'bos_token_id', None) if model_config else None
+        model_pad_token_id = getattr(model_config, 'pad_token_id', None) if model_config else None
+
         tqdm.write(f"  [Gen] Step {self._global_step}: launching async CPU generation...")
         self._generation_manager.generate_async(
             model,
             self._global_step,
             vocab_size,
             tokenizer=tokenizer,
-            eos_token_id=getattr(tokenizer, 'eos_token_id', None) if tokenizer else None,
+            eos_token_id=model_eos_token_id or (getattr(tokenizer, 'eos_token_id', None) if tokenizer else None),
+            bos_token_id=model_bos_token_id or (getattr(tokenizer, 'bos_token_id', None) if tokenizer else None),
+            pad_token_id=model_pad_token_id or (getattr(tokenizer, 'pad_token_id', None) if tokenizer else None),
             max_length=generation_config.get('max_length', 128),
             temperature=generation_config.get('temperature', 0.7),
             top_p=generation_config.get('top_p', 0.9),
             top_k=generation_config.get('top_k', 50),
-            repetition_penalty=generation_config.get('repetition_penalty', 1.0),
+            # COHERENCE FIX: Better defaults to prevent repetitive generation
+            # Old defaults (1.0, 0) allowed degenerate repetition
+            repetition_penalty=generation_config.get('repetition_penalty', 1.2),
             prompt=generation_config.get('prompt', None),
-            no_repeat_ngram_size=generation_config.get('no_repeat_ngram_size', 0),
+            no_repeat_ngram_size=generation_config.get('no_repeat_ngram_size', 3),
             skip_special_tokens=generation_config.get('skip_special_tokens', True),
         )
 

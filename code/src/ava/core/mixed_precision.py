@@ -20,6 +20,8 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+from .checkpoint import load_state_dict_with_remapping
+
 logger = logging.getLogger(__name__)
 
 
@@ -177,14 +179,17 @@ def load_checkpoint(
     """
     checkpoint = torch.load(path, map_location=device, weights_only=False)
 
-    # Handle both current and legacy model state keys
+    # Handle both current and legacy model state keys with automatic key remapping
     if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+        state_dict = checkpoint['model_state_dict']
     elif 'model_state' in checkpoint:
-        model.load_state_dict(checkpoint['model_state'], strict=strict)
+        state_dict = checkpoint['model_state']
     else:
         # Assume checkpoint is raw state dict
-        model.load_state_dict(checkpoint, strict=strict)
+        state_dict = checkpoint
+
+    # Load with automatic key remapping for backwards compatibility
+    load_state_dict_with_remapping(model, state_dict, strict=strict)
 
     # Handle both current and legacy optimizer state keys
     if optimizer is not None:

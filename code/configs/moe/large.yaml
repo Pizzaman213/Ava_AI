@@ -84,7 +84,7 @@ hybrid_caching:
 # =====================================================================
 # AUTO-FETCH: Uses model config (hidden_size, num_layers, num_experts, etc.)
 batch_size_calibration:
-  enabled: true                  # Enable binary search calibration at startup
+  enabled: false                  # Enable binary search calibration at startup
   target_memory: 0.88            # Reduced from 0.90 for packing safety margin
   max_batch_size: 128            # Can go higher on 24GB single GPU
   min_batch_size: 8              # Set minimum floor
@@ -101,11 +101,11 @@ training:
     mixed_precision: bf16  # Native BF16 on Ampere - no loss scaling needed
 
   batching:
-    # batch_size: 32  # REMOVED - let calibration find optimal size
+    batch_size: 32  # REMOVED - let calibration find optimal size
     gradient_accumulation_steps: 4  # Effective batch size = calibrated_BS * 4
 
   optimizer:
-    type: adamw_8bit # 8-bit AdamW for memory efficiency
+    type: adamw  # 8-bit AdamW for memory efficiency
     learning_rate: 6.0e-5  # Increased for faster coherence learning
     betas: [0.9, 0.95]
     weight_decay: 0.01  # Fixed: Was 0.1 (too aggressive with high LR)

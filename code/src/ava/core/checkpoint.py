@@ -18,6 +18,7 @@ Usage:
 """
 
 import logging
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -40,6 +41,153 @@ except ImportError:
     _CUDA_STREAMS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def remap_state_dict_keys(
+    state_dict: Dict[str, Any],
+    expected_keys: Optional[set] = None
+) -> Tuple[Dict[str, Any], int]:
+    """
+    Remap corrupted checkpoint keys to match expected model architecture.
+
+    This handles common key corruption patterns from architecture changes:
+    - layers.X.attention.attention.Y -> layers.X.attention.Y (double attention)
+    - layers.X.attention.{q,k,v,o}_proj.attention.Y -> layers.X.attention.{q,k,v,o}_proj.Y
+    - layers.X.attention.rope.attention.Y -> layers.X.attention.rope.Y
+    - layers.X.attention._wrapped_attn.Y -> layers.X.attention.Y (hybrid caching wrapper)
+
+    Args:
+        state_dict: The checkpoint state dict with potentially corrupted keys
+        expected_keys: Optional set of expected keys for filtering. If None, all remapped keys are kept.
+
+    Returns:
+        Tuple of (remapped_state_dict, remapped_count)
+    """
+    remapped_state_dict = {}
+    remapped_count = 0
+
+    for old_key, value in state_dict.items():
+        new_key = old_key
+
+        # Fix: layers.X.attention._wrapped_attn.Y -> layers.X.attention.Y
+        # This handles keys from hybrid caching wrapper
+        if '._wrapped_attn.' in old_key:
+            new_key = old_key.replace('._wrapped_attn.', '.')
+            remapped_count += 1
+
+        # Fix: layers.X.attention.attention.Y -> layers.X.attention.Y
+        elif '.attention.attention.' in old_key:
+            new_key = old_key.replace('.attention.attention.', '.attention.')
+            remapped_count += 1
+
+        # Fix: layers.X.attention.{q,k,v,o}_proj.attention.Y -> layers.X.attention.{q,k,v,o}_proj.Y
+        # This handles corrupted keys like: layers.0.attention.q_proj.attention.weight
+        elif '.attention.' in old_key and old_key.count('.attention.') > 1:
+            # Remove spurious '.attention.' after projection names
+            new_key = re.sub(
+                r'\.(q_proj|k_proj|v_proj|o_proj)\.attention\.',
+                r'.\1.',
+                old_key
+            )
+            if new_key != old_key:
+                remapped_count += 1
+            else:
+                # Fallback: remove duplicate adjacent 'attention' segments
+                parts = old_key.split('.')
+                cleaned_parts = []
+                prev_was_attention = False
+                for part in parts:
+                    if part == 'attention' and prev_was_attention:
+                        continue  # Skip duplicate
+                    cleaned_parts.append(part)
+                    prev_was_attention = (part == 'attention')
+                new_key = '.'.join(cleaned_parts)
+                if new_key != old_key:
+                    remapped_count += 1
+
+        # Fix: layers.X.attention.rope.attention.inv_freq -> layers.X.attention.rope.inv_freq
+        if '.rope.attention.' in new_key:
+            new_key = new_key.replace('.rope.attention.', '.rope.')
+            remapped_count += 1
+
+        # Keep the key if it matches expected keys or if no expected keys provided
+        if expected_keys is None:
+            remapped_state_dict[new_key] = value
+        elif new_key in expected_keys:
+            remapped_state_dict[new_key] = value
+        elif old_key in expected_keys:
+            remapped_state_dict[old_key] = value
+
+    return remapped_state_dict, remapped_count
+
+
+def load_state_dict_with_remapping(
+    model: nn.Module,
+    state_dict: Dict[str, Any],
+    strict: bool = True
+) -> Tuple[bool, Optional[Any]]:
+    """
+    Load state dict into model with automatic key remapping for backwards compatibility.
+
+    This is a utility function that can be used by any code loading checkpoints.
+    - If strict=True: tries strict loading first, then remaps on failure
+    - If strict=False: always remaps first (handles _wrapped_attn, corrupted keys, etc)
+      then loads with non-strict mode
+
+    Handles common key corruption patterns:
+    - layers.X.attention._wrapped_attn.Y -> layers.X.attention.Y (hybrid caching)
+    - layers.X.attention.attention.Y -> layers.X.attention.Y (double attention)
+    - layers.X.attention.{q,k,v,o}_proj.attention.Y -> layers.X.attention.{q,k,v,o}_proj.Y
+    - And other architecture change mismatches
+
+    Args:
+        model: The model to load state into
+        state_dict: The state dict to load
+        strict: If True, try strict loading first then remap. If False, always remap first.
+
+    Returns:
+        Tuple of (success: bool, load_result: IncompatibleKeys or None)
+    """
+    # If strict=False, always remap first to handle _wrapped_attn and other key mismatches
+    if not strict:
+        expected_keys = set(model.state_dict().keys())
+        remapped_state_dict, remapped_count = remap_state_dict_keys(state_dict, expected_keys)
+
+        if remapped_count > 0:
+            logger.debug(f"Remapped {remapped_count} keys for backwards compatibility")
+            state_dict = remapped_state_dict
+
+        # Load with non-strict mode
+        result = model.load_state_dict(state_dict, strict=False)
+        return True, result
+
+    # If strict=True, try strict loading first
+    try:
+        model.load_state_dict(state_dict, strict=True)
+        return True, None
+    except RuntimeError as e:
+        logger.warning(
+            f"Checkpoint loading with strict=True failed: {e}\n"
+            f"Attempting to remap keys for backwards compatibility..."
+        )
+
+        # Get expected keys and remap
+        expected_keys = set(model.state_dict().keys())
+        remapped_state_dict, remapped_count = remap_state_dict_keys(state_dict, expected_keys)
+
+        if remapped_count > 0:
+            logger.info(f"Remapped {remapped_count} keys for backwards compatibility")
+
+        # Load remapped state dict
+        result = model.load_state_dict(remapped_state_dict, strict=False)
+        if result.missing_keys:
+            logger.warning(f"Missing keys after remap: {len(result.missing_keys)} keys")
+            logger.debug(f"Missing keys: {result.missing_keys[:10]}...")
+        if result.unexpected_keys:
+            logger.warning(f"Unexpected keys after remap: {len(result.unexpected_keys)} keys")
+            logger.debug(f"Unexpected keys: {result.unexpected_keys[:10]}...")
+
+        return True, result
 
 
 class CheckpointManager:
@@ -707,15 +855,8 @@ class CheckpointManager:
             state_dict = {k.replace('module.', '', 1): v for k, v in state_dict.items()}
             logger.info("Checkpoint loaded: Removed 'module.' prefix for non-DDP model")
 
-        # Load with strict=True first to detect issues, fallback to strict=False with warning
-        try:
-            model.load_state_dict(state_dict, strict=True)
-        except RuntimeError as e:
-            logger.warning(
-                f"Checkpoint loading with strict=True failed: {e}\n"
-                f"Falling back to strict=False - some weights may not be loaded correctly!"
-            )
-            model.load_state_dict(state_dict, strict=False)
+        # Load with automatic key remapping for backwards compatibility
+        load_state_dict_with_remapping(model, state_dict, strict=True)
 
         # Handle both old and new checkpoint formats for optimizer
         # Standardized key is 'optimizer_state_dict', legacy key is 'optimizer_state'

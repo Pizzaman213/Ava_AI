@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Any, List, Union
 from contextlib import contextmanager
 
+from ..core.checkpoint import load_state_dict_with_remapping
+
 logger = logging.getLogger(__name__)
 
 
@@ -637,6 +639,10 @@ class MoEFeedForward(nn.Module):
         self.diversity_loss_coef = getattr(config, 'diversity_loss_coef', 0.0)  # Expert diversity
         self.router_z_loss_coef = getattr(config, 'router_z_loss_coef', 0.001)  # Router stability
 
+        # Router jitter noise to prevent expert collapse
+        # During training, adds small noise to router logits to encourage exploration
+        self.router_jitter_noise = getattr(config, 'router_jitter_noise', 0.01)
+
         # Use ModuleList with SwiGLU experts (memory-efficient, fast)
         self.experts = nn.ModuleList([
             SwiGLUExpert(config.hidden_size, config.intermediate_size)
@@ -654,6 +660,15 @@ class MoEFeedForward(nn.Module):
 
         # Router forward pass
         router_logits = self.router(hidden_flat)
+
+        # Apply jitter during training to prevent expert collapse
+        # Small noise encourages exploration and prevents router from getting stuck
+        if self.training and self.router_jitter_noise > 0:
+            noise = torch.empty_like(router_logits).uniform_(
+                -self.router_jitter_noise, self.router_jitter_noise
+            )
+            router_logits = router_logits + noise
+
         router_probs = F.softmax(router_logits, dim=-1)
 
         # Auxiliary loss info
@@ -1453,10 +1468,11 @@ class EnhancedMoEModel(nn.Module):
                     f"hidden={model_config.hidden_size}, layers={model_config.num_layers}")
         model = cls(model_config, **kwargs)
 
-        incompatible = model.load_state_dict(state_dict, strict=strict)
-        if not strict and (incompatible.missing_keys or incompatible.unexpected_keys):
-            logger.warning(f"Incompatible keys: missing={len(incompatible.missing_keys)}, "
-                          f"unexpected={len(incompatible.unexpected_keys)}")
+        # Load with automatic key remapping for backwards compatibility
+        success, result = load_state_dict_with_remapping(model, state_dict, strict=strict)
+        if not strict and result and (result.missing_keys or result.unexpected_keys):
+            logger.warning(f"Incompatible keys: missing={len(result.missing_keys)}, "
+                          f"unexpected={len(result.unexpected_keys)}")
 
         if device is not None:
             model = model.to(device)

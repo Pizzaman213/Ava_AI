@@ -255,7 +255,13 @@
       "Bash(PYTHONPATH=code/src timeout 1800 python:*)",
       "Bash(fuser:*)",
       "Bash(PYTHONPATH=/root/Ava_AI/code/src timeout 1800 python:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(head:*)",
+      "Bash(# Check if there are any recent runs with actual loss values logged grep -r \"\"loss\"\" code/outputs/pretraining/ava_training_20251228_153648_e2f02915/logs/)",
+      "Bash(# Check the metrics from a recent completed run find code/outputs/pretraining -name \"\"metrics*.json\"\" -o -name \"\"*history*\"\")",
+      "Bash(# Check WandB cloud link for metrics - look at any saved metrics cat code/outputs/pretraining/ava_training_20251228_153648_e2f02915/metrics/*.json)",
+      "Bash(# Check for any actual training output with loss values from previous runs grep -h \"\"loss\\\\|Loss\\\\|step\"\" code/outputs/pretraining/ava_training_20251228_152407_a25e8818/logs/*.log)",
+      "Bash(# Check WandB logs for actual metrics cat code/outputs/pretraining/ava_training_20251228_152407_a25e8818/wandb/wandb/run-*/files/output.log)"
     ],
     "deny": [],
     "ask": []

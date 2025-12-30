@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 
+from ava.core.checkpoint import load_state_dict_with_remapping
 from .context import ManagerInterface, TrainingContext
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,8 @@ class GenerationManager(ManagerInterface):
         prompt: Optional[str] = None,
         skip_special_tokens: bool = True,
         eos_token_id: Optional[int] = None,
+        bos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
         no_repeat_ngram_size: int = 0,
         banned_tokens: Optional[List[int]] = None,
     ) -> str:
@@ -130,7 +133,9 @@ class GenerationManager(ManagerInterface):
             repetition_penalty: Repetition penalty
             prompt: Optional prompt text
             skip_special_tokens: Skip special tokens in output
-            eos_token_id: End-of-sequence token ID (auto-detected from tokenizer if None)
+            eos_token_id: End-of-sequence token ID (auto-detected from model/tokenizer if None)
+            bos_token_id: Beginning-of-sequence token ID (auto-detected from model/tokenizer if None)
+            pad_token_id: Padding token ID (auto-detected from model/tokenizer if None)
             no_repeat_ngram_size: Block repeated n-grams of this size (0 = disabled)
             banned_tokens: List of token IDs to never generate (e.g., [23] blocks '/')
 
@@ -138,19 +143,44 @@ class GenerationManager(ManagerInterface):
             Generated text string
         """
         # Default banned tokens: block rare punctuation not in typical training data
-        # Token 23 = '/' which appears in "/" repetition issues
         if banned_tokens is None:
             banned_tokens = [23]  # Block '/' by default
         self.assert_initialized()
 
-        # Get EOS token ID from tokenizer if not provided
-        if eos_token_id is None and tokenizer is not None:
-            eos_token_id = getattr(tokenizer, 'eos_token_id', None)
+        # Get special token IDs with fallback chain: explicit param -> model config -> tokenizer -> default
+        # This ensures generation uses the same token IDs the model was trained with
+        base_model = model.module if hasattr(model, 'module') else model
+        model_config = getattr(base_model, 'config', None)
 
-        # Get BOS token ID for proper sequence start (critical for coherent generation)
-        bos_token_id = getattr(tokenizer, 'bos_token_id', None) if tokenizer else None
+        # EOS token ID: param -> model config -> tokenizer -> default (1)
+        if eos_token_id is None:
+            if model_config is not None and hasattr(model_config, 'eos_token_id'):
+                eos_token_id = model_config.eos_token_id
+            elif tokenizer is not None:
+                eos_token_id = getattr(tokenizer, 'eos_token_id', None)
+            if eos_token_id is None:
+                eos_token_id = 1
+                self.logger.debug(f"Using default eos_token_id={eos_token_id}")
+
+        # BOS token ID: param -> model config -> tokenizer -> default (2)
         if bos_token_id is None:
-            bos_token_id = 2  # Default BOS token ID matching tokenizer vocab
+            if model_config is not None and hasattr(model_config, 'bos_token_id'):
+                bos_token_id = model_config.bos_token_id
+            elif tokenizer is not None:
+                bos_token_id = getattr(tokenizer, 'bos_token_id', None)
+            if bos_token_id is None:
+                bos_token_id = 2
+                self.logger.debug(f"Using default bos_token_id={bos_token_id}")
+
+        # PAD token ID: param -> model config -> tokenizer -> default (0)
+        if pad_token_id is None:
+            if model_config is not None and hasattr(model_config, 'pad_token_id'):
+                pad_token_id = model_config.pad_token_id
+            elif tokenizer is not None:
+                pad_token_id = getattr(tokenizer, 'pad_token_id', None)
+            if pad_token_id is None:
+                pad_token_id = 0
+                self.logger.debug(f"Using default pad_token_id={pad_token_id}")
 
         model.eval()
         # Get device from model, not self.device (supports CPU generation)
@@ -199,8 +229,13 @@ class GenerationManager(ManagerInterface):
                 if generated_ids.shape[1] >= max_pos:
                     break
 
-                # Pass attention mask to model for proper masking
-                outputs = model(generated_ids, attention_mask=attention_mask)
+                # Create position_ids for generation (sequential: 0, 1, 2, ...)
+                # This ensures RoPE embeddings are applied correctly
+                current_len = generated_ids.shape[1]
+                position_ids = torch.arange(current_len, device=device).unsqueeze(0)
+
+                # Pass attention mask and position_ids to model for proper masking
+                outputs = model(generated_ids, attention_mask=attention_mask, position_ids=position_ids)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
 
                 # Get next token logits
@@ -234,40 +269,54 @@ class GenerationManager(ManagerInterface):
                         if token_id < next_logits.shape[-1]:
                             next_logits[0, token_id] = float('-inf')
 
-                # Top-k filtering
+                # Compute softmax probabilities
                 probs = torch.softmax(next_logits, dim=-1)
-                if top_k > 0:
+
+                # Top-k filtering: keep only top_k highest probability tokens
+                if top_k > 0 and top_k < probs.shape[-1]:
                     top_k_probs, top_k_indices = torch.topk(probs, min(top_k, probs.shape[-1]), dim=-1)
-                    probs_filtered = torch.zeros_like(probs)
-                    probs_filtered.scatter_(-1, top_k_indices, top_k_probs)
-                    probs = probs_filtered
 
-                # Top-p (nucleus) sampling
-                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-                cum_probs = torch.cumsum(sorted_probs, dim=-1)
-                mask = cum_probs > top_p
-                mask[..., 0] = False
-                sorted_probs[mask] = 0.0
+                    # Apply top-p (nucleus) sampling within top-k
+                    sorted_probs, sort_idx = torch.sort(top_k_probs, descending=True, dim=-1)
+                    cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                    mask = cum_probs > top_p
+                    mask[..., 0] = False  # Always keep at least one token
+                    sorted_probs[mask] = 0.0
 
-                # Safeguard: ensure valid probability distribution
-                # GPU SYNC FIX: Use torch.where to avoid CPU sync for condition check
-                prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
-                # Normalize with epsilon to prevent division by zero
-                safe_prob_sum = prob_sum + 1e-10
-                normalized_probs = sorted_probs / safe_prob_sum
-                normalized_probs = normalized_probs + 1e-8
-                normalized_probs = normalized_probs / normalized_probs.sum(dim=-1, keepdim=True)
+                    # Normalize with fallback for invalid distributions
+                    prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                    # Fallback to uniform if all probs are zero (can happen with aggressive filtering)
+                    is_invalid = (prob_sum < 1e-10) | torch.isnan(prob_sum)
+                    if is_invalid.any():
+                        uniform_probs = torch.ones_like(sorted_probs) / sorted_probs.shape[-1]
+                        sorted_probs = torch.where(is_invalid.expand_as(sorted_probs), uniform_probs, sorted_probs)
+                        prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                    sorted_probs = sorted_probs / (prob_sum + 1e-10)
 
-                # Uniform fallback for invalid distributions
-                uniform_probs = torch.ones_like(sorted_probs) / sorted_probs.shape[-1]
+                    # Sample from sorted probs, then map back to original indices
+                    sampled_idx = torch.multinomial(sorted_probs, num_samples=1)
+                    # Map back: sampled_idx -> sort_idx -> top_k_indices -> vocab
+                    local_idx = sort_idx.gather(-1, sampled_idx)
+                    next_token = top_k_indices.gather(-1, local_idx)
+                else:
+                    # No top-k, just use top-p on full distribution
+                    sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                    cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                    mask = cum_probs > top_p
+                    mask[..., 0] = False
+                    sorted_probs[mask] = 0.0
 
-                # Select valid or uniform without CPU sync
-                is_invalid = (prob_sum == 0) | torch.isnan(prob_sum)
-                sorted_probs = torch.where(is_invalid.expand_as(sorted_probs), uniform_probs, normalized_probs)
+                    # Normalize with fallback for invalid distributions
+                    prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                    is_invalid = (prob_sum < 1e-10) | torch.isnan(prob_sum)
+                    if is_invalid.any():
+                        uniform_probs = torch.ones_like(sorted_probs) / sorted_probs.shape[-1]
+                        sorted_probs = torch.where(is_invalid.expand_as(sorted_probs), uniform_probs, sorted_probs)
+                        prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                    sorted_probs = sorted_probs / (prob_sum + 1e-10)
 
-                # Sample
-                next_token = torch.multinomial(sorted_probs, num_samples=1)
-                next_token = sorted_indices.gather(-1, next_token)
+                    sampled_idx = torch.multinomial(sorted_probs, num_samples=1)
+                    next_token = sorted_indices.gather(-1, sampled_idx)
 
                 generated_ids = torch.cat([generated_ids, next_token], dim=1)
 
@@ -277,21 +326,33 @@ class GenerationManager(ManagerInterface):
                     torch.ones((attention_mask.shape[0], 1), device=device, dtype=attention_mask.dtype)
                 ], dim=-1)
 
-            # GPU SYNC FIX: Single EOS check after generation loop completes
-            # Instead of checking every 8 tokens with .item() sync, find EOS once at end
-            if eos_token_id is not None:
-                eos_mask = (generated_ids[0] == eos_token_id)
-                eos_positions = eos_mask.nonzero(as_tuple=True)[0]
-                if eos_positions.numel() > 0:
-                    # Single sync only when truncating at EOS
-                    first_eos_idx = eos_positions[0].item()
-                    generated_ids = generated_ids[:, :first_eos_idx + 1]
+                # EOS check: stop generation immediately when EOS token is produced
+                # This uses a single .item() call per token, which is acceptable for
+                # generation (not training) since we want to stop ASAP
+                next_token_val = next_token[0, 0].item()
+                if next_token_val == eos_token_id:
+                    self.logger.debug(f"Generation stopped at EOS token ({eos_token_id}) after {generated_ids.shape[1]} tokens")
+                    break
 
         # Decode with single sync point
         generated_cpu = generated_ids[0].cpu()
         if torch.cuda.is_available():
             torch.cuda.current_stream().synchronize()
         generated_list = generated_cpu.tolist()
+
+        # COHERENCE FIX: Detect and warn about repetitive/degenerate generation
+        # This helps diagnose coherence issues early
+        if len(generated_list) > 10:
+            unique_tokens = len(set(generated_list))
+            unique_ratio = unique_tokens / len(generated_list)
+            if unique_ratio < 0.1:
+                self.logger.warning(
+                    f"Degenerate generation detected: unique_ratio={unique_ratio:.3f} "
+                    f"({unique_tokens}/{len(generated_list)} unique tokens). "
+                    f"This indicates the model may not have learned properly. "
+                    f"Check: 1) position_ids are being passed, 2) attention_mask is 2D for packed sequences, "
+                    f"3) training data quality."
+                )
 
         if tokenizer is not None:
             try:
@@ -311,6 +372,8 @@ class GenerationManager(ManagerInterface):
         vocab_size: int,
         tokenizer: Any = None,
         eos_token_id: Optional[int] = None,
+        bos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
         **generation_kwargs
     ) -> Optional[Future]:
         """
@@ -321,7 +384,9 @@ class GenerationManager(ManagerInterface):
             global_step: Current training step
             vocab_size: Vocabulary size
             tokenizer: Optional tokenizer
-            eos_token_id: End-of-sequence token ID (auto-detected from tokenizer if None)
+            eos_token_id: End-of-sequence token ID (auto-detected from model/tokenizer if None)
+            bos_token_id: Beginning-of-sequence token ID (auto-detected from model/tokenizer if None)
+            pad_token_id: Padding token ID (auto-detected from model/tokenizer if None)
             **generation_kwargs: Generation parameters
 
         Returns:
@@ -329,9 +394,36 @@ class GenerationManager(ManagerInterface):
         """
         self.assert_initialized()
 
-        # Auto-detect EOS token ID from tokenizer if not provided
-        if eos_token_id is None and tokenizer is not None:
-            eos_token_id = getattr(tokenizer, 'eos_token_id', None)
+        # Get special token IDs with fallback chain: explicit param -> model config -> tokenizer -> default
+        base_model = model.module if hasattr(model, 'module') else model
+        model_config = getattr(base_model, 'config', None)
+
+        # Auto-detect EOS token ID from model config/tokenizer if not provided
+        if eos_token_id is None:
+            if model_config is not None and hasattr(model_config, 'eos_token_id'):
+                eos_token_id = model_config.eos_token_id
+            elif tokenizer is not None:
+                eos_token_id = getattr(tokenizer, 'eos_token_id', None)
+            if eos_token_id is None:
+                eos_token_id = 1
+
+        # Auto-detect BOS token ID from model config/tokenizer if not provided
+        if bos_token_id is None:
+            if model_config is not None and hasattr(model_config, 'bos_token_id'):
+                bos_token_id = model_config.bos_token_id
+            elif tokenizer is not None:
+                bos_token_id = getattr(tokenizer, 'bos_token_id', None)
+            if bos_token_id is None:
+                bos_token_id = 2
+
+        # Auto-detect PAD token ID from model config/tokenizer if not provided
+        if pad_token_id is None:
+            if model_config is not None and hasattr(model_config, 'pad_token_id'):
+                pad_token_id = model_config.pad_token_id
+            elif tokenizer is not None:
+                pad_token_id = getattr(tokenizer, 'pad_token_id', None)
+            if pad_token_id is None:
+                pad_token_id = 0
 
         # Use lock to prevent race conditions
         with self._lock:
@@ -369,17 +461,44 @@ class GenerationManager(ManagerInterface):
                             # Fallback to deepcopy if no config available
                             cpu_model = copy.deepcopy(base_model)
 
-                        # Load the pre-captured state dict
-                        cpu_model.load_state_dict(state_dict_cpu, strict=False)
+                        # CRITICAL: Apply hybrid caching wrapper if checkpoint uses it
+                        # The checkpoint has _wrapped_attn keys, so model must have same structure
+                        try:
+                            from ava.optimizations.hybrid_cache import apply_hybrid_caching, HybridCacheConfig
+                            # Check if training config has hybrid caching enabled
+                            if self.context.config.get('hybrid_caching', {}).get('enabled', False):
+                                cache_config = HybridCacheConfig(
+                                    max_cache_size_gb=self.context.config['hybrid_caching'].get('max_cache_size_gb', 2.0),
+                                    kv_cache_ratio=self.context.config['hybrid_caching'].get('kv_cache_ratio', 0.7),
+                                    eviction_policy=self.context.config['hybrid_caching'].get('eviction_policy', 'hybrid'),
+                                )
+                                cpu_model, _ = apply_hybrid_caching(cpu_model, cache_config)
+                                self.logger.debug("Applied hybrid caching wrapper for checkpoint compatibility")
+                        except ImportError:
+                            self.logger.debug("Hybrid caching not available, skipping wrapper")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to apply hybrid caching wrapper: {e}")
+
+                        # Load state dict with automatic remapping
+                        # Handles _wrapped_attn keys and other architecture mismatches
+                        success, incompatible = load_state_dict_with_remapping(
+                            cpu_model, state_dict_cpu, strict=True
+                        )
+
+                        if not success:
+                            raise RuntimeError("Failed to load checkpoint into CPU model for generation")
+
                         cpu_model = cpu_model.to('cpu')
                         cpu_model.eval()
 
-                        # Generate
+                        # Generate with explicit token IDs for consistency
                         text = self.generate_sample(
                             cpu_model,
                             tokenizer,
                             vocab_size,
                             eos_token_id=eos_token_id,
+                            bos_token_id=bos_token_id,
+                            pad_token_id=pad_token_id,
                             **generation_kwargs
                         )
 
@@ -421,13 +540,28 @@ class GenerationManager(ManagerInterface):
                         return text
 
                 except Exception as e:
-                    self.logger.error(f"Async generation failed: {e}")
+                    # Log full traceback for debugging
+                    import traceback
+                    tb_str = ''.join(traceback.format_tb(e.__traceback__))
+                    self.logger.error(
+                        f"Async generation failed at step {global_step}: {e}\n"
+                        f"Traceback:\n{tb_str}"
+                    )
                     # Also print to console for visibility
                     try:
                         from tqdm import tqdm
-                        tqdm.write(f"  [Gen ERROR] Async generation failed: {e}")
+                        tqdm.write(f"  [Gen ERROR] Step {global_step}: {type(e).__name__}: {e}")
                     except ImportError:
-                        print(f"  [Gen ERROR] Async generation failed: {e}")
+                        print(f"  [Gen ERROR] Step {global_step}: {type(e).__name__}: {e}")
+
+                    # Record error in history for monitoring
+                    with self._lock:
+                        error_result = {
+                            'step': global_step,
+                            'error': str(e),
+                            'error_type': type(e).__name__,
+                        }
+                        self._add_to_history(error_result)
                     return None
 
             self._pending_future = self.executor.submit(_run_generation)
