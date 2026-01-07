@@ -21,6 +21,11 @@ from typing import Dict, Optional, Tuple, Any, List, Union
 from contextlib import contextmanager
 
 from ..core.checkpoint import load_state_dict_with_remapping
+from .experts import HighPerformanceExpert, ExpertParallelGroup
+
+# Backward compatibility aliases - use nn.experts implementations
+SwiGLUExpert = HighPerformanceExpert
+SwiGLUExpertGroup = ExpertParallelGroup
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +101,8 @@ def nvtx_range(name: str):
 
 # Import routing and expert layers
 try:
-    from ..nn.routing import MixtralRouter as SwitchTransformerRouting
-    from ..nn.experts import SparseExpert
+    from .routing import MixtralRouter as SwitchTransformerRouting
+    from .experts import SparseExpert
 except ImportError:
     SwitchTransformerRouting = None
     SparseExpert = None
@@ -128,10 +133,10 @@ class EnhancedMoEConfig:
     intermediate_size: int = 3072
     max_position_embeddings: int = 2048
 
-    # Special token IDs (must match tokenizer)
+    # Special token IDs (must match tokenizer - BERT-style tokens)
     pad_token_id: int = 0
-    eos_token_id: int = 1
-    bos_token_id: int = 2
+    eos_token_id: int = 102  # [SEP] token
+    bos_token_id: int = 101  # [CLS] token
 
     # MoE settings
     num_experts: int = 8
@@ -788,71 +793,12 @@ class MoEFeedForward(nn.Module):
         return output, aux_info
 
 
-class SwiGLUExpertGroup(nn.Module):
-    """
-    Memory-efficient grouped GEMM for SwiGLU experts.
-
-    Instead of nn.ModuleList with separate experts, this stores all expert
-    weights in stacked tensors and uses batched operations per expert.
-
-    Key optimization: We DON'T gather all weights for all tokens at once
-    (which would be O(num_tokens * k * hidden * intermediate) memory).
-    Instead, we process one expert at a time, batching all tokens for that expert.
-
-    Memory: O(hidden * intermediate * num_experts) for weights
-    Compute: O(num_tokens * hidden * intermediate) per forward (same as before)
-    """
-
-    def __init__(self, num_experts: int, hidden_size: int, intermediate_size: int):
-        super().__init__()
-        self.num_experts = num_experts
-        self.hidden_size = hidden_size
-        self.intermediate_size = intermediate_size
-
-        # Stack all expert weights in F.linear-compatible layout
-        # F.linear expects weight shape: [out_features, in_features]
-        # Shape: [num_experts, intermediate_size, hidden_size] for gate/up
-        self.gate_proj_weight = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))
-        self.up_proj_weight = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))
-        # Shape: [num_experts, hidden_size, intermediate_size] for down
-        self.down_proj_weight = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
-
-        # Initialize weights (use kaiming for each expert slice)
-        for i in range(num_experts):
-            nn.init.kaiming_uniform_(self.gate_proj_weight[i], a=5**0.5)
-            nn.init.kaiming_uniform_(self.up_proj_weight[i], a=5**0.5)
-            nn.init.kaiming_uniform_(self.down_proj_weight[i], a=5**0.5)
-
-    def forward_expert(self, x: torch.Tensor, expert_idx: int) -> torch.Tensor:
-        """Forward pass through a single expert (batched for all tokens assigned to it)."""
-        if x.numel() == 0:
-            return x  # Handle empty tensors
-        # x: [num_tokens_for_expert, hidden_size]
-        # Use F.linear with properly shaped weights (no transpose needed)
-        gate = F.linear(x, self.gate_proj_weight[expert_idx])  # [n, intermediate]
-        up = F.linear(x, self.up_proj_weight[expert_idx])      # [n, intermediate]
-        hidden = F.silu(gate) * up
-        return F.linear(hidden, self.down_proj_weight[expert_idx])  # [n, hidden]
-
-
-class SwiGLUExpert(nn.Module):
-    """SwiGLU expert: gate * swish(gate_proj(x)) * up_proj(x) -> down_proj"""
-
-    def __init__(self, hidden_size: int, intermediate_size: int):
-        super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
-
-
 class TransformerBlock(nn.Module):
     """Transformer block with MoE feed-forward."""
 
-    def __init__(self, config: EnhancedMoEConfig):
+    def __init__(self, config: EnhancedMoEConfig, layer_idx: int = 0):
         super().__init__()
+        self.layer_idx = layer_idx
         self.attention = MultiHeadAttention(config)
         self.feed_forward = MoEFeedForward(config)
 
@@ -860,6 +806,19 @@ class TransformerBlock(nn.Module):
         self.ln2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
         self.dropout = nn.Dropout(config.dropout)
+
+        # Activation cache for gradient checkpointing optimization
+        # Set via set_activation_cache() by HybridCacheManager
+        self._activation_cache = None
+
+    def set_activation_cache(self, cache) -> None:
+        """
+        Set activation cache for this layer.
+
+        Args:
+            cache: ActivationCache instance from hybrid_cache module
+        """
+        self._activation_cache = cache
 
     def forward(
         self,
@@ -935,8 +894,8 @@ class EnhancedMoEModel(nn.Module):
 
         # Transformer blocks
         self.layers = nn.ModuleList([
-            TransformerBlock(config)
-            for _ in range(config.num_layers)
+            TransformerBlock(config, layer_idx=i)
+            for i in range(config.num_layers)
         ])
 
         # Final layer norm
@@ -1169,6 +1128,13 @@ class EnhancedMoEModel(nn.Module):
         all_aux_info = []
         present_key_values = [] if use_cache else None
 
+        # KV cache eviction for long sequences (generation mode only)
+        # Uses HybridCacheManager's KVCacheManager if attached
+        if use_cache and past_key_values is not None:
+            kv_manager = getattr(self, '_kv_cache_manager', None)
+            if kv_manager is not None and kv_manager.should_evict(past_key_values):
+                past_key_values = kv_manager.evict(past_key_values)
+
         with nvtx_range("model/transformer_layers"):
             for idx, layer in enumerate(self.layers):
                 with nvtx_range(f"model/layer_{idx}"):
@@ -1311,48 +1277,66 @@ class EnhancedMoEModel(nn.Module):
                             loss = loss + total_aux_loss
 
                 # FIX #18: Add entropy regularization (encourages diverse predictions)
+                # MEMORY FIX: Use chunked computation to avoid OOM on large vocab
                 entropy_reg = getattr(self.config, 'entropy_regularization', 0.0) or 0.0
                 if entropy_reg > 0:
                     with nvtx_range("model/loss_compute/entropy_reg"):
-                        # Calculate entropy of output distribution
-                        output_probs = F.softmax(shift_logits, dim=-1)
-                        # Entropy: -sum(p * log(p))
-                        # FIX: Clamp probabilities to avoid log(0) and numerical instability
-                        safe_probs = torch.clamp(output_probs, min=1e-9, max=1.0)
-                        entropy = -(safe_probs * torch.log(safe_probs)).sum(dim=-1).mean()
-                        # CRITICAL FIX: Ensure entropy is a scalar
-                        if entropy.numel() > 1:
-                            entropy = entropy.mean()
+                        # Memory-efficient entropy: use log_softmax and process in chunks
+                        # Entropy = -sum(p * log(p)) = -sum(softmax(x) * log_softmax(x))
+                        batch_size, seq_len_shifted = shift_logits.shape[:2]
+                        chunk_size = min(64, seq_len_shifted)  # Process 64 positions at a time
+
+                        entropy_sum = 0.0
+                        total_positions = 0
+
+                        for i in range(0, seq_len_shifted, chunk_size):
+                            chunk_logits = shift_logits[:, i:i+chunk_size, :]
+                            # Use log_softmax (more numerically stable and memory efficient)
+                            log_probs = F.log_softmax(chunk_logits, dim=-1)
+                            probs = torch.exp(log_probs)
+                            # Entropy for this chunk: -sum(p * log(p))
+                            chunk_entropy = -(probs * log_probs).sum(dim=-1).sum()
+                            entropy_sum = entropy_sum + chunk_entropy
+                            total_positions += chunk_logits.shape[0] * chunk_logits.shape[1]
+                            del log_probs, probs, chunk_entropy  # Free memory immediately
+
+                        entropy = entropy_sum / total_positions
                         # CRITICAL FIX: Subtract entropy bonus (rewards high-entropy/diverse predictions)
-                        # Higher entropy = more diverse token distribution = lower loss = healthier training
                         loss = loss - entropy_reg * entropy
 
                 # FIX #19: Add differentiable output diversity penalty (penalizes repetitive outputs)
-                # Uses softmax probabilities instead of argmax for gradient flow
+                # MEMORY FIX: Use chunked computation to avoid OOM on large vocab
                 diversity_weight = getattr(self.config, 'output_diversity_weight', 0.0) or 0.0
                 if diversity_weight > 0:
                     with nvtx_range("model/loss_compute/diversity"):
-                        # Get soft token distribution instead of hard argmax (differentiable)
-                        output_probs = F.softmax(shift_logits, dim=-1)  # [batch, seq_len, vocab]
+                        # Memory-efficient diversity: process in chunks
+                        batch_size, seq_len_shifted = shift_logits.shape[:2]
+                        chunk_size = min(64, seq_len_shifted - 1)  # Process 64 position pairs at a time
 
-                        # Compute pairwise similarity between adjacent positions
-                        # High similarity = low diversity = should be penalized
-                        # Use cosine similarity between probability distributions
-                        probs_t = output_probs[:, :-1, :]  # [batch, seq_len-1, vocab]
-                        probs_t1 = output_probs[:, 1:, :]  # [batch, seq_len-1, vocab]
+                        similarity_sum = 0.0
+                        total_pairs = 0
 
-                        # Cosine similarity: dot(a, b) / (||a|| * ||b||)
-                        dot_product = (probs_t * probs_t1).sum(dim=-1)  # [batch, seq_len-1]
-                        norm_t = probs_t.norm(dim=-1) + 1e-8
-                        norm_t1 = probs_t1.norm(dim=-1) + 1e-8
-                        similarity = dot_product / (norm_t * norm_t1)  # [batch, seq_len-1]
+                        for i in range(0, seq_len_shifted - 1, chunk_size):
+                            end_idx = min(i + chunk_size, seq_len_shifted - 1)
+                            # Get logits for adjacent positions
+                            chunk_logits_t = shift_logits[:, i:end_idx, :]
+                            chunk_logits_t1 = shift_logits[:, i+1:end_idx+1, :]
 
-                        # Diversity loss: penalize high similarity (repetition)
-                        # Average similarity across sequence and batch
-                        diversity_loss = similarity.mean()
-                        # CRITICAL FIX: Ensure diversity_loss is a scalar
-                        if diversity_loss.numel() > 1:
-                            diversity_loss = diversity_loss.mean()
+                            # Compute softmax for chunks only
+                            probs_t = F.softmax(chunk_logits_t, dim=-1)
+                            probs_t1 = F.softmax(chunk_logits_t1, dim=-1)
+
+                            # Cosine similarity: dot(a, b) / (||a|| * ||b||)
+                            dot_product = (probs_t * probs_t1).sum(dim=-1)
+                            norm_t = probs_t.norm(dim=-1) + 1e-8
+                            norm_t1 = probs_t1.norm(dim=-1) + 1e-8
+                            chunk_similarity = dot_product / (norm_t * norm_t1)
+
+                            similarity_sum = similarity_sum + chunk_similarity.sum()
+                            total_pairs += chunk_similarity.numel()
+                            del probs_t, probs_t1, dot_product, norm_t, norm_t1, chunk_similarity
+
+                        diversity_loss = similarity_sum / total_pairs
                         loss = loss + diversity_weight * diversity_loss
 
         # FINAL SAFETY CHECK: Ensure loss is always a scalar before returning
@@ -1808,6 +1792,7 @@ class OptimizedTransformerBlock(nn.Module):
                 diversity_loss_coef=config.diversity_loss_coef,
                 expert_dropout_loss_coef=config.expert_dropout_loss_coef,
                 router_jitter_noise=config.router_jitter_noise,
+                aux_loss_frequency=getattr(config, 'aux_loss_frequency', 1),  # OPTIMIZATION: Reduce aux loss overhead
                 use_shared_expert=config.use_shared_expert,
                 shared_expert_weight=config.shared_expert_weight,
                 gradient_checkpointing=config.gradient_checkpointing,

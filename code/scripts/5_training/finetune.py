@@ -141,15 +141,15 @@ from ava.config import EnhancedTrainingConfig, TrainingConfigManager
 #     print_compatibility_report,
 #     validate_training_config,
 # )
-from ava.data.dataloader import create_streaming_dataloaders
+from ava.data.factory import create_streaming_dataloaders
 from ava.models.moe import EnhancedMoEConfig, EnhancedMoEModel
 from ava.data.multi_column import create_multi_column_dataloader
 # Observability modules are not yet implemented:
 # from ava.observability.health_dashboard import HealthDashboard
 # from ava.observability.hierarchical_logging import HierarchicalLogger, LogLevel
 # from ava.observability.training_validator import TrainingValidator
-from ava.optimization import AdaptiveLearningRateManager, AdaptiveLRConfig
-from ava.strategies.progressive import (
+from ava.optimizations import AdaptiveLearningRateManager, AdaptiveLRConfig
+from ava.training.progressive import (
     ProgressiveTrainingConfig,
     ProgressiveTrainingManager,
 )
@@ -386,7 +386,7 @@ def create_finetune_dataloaders(
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    from ava.data.dataloader import create_streaming_dataloaders
+    from ava.data.factory import create_streaming_dataloaders
 
     # Create a temporary directory with symlinks/copies for streaming loader
     # Or use the first file's directory as base

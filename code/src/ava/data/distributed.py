@@ -1,26 +1,36 @@
 """
 Distributed data loading utilities.
 
-This module provides distributed training wrappers for streaming datasets:
-- DistributedStreamingDataset: Token-balanced sharding across GPUs
+This module provides distributed training wrappers and samplers:
+- DistributedStreamingDataset: Token-balanced sharding for IterableDataset
+- AdvancedDistributedSampler: Load-balanced sampler for map-style Dataset
 
 Usage:
-    from ava.data.distributed import DistributedStreamingDataset
+    from ava.data.distributed import DistributedStreamingDataset, AdvancedDistributedSampler
 
+    # For streaming datasets
     distributed_dataset = DistributedStreamingDataset(
         base_dataset=streaming_dataset,
         world_size=4,
         rank=0,
         token_balanced=True,
     )
+
+    # For map-style datasets
+    sampler = AdvancedDistributedSampler(
+        dataset=my_dataset,
+        shuffle=True,
+        enable_load_balancing=True,
+    )
 """
 
 import logging
+import math
 from datetime import timedelta
-from typing import Any, Iterator
+from typing import Any, Dict, Iterator, List, Optional
 
 import torch
-from torch.utils.data import IterableDataset
+from torch.utils.data import Dataset, IterableDataset, Sampler
 
 # Import centralized constants
 from ..config.constants import DATA_CONSTANTS
@@ -165,6 +175,205 @@ class DistributedStreamingDataset(IterableDataset):
             self._batch_buffer.clear()
 
 
+class AdvancedDistributedSampler(Sampler):
+    """
+    Advanced distributed sampler with proper sharding, load balancing, and fault tolerance.
+
+    Features:
+    - Balanced data distribution across ranks
+    - Dynamic resharding for failed ranks
+    - Load balancing monitoring
+    - Deterministic shuffling with proper epoch seeding
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+        shuffle: bool = True,
+        seed: int = 0,
+        drop_last: bool = False,
+        enable_load_balancing: bool = True,
+        balancing_tolerance: float = 0.05  # 5% tolerance for load imbalance
+    ):
+        if num_replicas is None:
+            if not DISTRIBUTED_AVAILABLE or dist is None or not dist.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            num_replicas = dist.get_world_size()
+        if rank is None:
+            if not DISTRIBUTED_AVAILABLE or dist is None or not dist.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            rank = dist.get_rank()
+        if rank is not None and num_replicas is not None:
+            if rank >= num_replicas or rank < 0:
+                raise ValueError(
+                    "Invalid rank {}, rank should be in the interval"
+                    " [0, {}]".format(rank, num_replicas - 1))
+
+        self.dataset = dataset
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+        self.drop_last = drop_last
+        self.shuffle = shuffle
+        self.seed = seed
+        self.enable_load_balancing = enable_load_balancing
+        self.balancing_tolerance = balancing_tolerance
+
+        # Calculate dataset size and samples per rank
+        if self.num_replicas is not None:
+            if self.drop_last and len(self.dataset) % self.num_replicas != 0:
+                self.num_samples = math.ceil(
+                    (len(self.dataset) - self.num_replicas) / self.num_replicas
+                )
+            else:
+                self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
+
+            self.total_size = self.num_samples * self.num_replicas
+        else:
+            self.num_samples = 0
+            self.total_size = 0
+
+        # Track load balancing statistics
+        self.samples_processed = 0
+        self.load_stats: Dict[str, Any] = {
+            'samples_assigned': self.num_samples,
+            'samples_processed': 0,
+            'load_ratio': 0.0
+        }
+
+    def __iter__(self) -> Iterator[int]:
+        if self.shuffle:
+            # Deterministically shuffle based on epoch and seed
+            g = torch.Generator()
+            g.manual_seed(self.seed + self.epoch)
+            indices = torch.randperm(len(self.dataset), generator=g).tolist()
+        else:
+            indices = list(range(len(self.dataset)))
+
+        if not self.drop_last:
+            # Add extra samples to make it evenly divisible
+            padding_size = self.total_size - len(indices)
+            if padding_size <= len(indices):
+                indices += indices[:padding_size]
+            else:
+                indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
+        else:
+            # Remove tail of data to make it evenly divisible
+            indices = indices[:self.total_size]
+
+        if len(indices) != self.total_size:
+            raise ValueError(
+                f"Index mismatch in distributed sampler: expected {self.total_size} indices "
+                f"but got {len(indices)}. This indicates a data sharding issue. "
+                f"Rank: {self.rank}, Num replicas: {self.num_replicas}"
+            )
+
+        # Subsample for this rank with proper sharding
+        rank_indices = self._get_rank_indices(indices)
+
+        # Update load statistics
+        self.load_stats['samples_assigned'] = len(rank_indices)
+
+        return iter(rank_indices)
+
+    def _get_rank_indices(self, indices: List[int]) -> List[int]:
+        """Get indices for this rank with advanced sharding."""
+        if not self.enable_load_balancing:
+            # Standard sharding
+            return indices[self.rank:self.total_size:self.num_replicas]
+
+        # Advanced load-balanced sharding
+        chunk_size = len(indices) // self.num_replicas
+        remainder = len(indices) % self.num_replicas
+
+        # Calculate start and end indices for this rank
+        if self.rank < remainder:
+            # First `remainder` ranks get one extra sample
+            start_idx = self.rank * (chunk_size + 1)
+            end_idx = start_idx + chunk_size + 1
+        else:
+            # Remaining ranks get standard chunk size
+            start_idx = remainder * (chunk_size + 1) + (self.rank - remainder) * chunk_size
+            end_idx = start_idx + chunk_size
+
+        rank_indices = indices[start_idx:end_idx]
+
+        # Monitor load balance
+        expected_samples = len(indices) / self.num_replicas
+        actual_samples = len(rank_indices)
+        load_imbalance = abs(actual_samples - expected_samples) / expected_samples
+
+        if load_imbalance > self.balancing_tolerance:
+            logger.warning(
+                f"Load imbalance detected on rank {self.rank}: "
+                f"{actual_samples} samples vs {expected_samples:.1f} expected "
+                f"(imbalance: {load_imbalance:.1%})"
+            )
+
+        self.load_stats['load_ratio'] = actual_samples / expected_samples
+
+        return rank_indices
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch for this sampler."""
+        self.epoch = epoch
+
+    def get_load_stats(self) -> Dict[str, Any]:
+        """Get load balancing statistics for this rank."""
+        return self.load_stats.copy()
+
+    def coordinate_resharding(self, failed_ranks: List[int]) -> bool:
+        """
+        Coordinate resharding when ranks fail.
+
+        Args:
+            failed_ranks: List of failed rank IDs
+
+        Returns:
+            bool: True if resharding successful
+        """
+        if not failed_ranks:
+            return True
+
+        active_ranks = [r for r in range(self.num_replicas) if r not in failed_ranks]
+
+        if self.rank in failed_ranks:
+            logger.error(f"Rank {self.rank} is marked as failed - cannot reshard")
+            return False
+
+        if self.rank not in active_ranks:
+            logger.error(f"Rank {self.rank} not in active ranks: {active_ranks}")
+            return False
+
+        # Update num_replicas for resharding
+        old_replicas = self.num_replicas
+        self.num_replicas = len(active_ranks)
+
+        # Recalculate samples per rank
+        if self.drop_last and len(self.dataset) % self.num_replicas != 0:
+            self.num_samples = math.ceil(
+                (len(self.dataset) - self.num_replicas) / self.num_replicas
+            )
+        else:
+            self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
+
+        self.total_size = self.num_samples * self.num_replicas
+
+        logger.info(
+            f"Rank {self.rank}: Resharded from {old_replicas} to {self.num_replicas} replicas, "
+            f"new samples per rank: {self.num_samples}"
+        )
+
+        return True
+
+
 __all__ = [
     'DistributedStreamingDataset',
+    'AdvancedDistributedSampler',
+    'DISTRIBUTED_AVAILABLE',
 ]

@@ -36,12 +36,14 @@ try:
     import pyarrow as pa
     import pyarrow.ipc as ipc
     import pyarrow.parquet as pq
+    from .arrow_io import read_arrow_table
     PYARROW_AVAILABLE = True
 except ImportError:
     PYARROW_AVAILABLE = False
     pa = None
     ipc = None
     pq = None
+    read_arrow_table = None
 
 
 @dataclass
@@ -245,15 +247,8 @@ class DataValidator:
         lengths: List[int] = []
 
         try:
-            # Try IPC File format first, then fall back to IPC Stream format
-            try:
-                with pa.memory_map(str(file_path), 'r') as source:
-                    reader = ipc.open_file(source)
-                    table = reader.read_all()
-            except pa.ArrowInvalid:
-                # IPC Stream format (HuggingFace datasets)
-                with open(str(file_path), 'rb') as f:
-                    table = ipc.open_stream(f).read_all()
+            # Use centralized Arrow reader (handles both IPC File and Stream formats)
+            table = read_arrow_table(file_path)
 
             # Check required columns
             schema_names = table.schema.names

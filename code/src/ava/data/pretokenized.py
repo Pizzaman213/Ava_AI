@@ -41,44 +41,13 @@ from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 
+# Import from centralized Arrow I/O module
+from .arrow_io import read_arrow_table, ArrowTableCache
+
 logger = logging.getLogger(__name__)
 
 # Default vocab size for validation (can be overridden per-dataset)
 DEFAULT_VOCAB_SIZE = 50680  # Match standard tokenizer vocab
-
-
-def read_arrow_table(file_path: Union[str, Path]) -> pa.Table:
-    """
-    Read Arrow table from file, supporting both IPC File and IPC Stream formats.
-
-    Some Arrow files (especially from HuggingFace datasets) use IPC Stream format
-    which requires open_stream() instead of open_file().
-
-    Args:
-        file_path: Path to the Arrow file
-
-    Returns:
-        PyArrow Table with the data
-
-    Raises:
-        ValueError: If file cannot be read as either format
-    """
-    file_path = str(file_path)
-
-    # Try IPC File format first (standard Arrow files)
-    try:
-        with pa.memory_map(file_path, 'r') as source:
-            return ipc.open_file(source).read_all()
-    except pa.ArrowInvalid:
-        pass  # Not IPC File format, try Stream
-
-    # Try IPC Stream format (HuggingFace datasets format)
-    try:
-        with open(file_path, 'rb') as f:
-            reader = ipc.open_stream(f)
-            return reader.read_all()
-    except Exception as e:
-        raise ValueError(f"Failed to read Arrow file {file_path}: not IPC File or Stream format. Error: {e}")
 
 
 class DataLoaderError(Exception):
@@ -198,7 +167,7 @@ from ..core.data_utils import find_data_files, collate_batch
 # Only used when num_workers=0 (main process), as pinned memory
 # does not survive IPC from worker processes to main process.
 try:
-    from ..cuda.buffers import PinnedBufferPool, get_buffer_pool, is_main_process_dataloader
+    from ..cuda.streams import PinnedBufferPool, get_buffer_pool, is_main_process_dataloader
     PINNED_BUFFERS_AVAILABLE = True
 except ImportError:
     PINNED_BUFFERS_AVAILABLE = False
@@ -287,7 +256,9 @@ class PreTokenizedDataset(IterableDataset):
         enable_bucketing: bool = False,  # Bucketing less useful with pre-tokenized data
         pad_token_id: int = 0,
         world_size: Optional[int] = None,
-        rank: Optional[int] = None
+        rank: Optional[int] = None,
+        skip_sequence_count: bool = True,  # Fast startup: estimate instead of count
+        shuffle_seed: Optional[int] = None,  # Shuffle seed for reproducibility
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -296,6 +267,8 @@ class PreTokenizedDataset(IterableDataset):
         self.buffer_size = buffer_size
         self.enable_bucketing = enable_bucketing
         self.pad_token_id = pad_token_id
+        self.skip_sequence_count = skip_sequence_count
+        self.shuffle_seed = shuffle_seed
 
         # Distributed training
         self.world_size = world_size or 1
@@ -310,15 +283,50 @@ class PreTokenizedDataset(IterableDataset):
         logger.debug(f"Found {len(self.data_files)} pre-tokenized files for {split} split")
 
         # Calculate total sequences from Arrow files
-        self.total_sequences = 0
         self.file_sequences = []
-        for file_path in self.data_files:
-            table = read_arrow_table(file_path)
-            num_sequences = len(table)
-            self.file_sequences.append(num_sequences)
-            self.total_sequences += num_sequences
 
-        logger.debug(f"Total sequences: {self.total_sequences:,}")
+        if self.skip_sequence_count:
+            # Fast estimation from file sizes (no table loading)
+            self.total_sequences = self._estimate_sequence_count()
+            logger.debug(f"[FAST] Estimated sequences: {self.total_sequences:,}")
+        else:
+            # Exact counting (slow - loads all tables)
+            self.total_sequences = 0
+            for file_path in self.data_files:
+                table = read_arrow_table(file_path)
+                num_sequences = len(table)
+                self.file_sequences.append(num_sequences)
+                self.total_sequences += num_sequences
+            logger.debug(f"Total sequences: {self.total_sequences:,}")
+
+    def _estimate_sequence_count(self) -> int:
+        """Fast estimation of sequence count from file sizes."""
+        if not self.data_files:
+            return 0
+
+        # Sample first few files for estimation
+        sample_files = self.data_files[:min(5, len(self.data_files))]
+        total_sample_bytes = 0
+        total_sample_sequences = 0
+
+        for file_path in sample_files:
+            try:
+                total_sample_bytes += file_path.stat().st_size
+                table = read_arrow_table(file_path)
+                total_sample_sequences += len(table)
+            except Exception:
+                pass
+
+        if total_sample_bytes == 0 or total_sample_sequences == 0:
+            # Fallback: rough estimate of 500 sequences per file
+            return len(self.data_files) * 500
+
+        # Calculate bytes per sequence and extrapolate
+        bytes_per_seq = total_sample_bytes / total_sample_sequences
+        total_bytes = sum(f.stat().st_size for f in self.data_files)
+        estimated = int(total_bytes / bytes_per_seq)
+
+        return estimated
 
     def _find_data_files(self) -> List[Path]:
         """Find pre-tokenized Arrow files (using shared utility)."""
@@ -544,163 +552,7 @@ class PreTokenizedMapDataset(Dataset):
 # OPTIMIZED IMPLEMENTATION
 # ============================================================================
 
-
-class ArrowTableCache:
-    """
-    LRU cache for memory-mapped Arrow tables with zero-copy access.
-
-    Keeps Arrow tables open and memory-mapped for instant access.
-    Uses LRU eviction to prevent memory pressure.
-
-    Uses adaptive sizing based on available system RAM:
-    - RAM < 32GB: cache_size = 30
-    - RAM 32-64GB: cache_size = 75
-    - RAM > 64GB: cache_size = 150
-
-    Memory tradeoff: Each cached table uses ~5-40MB RAM per worker.
-    Set max_size explicitly to override adaptive sizing.
-
-    Resource Management:
-    - Call close() when done to release file handles
-    - __del__ provides backup cleanup on garbage collection
-    """
-
-    @staticmethod
-    def _get_adaptive_cache_size() -> int:
-        """Calculate optimal cache size based on available system RAM."""
-        try:
-            import psutil
-            mem_gb = psutil.virtual_memory().total / (1024**3)
-            if mem_gb < 32:
-                return 30  # Conservative for low-memory systems
-            elif mem_gb < 64:
-                return 75
-            else:
-                return 150  # High-memory systems
-        except ImportError:
-            # psutil not available, use conservative default
-            return 50
-
-    def __init__(self, max_size: Optional[int] = None):
-        # Use adaptive sizing if max_size not explicitly set
-        if max_size is None:
-            max_size = self._get_adaptive_cache_size()
-        self.max_size = max_size
-        self.cache: OrderedDict[Path, pa.Table] = OrderedDict()
-        self._memory_maps: OrderedDict[Path, pa.MemoryMappedFile] = OrderedDict()
-        self._closed = False
-        # Register for cleanup on shutdown
-        _cache_registry.add(self)
-
-    def __del__(self):
-        """Ensure resources are released on garbage collection."""
-        self.close()
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - close resources."""
-        self.close()
-        return False
-
-    def close(self):
-        """
-        Close all memory-mapped files and release resources.
-
-        Safe to call multiple times (idempotent).
-        """
-        if self._closed:
-            return
-
-        self._closed = True
-        close_errors = 0
-
-        # Close all memory maps
-        for path in list(self._memory_maps.keys()):
-            try:
-                mmap = self._memory_maps.pop(path, None)
-                if mmap is not None:
-                    mmap.close()
-            except Exception as e:
-                close_errors += 1
-                logger.debug(f"Failed to close memory map for {path}: {e}")
-
-        # Clear the table cache
-        self.cache.clear()
-
-        if close_errors > 0:
-            logger.debug(f"ArrowTableCache closed with {close_errors} memory map close warnings")
-
-    def get(self, file_path: Path) -> pa.Table:
-        """Get table from cache or load with memory mapping (zero-copy)."""
-        if self._closed:
-            raise RuntimeError("ArrowTableCache has been closed")
-
-        # Check cache first
-        if file_path in self.cache:
-            # Move to end for LRU
-            self.cache.move_to_end(file_path)
-            return self.cache[file_path]
-
-        # Evict oldest if cache full
-        if len(self.cache) >= self.max_size:
-            oldest_path, _ = self.cache.popitem(last=False)
-            if oldest_path in self._memory_maps:
-                # Close memory map with proper error handling
-                try:
-                    self._memory_maps[oldest_path].close()
-                except Exception as e:
-                    logger.debug(f"Failed to close memory map for {oldest_path}: {e}")
-                finally:
-                    del self._memory_maps[oldest_path]
-
-        # Load with memory mapping for zero-copy access
-        try:
-            file_ext = file_path.suffix.lower()
-            if file_ext == '.parquet':
-                # Use parquet reader for .parquet files
-                import pyarrow.parquet as pq
-                table = pq.read_table(str(file_path))
-                # Cache table (no memory map for parquet)
-                self.cache[file_path] = table
-            else:
-                # Use Arrow IPC reader for .arrow files (supports both File and Stream formats)
-                table = read_arrow_table(file_path)
-                # Cache table
-                self.cache[file_path] = table
-
-            return table
-        except Exception as e:
-            logger.warning(f"Failed to load data file {file_path}: {e}")
-            # Return empty table as fallback with proper schema
-            schema = pa.schema([
-                ('input_ids', pa.list_(pa.int64())),
-                ('attention_mask', pa.list_(pa.int64())),
-                ('labels', pa.list_(pa.int64()))
-            ])
-            return pa.table({
-                'input_ids': pa.array([], type=pa.list_(pa.int64())),
-                'attention_mask': pa.array([], type=pa.list_(pa.int64())),
-                'labels': pa.array([], type=pa.list_(pa.int64()))
-            }, schema=schema)
-
-    def clear(self):
-        """Clear cache and close all memory maps (resets for reuse)."""
-        close_errors = 0
-        for path in list(self._memory_maps.keys()):
-            try:
-                mmap = self._memory_maps.pop(path, None)
-                if mmap is not None:
-                    mmap.close()
-            except Exception as e:
-                close_errors += 1
-                logger.debug(f"Failed to close memory map for {path}: {e}")
-        if close_errors > 0:
-            logger.debug(f"Cache cleared with {close_errors} memory map close warnings")
-        self.cache.clear()
-        # Note: Don't set _closed=True here - clear() allows reuse, close() doesn't
+# ArrowTableCache is now imported from arrow_io module
 
 
 class LazyFileDiscovery:
@@ -902,6 +754,8 @@ class UltraFastPretokenizedDataset(IterableDataset):
         use_pinned_buffers: bool = True,  # Use pinned buffers when in main process
         vocab_size: int = DEFAULT_VOCAB_SIZE,  # Vocab size for token ID validation
         shuffle_seed: Optional[int] = None,  # Global shuffle seed (None = non-deterministic)
+        warm_start_files: int = 3,  # Number of files to load initially for fast startup
+        examples_per_random_select: int = 20,  # Examples to take per random file selection
     ):
         self.data_dir = Path(data_dir)
         self.vocab_size = vocab_size  # Store for validation
@@ -921,6 +775,8 @@ class UltraFastPretokenizedDataset(IterableDataset):
         self.max_files_to_load = max_files_to_load
         self.lazy_file_discovery = lazy_file_discovery
         self.shuffle_seed = shuffle_seed
+        self.warm_start_files = warm_start_files  # For progressive loading
+        self.examples_per_random_select = examples_per_random_select
         self._validation_counter = 0
         # Enable pinned buffer pool for async GPU transfers
         self.use_pinned_buffers = use_pinned_buffers and PINNED_BUFFERS_AVAILABLE
@@ -1141,187 +997,166 @@ class UltraFastPretokenizedDataset(IterableDataset):
             yield from self._stream_examples_lazy(worker_id, should_print)
             return
 
-        # Eager mode: use pre-discovered files
+        # Eager mode: use pre-discovered files with true random file selection
         epoch_num = getattr(self, '_stream_epoch_number', 0)
-        shuffled_files = list(self.data_files)
-        # Get configurable seed with distributed training support
+
+        # Reproducible seeding with distributed training support
         base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
         rank = dist.get_rank() if dist.is_initialized() else 0
         combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
         rng = random.Random(combined_seed)
-        rng.shuffle(shuffled_files)
 
-        # Stream from files with efficient batching
-        exhausted_files = set()
-        file_cursors = {}  # Track read position in each file
+        # Examples per random selection (configurable, default 20)
+        examples_per_select = self.examples_per_random_select
 
-        # Initialize cursors with cached tables
-        for idx, file_path in enumerate(shuffled_files):
+        # Group files by parent folder for diversity
+        from collections import defaultdict
+        files_by_folder = defaultdict(list)
+        for file_path in self.data_files:
+            folder = file_path.parent
+            files_by_folder[folder].append(file_path)
+
+        # Shuffle files within each folder
+        for folder in files_by_folder:
+            rng.shuffle(files_by_folder[folder])
+
+        # PROGRESSIVE LOADING: Select up to 3 files from each folder initially
+        files_per_folder = getattr(self, 'warm_start_files', 3) or 3
+        initial_files = []
+        pending_files = []
+
+        for folder, folder_files in files_by_folder.items():
+            # Take up to files_per_folder from this folder for initial load
+            initial_files.extend(folder_files[:files_per_folder])
+            # Rest go to pending
+            pending_files.extend(folder_files[files_per_folder:])
+
+        # Shuffle initial and pending for randomness
+        rng.shuffle(initial_files)
+        rng.shuffle(pending_files)
+
+        if should_print:
+            print(f"  [RANDOM-SELECT] {len(files_by_folder)} folders, {len(initial_files)} initial files ({files_per_folder}/folder), {len(pending_files)} pending")
+
+        # Track loaded vs pending files
+        active_files = []  # Currently loaded files with cursors
+
+        # Load initial batch of files (up to 3 from each folder)
+        for file_path in initial_files:
             try:
                 table = self.table_cache.get(file_path)
-                file_cursors[idx] = {
+                active_files.append({
+                    'file_path': file_path,
                     'table': table,
                     'offset': 0,
-                    'total_rows': len(table),
-                    'file_path': file_path
-                }
+                    'total_rows': len(table)
+                })
             except Exception as e:
                 logger.warning(f"Worker {worker_id} could not load {file_path}: {e}")
 
-        # Stream with efficient batch extraction
-        # Track iterations to prevent infinite loops when max_samples is not set
-        max_iterations = 1000000  # Safety limit: 1M iterations per epoch
-        iteration_count = 0
+        if not active_files and not pending_files:
+            raise ValueError(f"No files could be opened from {self.data_dir}")
 
-        while len(exhausted_files) < len(shuffled_files):
-            # Safety check to prevent infinite loops
-            iteration_count += 1
-            if iteration_count > max_iterations:
-                logger.warning(
-                    f"Worker {worker_id} reached max iterations ({max_iterations}), ending epoch"
-                )
-                break
 
-            for idx, cursor in file_cursors.items():
-                if idx in exhausted_files:
-                    continue
+        # Main loop: randomly select file, take N examples, remove when exhausted
+        while active_files:
+            # Randomly pick a file
+            idx = rng.randrange(len(active_files))
+            cursor = active_files[idx]
 
-                table = cursor['table']
-                offset = cursor['offset']
-                total_rows = cursor['total_rows']
+            table = cursor['table']
+            offset = cursor['offset']
+            total_rows = cursor['total_rows']
 
-                # Calculate batch size for this read
-                remaining = total_rows - offset
-                if remaining <= 0:
-                    exhausted_files.add(idx)
-                    continue
+            # Calculate how many examples to read
+            remaining = total_rows - offset
+            if remaining <= 0:
+                # File exhausted, remove from pool
+                active_files.pop(idx)
+                continue
 
-                batch_size = min(self.samples_per_file, remaining)
+            batch_size = min(examples_per_select, remaining)
 
-                # Batch extraction (zero-copy view)
-                batch_slice = table.slice(offset, batch_size)
+            # Batch extraction (zero-copy view)
+            batch_slice = table.slice(offset, batch_size)
 
-                # Vectorized batch extraction for efficiency
-                try:
-                    # Use to_pydict for vectorized extraction (much faster than row iteration)
-                    batch_dict = batch_slice.to_pydict()
-                    # Support both 'input_ids' and 'token_ids' column names
-                    # Use explicit None check (not `or`) to handle empty lists correctly
-                    input_ids_list = batch_dict.get('input_ids')
-                    if input_ids_list is None:
-                        input_ids_list = batch_dict.get('token_ids')
-                    if input_ids_list is None:
-                        raise KeyError("Neither 'input_ids' nor 'token_ids' column found")
-                    attention_mask_list = batch_dict.get('attention_mask', None)
-                    labels_list = batch_dict.get('labels', None)
+            # Vectorized batch extraction for efficiency
+            try:
+                # Use to_pydict for vectorized extraction (much faster than row iteration)
+                batch_dict = batch_slice.to_pydict()
+                # Support both 'input_ids' and 'token_ids' column names
+                input_ids_list = batch_dict.get('input_ids')
+                if input_ids_list is None:
+                    input_ids_list = batch_dict.get('token_ids')
+                if input_ids_list is None:
+                    raise KeyError("Neither 'input_ids' nor 'token_ids' column found")
+                attention_mask_list = batch_dict.get('attention_mask', None)
+                labels_list = batch_dict.get('labels', None)
 
-                    # Process each sequence in the batch
-                    for i in range(batch_size):
-                        # CRITICAL: Validate sequence length BEFORE numpy conversion
-                        # This prevents catastrophic memory allocation from corrupted data
-                        raw_seq = input_ids_list[i]
+                # Process each sequence in the batch
+                for i in range(batch_size):
+                    raw_seq = input_ids_list[i]
 
-                        # Check if raw sequence has absurd length (corruption indicator)
-                        # Use a conservative estimate: actual_length or list size
-                        try:
-                            # Try to get length safely
-                            if isinstance(raw_seq, (list, np.ndarray)):
-                                raw_len = len(raw_seq)
-                            else:
-                                # For other types, assume it needs conversion
-                                raw_len = len(list(raw_seq))
-                        except (TypeError, AttributeError) as e:
-                            # If we can't determine length, skip this item
-                            logger.debug(f"[Worker {worker_id}] Skipping item {i}: Cannot determine sequence length ({e})")
-                            continue
-
-                        # AGGRESSIVE SANITY CHECK: Detect corrupted sequences
-                        # No sequence should exceed 10x the configured max_length
-                        # This catches tokenization bugs, data corruption, etc.
-                        max_allowed_len = min(self.max_length * 10, 32768)  # 10x or 32k, whichever is smaller
-                        if raw_len > max_allowed_len:
-                            if should_print:
-                                print(f" [Worker {worker_id}] SKIPPING corrupted sequence {i}:")
-                                print(f"   Detected catastrophic sequence length: {raw_len:,}")
-                                print(f"   Configured max_length: {self.max_length}")
-                                print(f"   Allowed threshold: {max_allowed_len:,}")
-                                print(f"   This would allocate {raw_len * 8 / 1024**3:.2f} GB for a single sequence!")
-                            continue
-
-                        # Convert to numpy (much faster when batch-converted)
-                        input_ids_np = np.array(input_ids_list[i], dtype=np.int64)
-
-                        if attention_mask_list is not None:
-                            attention_mask_np = np.array(attention_mask_list[i], dtype=np.int64)
+                    # Validate sequence length
+                    try:
+                        if isinstance(raw_seq, (list, np.ndarray)):
+                            raw_len = len(raw_seq)
                         else:
-                            attention_mask_np = np.ones(len(input_ids_np), dtype=np.int64)
+                            raw_len = len(list(raw_seq))
+                    except (TypeError, AttributeError):
+                        continue
 
-                        if labels_list is not None:
-                            labels_np = np.array(labels_list[i], dtype=np.int64)
-                        else:
-                            labels_np = input_ids_np.copy()
+                    # Skip corrupted sequences
+                    max_allowed_len = min(self.max_length * 10, 32768)
+                    if raw_len > max_allowed_len:
+                        continue
 
-                        # Truncate to max_length (leave room for special tokens)
-                        max_content_len = self.max_length - 2 if self.add_special_tokens else self.max_length
-                        if len(input_ids_np) > max_content_len:
-                            input_ids_np = input_ids_np[:max_content_len]
-                            attention_mask_np = attention_mask_np[:max_content_len]
-                            labels_np = labels_np[:max_content_len]
+                    # Convert to numpy
+                    input_ids_np = np.array(input_ids_list[i], dtype=np.int64)
 
-                        # Add BOS/EOS tokens for coherent text generation
-                        input_ids_np, attention_mask_np, labels_np = self._add_special_tokens(
-                            input_ids_np, attention_mask_np, labels_np
-                        )
+                    if attention_mask_list is not None:
+                        attention_mask_np = np.array(attention_mask_list[i], dtype=np.int64)
+                    else:
+                        attention_mask_np = np.ones(len(input_ids_np), dtype=np.int64)
 
-                        # Minimal validation (only length check)
-                        if len(input_ids_np) >= self.min_sequence_length:
-                            yield {
-                                'input_ids': input_ids_np,
-                                'attention_mask': attention_mask_np,
-                                'labels': labels_np
-                            }
+                    if labels_list is not None:
+                        labels_np = np.array(labels_list[i], dtype=np.int64)
+                    else:
+                        labels_np = input_ids_np.copy()
 
-                except Exception as e:
-                    # Fallback to old per-row method if batch conversion fails
-                    import warnings
-                    warnings.warn(f"Batch extraction failed, falling back to per-row: {e}")
+                    # Truncate to max_length
+                    max_content_len = self.max_length - 2 if self.add_special_tokens else self.max_length
+                    if len(input_ids_np) > max_content_len:
+                        input_ids_np = input_ids_np[:max_content_len]
+                        attention_mask_np = attention_mask_np[:max_content_len]
+                        labels_np = labels_np[:max_content_len]
 
-                    # Get columns as PyArrow arrays (zero-copy)
-                    # Support both 'input_ids' and 'token_ids' column names
-                    schema_names = batch_slice.schema.names
-                    token_col_name = 'input_ids' if 'input_ids' in schema_names else 'token_ids'
-                    input_ids_col = batch_slice.column(token_col_name)
-                    attention_mask_col = batch_slice.column('attention_mask') if 'attention_mask' in batch_slice.schema.names else None
-                    labels_col = batch_slice.column('labels') if 'labels' in batch_slice.schema.names else None
+                    # Add BOS/EOS tokens
+                    input_ids_np, attention_mask_np, labels_np = self._add_special_tokens(
+                        input_ids_np, attention_mask_np, labels_np
+                    )
 
-                    # Process batch (per-row fallback)
-                    for i in range(batch_size):
+                    # Yield if valid length
+                    if len(input_ids_np) >= self.min_sequence_length:
+                        yield {
+                            'input_ids': input_ids_np,
+                            'attention_mask': attention_mask_np,
+                            'labels': labels_np
+                        }
+
+            except Exception as e:
+                # Fallback to per-row method if batch conversion fails
+                logger.debug(f"Batch extraction failed, falling back to per-row: {e}")
+
+                schema_names = batch_slice.schema.names
+                token_col_name = 'input_ids' if 'input_ids' in schema_names else 'token_ids'
+                input_ids_col = batch_slice.column(token_col_name)
+                attention_mask_col = batch_slice.column('attention_mask') if 'attention_mask' in schema_names else None
+                labels_col = batch_slice.column('labels') if 'labels' in schema_names else None
+
+                for i in range(batch_size):
+                    try:
                         input_ids_arr = input_ids_col[i]
-
-                        # CRITICAL: Pre-validate sequence length BEFORE conversion to numpy
-                        # This prevents catastrophic memory allocation from corrupted Arrow data
-                        max_allowed_len = min(self.max_length * 10, 32768)
-                        try:
-                            # Get length safely from PyArrow scalar
-                            if hasattr(input_ids_arr, '__len__'):
-                                raw_len = len(input_ids_arr)
-                            else:
-                                # Fallback: try to get as python object and measure
-                                raw_len = len(input_ids_arr.as_py())
-
-                            # Validate length BEFORE attempting conversion
-                            if raw_len > max_allowed_len:
-                                if should_print:
-                                    print(f" [Worker {worker_id}] SKIPPING corrupted sequence {i} (per-row fallback):")
-                                    print(f"   Detected catastrophic sequence length: {raw_len:,}")
-                                    print(f"   Allowed threshold: {max_allowed_len:,}")
-                                continue
-                        except Exception as e:
-                            # If we can't validate length, skip this item
-                            if should_print:
-                                print(f"   [Worker {worker_id}] Skipping item {i}: Could not validate length - {e}")
-                            continue
-
                         try:
                             input_ids_np = np.asarray(input_ids_arr.values.to_numpy(zero_copy_only=False), dtype=np.int64)
                         except (AttributeError, TypeError):
@@ -1345,34 +1180,47 @@ class UltraFastPretokenizedDataset(IterableDataset):
                         else:
                             labels_np = input_ids_np.copy()
 
-                        # Truncate to max_length (leave room for special tokens)
+                        # Truncate
                         max_content_len = self.max_length - 2 if self.add_special_tokens else self.max_length
                         if len(input_ids_np) > max_content_len:
                             input_ids_np = input_ids_np[:max_content_len]
                             attention_mask_np = attention_mask_np[:max_content_len]
                             labels_np = labels_np[:max_content_len]
 
-                        # Add BOS/EOS tokens for coherent text generation
+                        # Add special tokens
                         input_ids_np, attention_mask_np, labels_np = self._add_special_tokens(
                             input_ids_np, attention_mask_np, labels_np
                         )
 
-                        # Minimal validation (only length check)
                         if len(input_ids_np) >= self.min_sequence_length:
                             yield {
                                 'input_ids': input_ids_np,
                                 'attention_mask': attention_mask_np,
                                 'labels': labels_np
                             }
+                    except Exception:
+                        continue
 
-                # Update cursor
-                cursor['offset'] = offset + batch_size
+            # Update cursor offset
+            cursor['offset'] = offset + batch_size
 
-            # Check if all files exhausted
-            if len(exhausted_files) == len(shuffled_files):
-                # Only restart if this is truly an infinite dataset (handled by InfiniteUltraFastDataset)
-                # For UltraFastPretokenizedDataset, end the epoch here
-                break
+            # Check if file exhausted after this batch
+            if cursor['offset'] >= total_rows:
+                active_files.pop(idx)
+
+                # PROGRESSIVE LOADING: Load next file from pending queue
+                if pending_files:
+                    next_file_path = pending_files.pop(0)
+                    try:
+                        next_table = self.table_cache.get(next_file_path)
+                        active_files.append({
+                            'file_path': next_file_path,
+                            'table': next_table,
+                            'offset': 0,
+                            'total_rows': len(next_table)
+                        })
+                    except Exception as e:
+                        logger.debug(f"Worker {worker_id} could not load {next_file_path}: {e}")
 
     def _stream_examples_lazy(self, worker_id: int, should_print: bool) -> Iterator[Dict[str, np.ndarray]]:
         """
@@ -1807,6 +1655,8 @@ def create_ultra_fast_dataloaders(
     shuffle_seed: Optional[int] = None,  # Global shuffle seed (None = non-deterministic)
     enable_length_sorting: bool = True,  # Enable length sorting in distributed mode
     disable_packing_length_sort: bool = False,  # Disable length sorting in packing
+    warm_start_files: int = 3,  # Number of files to load initially for fast startup
+    examples_per_random_select: int = 20,  # Examples to take per random file selection
 ) -> Tuple[Any, Any]:  # Returns DataLoader
     """
     Create ultra-fast pretokenized dataloaders.
@@ -1888,6 +1738,8 @@ def create_ultra_fast_dataloaders(
         'max_files_to_load': max_files_to_load,
         'lazy_file_discovery': lazy_file_discovery,
         'shuffle_seed': shuffle_seed,
+        'warm_start_files': warm_start_files,  # For fast startup
+        'examples_per_random_select': examples_per_random_select,
     }
 
     # Training dataset
@@ -1925,7 +1777,7 @@ def create_ultra_fast_dataloaders(
         'prefetch_factor': prefetch_factor if num_workers > 0 else None,
         'persistent_workers': persistent_workers if num_workers > 0 else False,
         'multiprocessing_context': 'spawn' if num_workers > 0 else None,
-        'timeout': 120 if num_workers > 0 else 0,  # OPTIMIZATION: 2-minute timeout prevents hanging on corrupted data
+        'timeout': 0,  # Disabled - prevents timeout errors with large datasets
         'worker_init_fn': _worker_init_fn if num_workers > 0 else None,  # FIX: Proper cleanup to prevent semaphore leaks
     }
 

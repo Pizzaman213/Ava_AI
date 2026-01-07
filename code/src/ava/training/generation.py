@@ -3,6 +3,41 @@ Generation manager for the Ava pipeline.
 
 Handles sample generation for quality monitoring during training,
 with support for async CPU generation and coherence evaluation.
+
+Async Generation Pattern:
+    To avoid blocking the training loop, generation runs in a background thread:
+
+    Training Thread                    Background Thread (ThreadPoolExecutor)
+    ──────────────────────────────     ─────────────────────────────────────
+    train_step()
+    |
+    +-> generate_async(model, step)
+    |   |
+    |   +-> submit(_async_generate)    -> _async_generate() starts
+    |       (returns immediately)         |
+    |                                     +-> copy model to CPU (slow, ~1-5s)
+    train_step()  (continues)             |
+    |                                     +-> generate tokens (slow)
+    train_step()                          |
+    |                                     +-> decode & return result
+    +-> process_completed_generations()
+        (checks if Future is done)
+
+    Key design decisions:
+    1. ThreadPoolExecutor with max_workers=1 ensures only one generation at a time
+    2. Model is deep-copied to CPU for generation to avoid blocking GPU
+    3. History is capped at MAX_HISTORY_SIZE=100 to prevent memory leaks
+    4. Lock protects _pending_future and _generation_history from race conditions
+
+Coherence Measurement:
+    Uses CoherenceMeasurer (if available) to evaluate:
+    - Repetition ratio: Fraction of repeated n-grams
+    - Semantic coherence: Cross-entropy consistency across windows
+    - Overall coherence score: Weighted combination
+
+History Capping:
+    Generation history is limited to MAX_HISTORY_SIZE entries.
+    Oldest entries are discarded when limit is reached.
 """
 
 import copy
@@ -159,7 +194,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 eos_token_id = getattr(tokenizer, 'eos_token_id', None)
             if eos_token_id is None:
-                eos_token_id = 1
+                eos_token_id = 102  # [SEP] token (BERT-style)
                 self.logger.debug(f"Using default eos_token_id={eos_token_id}")
 
         # BOS token ID: param -> model config -> tokenizer -> default (2)
@@ -169,7 +204,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 bos_token_id = getattr(tokenizer, 'bos_token_id', None)
             if bos_token_id is None:
-                bos_token_id = 2
+                bos_token_id = 101  # [CLS] token (BERT-style)
                 self.logger.debug(f"Using default bos_token_id={bos_token_id}")
 
         # PAD token ID: param -> model config -> tokenizer -> default (0)
@@ -183,6 +218,11 @@ class GenerationManager(ManagerInterface):
                 self.logger.debug(f"Using default pad_token_id={pad_token_id}")
 
         model.eval()
+
+        # Set hybrid cache to generation mode (enables KV cache eviction for long sequences)
+        if hasattr(base_model, '_hybrid_cache_manager') and base_model._hybrid_cache_manager:
+            base_model._hybrid_cache_manager.set_mode('generation')
+
         # Get device from model, not self.device (supports CPU generation)
         device = next(model.parameters()).device
 
@@ -204,6 +244,14 @@ class GenerationManager(ManagerInterface):
                             token_ids = list(enc_result)
                     else:
                         token_ids = [bos_token_id]
+
+                    # CRITICAL FIX: Strip trailing EOS/SEP token if present
+                    # BERT-style tokenizers automatically add [SEP] at the end of encoded text.
+                    # For autoregressive generation, we must remove it so the model can
+                    # generate new content instead of treating the sequence as "complete".
+                    if token_ids and token_ids[-1] == eos_token_id:
+                        token_ids = token_ids[:-1]
+                        self.logger.debug(f"Stripped trailing EOS token from prompt encoding")
 
                     # Prepend BOS token if not already present
                     if token_ids[0] != bos_token_id:
@@ -405,7 +453,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 eos_token_id = getattr(tokenizer, 'eos_token_id', None)
             if eos_token_id is None:
-                eos_token_id = 1
+                eos_token_id = 102  # [SEP] token (BERT-style)
 
         # Auto-detect BOS token ID from model config/tokenizer if not provided
         if bos_token_id is None:
@@ -414,7 +462,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 bos_token_id = getattr(tokenizer, 'bos_token_id', None)
             if bos_token_id is None:
-                bos_token_id = 2
+                bos_token_id = 101  # [CLS] token (BERT-style)
 
         # Auto-detect PAD token ID from model config/tokenizer if not provided
         if pad_token_id is None:
@@ -464,13 +512,33 @@ class GenerationManager(ManagerInterface):
                         # CRITICAL: Apply hybrid caching wrapper if checkpoint uses it
                         # The checkpoint has _wrapped_attn keys, so model must have same structure
                         try:
-                            from ava.optimizations.hybrid_cache import apply_hybrid_caching, HybridCacheConfig
+                            from ava.optimizations.hybrid_cache import (
+                                apply_hybrid_caching,
+                                HybridCacheConfig,
+                                ActivationCacheConfig,
+                                KVCacheConfig,
+                            )
                             # Check if training config has hybrid caching enabled
-                            if self.context.config.get('hybrid_caching', {}).get('enabled', False):
+                            hybrid_cfg = self.context.config.get('hybrid_caching', {})
+                            if hybrid_cfg.get('enabled', False):
+                                # Build proper config from YAML structure
+                                act_cfg = hybrid_cfg.get('activation_cache', {})
+                                kv_cfg = hybrid_cfg.get('kv_cache', {})
                                 cache_config = HybridCacheConfig(
-                                    max_cache_size_gb=self.context.config['hybrid_caching'].get('max_cache_size_gb', 2.0),
-                                    kv_cache_ratio=self.context.config['hybrid_caching'].get('kv_cache_ratio', 0.7),
-                                    eviction_policy=self.context.config['hybrid_caching'].get('eviction_policy', 'hybrid'),
+                                    enabled=True,
+                                    mode=hybrid_cfg.get('mode', 'generation'),
+                                    activation_cache=ActivationCacheConfig(
+                                        enabled=act_cfg.get('enabled', True),
+                                        max_size_gb=act_cfg.get('max_size_gb', 2.0),
+                                        eviction_policy=act_cfg.get('eviction_policy', 'lru'),
+                                    ),
+                                    kv_cache=KVCacheConfig(
+                                        enabled=kv_cfg.get('enabled', True),
+                                        max_size_gb=kv_cfg.get('max_size_gb', 4.0),
+                                        eviction_policy=kv_cfg.get('eviction_policy', 'hybrid'),
+                                        sink_tokens=kv_cfg.get('sink_tokens', 4),
+                                        recent_tokens=kv_cfg.get('recent_tokens', 256),
+                                    ),
                                 )
                                 cpu_model, _ = apply_hybrid_caching(cpu_model, cache_config)
                                 self.logger.debug("Applied hybrid caching wrapper for checkpoint compatibility")
@@ -517,15 +585,22 @@ class GenerationManager(ManagerInterface):
                             self._add_to_history(result)
                         self._generation_queue.put(result)
 
-                        # Save to file
+                        # Save to single JSONL file (append mode for WandB upload)
                         if self._log_dir:
+                            import json
                             gen_dir = self._log_dir / "async_generation"
                             gen_dir.mkdir(exist_ok=True, parents=True)
-                            output_file = gen_dir / f"generation_step_{global_step}.txt"
-                            with open(output_file, 'w') as f:
-                                f.write(f"=== Generation at Step {global_step} ===\n")
-                                f.write(text)
-                                f.write("\n=== End ===\n")
+                            output_file = gen_dir / "generations.jsonl"
+                            entry = {
+                                "step": global_step,
+                                "generated_text": text,
+                                "temperature": generation_kwargs.get('temperature', 1.0),
+                                "top_p": generation_kwargs.get('top_p', 1.0),
+                                "top_k": generation_kwargs.get('top_k', 50),
+                                "prompt": generation_kwargs.get('prompt', ''),
+                            }
+                            with open(output_file, 'a') as f:
+                                f.write(json.dumps(entry) + '\n')
 
                         # Cleanup
                         del cpu_model
@@ -631,7 +706,7 @@ class GenerationManager(ManagerInterface):
         micro_batch_size = config.get('micro_batch_size', micro_batch_size if micro_batch_size is not None else 8)
 
         try:
-            from ava.eval.coherence import (
+            from ava.training.coherence import (
                 CoherenceMeasurer,
                 FastCoherenceMeasurer,
                 CoherenceConfig,

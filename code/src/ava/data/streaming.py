@@ -44,6 +44,7 @@ from torch.utils.data import IterableDataset
 
 # Import centralized constants
 from ..config.constants import DATA_CONSTANTS
+from .arrow_io import read_arrow_table
 from .bucketing import AsyncFilePrefetcher, LengthBasedBucketing
 
 # Default timeout for epoch synchronization barriers
@@ -334,17 +335,9 @@ class FileReader:
     @retry_on_error(max_attempts=3, delay=0.5, exceptions=(IOError, OSError))
     def _read_arrow(self, file_path: Path) -> Iterator[Any]:
         """Read Arrow files efficiently with retry logic (supports IPC File and Stream formats)."""
-        # OPTIMIZATION: Use context manager for automatic cleanup (prevents file descriptor leaks)
         try:
-            # Try IPC File format first (standard Arrow files)
-            try:
-                with pa.memory_map(str(file_path), 'r') as mmap_file:
-                    table = pa.ipc.RecordBatchFileReader(mmap_file).read_all()
-            except pa.ArrowInvalid:
-                # Fall back to IPC Stream format (HuggingFace datasets format)
-                with open(str(file_path), 'rb') as f:
-                    table = ipc.open_stream(f).read_all()
-
+            # Use centralized Arrow reader (handles both IPC File and Stream formats)
+            table = read_arrow_table(file_path)
             df = table.to_pandas()
 
             # Handle pretokenized Arrow files (input_ids column)
@@ -545,8 +538,15 @@ class StreamingDataset(IterableDataset):
         dataset_name: Optional[str] = None,
         dev_log_config: Optional[Any] = None,
         shuffle_seed: Optional[int] = None,
+        progressive_buffer: bool = True,
+        min_buffer_size: int = 128,
+        warm_start_files: Optional[int] = None,
+        examples_per_random_select: int = 20,
     ):
         self.data_dir = Path(data_dir)
+        self.progressive_buffer = progressive_buffer
+        self.min_buffer_size = min_buffer_size
+        self.warm_start_files = warm_start_files  # Limit initial files for fast startup
         self.split = split
         self.dataset_name = dataset_name
         self.tokenizer = tokenizer
@@ -559,6 +559,7 @@ class StreamingDataset(IterableDataset):
         self.dynamic_length_fn = dynamic_length_fn
         self.samples_per_file = samples_per_file
         self.shuffle_seed = shuffle_seed
+        self.examples_per_random_select = examples_per_random_select
 
         self.dev_log_config = dev_log_config
         self._file_timings: Dict[str, Dict[str, Any]] = {}
@@ -611,9 +612,13 @@ class StreamingDataset(IterableDataset):
             print(f" Found {len(self.data_files)} data files for {split} split")
 
     def _find_data_files(self) -> List[Path]:
-        """Find and validate data files with deterministic train/val splitting."""
+        """Find and validate data files with deterministic train/val splitting.
+
+        If warm_start_files is set, limits discovery to that many files for fast startup.
+        """
         files = []
         MIN_FILE_SIZE = DATA_CONSTANTS.MIN_FILE_SIZE_BYTES
+        max_files = self.warm_start_files  # None means no limit
 
         patterns = [
             f"*/{self.split}/**/*.arrow",
@@ -637,10 +642,20 @@ class StreamingDataset(IterableDataset):
                 "*.jsonl",
                 "*.arrow",
                 "*.parquet",
+                # Recursive patterns for subdirectory structures
+                "**/*.arrow",
+                "**/*.parquet",
+                "**/*.jsonl",
             ])
 
         for pattern in patterns:
-            files.extend(self.data_dir.glob(pattern))
+            for f in self.data_dir.glob(pattern):
+                files.append(f)
+                # Early exit for warm start
+                if max_files and len(files) >= max_files * 2:  # Get extra for filtering
+                    break
+            if max_files and len(files) >= max_files * 2:
+                break
 
         files = list(dict.fromkeys(files))
 
@@ -688,6 +703,11 @@ class StreamingDataset(IterableDataset):
 
             files = split_files
             logger.debug(f"File-based split: {len(files)} files for {self.split}")
+
+        # Apply warm_start_files limit
+        if max_files and len(files) > max_files:
+            files = files[:max_files]
+            print(f"    [WARM START] Limited to {max_files} files for fast startup")
 
         if files:
             logger.debug(f"Sample files: {[f.name for f in files[:3]]}")
@@ -745,13 +765,14 @@ class StreamingDataset(IterableDataset):
         self._worker_file_cache.clear()
 
     def _stream_examples(self, files_to_use=None) -> Iterator[Any]:
-        """Stream examples with weighted sampling and efficient file rotation."""
+        """Stream examples with true random file selection.
+
+        Randomly picks a file, takes N examples from it (configurable via
+        examples_per_random_select), and removes exhausted files from the pool.
+        """
         files = files_to_use if files_to_use is not None else self.data_files
 
         worker_id, num_workers, should_print = get_worker_context()
-
-        if self.prefetcher is None:
-            self.prefetcher = AsyncFilePrefetcher(**self._prefetcher_config)
 
         if not files and num_workers > 1:
             files = self._find_data_files()
@@ -762,28 +783,27 @@ class StreamingDataset(IterableDataset):
             raise ValueError(f"No data files found in {self.data_dir}")
 
         epoch_num = getattr(self, '_stream_epoch_number', 0)
-        shuffled_files = list(files)
-        # Get configurable seed with distributed training support
+
+        # Reproducible seeding with distributed training support
         base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
         worker_info = torch.utils.data.get_worker_info()
         worker_id = worker_info.id if worker_info else 0
         rank = dist.get_rank() if dist.is_initialized() else 0
         combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
         rng = random.Random(combined_seed)
-        rng.shuffle(shuffled_files)
 
-        file_generators = []
-        skipped_empty = 0
+        # Examples per random selection (configurable, default 20)
+        examples_per_select = self.examples_per_random_select
+
+        # Initialize file pool: list of [file_path, generator]
+        active_files = []
         skipped_errors = []
-        for file_path in shuffled_files:
+        for file_path in files:
             try:
-                file_size = file_path.stat().st_size
-                if file_size == 0:
-                    skipped_empty += 1
+                if file_path.stat().st_size == 0:
                     continue
-
                 gen = self.file_reader.read_file(file_path)
-                file_generators.append((file_path, gen))
+                active_files.append([file_path, gen])
             except Exception as e:
                 skipped_errors.append((file_path.name, str(e)))
                 logger.warning(f"[Worker {worker_id}] Could not open {file_path.name}: {e}")
@@ -791,116 +811,44 @@ class StreamingDataset(IterableDataset):
         if skipped_errors and should_print:
             logger.warning(f"[Worker {worker_id}] Skipped {len(skipped_errors)} files due to errors")
 
-        if not file_generators:
+        if not active_files:
             error_details = "; ".join([f"{name}: {err}" for name, err in skipped_errors[:5]])
             raise ValueError(f"No files could be opened from {self.data_dir}. Errors: {error_details}")
 
-        exhausted_files = set()
-        file_sizes = {}
-        file_read_times: Dict[int, List[float]] = {}
+        # Main loop: randomly select file, take N examples, remove when exhausted
+        while active_files:
+            idx = rng.randrange(len(active_files))
+            file_path, gen = active_files[idx]
 
-        for idx, (file_path, _) in enumerate(file_generators):
+            # Take up to examples_per_select from this file
+            exhausted = False
+            for _ in range(examples_per_select):
+                try:
+                    yield next(gen)
+                except StopIteration:
+                    exhausted = True
+                    break
+
+            if exhausted:
+                # Close generator and remove from pool
+                try:
+                    if hasattr(gen, 'close'):
+                        gen.close()
+                except Exception:
+                    pass
+                active_files.pop(idx)
+
+        # Epoch complete
+        self._stream_epoch_number = epoch_num + 1
+        self._epoch_number = self._stream_epoch_number
+
+        # Synchronize epoch transitions across distributed ranks
+        if dist.is_initialized():
             try:
-                file_sizes[idx] = file_path.stat().st_size
-            except OSError:
-                file_sizes[idx] = 1024 * 1024
-
-        while len(exhausted_files) < len(file_generators):
-            for idx, (file_path, gen) in enumerate(file_generators):
-                if idx in exhausted_files:
-                    continue
-
-                read_start = time.time()
-                file_size_mb = file_sizes.get(idx, 1024 * 1024) / (1024 * 1024)
-
-                if idx in file_read_times and len(file_read_times[idx]) > 0:
-                    avg_read_time = sum(file_read_times[idx]) / len(file_read_times[idx])
-                    if avg_read_time > DATA_CONSTANTS.ADAPTIVE_SAMPLES_SLOW_READ_THRESHOLD:
-                        multiplier = DATA_CONSTANTS.ADAPTIVE_SAMPLES_SLOW_MULTIPLIER
-                    else:
-                        multiplier = DATA_CONSTANTS.ADAPTIVE_SAMPLES_FAST_MULTIPLIER
-                else:
-                    multiplier = 1.0
-
-                if file_size_mb > DATA_CONSTANTS.ADAPTIVE_SAMPLES_LARGE_FILE_MB:
-                    adaptive_samples = int(min(
-                        self.samples_per_file * DATA_CONSTANTS.ADAPTIVE_SAMPLES_LARGE_MULTIPLIER * multiplier,
-                        DATA_CONSTANTS.ADAPTIVE_SAMPLES_MAX
-                    ))
-                elif file_size_mb > DATA_CONSTANTS.ADAPTIVE_SAMPLES_MEDIUM_FILE_MB:
-                    adaptive_samples = int(self.samples_per_file * DATA_CONSTANTS.ADAPTIVE_SAMPLES_MEDIUM_MULTIPLIER * multiplier)
-                else:
-                    adaptive_samples = int(self.samples_per_file * multiplier)
-
-                adaptive_samples = max(adaptive_samples, DATA_CONSTANTS.ADAPTIVE_SAMPLES_MIN)
-
-                samples_read = 0
-                for _ in range(adaptive_samples):
-                    try:
-                        yield next(gen)
-                        samples_read += 1
-                    except StopIteration:
-                        exhausted_files.add(idx)
-                        break
-
-                if samples_read > 0:
-                    read_time = (time.time() - read_start) / samples_read
-                    if idx not in file_read_times:
-                        file_read_times[idx] = []
-                    file_read_times[idx].append(read_time)
-                    if len(file_read_times[idx]) > DATA_CONSTANTS.ADAPTIVE_READ_TIME_HISTORY_SIZE:
-                        file_read_times[idx].pop(0)
-
-            if len(exhausted_files) == len(file_generators):
-                # FIX: Atomically handle epoch transition to prevent race conditions
-                # Close old generators before creating new ones to prevent resource leaks
-                close_errors = close_generators_safely(file_generators)
-                if close_errors > 0:
-                    logger.debug(f"Epoch transition: {close_errors} generator close errors")
-
-                exhausted_files.clear()
-                self._stream_epoch_number = getattr(self, '_stream_epoch_number', 0) + 1
-                self._epoch_number = self._stream_epoch_number
-
-                epoch_num = self._stream_epoch_number
-
-                # FIX: Synchronize epoch transitions across distributed ranks
-                # This ensures all workers/ranks transition to the next epoch together
-                if dist.is_initialized():
-                    try:
-                        dist.barrier(timeout=_EPOCH_BARRIER_TIMEOUT)
-                        logger.debug(f"Rank {dist.get_rank()}: Epoch {epoch_num} synchronized")
-                    except Exception as e:
-                        logger.warning(f"Epoch barrier failed (continuing): {e}")
-
-                # Get configurable seed with distributed training support
-                base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
-                worker_info = torch.utils.data.get_worker_info()
-                worker_id = worker_info.id if worker_info else 0
-                rank = dist.get_rank() if dist.is_initialized() else 0
-                combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
-                rng = random.Random(combined_seed)
-                shuffled_files = list(files)
-                rng.shuffle(shuffled_files)
-
-                # FIX: Create new list instead of reusing to avoid iteration issues
-                new_file_generators = []
-                epoch_errors = 0
-                for file_path in shuffled_files:
-                    try:
-                        gen = self.file_reader.read_file(file_path)
-                        new_file_generators.append((file_path, gen))
-                    except Exception as e:
-                        epoch_errors += 1
-                        logger.debug(f"Epoch {epoch_num}: Could not open {file_path.name}: {e}")
-
-                if epoch_errors > 0:
-                    logger.warning(f"Epoch {epoch_num}: {epoch_errors} files failed to open")
-                if not new_file_generators:
-                    raise ValueError(f"Epoch {epoch_num}: No files could be reopened from {self.data_dir}")
-
-                # Atomic replacement of generators list
-                file_generators = new_file_generators
+                dist.barrier(timeout=_EPOCH_BARRIER_TIMEOUT)
+                logger.debug(f"Rank {dist.get_rank()}: Epoch {self._stream_epoch_number} synchronized")
+            except Exception as e:
+                logger.warning(f"Epoch barrier failed (continuing): {e}")
 
     def _validate_sequence(self, input_ids: torch.Tensor) -> bool:
         """Fast sequence validation - returns True for clean pretokenized data."""
@@ -1120,6 +1068,16 @@ class StreamingDataset(IterableDataset):
         sample_index = 0
         epoch_number = getattr(self, '_epoch_number', 0)
 
+        # Progressive buffer: start small, grow toward target
+        if self.progressive_buffer:
+            current_buffer_threshold = max(self.min_buffer_size, 64)
+            target_buffer_size = self.buffer_size
+            buffer_growth_factor = 2.0  # Double threshold after each batch
+        else:
+            current_buffer_threshold = self.buffer_size
+            target_buffer_size = self.buffer_size
+            buffer_growth_factor = 1.0
+
         tokenization_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix=f"tokenizer_w{worker_id}")
         # OPTIMIZATION: Increased queue size for better pipeline parallelism
         # Larger queue prevents workers from blocking, improving throughput by 5-10%
@@ -1141,11 +1099,11 @@ class StreamingDataset(IterableDataset):
             buffer.append(text)
             samples_processed += 1
 
-            if len(buffer) >= self.buffer_size:
+            if len(buffer) >= current_buffer_threshold:
                 buffer_list = list(buffer)
                 # Get configurable seed for buffer shuffling
                 base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
-                buffer_seed = base_seed + epoch_number * 10000 + (samples_processed // self.buffer_size)
+                buffer_seed = base_seed + epoch_number * 10000 + (samples_processed // max(current_buffer_threshold, 1))
                 rng = random.Random(buffer_seed)
                 rng.shuffle(buffer_list)
 
@@ -1311,6 +1269,13 @@ class StreamingDataset(IterableDataset):
                                     return
 
                 buffer.clear()
+
+                # Progressive buffer: grow threshold toward target
+                if self.progressive_buffer and current_buffer_threshold < target_buffer_size:
+                    current_buffer_threshold = min(
+                        int(current_buffer_threshold * buffer_growth_factor),
+                        target_buffer_size
+                    )
 
         # Process remaining buffer
         if buffer:

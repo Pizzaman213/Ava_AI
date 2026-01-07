@@ -17,8 +17,8 @@ import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, Any
 import math
 
-from ..nn.experts import ExpertParallelGroup, SharedExpertLayer
-from ..nn.routing import MixtralRouter, DeepSeekRouter
+from .experts import ExpertParallelGroup, SharedExpertLayer
+from .routing import MixtralRouter, DeepSeekRouter
 
 
 @torch.jit.script
@@ -72,6 +72,7 @@ class SparseMoELayer(nn.Module):
         diversity_loss_coef: Coefficient for diversity loss
         expert_dropout_loss_coef: Coefficient for expert dropout regularization
         router_jitter_noise: Jitter noise for exploration
+        aux_loss_frequency: Compute aux losses every N steps (1=every step, 50=every 50 steps)
         use_shared_expert: Whether to use shared expert (DeepSeek-style)
         shared_expert_weight: Weight for shared expert
         gradient_checkpointing: Whether to checkpoint expert computation
@@ -84,7 +85,8 @@ class SparseMoELayer(nn.Module):
         ...     intermediate_size=14336,
         ...     num_experts=32,
         ...     num_experts_per_token=2,
-        ...     router_type='mixtral'
+        ...     router_type='mixtral',
+        ...     aux_loss_frequency=50,  # Compute aux losses every 50 steps
         ... )
         >>> x = torch.randn(8, 128, 4096)  # [batch, seq, hidden]
         >>> output, aux_loss, metrics = moe_layer(x, training=True)
@@ -111,6 +113,7 @@ class SparseMoELayer(nn.Module):
         diversity_loss_coef: float = 0.001,
         expert_dropout_loss_coef: float = 0.001,
         router_jitter_noise: float = 0.0,
+        aux_loss_frequency: int = 1,  # Compute aux losses every N steps (1=every step)
         use_shared_expert: bool = False,
         shared_expert_weight: float = 0.5,
         gradient_checkpointing: bool = False,
@@ -160,6 +163,9 @@ class SparseMoELayer(nn.Module):
         # Use Python int instead of torch.tensor to avoid torch.compile graph breaks
         self._training_step = 0
 
+        # Store aux_loss_frequency for reference
+        self.aux_loss_frequency = aux_loss_frequency
+
         # Create router
         # Map 'switch' to 'mixtral' (functionally equivalent top-k routing)
         if router_type in ('mixtral', 'switch'):
@@ -173,6 +179,7 @@ class SparseMoELayer(nn.Module):
                 router_jitter_noise=router_jitter_noise,
                 dtype=dtype,
                 use_triton_kernels=use_triton_kernels,  # TIER 3 OPTIMIZATION
+                aux_loss_frequency=aux_loss_frequency,  # OPTIMIZATION: Reduce aux loss overhead
             )
         elif router_type == 'deepseek':
             self.router = DeepSeekRouter(
@@ -493,6 +500,7 @@ class SparseMoELayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         training: bool = True,
+        use_compile_friendly: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
         """
         Forward pass through Sparse MoE layer.
@@ -500,11 +508,13 @@ class SparseMoELayer(nn.Module):
         Args:
             hidden_states: Input tensor [batch_size, seq_len, hidden_size]
             training: Whether in training mode
+            use_compile_friendly: If True, use torch.compile-friendly dispatch
 
         Returns:
             - output: Layer output [batch_size, seq_len, hidden_size]
             - aux_loss: Total auxiliary loss (scalar)
             - metrics: Dictionary of routing metrics and losses
+                       Call compute_scalar_metrics() on metrics for logging
         """
         batch_size, seq_len, hidden_size = hidden_states.shape
         original_shape = hidden_states.shape
@@ -548,6 +558,7 @@ class SparseMoELayer(nn.Module):
         # Compute expert outputs using grouped GEMM
         if self.gradient_checkpointing and training:
             # Use gradient checkpointing to save memory
+            # Note: Can't use use_compile_friendly with checkpointing easily
             expert_outputs = torch.utils.checkpoint.checkpoint(  # type: ignore[attr-defined]
                 self.experts,
                 hidden_flat,
@@ -556,10 +567,12 @@ class SparseMoELayer(nn.Module):
                 use_reentrant=False
             )
         else:
+            # Pass use_compile_friendly flag to use torch.compile-friendly dispatch
             expert_outputs = self.experts(
                 hidden_flat,
                 expert_indices,
-                expert_weights
+                expert_weights,
+                use_compile_friendly=use_compile_friendly,
             )
         # expert_outputs: [num_tokens, k, hidden_size]
 
@@ -653,15 +666,44 @@ class SparseMoELayer(nn.Module):
             'router_type': self.router_type,  # Track which router is being used
         }
 
-        # Add per-expert utilization if available in routing metrics
+        # COMPILE-FRIENDLY: Keep expert_utilization as tensor, don't call .item() in forward
+        # The .item() calls would cause graph breaks in torch.compile
+        # Use compute_scalar_metrics() after forward() to get scalar values for logging
         if 'expert_utilization' in routing_metrics:
-            expert_util = routing_metrics['expert_utilization']
-            if isinstance(expert_util, torch.Tensor):
-                # Convert to individual metrics for WandB logging
-                for expert_id in range(min(expert_util.shape[0], self.num_experts)):
-                    metrics[f'expert_{expert_id}_utilization'] = expert_util[expert_id].item()
+            # Store raw tensor for later scalar conversion
+            metrics['_expert_utilization_tensor'] = routing_metrics['expert_utilization']
 
         return output, aux_loss, metrics
+
+    def compute_scalar_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert tensor metrics to scalars for logging.
+
+        TORCH.COMPILE FRIENDLY: Call this method OUTSIDE the compiled forward() region.
+        This allows forward() to stay compilable while still getting scalar metrics.
+
+        Args:
+            metrics: Dictionary returned by forward()
+
+        Returns:
+            Updated metrics dict with scalars instead of tensors
+        """
+        result = dict(metrics)
+
+        # Convert expert utilization tensor to per-expert scalar metrics
+        if '_expert_utilization_tensor' in result:
+            expert_util = result.pop('_expert_utilization_tensor')
+            if isinstance(expert_util, torch.Tensor):
+                # Now safe to call .item() - we're outside compiled region
+                for expert_id in range(min(expert_util.shape[0], self.num_experts)):
+                    result[f'expert_{expert_id}_utilization'] = expert_util[expert_id].item()
+
+        # Convert any other tensor metrics to scalars
+        for key, value in list(result.items()):
+            if isinstance(value, torch.Tensor) and value.numel() == 1:
+                result[key] = value.item()
+
+        return result
 
     def reset_expert_counts(self):
         """Reset expert utilization counts (for metrics)."""

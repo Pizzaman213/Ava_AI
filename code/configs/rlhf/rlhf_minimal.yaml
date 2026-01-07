@@ -26,10 +26,10 @@ rlhf:
     mixed_precision: bf16
 
 model:
-  vocab_size: 50680
+  vocab_size: 30522  # Matches tokenizer
   hidden_size: 384
   num_layers: 6
 
 data:
-  tokenizer_name: /root/Ava_AI/code/models/tokenizer/base_50680_whitespace
+  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
   max_length: 256

@@ -6,6 +6,7 @@ This package provides:
 - Bucketing utilities for efficient batch formation
 - Distributed data loading support
 - Factory functions for creating dataloaders
+- Centralized Arrow I/O utilities
 
 Usage:
     from ava.data import create_streaming_dataloaders, StreamingDataset
@@ -27,16 +28,41 @@ Usage:
     )
 """
 
+# Base dataset utilities
+from .base_dataset import (
+    discover_data_files,
+    get_file_format,
+    DatasetFileMixin,
+    ShuffleBufferMixin,
+    SUPPORTED_EXTENSIONS,
+)
+
+# Arrow I/O utilities (centralized)
+from .arrow_io import (
+    read_arrow_table,
+    read_arrow_or_parquet,
+    ArrowTableCache,
+    ThreadLocalArrowCache,
+    # Backward compatibility aliases
+    ArrowTableLRUCache,
+    ThreadSafeFileCache,
+    ThreadLocalFileCache,
+)
 from .bucketing import (
     AsyncFilePrefetcher,
     DynamicTokenBatcher,
     LengthBasedBucketing,
 )
-from .distributed import DistributedStreamingDataset
-from .factory import create_streaming_dataloaders
-from .indexed import (
-    ArrowTableLRUCache,
+from .distributed import DistributedStreamingDataset, AdvancedDistributedSampler
+from .factory import create_streaming_dataloaders, create_dataloaders
+# Collators (unified)
+from .collators import (
+    BaseCollator,
     DynamicPaddingCollator,
+    FixedPaddingCollator,
+    create_collator,
+)
+from .indexed import (
     IndexedArrowDataset,
     LengthBinnedSampler,
     create_indexed_dataloaders,
@@ -51,7 +77,22 @@ from .streaming import (
 )
 
 __all__ = [
+    # Base dataset utilities
+    'discover_data_files',
+    'get_file_format',
+    'DatasetFileMixin',
+    'ShuffleBufferMixin',
+    'SUPPORTED_EXTENSIONS',
+    # Arrow I/O (centralized)
+    'read_arrow_table',
+    'read_arrow_or_parquet',
+    'ArrowTableCache',
+    'ThreadLocalArrowCache',
+    'ArrowTableLRUCache',  # Backward compatibility
+    'ThreadSafeFileCache',  # Backward compatibility
+    'ThreadLocalFileCache',  # Backward compatibility
     # Factory
+    'create_dataloaders',  # Unified factory
     'create_streaming_dataloaders',
     'create_indexed_dataloaders',
     # Streaming
@@ -61,15 +102,19 @@ __all__ = [
     'get_worker_context',
     'retry_on_error',
     '_worker_init_fn',
+    # Collators (unified)
+    'BaseCollator',
+    'DynamicPaddingCollator',
+    'FixedPaddingCollator',
+    'create_collator',
     # Indexed (Map-style with true random shuffling)
     'IndexedArrowDataset',
     'LengthBinnedSampler',
-    'DynamicPaddingCollator',
-    'ArrowTableLRUCache',
     # Bucketing
     'DynamicTokenBatcher',
     'LengthBasedBucketing',
     'AsyncFilePrefetcher',
     # Distributed
     'DistributedStreamingDataset',
+    'AdvancedDistributedSampler',
 ]

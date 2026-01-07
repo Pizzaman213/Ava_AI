@@ -67,12 +67,14 @@ class AsyncMetricsLogger:
         flush_interval_seconds: float = 5.0,
         max_queue_size: int = 1000,
         custom_log_fn: Optional[Callable[[Dict[str, Any], int], None]] = None,
+        error_callback: Optional[Callable[[Exception], None]] = None,
     ):
         self.backend = backend
         self.batch_size = batch_size
         self.flush_interval_seconds = flush_interval_seconds
         self.max_queue_size = max_queue_size
         self.custom_log_fn = custom_log_fn
+        self._error_callback = error_callback
 
         # Queue for pending log calls
         self._queue: Queue[Optional[MetricEntry]] = Queue(maxsize=max_queue_size)
@@ -87,6 +89,7 @@ class AsyncMetricsLogger:
         self._total_batches = 0
         self._dropped_count = 0
         self._last_logged_step = -1  # Track last logged step to ensure monotonic ordering
+        self._last_error: Optional[Exception] = None  # Track last error for diagnostics
 
         # Backend setup
         self._wandb = None
@@ -111,13 +114,19 @@ class AsyncMetricsLogger:
 
         if self.backend == 'wandb':
             try:
+                from ava.core.wandb_logger import WANDB_AVAILABLE
+                if not WANDB_AVAILABLE:
+                    logger.warning("WandB not installed, async logging disabled")
+                    return
+
                 import wandb
-                if wandb.run is not None:
-                    self._wandb = wandb
-                else:
+                if wandb.run is None:
                     logger.warning("WandB run not initialized, async logging disabled")
+                    return
+
+                self._wandb = wandb
             except ImportError:
-                logger.warning("WandB not installed, async logging disabled")
+                logger.warning("WandB logger module not available, async logging disabled")
 
         elif self.backend == 'tensorboard':
             try:
@@ -264,6 +273,12 @@ class AsyncMetricsLogger:
 
         except Exception as e:
             logger.error(f"AsyncMetricsLogger send failed: {e}")
+            self._last_error = e
+            if self._error_callback is not None:
+                try:
+                    self._error_callback(e)
+                except Exception:
+                    pass  # Don't let callback errors propagate
 
     def flush(self, timeout: float = 30.0) -> bool:
         """
@@ -320,6 +335,14 @@ class AsyncMetricsLogger:
             'dropped_count': self._dropped_count,
             'queue_size': self._queue.qsize(),
         }
+
+    def get_last_error(self) -> Optional[Exception]:
+        """Get the last error that occurred during async logging."""
+        return self._last_error
+
+    def clear_last_error(self) -> None:
+        """Clear the last error."""
+        self._last_error = None
 
     @property
     def is_active(self) -> bool:

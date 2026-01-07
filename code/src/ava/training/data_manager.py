@@ -6,6 +6,26 @@ Handles all data loading functionality including:
 - Streaming and pretokenized dataloaders
 - Validation dataset creation
 - Data statistics logging
+
+Worker Cleanup Strategy:
+    DataLoader workers can block on distributed barriers (dist.barrier()) during
+    training. If the distributed process group is destroyed before workers are
+    terminated, this causes a deadlock.
+
+    Cleanup order to prevent deadlocks:
+    1. DataLoaderManager.cleanup() - Terminate worker processes FIRST
+    2. (other component cleanup)
+    3. cleanup_distributed() - Destroy process group LAST
+
+    Two termination modes:
+    - Normal (distributed_cleanup_started=False):
+      Graceful shutdown via _shutdown_workers(), workers exit cleanly
+    - Aggressive (distributed_cleanup_started=True):
+      SIGTERM → wait 1s → SIGKILL, used when workers may be blocked on barriers
+
+Format Detection:
+    Uses cached detection to avoid repeated expensive file scans.
+    Supports: Arrow (.arrow), JSONL (.jsonl), Parquet (.parquet), multi-column
 """
 
 import json
@@ -261,8 +281,12 @@ class DataLoaderManager(TrainingComponent):
         # Find data directory with intelligent fallback
         data_dir = self._find_data_directory(training_config)
 
-        # Log dataset information
-        self._log_dataset_stats(data_dir, batch_size, training_config)
+        # Log dataset information (SKIP if skip_sequence_count enabled for fast startup)
+        skip_stats = getattr(training_config.data, 'skip_sequence_count', False)
+        if not skip_stats:
+            self._log_dataset_stats(data_dir, batch_size, training_config)
+        else:
+            _logger.info(f" Data directory: {data_dir} (stats skipped for fast startup)")
 
         # Get configuration parameters
         num_workers = self._get_num_workers(training_config)
@@ -361,6 +385,9 @@ class DataLoaderManager(TrainingComponent):
             # Get lazy_file_discovery from config for memory-efficient large datasets
             lazy_file_discovery = getattr(training_config.data, 'lazy_file_discovery', False)
 
+            # Get warm_start_files for fast startup (load N files initially, more progressively)
+            warm_start_files = getattr(training_config.data, 'warm_start_files', 3)
+
             # Get packing-specific sorting control
             disable_packing_length_sort = getattr(training_config.data, 'disable_packing_length_sort', False)
 
@@ -414,6 +441,7 @@ class DataLoaderManager(TrainingComponent):
                 packing_strategy=packing_strategy,
                 max_files_to_load=max_files_to_load,
                 lazy_file_discovery=lazy_file_discovery,
+                warm_start_files=warm_start_files,
                 shuffle_seed=shuffle_seed,
                 enable_length_sorting=enable_length_sorting,
                 disable_packing_length_sort=disable_packing_length_sort,
@@ -446,6 +474,9 @@ class DataLoaderManager(TrainingComponent):
                 dev_log_config=getattr(training_config, "dev_log", None),
                 shuffle_seed=shuffle_seed,
                 enable_length_sorting=enable_length_sorting,
+                progressive_buffer=getattr(training_config.data, "progressive_buffer", True),
+                min_buffer_size=getattr(training_config.data, "min_buffer_size", 128),
+                warm_start_files=getattr(training_config.data, "warm_start_files", None),
             )
 
         # Validate dataloaders (skip if configured - useful for pretokenized data with spawn workers)
@@ -565,21 +596,22 @@ class DataLoaderManager(TrainingComponent):
 
         _logger.info(f" Data directory: {data_dir}")
 
-        # Count JSONL files
-        for jsonl_file in data_path.glob("*_processed.jsonl"):
+        # Count JSONL files (check both root and subdirectories)
+        for jsonl_file in data_path.glob("**/*_processed.jsonl"):
             try:
                 with open(jsonl_file, "r") as f:
                     file_lines = sum(1 for _ in f)
                     total_examples += file_lines
                     file_count += 1
+                    rel_path = jsonl_file.relative_to(data_path)
                     _logger.info(
-                        f"    {jsonl_file.name}: {file_lines:,} examples"
+                        f"    {rel_path}: {file_lines:,} examples"
                     )
             except Exception as e:
                 _logger.warning(f"     Could not read {jsonl_file.name}: {e}")
 
-        # Count Arrow files (supports both IPC File and Stream formats)
-        for arrow_file in data_path.glob("*.arrow"):
+        # Count Arrow files (check both root and subdirectories, supports IPC File and Stream formats)
+        for arrow_file in data_path.glob("**/*.arrow"):
             try:
                 import pyarrow as pa
                 import pyarrow.ipc as ipc
@@ -596,8 +628,9 @@ class DataLoaderManager(TrainingComponent):
                 file_rows = len(table)
                 total_examples += file_rows
                 file_count += 1
+                rel_path = arrow_file.relative_to(data_path)
                 _logger.info(
-                    f"    {arrow_file.name}: {file_rows:,} examples (pre-tokenized)"
+                    f"    {rel_path}: {file_rows:,} examples (pre-tokenized)"
                 )
             except Exception as e:
                 _logger.warning(f"     Could not read {arrow_file.name}: {e}")

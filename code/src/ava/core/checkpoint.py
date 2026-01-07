@@ -28,7 +28,7 @@ import torch
 import torch.nn as nn
 
 if TYPE_CHECKING:
-    from ava.training.quality_score import ModelQualityScore
+    from ava.training.validation import ModelQualityScore
 
 # Import optimized CUDA stream utilities
 try:

@@ -25,97 +25,24 @@ import logging
 import os
 import random
 import time
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import pyarrow as pa
-import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 import torch
 from torch.utils.data import Dataset, Sampler, DataLoader, Subset
 
+# Use centralized Arrow I/O utilities
+from .arrow_io import ArrowTableCache, read_arrow_or_parquet
+from .base_dataset import discover_data_files
+
 logger = logging.getLogger(__name__)
 
-
-# =============================================================================
-# Arrow Table LRU Cache
-# =============================================================================
-
-
-class ArrowTableLRUCache:
-    """
-    LRU cache for memory-mapped Arrow tables.
-
-    Thread-safe with per-worker instances (no sharing needed).
-    Memory-efficient with configurable max size.
-
-    Args:
-        max_size: Maximum number of tables to cache
-    """
-
-    def __init__(self, max_size: int = 50):
-        self.max_size = max_size
-        self.cache: OrderedDict[Path, Tuple[pa.Table, Optional[pa.MemoryMappedFile]]] = OrderedDict()
-        self._closed = False
-
-    def get(self, file_path: Path) -> pa.Table:
-        """Get table from cache or load with memory mapping."""
-        if self._closed:
-            raise RuntimeError("Cache has been closed")
-
-        if file_path in self.cache:
-            self.cache.move_to_end(file_path)
-            return self.cache[file_path][0]
-
-        # Evict if full
-        while len(self.cache) >= self.max_size:
-            old_path, (old_table, old_mmap) = self.cache.popitem(last=False)
-            if old_mmap is not None:
-                try:
-                    old_mmap.close()
-                except Exception as e:
-                    logger.debug(f"Memory map close warning during eviction: {e}")
-
-        # Load new table
-        if file_path.suffix.lower() == '.parquet':
-            table = pq.read_table(str(file_path))
-            self.cache[file_path] = (table, None)
-        else:
-            # Try IPC File format first, then fall back to IPC Stream format
-            try:
-                mmap = pa.memory_map(str(file_path), 'r')
-                table = ipc.open_file(mmap).read_all()
-                self.cache[file_path] = (table, mmap)
-            except pa.ArrowInvalid:
-                # IPC Stream format (HuggingFace datasets)
-                with open(str(file_path), 'rb') as f:
-                    table = ipc.open_stream(f).read_all()
-                self.cache[file_path] = (table, None)
-
-        return table
-
-    def close(self):
-        """Close all memory maps."""
-        if self._closed:
-            return
-        self._closed = True
-        close_errors = 0
-        for path, (table, mmap) in list(self.cache.items()):
-            if mmap is not None:
-                try:
-                    mmap.close()
-                except Exception as e:
-                    close_errors += 1
-                    logger.debug(f"Memory map close warning during cache cleanup: {e}")
-        if close_errors > 0:
-            logger.debug(f"Cache cleanup completed with {close_errors} close errors")
-        self.cache.clear()
-
-    def __del__(self):
-        self.close()
+# Backward compatibility alias
+ArrowTableLRUCache = ArrowTableCache
 
 
 # =============================================================================
@@ -305,17 +232,7 @@ class IndexedArrowDataset(Dataset):
 
     def _load_table_for_indexing(self, file_path: Path) -> pa.Table:
         """Load table for indexing (temporary, not cached)."""
-        if file_path.suffix.lower() == '.parquet':
-            return pq.read_table(str(file_path))
-        else:
-            # Try IPC File format first, then fall back to IPC Stream format
-            try:
-                with pa.memory_map(str(file_path), 'r') as mmap:
-                    return ipc.open_file(mmap).read_all()
-            except pa.ArrowInvalid:
-                # IPC Stream format (HuggingFace datasets)
-                with open(str(file_path), 'rb') as f:
-                    return ipc.open_stream(f).read_all()
+        return read_arrow_or_parquet(file_path)
 
     def _get_row_length(self, table: pa.Table, row_idx: int) -> int:
         """Get sequence length for a row (non-padding tokens)."""
@@ -338,7 +255,7 @@ class IndexedArrowDataset(Dataset):
     def _ensure_cache(self):
         """Ensure table cache is initialized (per-worker)."""
         if self._table_cache is None:
-            self._table_cache = ArrowTableLRUCache(max_size=self._cache_size)
+            self._table_cache = ArrowTableCache(max_size=self._cache_size)
 
     def __len__(self) -> int:
         return len(self._index)
@@ -528,94 +445,11 @@ class LengthBinnedSampler(Sampler[int]):
 
 
 # =============================================================================
-# Dynamic Padding Collator
+# Dynamic Padding Collator (now in collators.py)
 # =============================================================================
 
-
-class DynamicPaddingCollator:
-    """
-    Collator that pads to batch maximum, not global maximum.
-
-    With LengthBinnedSampler, sequences in each batch have similar lengths,
-    so padding waste is typically only ~5% instead of 50-80% with fixed padding.
-
-    Args:
-        pad_token_id: Padding token ID
-        max_length: Maximum sequence length (safety cap)
-        padding_side: 'right' or 'left'
-    """
-
-    def __init__(
-        self,
-        pad_token_id: int = 0,
-        max_length: int = 2048,
-        padding_side: str = 'right',
-    ):
-        self.pad_token_id = pad_token_id
-        self.max_length = max_length
-        self.padding_side = padding_side
-
-        # Track padding efficiency
-        self.total_tokens = 0
-        self.padding_tokens = 0
-        self.batch_count = 0
-
-    def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """Collate batch with dynamic padding."""
-        if not batch:
-            return {}
-
-        # Filter out any None items
-        batch = [b for b in batch if b is not None]
-        if not batch:
-            return {}
-
-        # Get batch max length (capped at self.max_length)
-        lengths = [item['length'] for item in batch]
-        max_len = min(max(lengths), self.max_length)
-        batch_size = len(batch)
-
-        # Pre-allocate tensors
-        input_ids = torch.full((batch_size, max_len), self.pad_token_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
-        labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
-
-        # Fill tensors
-        for i, item in enumerate(batch):
-            seq_len = min(item['length'], max_len)
-
-            if self.padding_side == 'right':
-                input_ids[i, :seq_len] = item['input_ids'][:seq_len]
-                attention_mask[i, :seq_len] = item['attention_mask'][:seq_len]
-                labels[i, :seq_len] = item['labels'][:seq_len]
-            else:
-                offset = max_len - seq_len
-                input_ids[i, offset:] = item['input_ids'][:seq_len]
-                attention_mask[i, offset:] = item['attention_mask'][:seq_len]
-                labels[i, offset:] = item['labels'][:seq_len]
-
-        # Track efficiency
-        self.total_tokens += batch_size * max_len
-        self.padding_tokens += sum(max_len - min(l, max_len) for l in lengths)
-        self.batch_count += 1
-
-        return {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': labels,
-        }
-
-    def get_efficiency(self) -> float:
-        """Get padding efficiency (1.0 = no waste)."""
-        if self.total_tokens == 0:
-            return 1.0
-        return 1.0 - (self.padding_tokens / self.total_tokens)
-
-    def reset_statistics(self):
-        """Reset tracking statistics."""
-        self.total_tokens = 0
-        self.padding_tokens = 0
-        self.batch_count = 0
+# Import from unified collators module for backward compatibility
+from .collators import DynamicPaddingCollator
 
 
 # =============================================================================
@@ -680,28 +514,16 @@ def create_indexed_dataloaders(
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    data_path = Path(data_dir)
+    # Use centralized file discovery
+    valid_files = discover_data_files(
+        data_dir,
+        extensions=['.arrow', '.parquet'],
+        max_files=max_files,
+    )
 
-    # Find all data files
-    patterns = ['**/*.arrow', '**/*.parquet']
-    all_files = []
-    for pattern in patterns:
-        all_files.extend(data_path.glob(pattern))
-
-    # Filter by size and limit if requested
+    # Filter by minimum size
     MIN_FILE_SIZE = 10 * 1024  # 10KB
-    valid_files = []
-    for f in all_files:
-        try:
-            if f.stat().st_size >= MIN_FILE_SIZE:
-                valid_files.append(f)
-        except OSError:
-            pass
-
-    valid_files = sorted(set(valid_files))  # Deduplicate and sort
-
-    if max_files is not None:
-        valid_files = valid_files[:max_files]
+    valid_files = [f for f in valid_files if f.stat().st_size >= MIN_FILE_SIZE]
 
     if not valid_files:
         raise ValueError(f"No valid Arrow/Parquet files found in {data_dir}")

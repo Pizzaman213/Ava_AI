@@ -36,7 +36,8 @@ model:
   # GPU Optimizations for RTX 3090 Ti (Ampere)
   use_grouped_gemm: true      # 15-25% speedup for expert computation
   use_triton_kernels: true    # 2-3x speedup with fused ops
-  use_torch_compile: false    # Disabled - needs 48GB+ VRAM
+  use_torch_compile: false    # Set true for +15-25% speedup (router is now compile-friendly)
+  torch_compile_mode: reduce-overhead  # 'reduce-overhead' best for MoE
   use_flash_attention: true   # 2-4x faster attention, 40% VRAM savings
   gradient_checkpointing: true  # Enabled - 70-80% activation memory savings
   use_optimized_moe: true     # 10-20% speedup
@@ -48,6 +49,7 @@ model:
   diversity_loss_coef: 0.001      # Reduced 10x - expert diversity less important than coherence
   expert_dropout_loss_coef: 0.0
   router_jitter_noise: 0.01       # Reduced for more stable routing
+  aux_loss_frequency: 50          # NEW: Compute aux losses every 50 steps (~5-8% speedup)
 
   # Coherence regularization (REDUCED - let CE loss dominate)
   entropy_regularization: 0.001   # Reduced 10x - was interfering with learning
@@ -362,9 +364,10 @@ performance:
   enable_cudnn_benchmark: true  # Auto-tune cuDNN kernels
   enable_tf32: true  # 8x faster matmul on Ampere
   torchinductor_max_autotune: 0
-  enable_torch_compile: false  # Needs 48GB+ VRAM
-  torch_compile_mode: default
-  torch_compile_fullgraph: false
+  # torch.compile - NOW WORKS with compile-friendly router (no graph breaks)
+  enable_torch_compile: false     # Set true for +15-25% speedup (adds ~60s compile time at start)
+  torch_compile_mode: reduce-overhead  # 'reduce-overhead' recommended for MoE
+  torch_compile_fullgraph: false  # false allows partial compilation
   torch_compile_dynamic: true
 
 # =============================================================================

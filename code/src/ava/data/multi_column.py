@@ -22,6 +22,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pandas as pd
 import numpy as np
+
+# Import centralized Arrow I/O
+from .arrow_io import read_arrow_table
+# Import centralized distributed utilities
+from .distributed import AdvancedDistributedSampler, DISTRIBUTED_AVAILABLE
 from dataclasses import dataclass, field
 from enum import Enum
 import random
@@ -69,12 +74,10 @@ except ImportError:
     tf = None  # type: ignore[assignment]
     logger.debug("TensorFlow not installed. TFRecord support disabled. Install with: pip install tensorflow")
 
-# Try to import distributed training support
+# Import distributed training module (DISTRIBUTED_AVAILABLE imported from .distributed)
 try:
     import torch.distributed as dist  # type: ignore[import]
-    DISTRIBUTED_AVAILABLE = True
 except ImportError:
-    DISTRIBUTED_AVAILABLE = False
     dist = None  # type: ignore[assignment]
 
 
@@ -340,15 +343,8 @@ class MultiColumnDataset(Dataset):
 
         try:
             if file_path.suffix == '.arrow':
-                # Try IPC File format first, then fall back to IPC Stream format
-                try:
-                    with pa.memory_map(str(file_path), 'r') as source:
-                        batch_reader = pa.ipc.open_file(source)
-                        table = batch_reader.read_all()
-                except pa.ArrowInvalid:
-                    # IPC Stream format (HuggingFace datasets)
-                    with open(str(file_path), 'rb') as f:
-                        table = pa.ipc.open_stream(f).read_all()
+                # Use centralized Arrow reader (handles both IPC File and Stream formats)
+                table = read_arrow_table(file_path)
                 df = table.to_pandas()
                 data = df.to_dict('records')
 
@@ -900,22 +896,11 @@ class StreamingMultiColumnDataset(IterableDataset):
             elif file_path.suffix in ['.arrow', '.parquet']:
                 # Stream in batches
                 if file_path.suffix == '.arrow':
-                    # Try IPC File format first, then fall back to IPC Stream format
-                    try:
-                        with pa.memory_map(str(file_path), 'r') as source:
-                            batch_reader = pa.ipc.open_file(source)
-                            for i in range(batch_reader.num_record_batches):
-                                batch = batch_reader.get_batch(i)
-                                df = batch.to_pandas()
-                                for _, row in df.iterrows():
-                                    yield row.to_dict()
-                    except pa.ArrowInvalid:
-                        # IPC Stream format (HuggingFace datasets) - read all and iterate
-                        with open(str(file_path), 'rb') as f:
-                            table = pa.ipc.open_stream(f).read_all()
-                            df = table.to_pandas()
-                            for _, row in df.iterrows():
-                                yield row.to_dict()
+                    # Use centralized Arrow reader (handles both IPC File and Stream formats)
+                    table = read_arrow_table(file_path)
+                    df = table.to_pandas()
+                    for _, row in df.iterrows():
+                        yield row.to_dict()
                 else:
                     parquet_file = pq.ParquetFile(file_path)
                     for batch in parquet_file.iter_batches(batch_size=self.buffer_size):
@@ -927,218 +912,7 @@ class StreamingMultiColumnDataset(IterableDataset):
             print(f" Error streaming {file_path}: {e}")
 
 
-class AdvancedDistributedSampler(Sampler):
-    """
-    Advanced distributed sampler with proper sharding, load balancing, and fault tolerance.
-
-    Features:
-    - Balanced data distribution across ranks
-    - Dynamic resharding for failed ranks
-    - Load balancing monitoring
-    - Deterministic shuffling with proper epoch seeding
-    """
-
-    def __init__(
-        self,
-        dataset: Dataset,
-        num_replicas: Optional[int] = None,
-        rank: Optional[int] = None,
-        shuffle: bool = True,
-        seed: int = 0,
-        drop_last: bool = False,
-        enable_load_balancing: bool = True,
-        balancing_tolerance: float = 0.05  # 5% tolerance for load imbalance
-    ):
-        if num_replicas is None:
-            if not DISTRIBUTED_AVAILABLE or dist is None or not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size()
-        if rank is None:
-            if not DISTRIBUTED_AVAILABLE or dist is None or not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank()  # type: ignore[assignment]
-        if rank is not None and num_replicas is not None:
-            if rank >= num_replicas or rank < 0:
-                raise ValueError(
-                    "Invalid rank {}, rank should be in the interval"
-                    " [0, {}]".format(rank, num_replicas - 1))
-
-        self.dataset = dataset
-        self.num_replicas = num_replicas
-        self.rank = rank
-        self.epoch = 0
-        self.drop_last = drop_last
-        self.shuffle = shuffle
-        self.seed = seed
-        self.enable_load_balancing = enable_load_balancing
-        self.balancing_tolerance = balancing_tolerance
-
-        # Calculate dataset size and samples per rank
-        if self.num_replicas is not None:
-            if self.drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type]
-                # Split to nearest available length that is evenly divisible
-                self.num_samples = math.ceil(
-                    (len(self.dataset) - self.num_replicas) / self.num_replicas  # type: ignore[arg-type]
-                )
-            else:
-                self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)  # type: ignore[arg-type]
-
-            self.total_size = self.num_samples * self.num_replicas
-        else:
-            self.num_samples = 0
-            self.total_size = 0
-
-        # Track load balancing statistics
-        self.samples_processed = 0
-        self.load_stats = {
-            'samples_assigned': self.num_samples,
-            'samples_processed': 0,
-            'load_ratio': 0.0
-        }
-
-    def __iter__(self) -> Iterator[int]:
-        if self.shuffle:
-            # Deterministically shuffle based on epoch and seed
-            g = torch.Generator()
-            g.manual_seed(self.seed + self.epoch)
-            indices = torch.randperm(len(self.dataset), generator=g).tolist()  # type: ignore[arg-type]
-        else:
-            indices = list(range(len(self.dataset)))  # type: ignore[arg-type]
-
-        if not self.drop_last:
-            # Add extra samples to make it evenly divisible
-            padding_size = self.total_size - len(indices)
-            if padding_size <= len(indices):
-                indices += indices[:padding_size]
-            else:
-                indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
-        else:
-            # Remove tail of data to make it evenly divisible
-            indices = indices[:self.total_size]
-
-        if len(indices) != self.total_size:
-            raise ValueError(
-                f"Index mismatch in distributed sampler: expected {self.total_size} indices "
-                f"but got {len(indices)}. This indicates a data sharding issue. "
-                f"Rank: {self.rank}, Num replicas: {self.num_replicas}"
-            )
-
-        # Subsample for this rank with proper sharding
-        rank_indices = self._get_rank_indices(indices)
-
-        # Update load statistics
-        self.load_stats['samples_assigned'] = len(rank_indices)
-
-        return iter(rank_indices)
-
-    def _get_rank_indices(self, indices: List[int]) -> List[int]:
-        """Get indices for this rank with advanced sharding."""
-        if not self.enable_load_balancing:
-            # Standard sharding
-            return indices[self.rank:self.total_size:self.num_replicas]  # type: ignore[misc]
-
-        # Advanced load-balanced sharding
-        chunk_size = len(indices) // self.num_replicas  # type: ignore[operator]
-        remainder = len(indices) % self.num_replicas  # type: ignore[operator]
-
-        # Calculate start and end indices for this rank
-        if self.rank < remainder:  # type: ignore[operator]
-            # First `remainder` ranks get one extra sample
-            start_idx = self.rank * (chunk_size + 1)  # type: ignore[operator]
-            end_idx = start_idx + chunk_size + 1
-        else:
-            # Remaining ranks get standard chunk size
-            start_idx = remainder * (chunk_size + 1) + (self.rank - remainder) * chunk_size  # type: ignore[operator]
-            end_idx = start_idx + chunk_size
-
-        rank_indices = indices[start_idx:end_idx]
-
-        # Monitor load balance
-        expected_samples = len(indices) / self.num_replicas  # type: ignore[operator]
-        actual_samples = len(rank_indices)
-        load_imbalance = abs(actual_samples - expected_samples) / expected_samples
-
-        if load_imbalance > self.balancing_tolerance:
-            logger.warning(
-                f"Load imbalance detected on rank {self.rank}: "
-                f"{actual_samples} samples vs {expected_samples:.1f} expected "
-                f"(imbalance: {load_imbalance:.1%})"
-            )
-
-        self.load_stats['load_ratio'] = actual_samples / expected_samples
-
-        return rank_indices
-
-    def __len__(self) -> int:
-        return self.num_samples
-
-    def set_epoch(self, epoch: int) -> None:
-        """Set the epoch for this sampler."""
-        self.epoch = epoch
-
-    def get_load_stats(self) -> Dict[str, Any]:
-        """Get load balancing statistics for this rank."""
-        return self.load_stats.copy()
-
-    def coordinate_resharding(self, failed_ranks: List[int]) -> bool:
-        """
-        Coordinate resharding when ranks fail.
-
-        Args:
-            failed_ranks: List of failed rank IDs
-
-        Returns:
-            bool: True if resharding successful
-        """
-        if not failed_ranks:
-            return True
-
-        active_ranks = [r for r in range(self.num_replicas) if r not in failed_ranks]  # type: ignore[arg-type]
-
-        if self.rank in failed_ranks:  # type: ignore[operator]
-            logger.error(f"Rank {self.rank} is marked as failed - cannot reshard")
-            return False
-
-        if self.rank not in active_ranks:  # type: ignore[operator]
-            logger.error(f"Rank {self.rank} not in active ranks: {active_ranks}")
-            return False
-
-        logger.info(f"Resharding data for {len(active_ranks)} active ranks (failed: {failed_ranks})")
-
-        # Recalculate num_replicas and rank mapping for active ranks
-        old_num_replicas = self.num_replicas
-        old_rank = self.rank
-
-        self.num_replicas = len(active_ranks)
-        self.rank = active_ranks.index(old_rank)  # type: ignore[arg-type]
-
-        # Recalculate samples per rank
-        if self.drop_last and len(self.dataset) % self.num_replicas != 0:  # type: ignore[arg-type,operator]
-            self.num_samples = math.ceil(
-                (len(self.dataset) - self.num_replicas) / self.num_replicas  # type: ignore[operator]
-            )
-        else:
-            self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)  # type: ignore[arg-type,operator]
-
-        self.total_size = self.num_samples * self.num_replicas  # type: ignore[operator]
-
-        logger.info(
-            f"Resharding complete: rank {old_rank}->{self.rank}, "
-            f"replicas {old_num_replicas}->{self.num_replicas}, "
-            f"samples: {self.num_samples}"
-        )
-
-        # Update load stats
-        self.load_stats = {
-            'samples_assigned': self.num_samples,
-            'samples_processed': 0,
-            'load_ratio': 0.0,
-            'resharded': True,
-            'failed_ranks': failed_ranks,
-            'active_ranks': active_ranks
-        }
-
-        return True
+# AdvancedDistributedSampler is now imported from .distributed
 
 
 def create_multi_column_dataloader(

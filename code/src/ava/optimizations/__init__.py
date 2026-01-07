@@ -7,6 +7,13 @@ This package provides:
 - FP8 training support
 - Async prefetching
 - Batch size calibration
+- Learning rate management (moved from optim/)
 """
 
-__all__ = []
+# Learning rate management (moved from optim/)
+from .lr_managers import AdaptiveLearningRateManager, AdaptiveLRConfig
+
+__all__ = [
+    'AdaptiveLearningRateManager',
+    'AdaptiveLRConfig',
+]

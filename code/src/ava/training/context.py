@@ -1,7 +1,41 @@
 """
 Base classes and interfaces for modular training components.
 
-Provides common interfaces and data structures for all training components.
+This module provides the shared state hub and component interfaces for the
+Ava training pipeline. The design separates concerns:
+
+Design Pattern - Shared Context:
+    TrainingContext is a dataclass that acts as a "shared state hub" between
+    components. Rather than components directly referencing each other (tight
+    coupling), they all reference the context (loose coupling).
+
+    Before (tight coupling):
+        optimizer = Adam(model.parameters())  # Optimizer knows about Model
+        scheduler = CosineScheduler(optimizer)  # Scheduler knows about Optimizer
+
+    After (loose coupling):
+        context.model = model
+        context.optimizer = optimizer
+        # Components access via context.model, context.optimizer
+
+Why Metadata Dict vs Direct Fields:
+    The `metadata` dictionary provides extensibility for config values that
+    don't warrant a dedicated field. This avoids frequent dataclass changes.
+
+    Use direct fields for:
+    - Core training state (epoch, step, loss)
+    - Components that multiple managers need (model, optimizer, tokenizer)
+
+    Use metadata for:
+    - Config values that only one manager reads (learning_rate, warmup_steps)
+    - Experimental features not yet stable enough for direct fields
+    - Custom user extensions
+
+Component Lifecycle:
+    1. __init__(context) - Store context reference, set _initialized=False
+    2. initialize() - Allocate resources, connect to services, set _initialized=True
+    3. [training loop] - Components called via hooks
+    4. cleanup() - Release resources, close connections
 """
 
 from abc import ABC, abstractmethod
@@ -90,8 +124,11 @@ class TrainingContext:
         """
         Update context fields from a configuration dictionary.
 
-        FIX: Expanded to propagate all relevant config values to context.
-        Previously only handled gradient_accumulation_steps and mixed_precision.
+        This method bridges YAML config → TrainingContext, ensuring that
+        config changes actually affect training behavior. Values go to either
+        direct fields (if widely used) or metadata dict (if component-specific).
+
+        Flow: YAML file → dict → this method → context fields/metadata → components
 
         Args:
             config: Configuration dictionary with training settings
@@ -104,28 +141,19 @@ class TrainingContext:
             self.gradient_accumulation_steps
         )
 
-        # FIX: Add missing training config propagation
-        # These were previously ignored, causing YAML changes to have no effect
-        if 'batch_size' in training:
-            self.metadata['batch_size'] = training['batch_size']
-        if 'learning_rate' in training:
-            self.metadata['learning_rate'] = training['learning_rate']
-        if 'warmup_steps' in training:
-            self.metadata['warmup_steps'] = training['warmup_steps']
-        if 'max_steps' in training:
-            self.metadata['max_steps'] = training['max_steps']
-        if 'num_epochs' in training:
-            self.metadata['num_epochs'] = training['num_epochs']
-        if 'weight_decay' in training:
-            self.metadata['weight_decay'] = training['weight_decay']
-        if 'max_grad_norm' in training:
-            self.metadata['max_grad_norm'] = training['max_grad_norm']
-        if 'log_interval' in training:
-            self.metadata['log_interval'] = training['log_interval']
-        if 'save_interval' in training:
-            self.metadata['save_interval'] = training['save_interval']
-        if 'eval_interval' in training:
-            self.metadata['eval_interval'] = training['eval_interval']
+        # Propagate training config values to metadata dict
+        # These go to metadata (not direct fields) because:
+        # 1. Only specific managers need them (OptimizerManager, TrainingLoopManager)
+        # 2. Avoiding dataclass field explosion for 50+ config values
+        # 3. Allows easy extension without modifying TrainingContext signature
+        config_keys = [
+            'batch_size', 'learning_rate', 'warmup_steps', 'max_steps',
+            'num_epochs', 'weight_decay', 'max_grad_norm',
+            'log_interval', 'save_interval', 'eval_interval'
+        ]
+        for key in config_keys:
+            if key in training:
+                self.metadata[key] = training[key]
 
         # Data config
         data = config.get('data', {})
@@ -211,28 +239,48 @@ class ManagerInterface(TrainingComponent):
     """
     Extended interface for manager components that integrate into
     the main training loop.
+
+    Lifecycle hooks are called by TrainingPipeline at specific points:
+
+    Training Flow:
+        pipeline.initialize_all()  →  initialize()
+        for epoch in range(num_epochs):
+            pipeline.on_epoch_start(epoch)  →  on_epoch_start(epoch)
+            for step, batch in enumerate(dataloader):
+                pipeline.on_step_start(step)  →  on_step_start(step)
+                loss = train_step(batch)
+                pipeline.on_step_end(step, loss)  →  on_step_end(step, loss)
+            pipeline.on_epoch_end(epoch)  →  on_epoch_end(epoch)
+        pipeline.cleanup_all()  →  cleanup()
+
+    Error Recovery:
+        If training fails, pipeline.on_error() is called on all components
+        BEFORE cleanup, allowing emergency checkpoint saves.
+
+    All hooks are optional (default implementation is pass). Override only
+    the hooks your component needs.
     """
 
     def on_epoch_start(self, epoch: int) -> None:
-        """Called at the start of each epoch."""
+        """Called at the start of each epoch. Use to reset epoch-level state."""
         pass
 
     def on_epoch_end(self, epoch: int) -> None:
-        """Called at the end of each epoch."""
+        """Called at the end of each epoch. Use to log epoch metrics, save checkpoints."""
         pass
 
     def on_step_start(self, step: int) -> None:
-        """Called at the start of each training step."""
+        """Called at the start of each training step. Use to prepare batch resources."""
         pass
 
     def on_step_end(self, step: int, loss: float) -> None:
-        """Called at the end of each training step."""
+        """Called at the end of each training step. Use to log step metrics."""
         pass
 
     def on_error(self, error: Exception) -> None:
-        """Called when an error occurs during training."""
+        """Called when training fails. Use for emergency saves before cleanup."""
         self.logger.error(f"Error in {self.__class__.__name__}: {error}")
 
     def get_status(self) -> Dict[str, Any]:
-        """Return current status/statistics."""
+        """Return current status/statistics for monitoring dashboards."""
         return {}

@@ -1,13 +1,53 @@
 """
 Training loop manager for the Ava pipeline.
 
-Handles the core training loop with:
-- Async batch prefetching
-- Gradient accumulation
-- Mixed precision training
-- Generation testing
-- Coherence measurement
-- Proper error tracking
+This module contains the core training loop implementation with advanced
+optimizations for throughput and memory efficiency.
+
+Key Features:
+- Async batch prefetching: Uses dedicated CUDA stream to overlap I/O with compute
+- Gradient accumulation: Simulates larger batch sizes across multiple micro-batches
+- Mixed precision training: FP16/BF16 with automatic loss scaling
+- CUDA graphs: Captures training step to eliminate kernel launch overhead (15-25% speedup)
+- Generation testing: Async sample generation to monitor training quality
+- Coherence measurement: Evaluates model output coherence during training
+- OOM recovery: Automatic batch size reduction on out-of-memory errors
+
+Training Flow (per epoch):
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │ for batch in dataloader:                                            │
+    │   ┌───────────────────────────────────────────────────────────────┐│
+    │   │ FORWARD PASS (with autocast for AMP)                          ││
+    │   │   outputs = model(input_ids, attention_mask, labels)          ││
+    │   │   loss = outputs['loss'] / gradient_accumulation_steps        ││
+    │   └───────────────────────────────────────────────────────────────┘│
+    │   ┌───────────────────────────────────────────────────────────────┐│
+    │   │ BACKWARD PASS                                                  ││
+    │   │   scaler.scale(loss).backward()  # or loss.backward()         ││
+    │   │   # Gradients accumulate across micro-batches                 ││
+    │   └───────────────────────────────────────────────────────────────┘│
+    │   if (batch_idx + 1) % gradient_accumulation_steps == 0:           │
+    │     ┌─────────────────────────────────────────────────────────────┐│
+    │     │ OPTIMIZER STEP (only at accumulation boundaries)            ││
+    │     │   grad_norm = clip_grad_norm_(parameters, max_grad_norm)    ││
+    │     │   scaler.step(optimizer)  # or optimizer.step()             ││
+    │     │   scheduler.step()                                          ││
+    │     │   optimizer.zero_grad()                                     ││
+    │     └─────────────────────────────────────────────────────────────┘│
+    │     global_step += 1                                               │
+    │     if global_step % log_interval == 0: log_metrics()             │
+    │     if global_step % generate_every_n_steps == 0: generate_async()│
+    └─────────────────────────────────────────────────────────────────────┘
+
+CUDA Graph Capture:
+    After warmup_steps, captures the forward/backward pass as a CUDA graph.
+    IMPORTANT: Optimizer state is saved before capture and restored after
+    to prevent warmup runs from polluting momentum/variance buffers.
+
+Loss Accumulator:
+    Uses async accumulation to avoid cudaStreamSynchronize on every batch.
+    _loss_accumulator: Running sum of losses (not synced to CPU until log step)
+    _step_losses: List of synced losses for logging (populated at log intervals)
 """
 
 import copy
@@ -321,7 +361,7 @@ class TrainingLoopManager(ManagerInterface):
         """
         try:
             # CUDA graphs are not compatible with DeepSpeed (due to dynamic control flow)
-            from ..training.deepspeed_utils import is_deepspeed_engine
+            from .deepspeed import is_deepspeed_engine
             if is_deepspeed_engine(model):
                 self.logger.info("CUDA graphs disabled: incompatible with DeepSpeed")
                 return False
@@ -350,11 +390,23 @@ class TrainingLoopManager(ManagerInterface):
             # Static loss tensor for output
             self._graph_static_loss = torch.zeros(1, device=self.device)
 
-            # Warmup run (required for CUDA graph capture)
-            # FIX: Save optimizer state before warmup, restore after to prevent
-            # warmup runs from polluting the momentum buffers
-            # Issue #8 fix: Use deep copy for optimizer state to handle nested structures
-            # The shallow clone approach may miss nested tensors in some optimizers (e.g., Lion)
+            # ═══════════════════════════════════════════════════════════════
+            # WARMUP RUNS & OPTIMIZER STATE PRESERVATION
+            # ═══════════════════════════════════════════════════════════════
+            # CUDA graph capture requires warmup runs to "prime" the GPU.
+            # However, warmup runs perform real forward/backward passes which:
+            # 1. Update optimizer momentum buffers (exp_avg, exp_avg_sq in AdamW)
+            # 2. Pollute variance estimates with dummy gradients
+            # 3. Can cause training instability if not handled
+            #
+            # Solution: Deep copy optimizer state before warmup, restore after.
+            # This ensures the captured graph doesn't affect actual training.
+            #
+            # Why deep copy vs shallow clone:
+            # - Some optimizers (Lion, GaLore) have nested dict structures
+            # - Shallow clone may share tensor references
+            # - Deep copy handles all nested structures safely
+            # ═══════════════════════════════════════════════════════════════
             if optimizer.state:
                 try:
                     # Attempt deep copy (handles all nested structures)
@@ -518,6 +570,19 @@ class TrainingLoopManager(ManagerInterface):
         self._checkpoint_manager = checkpoint_manager
         self._profiler = profiler
         self._diagnostics_manager = diagnostics_manager
+
+        # Startup diagnostic: check if generation logging to WandB will work
+        if self._metrics_manager and self._generation_manager:
+            use_wandb = getattr(self._metrics_manager, '_use_wandb', False)
+            if not use_wandb:
+                tqdm.write(
+                    "[WARNING] WandB is disabled - generation samples will NOT appear in WandB tables. "
+                    "Check your wandb config (wandb.enabled: true) and ensure WandB is installed."
+                )
+            else:
+                tqdm.write(
+                    "[INFO] WandB generation logging enabled - samples will be logged to 'generations' table"
+                )
 
     def train_epoch(
         self,
@@ -846,7 +911,7 @@ class TrainingLoopManager(ManagerInterface):
                     # Synchronize new batch size across ranks if distributed
                     if self.context.world_size > 1:
                         try:
-                            from ..training.distributed_sync import DistributedStateManager
+                            from .distributed import DistributedStateManager
                             import torch.distributed as dist
 
                             dist_manager = DistributedStateManager(
@@ -957,8 +1022,15 @@ class TrainingLoopManager(ManagerInterface):
         # Get position_ids if provided (from sequence packing with per-document positions)
         position_ids = gpu_batch.get('position_ids', None)
 
+        # Notify activation cache of batch start (for hybrid caching)
+        base_model = model.module if hasattr(model, 'module') else model
+        if hasattr(base_model, '_hybrid_cache_manager') and base_model._hybrid_cache_manager:
+            cache_mgr = base_model._hybrid_cache_manager
+            if cache_mgr.activation_cache:
+                cache_mgr.activation_cache.on_batch_start(gpu_batch)
+
         # Detect DeepSpeed engine
-        from ..training.deepspeed_utils import is_deepspeed_engine
+        from .deepspeed import is_deepspeed_engine
         is_deepspeed = is_deepspeed_engine(model)
 
         # Helper for profiler range context
@@ -1138,6 +1210,12 @@ class TrainingLoopManager(ManagerInterface):
                         optimizer.zero_grad()
                     with get_range_context("optimizer_step/scheduler_step"):
                         scheduler.step()
+
+        # Notify activation cache of batch end (clear per-batch cache)
+        if hasattr(base_model, '_hybrid_cache_manager') and base_model._hybrid_cache_manager:
+            cache_mgr = base_model._hybrid_cache_manager
+            if cache_mgr.activation_cache:
+                cache_mgr.activation_cache.on_batch_end()
 
         # Return detached loss (stays on GPU, no sync)
         return loss.detach()

@@ -2,12 +2,47 @@
 Validation manager for the Ava pipeline.
 
 Handles model validation during training with proper error tracking.
-
 Accumulates losses on GPU and syncs once at the end for efficiency.
 Supports multi-metric model selection using quality scores.
+
+Quality Score Formula:
+    The quality score is a weighted combination of normalized metrics:
+
+    quality = (val_loss_weight × val_loss_norm) +
+              (coherence_weight × coherence_norm) +
+              (perplexity_weight × perplexity_norm)
+
+    Where:
+    - val_loss_norm = 1.0 - (min(val_loss, cap) / cap)  → higher is better
+    - coherence_norm = coherence_score (already 0-1)   → higher is better
+    - perplexity_norm = 1.0 - (log(min(ppl, cap)) / log(cap))  → higher is better
+
+Normalization Caps:
+    Caps prevent extreme values from dominating the score:
+    - val_loss_cap: 10.0 (losses above this are treated as 10.0)
+    - perplexity_cap: 100.0 (perplexities above this are treated as 100.0)
+
+    Example: val_loss=5.0 with cap=10.0 → norm = 1.0 - (5.0/10.0) = 0.5
+
+Default Weights:
+    - val_loss_weight: 0.5 (50%)
+    - coherence_weight: 0.3 (30%)
+    - perplexity_weight: 0.2 (20%)
+
+Missing Metrics:
+    If a metric is unavailable (e.g., coherence disabled), its weight is
+    redistributed proportionally among present metrics.
+
+Includes:
+- ModelQualityScore: Container for model quality metrics
+- QualityScorer: Computes weighted quality scores from multiple metrics
+- ValidationManager: Main validation manager
 """
 
 import logging
+import math
+import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import torch
@@ -16,12 +51,248 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .context import ManagerInterface, TrainingContext
-from .quality_score import ModelQualityScore, QualityScorer
 
 if TYPE_CHECKING:
     from ..config.training_config import ModelSelectionConfig
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Model Quality Score
+# =============================================================================
+
+@dataclass
+class ModelQualityScore:
+    """Container for model quality metrics and composite score.
+
+    Stores both raw metrics and normalized values (0-1 scale, higher is better).
+    The quality_score is a weighted combination of normalized metrics.
+
+    Attributes:
+        val_loss: Raw validation loss (lower is better)
+        coherence_score: Raw coherence score 0-1 (higher is better)
+        perplexity: Raw perplexity (lower is better)
+        val_loss_normalized: Normalized val_loss 0-1 (higher is better)
+        coherence_normalized: Normalized coherence 0-1 (higher is better)
+        perplexity_normalized: Normalized perplexity 0-1 (higher is better)
+        quality_score: Weighted composite score 0-1 (higher is better)
+        step: Training step when this score was computed
+        epoch: Training epoch when this score was computed
+        timestamp: Unix timestamp when this score was computed
+        metrics_present: Dict indicating which metrics were available
+    """
+
+    # Raw metrics
+    val_loss: Optional[float] = None
+    coherence_score: Optional[float] = None
+    perplexity: Optional[float] = None
+
+    # Normalized metrics (0-1 scale, higher is better)
+    val_loss_normalized: float = 0.0
+    coherence_normalized: float = 0.0
+    perplexity_normalized: float = 0.0
+
+    # Composite score (weighted combination)
+    quality_score: float = 0.0
+
+    # Metadata
+    step: int = 0
+    epoch: int = 0
+    timestamp: float = field(default_factory=time.time)
+    metrics_present: Dict[str, bool] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging and checkpointing."""
+        return {
+            'quality_score': self.quality_score,
+            'val_loss': self.val_loss,
+            'coherence_score': self.coherence_score,
+            'perplexity': self.perplexity,
+            'val_loss_normalized': self.val_loss_normalized,
+            'coherence_normalized': self.coherence_normalized,
+            'perplexity_normalized': self.perplexity_normalized,
+            'step': self.step,
+            'epoch': self.epoch,
+            'timestamp': self.timestamp,
+            'metrics_present': self.metrics_present,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ModelQualityScore':
+        """Create ModelQualityScore from dictionary."""
+        return cls(
+            val_loss=data.get('val_loss'),
+            coherence_score=data.get('coherence_score'),
+            perplexity=data.get('perplexity'),
+            val_loss_normalized=data.get('val_loss_normalized', 0.0),
+            coherence_normalized=data.get('coherence_normalized', 0.0),
+            perplexity_normalized=data.get('perplexity_normalized', 0.0),
+            quality_score=data.get('quality_score', 0.0),
+            step=data.get('step', 0),
+            epoch=data.get('epoch', 0),
+            timestamp=data.get('timestamp', time.time()),
+            metrics_present=data.get('metrics_present', {}),
+        )
+
+    def __gt__(self, other: 'ModelQualityScore') -> bool:
+        if not isinstance(other, ModelQualityScore):
+            return NotImplemented
+        return self.quality_score > other.quality_score
+
+    def __ge__(self, other: 'ModelQualityScore') -> bool:
+        if not isinstance(other, ModelQualityScore):
+            return NotImplemented
+        return self.quality_score >= other.quality_score
+
+    def __lt__(self, other: 'ModelQualityScore') -> bool:
+        if not isinstance(other, ModelQualityScore):
+            return NotImplemented
+        return self.quality_score < other.quality_score
+
+    def __le__(self, other: 'ModelQualityScore') -> bool:
+        if not isinstance(other, ModelQualityScore):
+            return NotImplemented
+        return self.quality_score <= other.quality_score
+
+    def __repr__(self) -> str:
+        parts = [f"quality={self.quality_score:.4f}"]
+        if self.val_loss is not None:
+            parts.append(f"val_loss={self.val_loss:.4f}")
+        if self.coherence_score is not None:
+            parts.append(f"coherence={self.coherence_score:.4f}")
+        if self.perplexity is not None:
+            parts.append(f"ppl={self.perplexity:.2f}")
+        return f"ModelQualityScore({', '.join(parts)})"
+
+
+class QualityScorer:
+    """Computes weighted quality scores from multiple metrics.
+
+    Handles normalization, inversion of lower-is-better metrics,
+    weighted combination, and missing metric handling.
+    """
+
+    def __init__(self, config: 'ModelSelectionConfig'):
+        """Initialize the quality scorer."""
+        self.config = config
+        self._validate_config()
+
+    def _validate_config(self) -> None:
+        """Validate configuration weights."""
+        total_weight = (
+            self.config.val_loss_weight +
+            self.config.coherence_score_weight +
+            self.config.perplexity_weight
+        )
+        if abs(total_weight - 1.0) > 0.01:
+            logger.warning(
+                f"Model selection weights sum to {total_weight:.2f}, not 1.0. "
+                "Scores will be normalized by actual weights used."
+            )
+
+    def compute(
+        self,
+        val_loss: Optional[float] = None,
+        coherence_score: Optional[float] = None,
+        perplexity: Optional[float] = None,
+        step: int = 0,
+        epoch: int = 0,
+    ) -> ModelQualityScore:
+        """Compute quality score from available metrics."""
+        score = ModelQualityScore(
+            val_loss=val_loss,
+            coherence_score=coherence_score,
+            perplexity=perplexity,
+            step=step,
+            epoch=epoch,
+        )
+
+        score.metrics_present = {
+            'val_loss': val_loss is not None,
+            'coherence_score': coherence_score is not None,
+            'perplexity': perplexity is not None,
+        }
+
+        # Normalize metrics to 0-1 scale (higher is better)
+        if val_loss is not None:
+            capped = min(max(val_loss, 0.0), self.config.val_loss_cap)
+            score.val_loss_normalized = 1.0 - (capped / self.config.val_loss_cap)
+
+        if coherence_score is not None:
+            score.coherence_normalized = max(0.0, min(1.0, coherence_score))
+
+        if perplexity is not None:
+            capped = min(max(perplexity, 1.0), self.config.perplexity_cap)
+            log_capped = math.log(capped)
+            log_cap = math.log(self.config.perplexity_cap)
+            score.perplexity_normalized = 1.0 - (log_capped / log_cap)
+
+        # Compute weighted combination
+        total_weight = 0.0
+        weighted_sum = 0.0
+
+        if val_loss is not None:
+            weighted_sum += self.config.val_loss_weight * score.val_loss_normalized
+            total_weight += self.config.val_loss_weight
+
+        if coherence_score is not None:
+            weighted_sum += self.config.coherence_score_weight * score.coherence_normalized
+            total_weight += self.config.coherence_score_weight
+
+        if perplexity is not None:
+            weighted_sum += self.config.perplexity_weight * score.perplexity_normalized
+            total_weight += self.config.perplexity_weight
+
+        if total_weight > 0:
+            score.quality_score = weighted_sum / total_weight
+        else:
+            score.quality_score = 0.0
+            logger.warning("No metrics available for quality score computation")
+
+        return score
+
+    def is_improvement(
+        self,
+        current: ModelQualityScore,
+        best: Optional[ModelQualityScore],
+    ) -> bool:
+        """Check if current score is an improvement over best."""
+        if best is None:
+            return True
+
+        if self.config.higher_is_better:
+            return current.quality_score > best.quality_score
+        else:
+            return current.quality_score < best.quality_score
+
+    def compute_from_coherence_metrics(
+        self,
+        val_loss: float,
+        coherence_metrics: Optional[Dict[str, Any]],
+        step: int = 0,
+        epoch: int = 0,
+    ) -> ModelQualityScore:
+        """Compute quality score from validation loss and coherence metrics dict."""
+        coherence_score = None
+        perplexity = None
+
+        if coherence_metrics:
+            coherence_score = coherence_metrics.get('coherence_score')
+            perplexity = coherence_metrics.get('perplexity')
+
+        return self.compute(
+            val_loss=val_loss,
+            coherence_score=coherence_score,
+            perplexity=perplexity,
+            step=step,
+            epoch=epoch,
+        )
+
+
+# =============================================================================
+# Validation Manager
+# =============================================================================
 
 
 class ValidationManager(ManagerInterface):

@@ -19,6 +19,9 @@ import json
 from .ppo_trainer import PPOTrainer, PPOConfig
 from .reward_model import RewardModel, ModelToModelReward
 
+# Import centralized WandB logger
+from ava.core.wandb_logger import WandBLogger, WANDB_AVAILABLE, get_wandb_logger
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,18 +173,22 @@ class RLHFTrainer:
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize wandb if enabled
+        # Initialize wandb if enabled using centralized logger
         self.use_wandb = config.use_wandb
+        self._wandb_logger = get_wandb_logger()
         if self.use_wandb:
-            try:
-                import wandb
-                wandb.init(
+            if WANDB_AVAILABLE:
+                success = self._wandb_logger.init(
                     project=config.wandb_project,
                     name=config.wandb_name,
                     config=vars(config)
                 )
-                logger.info("Initialized Weights & Biases logging")
-            except ImportError:
+                if success:
+                    logger.info("Initialized Weights & Biases logging")
+                else:
+                    logger.warning("Failed to initialize WandB, disabling wandb logging")
+                    self.use_wandb = False
+            else:
                 logger.warning("wandb not installed, disabling wandb logging")
                 self.use_wandb = False
 
@@ -533,8 +540,7 @@ class RLHFTrainer:
                     'global_step': self.global_step
                 }
                 if self.use_wandb:
-                    import wandb
-                    wandb.log(log_dict)
+                    self._wandb_logger.log(log_dict)
 
                 logger.info(f"Step {self.global_step}: " +
                           " | ".join([f"{k}: {v:.4f}" for k, v in log_dict.items() if k != 'global_step']))
@@ -543,8 +549,7 @@ class RLHFTrainer:
             if self.global_step % self.config.eval_every == 0:
                 eval_stats = self.evaluate()
                 if self.use_wandb:
-                    import wandb
-                    wandb.log({f'eval/{k}': v for k, v in eval_stats.items()})
+                    self._wandb_logger.log({f'eval/{k}': v for k, v in eval_stats.items()})
                 logger.info(f"Evaluation: " +
                           " | ".join([f"{k}: {v:.4f}" for k, v in eval_stats.items()]))
 
@@ -597,8 +602,7 @@ class RLHFTrainer:
             logger.info(f"  {k}: {v:.4f}")
 
         if self.use_wandb:
-            import wandb
-            wandb.finish()
+            self._wandb_logger.finish()
 
     def save_checkpoint(
         self,

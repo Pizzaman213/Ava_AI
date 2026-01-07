@@ -3,6 +3,38 @@ Optimizer manager for the Ava pipeline.
 
 Handles optimizer and learning rate scheduler creation with support for
 multiple optimizer types and proper fallback handling.
+
+Optimizer Fallback Chain:
+    When a requested optimizer is unavailable (package not installed),
+    the manager falls back gracefully:
+
+    Requested     → Check availability → If unavailable → Fallback
+    ─────────────────────────────────────────────────────────────────
+    lion          → LION_AVAILABLE     → False          → AdamW
+    galore        → GALORE_AVAILABLE   → False          → AdamW
+    adamw8bit     → ADAMW8BIT_AVAILABLE → False         → AdamW
+    adafactor     → ADAFACTOR_AVAILABLE → False         → AdamW
+    adamw         → Always available   → (default)
+
+Supported Optimizers:
+    - AdamW (torch.optim.AdamW): Default, always available
+      Best for: General training, stable convergence
+
+    - Lion (lion_pytorch.Lion): Memory efficient, requires pip install lion-pytorch
+      Best for: Large models, memory constrained, faster convergence
+
+    - GaLore (galore_torch.GaLoreAdamW): Low-rank projection, requires pip install galore-torch
+      Best for: Training with low-rank gradients
+
+    - AdamW8bit (bitsandbytes.AdamW8bit): 8-bit optimizer, requires pip install bitsandbytes
+      Best for: Memory savings on GPU, may need epsilon adjustment for bf16
+
+    - Adafactor (transformers.Adafactor): Memory efficient, requires pip install transformers
+      Best for: Very large models, no momentum storage overhead
+
+Epsilon Adjustment:
+    For bf16 training, epsilon is increased from default 1e-8 to 1e-6
+    to prevent denormalized values which cause numerical instability.
 """
 
 import logging
@@ -485,6 +517,67 @@ class OptimizerManager(ManagerInterface):
     def on_error(self, error: Exception) -> None:
         """Handle optimizer errors."""
         self.logger.error(f"Optimizer error: {error}", exc_info=True)
+
+    def create_adaptive_lr_manager(
+        self,
+        enable_plateau_detection: bool = True,
+        enable_spike_detection: bool = True,
+        plateau_patience: int = 500,
+        min_lr: float = 1e-6,
+        max_lr: float = 1e-3,
+    ) -> Optional[Any]:
+        """
+        Create an adaptive learning rate manager that wraps the optimizer.
+
+        This integrates with ava.optimizations.lr_managers.AdaptiveLearningRateManager
+        to provide real-time LR adaptation based on training dynamics.
+
+        Args:
+            enable_plateau_detection: Reduce LR on loss plateau
+            enable_spike_detection: Emergency LR reduction on loss spikes
+            plateau_patience: Steps before plateau reduction
+            min_lr: Minimum learning rate
+            max_lr: Maximum learning rate
+
+        Returns:
+            AdaptiveLearningRateManager instance or None if unavailable
+        """
+        self.assert_initialized()
+
+        if self.optimizer is None:
+            self.logger.warning("Cannot create adaptive LR manager: optimizer not created")
+            return None
+
+        try:
+            from ava.optimizations.lr_managers import (
+                AdaptiveLearningRateManager,
+                AdaptiveLRConfig,
+            )
+
+            config = AdaptiveLRConfig(
+                plateau_patience=plateau_patience,
+                min_lr=min_lr,
+                max_lr=max_lr,
+            )
+
+            adaptive_manager = AdaptiveLearningRateManager(
+                optimizer=self.optimizer,
+                config=config,
+            )
+
+            self.logger.info(
+                f"Created adaptive LR manager: plateau_patience={plateau_patience}, "
+                f"min_lr={min_lr:.2e}, max_lr={max_lr:.2e}"
+            )
+
+            return adaptive_manager
+
+        except ImportError:
+            self.logger.warning(
+                "AdaptiveLearningRateManager not available. "
+                "Using standard scheduler only."
+            )
+            return None
 
 
 def get_optimizer_availability() -> Dict[str, bool]:

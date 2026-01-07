@@ -73,6 +73,10 @@ def create_streaming_dataloaders(
     dev_log_config: Optional[Any] = None,
     shuffle_seed: Optional[int] = None,
     enable_length_sorting: bool = True,
+    progressive_buffer: bool = True,
+    min_buffer_size: int = 128,
+    warm_start_files: Optional[int] = None,
+    examples_per_random_select: int = 20,
 ) -> Tuple[Any, Any]:
     """
     Create optimized streaming train and validation dataloaders.
@@ -207,6 +211,10 @@ def create_streaming_dataloaders(
         'dev_log_config': dev_log_config,
         'validation_rate': 0.0,
         'shuffle_seed': shuffle_seed,
+        'progressive_buffer': progressive_buffer,
+        'min_buffer_size': min_buffer_size,
+        'warm_start_files': warm_start_files,
+        'examples_per_random_select': examples_per_random_select,
     }
 
     # Training dataset
@@ -249,6 +257,7 @@ def create_streaming_dataloaders(
         data_mixer=None,
         samples_per_file=samples_per_file,
         shuffle_seed=shuffle_seed,
+        examples_per_random_select=examples_per_random_select,
     )
 
     # Use spawn method for multiprocessing with Arrow files
@@ -264,7 +273,7 @@ def create_streaming_dataloaders(
         'prefetch_factor': prefetch_factor if num_workers > 0 else None,
         'persistent_workers': persistent_workers if num_workers > 0 else False,
         'multiprocessing_context': 'spawn' if num_workers > 0 else None,
-        'timeout': 120 if num_workers > 0 else 0,
+        'timeout': 0,  # Disabled - prevents timeout errors with large datasets
         'worker_init_fn': _worker_init_fn if num_workers > 0 else None,
         'collate_fn': None
     }
@@ -330,6 +339,86 @@ def create_streaming_dataloaders(
     return train_loader, val_loader
 
 
+# =============================================================================
+# Unified Factory Function
+# =============================================================================
+
+def create_dataloaders(
+    mode: str = 'streaming',
+    **kwargs,
+) -> Tuple[Any, Any]:
+    """
+    Unified factory function for creating dataloaders.
+
+    This is the single entry point for all dataloader creation. It dispatches
+    to the appropriate specialized factory based on mode.
+
+    Args:
+        mode: Dataloader mode:
+            - 'streaming': Memory-efficient streaming (default)
+            - 'indexed': Map-style with true random shuffling
+            - 'pretokenized': Ultra-fast pretokenized Arrow loading
+            - 'multi_column': Multi-column dataset support
+            - 'conversation': Turn-aware conversation loading
+        **kwargs: Arguments passed to the specialized factory
+
+    Returns:
+        Tuple of (train_loader, val_loader)
+
+    Example:
+        >>> # Streaming mode (default)
+        >>> train, val = create_dataloaders(
+        ...     mode='streaming',
+        ...     tokenizer=tokenizer,
+        ...     batch_size=32,
+        ...     data_dir='/path/to/data',
+        ... )
+
+        >>> # Indexed mode
+        >>> train, val = create_dataloaders(
+        ...     mode='indexed',
+        ...     data_dir='/path/to/data',
+        ...     batch_size=32,
+        ...     max_length=2048,
+        ... )
+
+        >>> # Pretokenized mode
+        >>> train, val = create_dataloaders(
+        ...     mode='pretokenized',
+        ...     batch_size=32,
+        ...     max_length=2048,
+        ...     data_dir='/path/to/pretokenized',
+        ... )
+    """
+    if mode == 'streaming':
+        return create_streaming_dataloaders(**kwargs)
+
+    elif mode == 'indexed':
+        from .indexed import create_indexed_dataloaders
+        return create_indexed_dataloaders(**kwargs)
+
+    elif mode == 'pretokenized':
+        from .pretokenized import create_ultra_fast_dataloaders
+        return create_ultra_fast_dataloaders(**kwargs)
+
+    elif mode == 'multi_column':
+        from .multi_column import create_multi_column_dataloader
+        # multi_column returns a single dataloader, wrap for consistency
+        loader = create_multi_column_dataloader(**kwargs)
+        return loader, None
+
+    elif mode == 'conversation':
+        from .conversation import create_turn_aware_dataloaders
+        return create_turn_aware_dataloaders(**kwargs)
+
+    else:
+        raise ValueError(
+            f"Unknown dataloader mode: {mode}. "
+            f"Valid modes: streaming, indexed, pretokenized, multi_column, conversation"
+        )
+
+
 __all__ = [
     'create_streaming_dataloaders',
+    'create_dataloaders',
 ]

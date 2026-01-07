@@ -9,22 +9,22 @@ Advanced LLM training framework with Mixture of Experts (MoE++) architecture, op
 python code/scripts/5_training/train_pipeline.py --config code/configs/moe/large.yaml
 
 # Multi-GPU training
-torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py --config code/configs/moe/large_Multy.yaml
+torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py --config code/configs/moe/Min_multy.yaml
 
 # Fine-tuning from checkpoint
 python code/scripts/5_training/finetune.py
 
 # RLHF training
-python code/scripts/6_rhlf_Finetuning/train_rlhf.py
+python code/scripts/6_rhlf_Finetuning/train_rlhf.py --config code/configs/rlhf/rlhf_config.yaml
 
-# Data download
-python code/scripts/1_data_download/unified_download.py
+# Build pre-tokenized data
+python code/scripts/1_data_download/build_pretokenized_data.py
+
+# Train custom tokenizer
+python code/scripts/1_data_download/train_custom_tokenizer.py
 
 # Text generation
 python code/scripts/7_generation/generate.py --prompt "Once upon a time"
-
-# Check dependencies
-python code/scripts/check_dependencies.py
 ```
 
 ## Project Structure
@@ -47,7 +47,9 @@ python code/scripts/check_dependencies.py
 │   │   │   │   ├── data_utils.py        # Collation, data helpers
 │   │   │   │   ├── activations.py       # Activation factory
 │   │   │   │   ├── logging.py           # Colored logging
-│   │   │   │   └── script_utils.py      # Script helpers
+│   │   │   │   ├── script_utils.py      # Script helpers
+│   │   │   │   ├── wandb_logger.py      # WandB integration
+│   │   │   │   └── error_tracking.py    # Error tracking utilities
 │   │   │   │
 │   │   │   ├── cuda/               # CUDA utilities
 │   │   │   │   ├── streams.py           # StreamPool, CUDATimer
@@ -65,7 +67,8 @@ python code/scripts/check_dependencies.py
 │   │   │   │   ├── conversation.py      # Turn-aware dialogue loading
 │   │   │   │   ├── packing.py           # Sequence packing
 │   │   │   │   ├── validation.py        # Data validation utilities
-│   │   │   │   └── dataloader.py        # DataLoader utilities
+│   │   │   │   ├── indexed.py           # Indexed dataset support
+│   │   │   │   └── dynamic_batch_iterator.py  # Dynamic batching
 │   │   │   │
 │   │   │   ├── nn/                 # Neural network layers
 │   │   │   │   ├── experts.py           # HighPerformanceExpert, ExpertParallelGroup
@@ -94,7 +97,13 @@ python code/scripts/check_dependencies.py
 │   │   │   │   ├── metrics.py           # MetricsManager
 │   │   │   │   ├── run_manager.py       # Experiment tracking, logging
 │   │   │   │   ├── pipeline.py          # TrainingPipeline
-│   │   │   │   └── distributed.py       # DDP/FSDP setup
+│   │   │   │   ├── distributed.py       # DDP/FSDP setup
+│   │   │   │   ├── distributed_sync.py  # Distributed synchronization
+│   │   │   │   ├── state_guard.py       # Training state management
+│   │   │   │   ├── quality_score.py     # Quality scoring utilities
+│   │   │   │   ├── diagnostics.py       # Training diagnostics
+│   │   │   │   ├── deepspeed_utils.py   # DeepSpeed utilities
+│   │   │   │   └── deepspeed_config_builder.py  # DeepSpeed config generation
 │   │   │   │
 │   │   │   ├── optimizations/      # Training optimizations
 │   │   │   │   ├── checkpointing.py     # Gradient checkpointing
@@ -104,7 +113,8 @@ python code/scripts/check_dependencies.py
 │   │   │   │   ├── batch_controller.py  # Batch size control
 │   │   │   │   ├── prefetch.py          # Async batch prefetching
 │   │   │   │   ├── gradients.py         # Gradient utilities
-│   │   │   │   └── quantization.py      # Quantization helpers
+│   │   │   │   ├── quantization.py      # Quantization helpers
+│   │   │   │   └── oom_recovery.py      # OOM recovery utilities
 │   │   │   │
 │   │   │   ├── strategies/         # Training strategies
 │   │   │   │   └── progressive.py       # Curriculum learning
@@ -121,9 +131,9 @@ python code/scripts/check_dependencies.py
 │   │       └── reward_model.py          # Reward model
 │   │
 │   ├── scripts/                    # Executable scripts
-│   │   ├── 1_data_download/        # Data downloading
-│   │   │   ├── unified_download.py      # Multi-dataset downloader
-│   │   │   └── download_openorca.py     # OpenOrca downloader
+│   │   ├── 1_data_download/        # Data preparation
+│   │   │   ├── build_pretokenized_data.py   # Build pre-tokenized datasets
+│   │   │   └── train_custom_tokenizer.py    # Train custom tokenizer
 │   │   │
 │   │   ├── 5_training/             # Training scripts
 │   │   │   ├── train_pipeline.py        # Main training script
@@ -136,27 +146,24 @@ python code/scripts/check_dependencies.py
 │   │   │   ├── test_rlhf_cpu.py         # RLHF CPU testing
 │   │   │   └── test_training_cpu.py     # Training CPU testing
 │   │   │
-│   │   ├── 7_generation/           # Text generation
-│   │   │   └── generate.py              # Generation interface
-│   │   │
-│   │   └── check_dependencies.py   # Dependency checker
+│   │   └── 7_generation/           # Text generation
+│   │       └── generate.py              # Generation interface
 │   │
 │   ├── configs/                    # Configuration files
 │   │   ├── moe/                    # MoE configurations
 │   │   │   ├── large.yaml               # Production config (200M+ params)
 │   │   │   ├── minimal_working.yaml     # Testing/development (62M params)
-│   │   │   ├── large_Multy.yaml         # Multi-GPU configuration
-│   │   │   ├── mw_8bit.yaml             # 8-bit quantized training
-│   │   │   ├── max_randomness.yaml      # Maximum data randomization
-│   │   │   └── deterministic.yaml       # Deterministic training
+│   │   │   ├── minimal_working_fixed.yaml   # Fixed minimal config
+│   │   │   └── Min_multy.yaml           # Multi-GPU configuration
 │   │   │
-│   │   ├── distributed/            # Distributed training
-│   │   │   ├── deepspeed_zero1.yaml
-│   │   │   ├── deepspeed_zero2.yaml
-│   │   │   └── deepspeed_zero3.yaml
+│   │   ├── rlhf/                   # RLHF configurations
+│   │   │   ├── rlhf_config.yaml         # Full RLHF config
+│   │   │   └── rlhf_minimal.yaml        # Minimal RLHF config
 │   │   │
-│   │   └── memory/                 # Memory optimization
-│   │       └── memory_efficient_optimizers.yaml
+│   │   └── distributed/            # Distributed training
+│   │       ├── deepspeed_zero1.yaml
+│   │       ├── deepspeed_zero2.yaml
+│   │       └── deepspeed_zero3.yaml
 │   │
 │   ├── data/                       # Training data (local)
 │   │   ├── fine-tuning/            # Fine-tuning datasets (Arrow format)
@@ -165,15 +172,23 @@ python code/scripts/check_dependencies.py
 │   ├── outputs/                    # Training outputs
 │   │   └── pretraining/            # Pre-training runs
 │   │
-│   ├── docs/                       # Documentation (28 guides)
+│   ├── docs/                       # Documentation (11 guides)
+│   │   ├── README.md
+│   │   ├── 01_GETTING_STARTED.md
+│   │   ├── 02_ARCHITECTURE.md
+│   │   ├── 03_TRAINING_GUIDE.md
+│   │   ├── 04_CONFIGURATION.md
+│   │   ├── 05_DATA_PIPELINE.md
+│   │   ├── 06_DISTRIBUTED.md
+│   │   ├── 07_RLHF.md
+│   │   ├── 08_API_REFERENCE.md
+│   │   ├── 09_TROUBLESHOOTING.md
+│   │   └── 10_PERFORMANCE.md
 │   │
 │   └── tests/                      # Test suite
-│       ├── test_coherence.py
-│       ├── test_data_loader_fixes.py
-│       ├── test_kernel_diagnostics.py
-│       ├── test_triton_softmax_topk.py
-│       └── test_triton_topk_fix.py
+│       └── test_all.py                  # Unified test runner
 │
+├── pretokenized_data/              # Pre-tokenized datasets
 ├── data/                           # Root data directory
 ├── models/                         # Root model checkpoints
 ├── wandb/                          # WandB tracking
@@ -188,12 +203,11 @@ python code/scripts/check_dependencies.py
 |--------|----------|
 | `moe/large.yaml` | Production training (200M+ params) |
 | `moe/minimal_working.yaml` | Development and testing (62M params) |
-| `moe/large_Multy.yaml` | Multi-GPU distributed training |
-| `moe/mw_8bit.yaml` | 8-bit quantized training |
-| `moe/max_randomness.yaml` | Maximum data randomization |
-| `moe/deterministic.yaml` | Reproducible deterministic training |
+| `moe/minimal_working_fixed.yaml` | Fixed minimal config for testing |
+| `moe/Min_multy.yaml` | Multi-GPU distributed training |
+| `rlhf/rlhf_config.yaml` | Full RLHF training configuration |
+| `rlhf/rlhf_minimal.yaml` | Minimal RLHF for testing |
 | `distributed/deepspeed_zero*.yaml` | DeepSpeed ZeRO configurations |
-| `memory/memory_efficient_optimizers.yaml` | Memory-optimized optimizer settings |
 
 ## Key Features
 
@@ -238,6 +252,7 @@ The training scripts automatically handle missing tokenizer special tokens by us
 - **Overlapped Recomputation**: Parallel backward pass computation
 - **Progressive Training**: Curriculum learning, sequence length scaling
 - **Grouped GEMM**: Efficient expert computation
+- **OOM Recovery**: Automatic recovery from out-of-memory errors
 
 ### Data Loading
 - **Pre-tokenized Loading**: Memory-mapped Arrow files
@@ -245,6 +260,7 @@ The training scripts automatically handle missing tokenizer special tokens by us
 - **Sequence Packing**: Efficient utilization by eliminating padding
 - **Multi-Column Datasets**: Text, numeric, categorical, image, tensor support
 - **Streaming**: Memory-efficient large dataset processing
+- **Dynamic Batching**: Adaptive batch sizes based on sequence length
 
 ### Distributed Training
 - **DDP**: Data Distributed Parallel for multi-GPU
@@ -279,7 +295,7 @@ python code/scripts/5_training/train_pipeline.py --config code/configs/moe/large
 
 # Multi-GPU
 torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py \
-  --config code/configs/moe/large_Multy.yaml
+  --config code/configs/moe/Min_multy.yaml
 
 # Resume from checkpoint
 python code/scripts/5_training/train_pipeline.py \
@@ -301,7 +317,11 @@ python code/scripts/5_training/finetune.py --use-all-files
 
 ### RLHF Training
 ```bash
-python code/scripts/6_rhlf_Finetuning/train_rlhf.py --config <config_file>
+# Full RLHF training
+python code/scripts/6_rhlf_Finetuning/train_rlhf.py --config code/configs/rlhf/rlhf_config.yaml
+
+# Minimal RLHF for testing
+python code/scripts/6_rhlf_Finetuning/train_rlhf.py --config code/configs/rlhf/rlhf_minimal.yaml
 ```
 
 ### Text Generation
@@ -316,23 +336,22 @@ python code/scripts/7_generation/generate.py --interactive --temperature 0.8
 python code/scripts/7_generation/generate.py --input-file prompts.txt --output-file responses.txt
 ```
 
-### Data Download
+### Data Preparation
 ```bash
-# Full download
-python code/scripts/1_data_download/unified_download.py
+# Build pre-tokenized dataset
+python code/scripts/1_data_download/build_pretokenized_data.py
 
-# Limited partitions
-python code/scripts/1_data_download/unified_download.py --max-partitions 10
+# Train custom tokenizer
+python code/scripts/1_data_download/train_custom_tokenizer.py
 ```
 
 ### Testing
 ```bash
-python code/tests/test_coherence.py
-python code/tests/test_kernel_diagnostics.py
+python code/tests/test_all.py
 ```
 
 ## Outputs Location
-- **Training Runs**: `code/outputs/pretraining/run_YYYYMMDD_HHMMSS/`
+- **Training Runs**: `code/outputs/pretraining/ava_training_YYYYMMDD_HHMMSS_*/`
 - **Checkpoints**: `code/outputs/pretraining/*/checkpoints/`
 - **WandB Logs**: `code/scripts/5_training/wandb/`
 
@@ -393,10 +412,13 @@ data:
 ## Documentation
 
 Comprehensive guides in `code/docs/`:
-- `01_ARCHITECTURE.md` - System design
-- `02_TRAINING_GUIDE.md` - Training procedures
-- `03_MEMORY_OPTIMIZATION.md` - Memory techniques
-- `05_OPTIMIZATION_GUIDE.md` - Optimization strategies
-- `07_CONFIGURATION_SYSTEM.md` - Config reference
-- `TURN_AWARE_DATA_LOADING.md` - Conversation handling
-- `AVA_MODEL_API.md` - Model API reference
+- `01_GETTING_STARTED.md` - Quick start guide
+- `02_ARCHITECTURE.md` - System design
+- `03_TRAINING_GUIDE.md` - Training procedures
+- `04_CONFIGURATION.md` - Config reference
+- `05_DATA_PIPELINE.md` - Data loading system
+- `06_DISTRIBUTED.md` - Distributed training
+- `07_RLHF.md` - RLHF training guide
+- `08_API_REFERENCE.md` - API documentation
+- `09_TROUBLESHOOTING.md` - Common issues
+- `10_PERFORMANCE.md` - Performance optimization

@@ -1,10 +1,34 @@
 #!/usr/bin/env python3
 """
-Ava Pipeline Training Script
+Ava Pipeline Training Script - Main entry point for MoE model training.
 
 This is the new pipeline-based training script that uses the modular
 Ava component architecture. It replaces the monolithic train_100m_full.py
 with a cleaner, more maintainable structure.
+
+Training Pipeline Phases:
+    Phase 0:  Dependency checking (optional, quick package verification)
+    Phase 1:  Distributed setup (DDP/single GPU, rank/world_size)
+    Phase 2:  Configuration loading (YAML → dict, path resolution)
+    Phase 3:  RunManager setup (output directories, logging)
+    Phase 4:  TrainingContext creation (shared state hub)
+    Phase 5:  TrainingPipeline registration (component wiring)
+    Phase 6:  Model building (create → optimize → move → wrap DDP)
+    Phase 6.1: Batch size calibration (optional, auto-tune for GPU memory)
+    Phase 7:  Optimizer & scheduler creation
+    Phase 7.1: Checkpoint loading (if resuming from previous run)
+    Phase 8:  DataLoader creation (streaming, pre-tokenized, etc.)
+    Phase 8.1: Scheduler creation (needs total_steps from DataLoader)
+    Phase 9:  Metrics setup (WandB, logging, validation manager)
+    Phase 10: Additional components (diagnostics, generation)
+    Phase 11: Training loop (epochs, validation, checkpointing)
+    Phase 12: Finalization (metrics summary, cleanup)
+
+Key Design Decisions:
+    - Phases are ordered for dependency satisfaction (model before optimizer)
+    - Cleanup is in reverse order to prevent resource deadlocks
+    - Batch calibration is optional and runs before DataLoader creation
+    - Distributed barriers synchronize ranks at critical points
 
 Usage:
     python train_pipeline.py --config code/configs/moe/large.yaml
@@ -59,7 +83,7 @@ from ava.training import (
     cleanup_distributed,
 )
 from ava.training.diagnostics import DiagnosticsManager
-from ava.training.distributed_sync import DistributedStateManager
+from ava.training.distributed import DistributedStateManager
 from ava.config.yaml_loader import load_yaml_with_path_resolution
 from ava.config.training_config import DynamicConfig, ModelSelectionConfig, DiagnosticsConfig
 # Issue #10 fix: Guard Triton import in case ava.kernels fails to load
@@ -108,8 +132,16 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
     """
     Log detailed status of all optimization features at training start.
 
-    Provides visibility into which optimizations are enabled/disabled
-    with performance impact estimates and configuration details.
+    This function displays a comprehensive report of:
+    - Model architecture and parameter count
+    - Memory optimizations (gradient checkpointing, flash attention, etc.)
+    - Training configuration (batch size, learning rate, precision)
+    - Data loading optimizations (pre-tokenization, sequence packing)
+    - Advanced memory techniques (hybrid caching, overlapped computation)
+    - Performance settings (TF32, CuDNN benchmarking)
+    - Overall optimization score and recommendations
+
+    Only logs on rank 0 to avoid duplicate output in distributed training.
     """
     if rank != 0:
         return
@@ -128,6 +160,9 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     # ═══════════════════════════════════════════════════════════════════
     # Model Architecture Summary
+    # Shows: hidden dimensions, layer count, attention heads, MoE experts,
+    # vocabulary size, and estimated parameter count. These metrics help
+    # understand model capacity and memory requirements.
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.BRAIN} Model Architecture")
     hidden_size = model_config.get('hidden_size', 768)
@@ -161,6 +196,9 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     # ═══════════════════════════════════════════════════════════════════
     # Model Optimizations (Memory & Speed)
+    # These are techniques that reduce memory usage or improve training speed
+    # at the model level: flash attention, gradient checkpointing, compiled
+    # kernels, and other architectural optimizations.
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.LIGHTNING} Model Optimizations")
 
@@ -189,6 +227,9 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     # ═══════════════════════════════════════════════════════════════════
     # Training Configuration
+    # Core training hyperparameters: batch size, learning rate, optimizer
+    # choice, mixed precision settings (FP16/BF16/FP32), weight decay,
+    # and maximum sequence length. These directly impact learning dynamics.
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.TARGET} Training Configuration")
 
@@ -213,6 +254,9 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     # ═══════════════════════════════════════════════════════════════════
     # Data Loading
+    # Shows efficiency improvements in data pipeline: pre-tokenized (Arrow
+    # files), sequence packing (reduces padding), lazy file discovery
+    # (streaming mode), and number of data loading workers.
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.DATA} Data Loading")
 
@@ -235,6 +279,11 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     # ═══════════════════════════════════════════════════════════════════
     # Advanced Memory Optimizations
+    # Sophisticated techniques for handling very large models and sequences:
+    # - Hybrid caching: Mixes KV cache and activation caching
+    # - Overlapped checkpointing: Runs backward pass during forward
+    # - Double checkpointing: Reduces memory to O(sqrt(N)) for long sequences
+    # - FP8 training: Ultra-low precision for H100+ GPUs only
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.FIRE} Advanced Memory Optimizations")
 
@@ -257,6 +306,10 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     # ═══════════════════════════════════════════════════════════════════
     # Performance Backend Settings
+    # Low-level GPU/CUDA optimizations that can boost performance:
+    # - Torch compile: JIT compiles model graph (15-25% speedup after warmup)
+    # - TF32: Fast reduced precision on Ampere+ GPUs
+    # - CuDNN benchmark: Auto-tunes convolution algorithms
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.ROCKET} Performance Backend")
 
@@ -489,10 +542,27 @@ def create_calibration_dataloader(
 
 
 def main(args: argparse.Namespace) -> None:
-    """Main training function using the Ava pipeline architecture."""
+    """
+    Main training function using the Ava pipeline architecture.
+
+    This function orchestrates the complete training pipeline in phases:
+    0. Dependency checking (optional)
+    1. Distributed setup (DDP/single GPU)
+    2. Configuration loading and validation
+    3. RunManager setup (output directory structure)
+    4. TrainingContext creation (shared state hub)
+    5. TrainingPipeline registration (component wiring)
+    6. Model building (creation + optimizations + device movement)
+    7. Batch size calibration (optional auto-tuning)
+    8. DataLoader creation and scheduler setup
+    9. Metrics and validation manager setup
+    10. Training loop execution
+    11. Training complete (finalization)
+    """
 
     # =========================================================================
     # Phase 0: Dependency Check
+    # Verifies all required packages are available (transformers, torch, etc.)
     # =========================================================================
     if not getattr(args, 'skip_dep_check', False):
         # Import here to avoid circular imports and keep startup fast when skipped
@@ -515,6 +585,8 @@ def main(args: argparse.Namespace) -> None:
 
     # =========================================================================
     # Phase 1: Distributed Setup
+    # Initialize DDP for multi-GPU or single GPU training.
+    # Sets up rank (process ID) and world_size (total processes).
     # =========================================================================
     rank, world_size = setup_distributed()
 
@@ -528,6 +600,8 @@ def main(args: argparse.Namespace) -> None:
 
     # =========================================================================
     # Phase 2: Load Configuration
+    # Load YAML config and extract key sections (model, training, data).
+    # YAML paths are resolved relative to config file location.
     # =========================================================================
     try:
         config = load_yaml_with_path_resolution(args.config)
@@ -616,6 +690,11 @@ def main(args: argparse.Namespace) -> None:
 
     # =========================================================================
     # Phase 3: Create RunManager (Ava's output organizer)
+    # RunManager handles output directory structure:
+    # - Run folder: {output_dir}/pretraining/run_YYYYMMDD_HHMMSS_ID/
+    # - Checkpoints: run_folder/checkpoints/
+    # - Logs: run_folder/logs/
+    # - Config copies: run_folder/*.yaml
     # =========================================================================
     run_manager = RunManager(
         base_output_dir=str(output_dir),
@@ -701,6 +780,11 @@ def main(args: argparse.Namespace) -> None:
 
     # =========================================================================
     # Phase 4: Create TrainingContext (Ava's shared state hub)
+    # TrainingContext is a central object that all managers access for:
+    # - Model and optimizer references
+    # - Device, rank, world_size for distributed training
+    # - Config and RunManager for output/logging
+    # - Metadata dict for storing runtime state (resume_step, etc.)
     # =========================================================================
     context = TrainingContext(
         model=None,  # Will be set by ModelBuilder
@@ -715,6 +799,11 @@ def main(args: argparse.Namespace) -> None:
 
     # =========================================================================
     # Phase 5: Create TrainingPipeline and Register Components
+    # The TrainingPipeline acts as a central component manager that:
+    # - Registers all manager components (model, optimizer, data, etc.)
+    # - Calls lifecycle hooks (on_epoch_start, on_epoch_end, etc.)
+    # - Handles component errors and cleanup
+    # Components are retrieved with: pipeline.get('model'), etc.
     # =========================================================================
     pipeline = TrainingPipeline(context)
 
@@ -730,6 +819,13 @@ def main(args: argparse.Namespace) -> None:
     try:
         # =====================================================================
         # Phase 6: Build Model
+        # Builds MoE model with full pipeline:
+        # 1. Create model (EnhancedMoEModel)
+        # 2. Apply quantization if enabled (8-bit, 4-bit, etc.)
+        # 3. Apply pre-device optimizations (torch.compile on CPU)
+        # 4. Move to GPU
+        # 5. Apply post-device optimizations (FP8, gradient checkpointing)
+        # 6. Wrap in DDP for multi-GPU
         # =====================================================================
         model_builder = pipeline.get('model')
         model_builder.initialize()
@@ -761,6 +857,12 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 6.1: Batch Size Calibration (Independent from Dynamic Batching)
+        # Auto-tunes optimal batch size to maximize GPU utilization while
+        # staying within memory limits. Features:
+        # - Real DataLoader or synthetic batches (full-length sequences)
+        # - Binary search between min and max batch size
+        # - Target memory % (default 70%)
+        # - Synchronizes across all GPUs (uses MIN in multi-GPU)
         # =====================================================================
         calibration_config = config.get('batch_size_calibration', {})
         calibration_enabled = calibration_config.get('enabled', False)
@@ -882,7 +984,26 @@ def main(args: argparse.Namespace) -> None:
                                 train_logger.warning("Failed to create calibration DataLoader, using synthetic batches")
                             use_real_dataloader = False
 
-                # Create sample batch function (real DataLoader or synthetic)
+                # ═══════════════════════════════════════════════════════════════
+                # BATCH SAMPLING STRATEGY
+                # Calibration needs a function to produce batches of variable sizes.
+                # Two strategies are available:
+                #
+                # 1. REAL DataLoader (use_real_dataloader=True):
+                #    - Uses actual training data from disk/network
+                #    - More accurate: includes I/O overhead and realistic tensor shapes
+                #    - Slower: requires tokenizer and dataset setup
+                #    - May fail if data is unavailable
+                #
+                # 2. SYNTHETIC Batches (fallback):
+                #    - Generates random tensors matching max_length
+                #    - Faster: no I/O, no tokenizer needed
+                #    - Less accurate: doesn't reflect real data distribution
+                #    - Always works: no external dependencies
+                #
+                # The sample_batch_fn() is called by BatchSizeController during
+                # binary search to test if a given batch size fits in GPU memory.
+                # ═══════════════════════════════════════════════════════════════
                 if use_real_dataloader and calib_loader is not None:
                     if rank == 0:
                         train_logger.info("Using REAL DataLoader for calibration (includes I/O overhead)")
@@ -891,6 +1012,7 @@ def main(args: argparse.Namespace) -> None:
                     calib_iter = iter(calib_loader)
 
                     # Retry counter to prevent infinite recursion on empty/broken DataLoader
+                    # If DataLoader fails 3 times, we fall back to synthetic batches
                     _sample_retry_count = [0]  # Use list to allow mutation in closure
                     _MAX_SAMPLE_RETRIES = 3
 
@@ -1210,6 +1332,9 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 7: Create Optimizer (scheduler created after dataloader)
+        # Creates optimizer (AdamW, SGD, etc.) with settings from config.
+        # Learning rate comes from CLI > config.training.optimizer.learning_rate.
+        # Scheduler is created later after we know total_steps from dataloader.
         # =====================================================================
         optimizer_mgr = pipeline.get('optimizer')
         optimizer_mgr.initialize()
@@ -1223,6 +1348,8 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 7.1: Load Checkpoint if Resuming
+        # Restores model and optimizer state from checkpoint.
+        # Returns resume_epoch and resume_step to continue from there.
         # =====================================================================
         if args.resume:
             resume_path = Path(args.resume)
@@ -1240,6 +1367,11 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 8: Create DataLoaders
+        # Creates train and validation dataloaders with:
+        # - Tokenizer loading (multiple fallback paths)
+        # - Pre-tokenized or streaming datasets
+        # - Sequence packing (optional)
+        # - Multiple workers for parallel loading
         # =====================================================================
         data_mgr = pipeline.get('data')
         data_mgr.initialize()
@@ -1352,6 +1484,11 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 8.1: Create Scheduler (now that we know total_steps)
+        # Creates learning rate scheduler with:
+        # - Scheduler type (cosine, linear, etc.)
+        # - Warmup steps (linear ramp from 0 to LR)
+        # - Total steps (calculated from epochs * loader_len / grad_accum)
+        # - Minimum LR floor (for cosine annealing)
         # =====================================================================
         # Schedule config can be at training.schedule or training level
         schedule_config = training_config.get('schedule', {})
@@ -1373,6 +1510,10 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 9: Setup Metrics
+        # Initializes metrics tracking:
+        # - WandB integration (if enabled)
+        # - Local logging (CSV, JSON)
+        # - WandB directory inside run folder
         # =====================================================================
         metrics_mgr = pipeline.get('metrics')
         metrics_mgr.initialize()
@@ -1391,6 +1532,10 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 10: Initialize Remaining Components
+        # Sets up validation manager, generation manager, and diagnostics:
+        # - Quality scoring (multi-metric model selection)
+        # - Generation config (sampling parameters)
+        # - Diagnostics (per-layer gradients, routing analysis, etc.)
         # =====================================================================
         validation_mgr = pipeline.get('validation')
         validation_mgr.initialize()
@@ -1505,6 +1650,13 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 11: Training Loop
+        # Main training loop that:
+        # - Iterates through epochs (respecting resume_epoch)
+        # - Calls train_epoch() for each epoch
+        # - Optionally validates (every val_interval epochs)
+        # - Saves checkpoints and best models
+        # - Checks max_steps termination condition
+        # - Notifies components via on_epoch_start/end hooks
         # =====================================================================
         if rank == 0:
             print_phase(11, "Training Loop")
@@ -1549,7 +1701,21 @@ def main(args: argparse.Namespace) -> None:
                     train_logger.info(f"Reached max_steps ({loop_config.max_steps}), stopping training")
                 break
 
-            # Validation
+            # ═══════════════════════════════════════════════════════════════════
+            # VALIDATION & MULTI-METRIC MODEL SELECTION
+            # Runs every val_interval epochs to evaluate model quality.
+            #
+            # Quality Score Formula (when model_selection.enabled=true):
+            #   quality = (val_loss_weight * normalized_val_loss) +
+            #             (coherence_weight * coherence_score) +
+            #             (perplexity_weight * normalized_perplexity)
+            #
+            # Where normalized values are capped to prevent outliers from
+            # dominating: val_loss_cap=10.0, perplexity_cap=100.0
+            #
+            # Best model selection: Lower quality score = better model
+            # (not just lowest val_loss, but balanced across all metrics)
+            # ═══════════════════════════════════════════════════════════════════
             if val_loader is not None and (epoch + 1) % val_interval == 0:
                 val_loss = validation_mgr.validate(
                     model=model,
@@ -1565,6 +1731,7 @@ def main(args: argparse.Namespace) -> None:
                 )
 
                 # Get coherence metrics for multi-metric model selection
+                # coherence_metrics is None when: (a) coherence disabled, (b) method missing, (c) error
                 coherence_metrics = None
                 if coherence_config and coherence_config.get('enabled', False):
                     # Issue #20 fix: Verify measure_coherence method exists
@@ -1627,6 +1794,12 @@ def main(args: argparse.Namespace) -> None:
 
         # =====================================================================
         # Phase 12: Finalize
+        # Final cleanup after training:
+        # - Log best validation loss
+        # - Save metrics summary (JSON)
+        # - Log generation history table
+        # - Stop profiler and report location
+        # - Mark run as complete
         # =====================================================================
         if rank == 0:
             print_phase(12, "Training Complete")
@@ -1695,7 +1868,7 @@ def main(args: argparse.Namespace) -> None:
             pass
 
         try:
-            from ava.cuda.buffers import clear_buffer_pool
+            from ava.cuda.streams import clear_buffer_pool
             clear_buffer_pool()
         except Exception:
             pass

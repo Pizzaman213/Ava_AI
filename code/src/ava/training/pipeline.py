@@ -1,7 +1,42 @@
 """
 Training pipeline orchestrator for the Ava framework.
 
-Coordinates all training components through a unified interface.
+This module implements a component-based orchestration pattern that coordinates
+all training components through a unified lifecycle interface.
+
+Architecture Overview:
+    TrainingPipeline (Orchestrator)
+        ├── TrainingContext (Shared State Hub)
+        │   └── model, optimizer, scheduler, device, config, metadata
+        │
+        └── Registered Components (in order):
+            ├── ModelBuilder      → Model creation & optimization
+            ├── OptimizerManager  → Optimizer & scheduler setup
+            ├── DataLoaderManager → Data loading & preprocessing
+            ├── TrainingLoopManager → Main training loop
+            ├── ValidationManager → Validation & model selection
+            ├── GenerationManager → Sample generation (async)
+            └── MetricsManager    → WandB, CSV, logging
+
+Lifecycle Hooks:
+    - initialize(): Called once at startup (FATAL severity - must succeed)
+    - cleanup(): Called once at shutdown (WARNING severity - best effort)
+    - on_epoch_start/end(): Called at epoch boundaries
+    - on_step_start/end(): Called at step boundaries
+    - on_error(): Called when training fails (for emergency saves)
+
+Error Handling:
+    - FATAL errors stop training immediately and trigger cleanup
+    - WARNING errors are logged but training continues
+    - RETRY is reserved for future automatic recovery logic
+
+Usage:
+    pipeline = TrainingPipeline(context)
+    pipeline.register('model', ModelBuilder(context))
+    pipeline.register('optimizer', OptimizerManager(context))
+    pipeline.initialize_all()  # Calls initialize() on each in order
+    # ... training loop ...
+    pipeline.cleanup_all()     # Calls cleanup() in reverse order
 """
 
 import logging
@@ -15,14 +50,27 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorSeverity(Enum):
-    """Severity levels for component errors."""
-    FATAL = "fatal"       # Stop training immediately
-    WARNING = "warning"   # Log and continue
-    RETRY = "retry"       # Attempt recovery
+    """
+    Severity levels for component errors during training.
+
+    - FATAL: Stop training immediately (e.g., model build failure)
+    - WARNING: Log error but continue (e.g., metrics logging failed)
+    - RETRY: Attempt recovery (reserved for future retry logic)
+    """
+    FATAL = "fatal"
+    WARNING = "warning"
+    RETRY = "retry"
 
 
 class ComponentError:
-    """Wrapper for component errors with severity and context."""
+    """
+    Wrapper for component errors with severity and context.
+
+    Used internally by TrainingPipeline to wrap exceptions from components
+    with metadata about which component failed, how severe the error is,
+    and any contextual information (e.g., epoch number if it failed during
+    on_epoch_start).
+    """
 
     def __init__(
         self,
@@ -31,54 +79,66 @@ class ComponentError:
         severity: ErrorSeverity = ErrorSeverity.WARNING,
         context: Optional[Dict[str, Any]] = None,
     ):
-        self.component_name = component_name
-        self.error = error
-        self.severity = severity
-        self.context = context or {}
+        self.component_name = component_name  # e.g., 'model', 'optimizer', 'metrics'
+        self.error = error                    # The underlying exception
+        self.severity = severity              # FATAL/WARNING/RETRY
+        self.context = context or {}          # Additional context (epoch, step, etc.)
 
     def __str__(self) -> str:
         return f"[{self.severity.value}] {self.component_name}: {self.error}"
 
 
 # Default severity mapping for hooks
+# These define how strictly to enforce errors in each lifecycle stage.
+# FATAL errors stop training immediately, WARNING errors are logged but continue.
 DEFAULT_HOOK_SEVERITIES: Dict[str, ErrorSeverity] = {
-    'initialize': ErrorSeverity.FATAL,
-    'cleanup': ErrorSeverity.WARNING,
-    'on_epoch_start': ErrorSeverity.WARNING,
-    'on_epoch_end': ErrorSeverity.WARNING,
-    'on_step_start': ErrorSeverity.WARNING,
-    'on_step_end': ErrorSeverity.WARNING,
-    'on_error': ErrorSeverity.WARNING,
+    'initialize': ErrorSeverity.FATAL,     # Must succeed before training starts
+    'cleanup': ErrorSeverity.WARNING,       # Best-effort cleanup, continue anyway
+    'on_epoch_start': ErrorSeverity.WARNING,  # Log but continue to next epoch
+    'on_epoch_end': ErrorSeverity.WARNING,    # Log but continue to next epoch
+    'on_step_start': ErrorSeverity.WARNING,   # Log but continue to next step
+    'on_step_end': ErrorSeverity.WARNING,     # Log but continue to next step
+    'on_error': ErrorSeverity.WARNING,        # Don't fail during error handling
 }
 
 
 class TrainingPipeline:
     """
-    Manages component lifecycle and coordination for training.
+    Central manager for all training components and their lifecycle.
 
-    The TrainingPipeline:
-        - Registers and manages all training components
-        - Calls lifecycle hooks (initialize, cleanup, on_epoch_*, on_step_*, on_error)
-        - Provides unified access to components
-        - Ensures proper cleanup on error
+    The TrainingPipeline orchestrates training by:
+
+    1. **Component Registration**: Components are registered by name and can
+       be retrieved via pipeline.get('name') or pipeline['name'].
+
+    2. **Lifecycle Hooks**: Calls lifecycle methods on all registered components
+       - initialize(): Called once before training (FATAL if fails)
+       - cleanup(): Called once after training (WARNING if fails)
+       - on_epoch_start(epoch): Called at epoch start (WARNING if fails)
+       - on_epoch_end(epoch): Called at epoch end (WARNING if fails)
+       - on_step_start(step): Called at step start (WARNING if fails)
+       - on_step_end(step, loss): Called at step end (WARNING if fails)
+       - on_error(error): Called when training fails (WARNING if fails)
+
+    3. **Error Handling**: Wraps component errors with severity levels
+       and context. FATAL errors stop training, WARNING errors are logged.
+
+    4. **State Management**: Tracks context, registered components, and
+       error history for debugging.
 
     Example:
         >>> context = TrainingContext(model=None, device=device)
         >>> pipeline = TrainingPipeline(context)
+        >>> # Register components
         >>> pipeline.register('model', ModelBuilder(context))
         >>> pipeline.register('optimizer', OptimizerManager(context))
         >>> pipeline.register('data', DataLoaderManager(context))
-        >>> pipeline.register('training', TrainingLoopManager(context))
-        >>> pipeline.register('validation', ValidationManager(context))
-        >>> pipeline.register('metrics', MetricsManager(context))
-        >>>
         >>> pipeline.initialize_all()
-        >>>
+        >>> # Training loop
         >>> for epoch in range(num_epochs):
         ...     pipeline.on_epoch_start(epoch)
         ...     train_loss = pipeline.get('training').train_epoch(...)
         ...     pipeline.on_epoch_end(epoch)
-        >>>
         >>> pipeline.cleanup_all()
     """
 
@@ -87,7 +147,13 @@ class TrainingPipeline:
         Initialize the training pipeline.
 
         Args:
-            context: Training context with shared state
+            context: Training context with shared state (model, device, config, etc.)
+
+        Attributes:
+            _components: OrderedDict of registered components (order preserved)
+            _initialized: Flag indicating if all components have been initialized
+            _errors: List of ComponentError objects for debugging
+            _hook_severities: Maps hook names to ErrorSeverity levels
         """
         self.context = context
         self._components: OrderedDict[str, TrainingComponent] = OrderedDict()
@@ -136,24 +202,40 @@ class TrainingPipeline:
         comp_error = ComponentError(component_name, error, severity, context)
         self._errors.append(comp_error)
 
+        # Handle error based on severity level:
+        # - FATAL: Critical failure, cannot continue (e.g., model build failed)
+        # - WARNING: Non-critical, log and continue (e.g., metrics logging failed)
+        # - RETRY: Reserved for future automatic retry logic (not yet implemented)
         if severity == ErrorSeverity.FATAL:
             logger.error(f"FATAL error in {hook_name} for '{component_name}': {error}")
             raise RuntimeError(f"Fatal pipeline error: {comp_error}")
         elif severity == ErrorSeverity.WARNING:
             logger.warning(f"{hook_name} failed for '{component_name}': {error}")
         elif severity == ErrorSeverity.RETRY:
+            # TODO: Implement retry logic with configurable max_retries and backoff
+            # For now, just log and continue (same as WARNING)
             logger.info(f"{hook_name} failed for '{component_name}', will retry: {error}")
 
     def register(self, name: str, component: TrainingComponent) -> 'TrainingPipeline':
         """
         Register a component with the pipeline.
 
+        Components are registered in order and initialize_all() calls them
+        in registration order. Common components:
+        - 'model': ModelBuilder
+        - 'optimizer': OptimizerManager
+        - 'data': DataLoaderManager
+        - 'training': TrainingLoopManager
+        - 'validation': ValidationManager
+        - 'generation': GenerationManager
+        - 'metrics': MetricsManager
+
         Args:
-            name: Unique name for the component
-            component: TrainingComponent instance
+            name: Unique name for the component (string key)
+            component: Must be instance of TrainingComponent
 
         Returns:
-            Self for method chaining
+            Self for method chaining (allows: pipeline.register(...).register(...))
 
         Raises:
             ValueError: If component name already registered
@@ -162,9 +244,14 @@ class TrainingPipeline:
         if name in self._components:
             raise ValueError(f"Component '{name}' already registered")
 
-        if not isinstance(component, TrainingComponent):
+        # Duck typing: check for required interface instead of strict isinstance
+        # This allows MetricsManager and other compatible classes to work
+        required_methods = ['initialize', 'cleanup']
+        missing = [m for m in required_methods if not hasattr(component, m)]
+        if missing and not isinstance(component, TrainingComponent):
             raise TypeError(
-                f"Component must be a TrainingComponent, got {type(component).__name__}"
+                f"Component must be a TrainingComponent or have {required_methods}, "
+                f"got {type(component).__name__} missing {missing}"
             )
 
         self._components[name] = component
@@ -212,8 +299,14 @@ class TrainingPipeline:
         """
         Initialize all registered components in registration order.
 
+        This must be called before training begins. If any component fails
+        with FATAL severity, stops immediately and cleans up already-
+        initialized components.
+
+        Order matters: usually model → optimizer → data → training → metrics
+
         Raises:
-            RuntimeError: If initialization fails
+            RuntimeError: If initialization fails (FATAL error from component)
         """
         logger.info("Initializing pipeline components...")
 
@@ -234,7 +327,12 @@ class TrainingPipeline:
         """
         Cleanup all components in reverse registration order.
 
-        Continues cleanup even if individual components fail.
+        Called after training completes (or fails). Cleans up in reverse
+        order to properly deallocate resources (e.g., close dataloaders
+        before destroying model). Continues cleanup even if individual
+        components fail so all get a chance to cleanup.
+
+        Cleanup errors are logged as WARNING but don't stop the process.
         """
         logger.info("Cleaning up pipeline components...")
 
@@ -263,8 +361,12 @@ class TrainingPipeline:
         """
         Notify all components of epoch start.
 
+        Called at the beginning of each training epoch. Components can use
+        this hook to reset epoch-level state (e.g., metrics). Errors are
+        logged as WARNING but don't stop training.
+
         Args:
-            epoch: Starting epoch number
+            epoch: Starting epoch number (0-indexed)
         """
         self.context.epoch = epoch
 
@@ -281,8 +383,12 @@ class TrainingPipeline:
         """
         Notify all components of epoch end.
 
+        Called at the end of each training epoch. Components can use this
+        hook to finalize epoch metrics, save checkpoints, or log progress.
+        Errors are logged as WARNING but don't stop training.
+
         Args:
-            epoch: Ending epoch number
+            epoch: Ending epoch number (0-indexed)
         """
         for name, component in self._components.items():
             if isinstance(component, ManagerInterface):
@@ -332,10 +438,15 @@ class TrainingPipeline:
 
     def on_error(self, error: Exception) -> None:
         """
-        Notify all components of an error.
+        Notify all components of a training error.
+
+        Called when training fails. Components can use this hook to save
+        emergency checkpoints, log final metrics, or attempt recovery.
+        Errors from on_error handlers are logged as WARNING and don't
+        prevent other components from handling the error.
 
         Args:
-            error: The exception that occurred
+            error: The exception that caused training to fail
         """
         logger.error(f"Pipeline error: {error}")
 
@@ -352,9 +463,17 @@ class TrainingPipeline:
         """
         Get status from all components.
 
+        Aggregates status dictionaries from all registered components.
+        Useful for debugging, monitoring dashboards, or health checks.
+
         Returns:
-            Dictionary mapping component names to their status dictionaries
+            Dictionary mapping component names to their status dictionaries.
+            Each component's status may include: metrics, counters, flags, etc.
+            If a component's get_status() fails, returns {'error': str(e)}.
         """
+        # Aggregate status from all components for unified monitoring
+        # Each ManagerInterface component provides its own status dict
+        # TrainingComponent (base) only reports initialization state
         status = {}
 
         for name, component in self._components.items():

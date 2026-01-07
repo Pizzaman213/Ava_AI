@@ -9,7 +9,7 @@ model:
   num_layers: 20
   num_attention_heads: 12
   intermediate_size: 3072
-  vocab_size: 50257
+  vocab_size: 30522  # Matches tokenizer
   max_position_embeddings: 2048
 
   # MoE Configuration
@@ -110,7 +110,7 @@ enhanced_features:
 data:
   data_dir: "code/data/processed"
   max_length: 2048
-  tokenizer_name: "gpt2"
+  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
   train_batch_size: 4
   eval_batch_size: 8
   use_pretokenized: true  # Use pretokenized Arrow/Parquet data (60x faster)

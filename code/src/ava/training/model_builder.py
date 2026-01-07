@@ -2,6 +2,43 @@
 Model builder for the Ava pipeline.
 
 Handles model creation, quantization, and optimization setup.
+
+Optimization Application Order:
+    Optimizations must be applied in a specific order due to dependencies:
+
+    1. CREATE MODEL (on CPU)
+       └─ EnhancedMoEModel(config)
+
+    2. APPLY QUANTIZATION (on CPU, before device move)
+       └─ INT8, NF4, NVFP4 quantization
+       └─ Must happen before moving to GPU for memory savings
+
+    3. APPLY PRE-DEVICE OPTIMIZATIONS (on CPU)
+       └─ torch.compile
+       └─ Graph compilation is more reliable on CPU
+
+    4. MOVE TO DEVICE
+       └─ model.to(device)
+
+    5. APPLY POST-DEVICE OPTIMIZATIONS (on GPU)
+       └─ FP8 training (requires CUDA compute capability 8.9+)
+       └─ Hybrid caching (device-specific memory management)
+       └─ Overlapped checkpointing (uses CUDA streams)
+       └─ Double checkpointing (uses CUDA streams)
+
+    6. WRAP IN DDP (for distributed training)
+       └─ DistributedDataParallel(model, device_ids=[rank])
+       └─ Must be LAST because DDP wraps the model
+
+Why Order Matters:
+    - Quantization on CPU avoids OOM when loading full-precision weights
+    - torch.compile on CPU avoids some CUDA graph issues
+    - FP8/checkpointing require GPU context
+    - DDP must wrap the final optimized model
+
+Fail-Fast Mode:
+    set_fail_on_optimization_error(True) raises on first failure.
+    Default: log warning and continue (more robust for optional features).
 """
 
 import logging
@@ -537,6 +574,10 @@ class ModelBuilder(TrainingComponent):
     ) -> Tuple[nn.Module, bool]:
         """Apply hybrid caching if enabled.
 
+        The new hybrid caching system provides:
+        1. ActivationCache (training) - caches activations for gradient checkpointing
+        2. KVCacheManager (generation) - intelligent eviction for long sequences
+
         Returns:
             Tuple of (model, success) where success indicates if optimization was applied
         """
@@ -547,27 +588,39 @@ class ModelBuilder(TrainingComponent):
 
         try:
             from ava.optimizations.hybrid_cache import (
-                apply_hybrid_caching,
-                HybridCacheConfig,
+                HybridCacheManager,
+                build_hybrid_cache_config,
             )
 
-            cache_config = HybridCacheConfig(
-                enabled=True,
-                max_cache_size_gb=hybrid_config.get('max_cache_size_gb', 0.5),
-                kv_cache_ratio=hybrid_config.get('kv_cache_ratio', 0.7),
-                eviction_policy=hybrid_config.get('eviction_policy', 'hybrid'),
-                prefetch_enabled=hybrid_config.get('prefetch_enabled', False),
-                prefetch_lookahead=hybrid_config.get('prefetch_lookahead', 2),
-                min_score_threshold=hybrid_config.get('min_score_threshold', 0.1),
-            )
+            # Build config from YAML dict
+            cache_config = build_hybrid_cache_config(hybrid_config)
 
             if is_main:
-                self.logger.info(f"Applying hybrid caching ({cache_config.max_cache_size_gb}GB)...")
+                act_size = cache_config.activation_cache.max_size_gb
+                kv_size = cache_config.kv_cache.max_size_gb
+                self.logger.info(f"Applying hybrid caching (activation: {act_size}GB, kv: {kv_size}GB)...")
 
-            model, _ = apply_hybrid_caching(model, cache_config)
+            # Create cache manager
+            cache_manager = HybridCacheManager(cache_config)
+
+            # Attach manager to model (NO wrapping of attention modules)
+            model._hybrid_cache_manager = cache_manager
+
+            # Set activation cache on each transformer layer (for training)
+            if cache_manager.activation_cache is not None and hasattr(model, 'layers'):
+                for idx, layer in enumerate(model.layers):
+                    if hasattr(layer, 'set_activation_cache'):
+                        layer.set_activation_cache(cache_manager.activation_cache)
+                    # Ensure layer_idx is set
+                    if hasattr(layer, 'layer_idx'):
+                        layer.layer_idx = idx
+
+            # Set KV cache manager reference (for generation)
+            if cache_manager.kv_cache_manager is not None:
+                model._kv_cache_manager = cache_manager.kv_cache_manager
 
             if is_main:
-                self.logger.info("  Hybrid caching applied")
+                self.logger.info("  Hybrid caching applied (activation + KV cache management)")
 
             return model, True
 
@@ -856,7 +909,7 @@ class ModelBuilder(TrainingComponent):
             )
             return wrapped_model, None, None
 
-        from .deepspeed_config_builder import build_deepspeed_config, validate_deepspeed_config
+        from .deepspeed import build_deepspeed_config, validate_deepspeed_config
 
         deepspeed_cfg = config.get('deepspeed', {})
 
@@ -883,7 +936,7 @@ class ModelBuilder(TrainingComponent):
             )
 
             # Log DeepSpeed info
-            from .deepspeed_utils import log_deepspeed_info
+            from .deepspeed import log_deepspeed_info
             log_deepspeed_info(model_engine, rank)
 
         return model_engine, optimizer, scheduler

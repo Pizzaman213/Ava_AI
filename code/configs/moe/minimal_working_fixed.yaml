@@ -22,11 +22,11 @@
 
 
 model:
-  vocab_size: 16000  # REDUCED: 16K tokenizer for better model capacity (was 50680)
-  pad_token_id: 0
-  eos_token_id: 1  # Fixed: <|eos|> is token ID 1, not 3
-  bos_token_id: 2  # <|bos|>
-  tokenizer_path: /root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/transformers  # 16K vocab tokenizer
+  vocab_size: 30522  # Matches tokenizer
+  pad_token_id: 0    # [PAD]
+  eos_token_id: 102  # [SEP] - end of sequence
+  bos_token_id: 101  # [CLS] - beginning of sequence
+  tokenizer_path: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
   hidden_size: 512           # Smaller for faster learning (~15M total)
   num_layers: 6              # Fewer layers = faster convergence
   num_attention_heads: 8     # Match hidden_size divisibility (512/8=64 head_dim)
@@ -72,14 +72,23 @@ model:
   initializer_range: 0.02
 
 # Hybrid Caching - OPTIMIZED for maximum RAM usage
+# 1. ActivationCache (training): reduces gradient checkpointing recomputation
+# 2. KVCacheManager (generation): StreamingLLM-style eviction for long sequences
 hybrid_caching:
   enabled: true
-  max_cache_size_gb: 2.0  # INCREASED: use more cache for speed (was 1.0)
-  kv_cache_ratio: 0.7
-  eviction_policy: hybrid
-  prefetch_enabled: true
-  prefetch_lookahead: 2
-  min_score_threshold: 0.1
+  mode: 'auto'
+
+  activation_cache:
+    enabled: true
+    max_size_gb: 2.0
+    eviction_policy: 'lru'
+
+  kv_cache:
+    enabled: true
+    max_size_gb: 3.0
+    eviction_policy: 'hybrid'
+    sink_tokens: 4
+    recent_tokens: 256
 
 # =====================================================================
 # Batch Size Calibration - Run at startup to find optimal BS
@@ -156,9 +165,9 @@ training:
     repetition_penalty: 1.2  # Lighter penalty to avoid repetition
     no_repeat_ngram_size: 3  # Block 3-gram repetitions
     skip_special_tokens: true
-    # CRITICAL: Explicit token IDs match model config (from tokenizer)
-    eos_token_id: 1      # [EOS] - stop generation token
-    bos_token_id: 2      # [BOS] - start generation token
+    # CRITICAL: Explicit token IDs match tokenizer
+    eos_token_id: 102    # [SEP] - stop generation token
+    bos_token_id: 101    # [CLS] - start generation token
     pad_token_id: 0      # [PAD] - padding token
     prompt: "Once upon a time"
     alternative_prompts:
@@ -207,15 +216,15 @@ data:
   # - For reproducibility: Set shuffle_seed to 42 (no throughput impact)
   # =====================================================================
 
-  data_dir: code/data/tinystories_16k/train  # 16K tokenized TinyStories
-  val_data_dir: code/data/tinystories_16k/val  # Separate validation set
+  data_dir: pretokenized_data/data/TinyStories  # Pretokenized TinyStories
+  val_data_dir: null  # Use auto_create_validation_split instead
   max_length: 256  # Match max_position_embeddings for full context
   add_special_tokens: false  # Data already has BOS/EOS tokens
   train_split: train
   eval_split: validation
-  auto_create_validation_split: false  # Using separate val set
+  auto_create_validation_split: true  # Auto-create val split from pretokenized data
   validation_split_ratio: 0.05
-  tokenizer_name: /root/Ava_AI/code/data/Ava_Ai/tokenizer_16k/transformers  # 16K vocab tokenizer
+  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
   padding_side: right
   truncation: false
 

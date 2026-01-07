@@ -355,7 +355,8 @@ class ModelConfig:
     # Performance optimizations
     use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
     use_triton_kernels: bool = True           # Use Triton fused kernels
-    use_torch_compile: bool = False           # Enable torch.compile
+    use_torch_compile: bool = False           # Enable torch.compile (15-25% speedup)
+    torch_compile_mode: str = 'reduce-overhead'  # 'default', 'reduce-overhead', 'max-autotune'
     enable_cudagraphs_safe_routing: bool = False  # Enable CUDA graphs safe routing
     use_flash_attention: bool = True          # Use flash attention
     gradient_checkpointing: bool = True       # Enable gradient checkpointing
@@ -371,6 +372,7 @@ class ModelConfig:
     diversity_loss_coef: float = 0.0001       # Diversity loss coefficient
     expert_dropout_loss_coef: float = 0.0     # Expert dropout loss coefficient
     router_jitter_noise: float = 0.01         # Router jitter noise for exploration
+    aux_loss_frequency: int = 1               # Compute aux losses every N steps (1=every, 50=5-8% speedup)
 
     # LoRA settings
     use_lora_experts: bool = False            # Use LoRA for experts
@@ -766,6 +768,7 @@ class DataConfig:
     shuffle_seed: Optional[int] = None        # Global shuffle seed (None = non-deterministic)
     enable_length_sorting: bool = True        # Enable length sorting in distributed mode
     disable_packing_length_sort: bool = False # Disable length sorting in packing
+    examples_per_random_select: int = 20      # Examples to take per random file selection (10-50 recommended)
 
     # Indexed loader (map-style with true random shuffling)
     use_indexed_loader: bool = False          # Enable IndexedArrowDataset (true random access)

@@ -33,8 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ProgressiveTrainingConfig:
-    """Configuration for progressive training strategies."""
+class ProgressiveStrategyConfig:
+    """Configuration for progressive training strategies.
+
+    Note: This is distinct from config.training_config.ProgressiveStrategyConfig
+    which handles YAML configuration loading. This class provides detailed
+    parameters for curriculum learning and progressive model scaling.
+    """
 
     # GrowLength configuration
     enable_grow_length: bool = True
@@ -78,7 +83,7 @@ class CurriculumLearning:
 
     def __init__(
         self,
-        config: ProgressiveTrainingConfig,
+        config: ProgressiveStrategyConfig,
         dataset,
         tokenizer,
         device: str = "cuda"
@@ -665,7 +670,7 @@ class GrowLengthScheduler:
     FIXED: Only changes sequence length at epoch boundaries, not mid-epoch.
     """
 
-    def __init__(self, config: ProgressiveTrainingConfig):
+    def __init__(self, config: ProgressiveStrategyConfig):
         self.config = config
         self.current_length = config.initial_seq_length
         self.current_epoch = 0
@@ -787,7 +792,7 @@ class DynamicBatchSizer:
     with parallel workers. This class now returns the configured batch size.
     """
 
-    def __init__(self, config: ProgressiveTrainingConfig, batch_size: int = 32):
+    def __init__(self, config: ProgressiveStrategyConfig, batch_size: int = 32):
         self.config = config
         self.batch_size = batch_size
         self.utilization_history = []
@@ -1056,7 +1061,7 @@ class ProgressiveModelScaler:
     This is experimental and requires careful implementation.
     """
 
-    def __init__(self, config: ProgressiveTrainingConfig, initial_model: nn.Module):
+    def __init__(self, config: ProgressiveStrategyConfig, initial_model: nn.Module):
         self.config = config
         self.initial_model = initial_model
         self.current_layers = config.initial_layers
@@ -1101,7 +1106,7 @@ class ProgressiveTrainer:
 
     def __init__(
         self,
-        config: ProgressiveTrainingConfig,
+        config: ProgressiveStrategyConfig,
         model: nn.Module,
         dataset,
         tokenizer,
@@ -1311,7 +1316,7 @@ def create_progressive_trainer(
         Configured ProgressiveTrainer instance
     """
     # Create config with defaults
-    config = ProgressiveTrainingConfig()
+    config = ProgressiveStrategyConfig()
 
     # Apply any overrides
     if config_dict:
@@ -1347,7 +1352,7 @@ class ProgressiveTrainingManager:
         self.min_performance_threshold = min_performance_threshold
 
         # Initialize internal scheduler
-        config = ProgressiveTrainingConfig(
+        config = ProgressiveStrategyConfig(
             enable_grow_length=True,
             initial_seq_length=initial_sequence_length,
             final_seq_length=target_sequence_length,
