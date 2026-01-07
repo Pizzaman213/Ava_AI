@@ -16,10 +16,10 @@
 
 
 model:
-  vocab_size: 50680
-  pad_token_id: 0
-  eos_token_id: 1  # Fixed: <|eos|> is token ID 1, not 3
-  bos_token_id: 2  # <|bos|>
+  vocab_size: 30522  # Matches BERT-style vocab tokenizer (data has tokens up to ~30k)
+  pad_token_id: 0    # [PAD]
+  eos_token_id: 102  # [SEP] - used as end of sequence
+  bos_token_id: 101  # [CLS] - used as beginning of sequence
   hidden_size: 768
   num_layers: 12
   num_attention_heads: 12
@@ -30,7 +30,7 @@ model:
   router_type: mixtral
   capacity_factor: 1.25  # Slightly increased for better expert utilization
   quantize_kv_cache: true  # INT8 KV cache - 75% memory savings
-  expert_dropout: 0.0
+  expert_dropout: 0.05  # Increased from 0.0 for regularization
   activation: swiglu
 
   # GPU Optimizations for RTX 3090 Ti (Ampere)
@@ -54,11 +54,11 @@ model:
   output_diversity_weight: 0.0    # DISABLED - was causing incoherent outputs
   eos_logit_bias: 0.1             # Reduced - model should learn EOS naturally
 
-  # Regularization (reduced for pre-training coherence)
+  # Regularization (INCREASED to prevent overfitting)
   use_lora_experts: false
   use_expert_offloading: false
-  attention_dropout: 0.02         # Reduced from 0.1 - less information loss
-  dropout: 0.02                   # Reduced from 0.1 - more stable representations
+  attention_dropout: 0.15         # INCREASED from 0.1 - prevents memorization
+  dropout: 0.15                   # INCREASED from 0.1 - better generalization
   label_smoothing: 0.1            # CRITICAL: Prevents overfitting, improves coherence
   tie_word_embeddings: true       # Ties input/output embeddings for better vocab learning
   # NOTE: dropout > 0 disables CUDA Graphs optimization
@@ -70,14 +70,27 @@ model:
   initializer_range: 0.02
 
 # Hybrid Caching - optimized for single GPU (24GB VRAM)
+# Two distinct caching strategies:
+# 1. ActivationCache (training): caches activations for gradient checkpointing
+# 2. KVCacheManager (generation): StreamingLLM-style eviction for long sequences
 hybrid_caching:
   enabled: true
-  max_cache_size_gb: 3.0  # Increased from 1.0 - more VRAM available without DDP
-  kv_cache_ratio: 0.7
-  eviction_policy: hybrid
-  prefetch_enabled: true
-  prefetch_lookahead: 3  # Increased from 2 for better prefetch
-  min_score_threshold: 0.05  # Lowered from 0.1 to cache more
+  mode: 'auto'  # 'training', 'generation', or 'auto' (infer from model.training)
+
+  # Training mode: Activation caching for gradient checkpointing optimization
+  activation_cache:
+    enabled: true
+    max_size_gb: 2.0
+    eviction_policy: 'lru'  # 'lru', 'lfu', 'hybrid'
+
+  # Generation mode: KV cache eviction for long sequences
+  kv_cache:
+    enabled: true
+    max_size_gb: 4.0
+    eviction_policy: 'hybrid'  # 'sliding_window', 'hybrid'
+    sliding_window: null  # null for dynamic based on memory
+    sink_tokens: 4  # StreamingLLM: keep first N tokens as attention sinks
+    recent_tokens: 256  # Keep last N tokens (working memory)
 
 # =====================================================================
 # Batch Size Calibration - Single GPU Optimized
@@ -101,14 +114,14 @@ training:
     mixed_precision: bf16  # Native BF16 on Ampere - no loss scaling needed
 
   batching:
-    batch_size: 32  # REMOVED - let calibration find optimal size
-    gradient_accumulation_steps: 4  # Effective batch size = calibrated_BS * 4
+    batch_size: 64  # Per-step batch size
+    gradient_accumulation_steps: 2  # Effective batch size = 64 * 2 = 128
 
   optimizer:
     type: adamw  # 8-bit AdamW for memory efficiency
-    learning_rate: 6.0e-5  # Increased for faster coherence learning
+    learning_rate: 1.0e-4  # Optimal for 343GB dataset - balances speed and stability
     betas: [0.9, 0.95]
-    weight_decay: 0.01  # Fixed: Was 0.1 (too aggressive with high LR)
+    weight_decay: 0.1   # INCREASED from 0.05 - stronger L2 penalty to prevent memorization
     use_fused: true  # 5-10% speedup
     # eps: AUTO-DETECTED based on mixed_precision setting
     #      bf16 → 1e-6 (safe for bfloat16 mantissa precision ~1e-7)
@@ -119,15 +132,15 @@ training:
   schedule:
     num_epochs: 3
     max_steps: null
-    warmup_steps: 5000  # Increased from 2000 for better stabilization (3-4% of training)
+    warmup_steps: 3000  # Shorter warmup for faster ramp-up
     scheduler_type: cosine_with_restarts  # Warm restarts help escape plateaus
     num_cycles: 2  # 2 cycles over 3 epochs (~78k steps per cycle)
-    min_lr: 1.0e-5  # Gentler decay: 6e-5 → 1e-5 (6x, was 30x)
+    min_lr: 1.0e-5  # 10x decay: 1e-4 → 1e-5
 
   logging:
-    save_steps: 500
+    save_steps: 1000
     eval_steps: 1000  # Reduced frequency from 500 - less validation overhead
-    logging_steps: 25  # Increased from 1 - reduces GPU→CPU sync overhead 25x
+    logging_steps: 50  # Log every 50 steps
     # Logging backends (WandB only for performance)
     use_tensorboard: false  # Disabled - using WandB only
     use_wandb: true         # Cloud logging (requires: wandb login)
@@ -140,7 +153,7 @@ training:
 
   generation:
     enabled: true  # Enable for quality monitoring
-    generate_every_n_steps: 2000  # Reduced frequency for performance
+    generate_every_n_steps: 1000  # Reduced frequency for performance
     num_per_step: 1
     during_eval: true
     test_quality: true
@@ -175,7 +188,15 @@ training:
 
 data:
   streaming: true
-  buffer_size: 5000  # Reduced from 10000 to lower RAM usage
+  buffer_size: 100000  # INCREASED 10x for true diversity (was 10k, now 100k)
+
+  # =====================================================================
+  # FAST STARTUP OPTIONS - Reduces dataloader initialization time
+  # =====================================================================
+  progressive_buffer: false   # DISABLED - start with full buffer for diversity
+  min_buffer_size: 10000      # INCREASED from 128 - no tiny buffer start
+  warm_start_files: 3         # Load only 3 files initially for FAST startup
+  skip_sequence_count: true   # Estimate sequences instead of counting all
 
   # =====================================================================
   # RANDOMIZATION CONTROL - NEW PARAMETERS FOR DATA DIVERSITY
@@ -203,24 +224,25 @@ data:
   # - For reproducibility: Set shuffle_seed to 42 (no throughput impact)
   # =====================================================================
 
-  data_dir: code/data/tinystories_clean/train  # Fresh TinyStories with BOS/EOS, no HF artifacts
+  data_dir: pretokenized_data/data  # ALL pretokenized data (C4 + OpenOrca + TinyStories = ~179M examples)
   max_length: 512  # Data is pre-padded to 512
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
   validation_split_ratio: 0.05  # Smaller validation split = more training data
-  tokenizer_name: code/data/Ava_Ai/tokenizer_v3/transformers
+  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data (30522 vocab)
   padding_side: right
   truncation: false
 
-  # Data loading - optimized for single GPU (6 workers)
-  num_workers: 6  # Reduced from 8 for single GPU (4-6 workers per GPU)
-  prefetch_factor: 4  # Increased from 2 to compensate for fewer workers
+  # Data loading - reduced for stability
+  num_workers: 2  # Reduced to prevent timeout issues
+  prefetch_factor: 2  # Standard prefetch
   persistent_workers: true
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_samples_per_file: 1000  # Standard chunk size
+  dataloader_samples_per_file: 100  # Standard chunk size
   skip_dataloader_validation: true
+  timeout: 300  # 5 minute timeout (was 120s default)
 
   # =====================================================================
   # Sequence Packing - Throughput Optimization
@@ -249,18 +271,18 @@ data:
 
   # USE ALL DATA with lazy discovery (memory-safe)
   use_pretokenized: true
-  use_all_data: true
-  max_files_to_load: null  # No limit - use ALL files
-  lazy_file_discovery: true  # Lazy discovery - memory safe for large datasets
+  use_all_data: true  # Use full dataset for complete training
+  max_files_to_load: null  # No limit - use all available files
+  lazy_file_discovery: false  # DISABLED - use progressive loading instead (faster startup)
   multiprocessing_context: spawn
-  cache_size: 10  # Reduced from 20 to lower RAM usage with DeepSpeed
+  cache_size: 5  # Reduced cache size
   skip_validation: false  # ENABLED: use validation data for proper metrics
   shuffle_files: true  # Shuffle file order for variety
 
   # =====================================================================
   # INDEXED LOADER - Map-style dataset with TRUE random shuffling
   # =====================================================================
-  use_indexed_loader: false     # DISABLED - use streaming loader instead
+  use_indexed_loader: false     # DISABLED - use streaming loader with larger buffer
                                 # true = IndexedArrowDataset (global shuffle, efficient)
                                 # false = IterableDataset (buffer-based shuffle)
 
@@ -311,7 +333,7 @@ optimizations:
 # ENABLED after prefetch.py fix (CUDA event synchronization added)
 # Provides 10-15% throughput improvement via async batch prefetching
 cuda_streams:
-  enabled: true               # ENABLED after code fix to prefetch.py
+  enabled: false              # DISABLED - use sync iteration to fix hanging
   num_streams: 4              # Stream pool size for recomputation
   use_event_timing: true      # Use CUDA events instead of synchronize+time
   use_stream_pool: true       # Reuse streams instead of creating new
@@ -458,9 +480,9 @@ deepspeed:
   precision_type: "bf16"              # BF16 for Ampere GPUs
 
   # Batch Configuration (matches training.batching)
-  gradient_accumulation_steps: 4      # Same as training config
-  train_batch_size: 128               # For 2 GPUs: 32 * 4 * 2 = 256 (single GPU: 128)
-  micro_batch_size: 32                # Same as training.batching.batch_size
+  gradient_accumulation_steps: 2      # Same as training config
+  train_batch_size: 128               # Effective: 64 * 2 = 128
+  micro_batch_size: 64                 # Same as training.batching.batch_size
 
   # Activation Checkpointing (disabled - minimal model doesn't need it)
   activation_checkpointing: false     # No gradient checkpointing in training config
