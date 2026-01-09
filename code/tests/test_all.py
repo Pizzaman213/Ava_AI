@@ -23,7 +23,6 @@ import sys
 import tempfile
 import threading
 import time
-from collections import deque
 from pathlib import Path
 from typing import List, Tuple
 from unittest.mock import MagicMock, patch
@@ -355,31 +354,6 @@ class TestDataLoaderFixes:
                 assert is_valid is False
 
 
-class TestBoundedStatistics:
-    """Tests for bounded statistics collection."""
-
-    def test_batch_sizes_bounded(self):
-        """Verify _batch_sizes doesn't grow indefinitely."""
-        from ava.data.dynamic_batch_iterator import DynamicBatchIterator
-
-        mock_dataloader = MagicMock()
-        mock_scheduler = MagicMock()
-        mock_scheduler.get_batch_size.return_value = 64
-
-        iterator = DynamicBatchIterator(
-            dataloader=mock_dataloader,
-            scheduler=mock_scheduler,
-            min_batch_size=16,
-            max_batch_size=256,
-        )
-
-        for i in range(5000):
-            iterator._batch_sizes.append(64)
-
-        assert len(iterator._batch_sizes) <= 1000
-        assert isinstance(iterator._batch_sizes, deque)
-
-
 class TestDataValidation:
     """Tests for data validation module."""
 
@@ -414,73 +388,6 @@ class TestDataValidation:
         is_valid, error = validator._validate_sequence([1, 2, 3])
         assert is_valid is False
         assert "too short" in error.lower()
-
-
-# =============================================================================
-# Thread-Safe Cache Tests
-# =============================================================================
-
-class TestThreadSafeFileCache:
-    """Tests for ThreadSafeFileCache."""
-
-    def test_basic_get_put(self):
-        """Test basic get/put operations."""
-        from ava.data.streaming import ThreadSafeFileCache
-
-        cache = ThreadSafeFileCache(max_size=5)
-        cache.put(("file1.txt", 0), "generator1")
-        result = cache.get(("file1.txt", 0))
-        assert result == "generator1"
-
-        result = cache.get(("nonexistent.txt", 0))
-        assert result is None
-
-    def test_lru_eviction(self):
-        """Test LRU eviction when cache is full."""
-        from ava.data.streaming import ThreadSafeFileCache
-
-        cache = ThreadSafeFileCache(max_size=3)
-        cache.put(("file1.txt", 0), "gen1")
-        cache.put(("file2.txt", 0), "gen2")
-        cache.put(("file3.txt", 0), "gen3")
-        assert len(cache) == 3
-
-        cache.put(("file4.txt", 0), "gen4")
-        assert len(cache) == 3
-        assert cache.get(("file1.txt", 0)) is None
-
-    def test_concurrent_access(self):
-        """Test thread safety with concurrent access."""
-        from ava.data.streaming import ThreadSafeFileCache
-
-        cache = ThreadSafeFileCache(max_size=100)
-        errors = []
-
-        def writer(worker_id):
-            try:
-                for i in range(50):
-                    cache.put((f"file{i}.txt", worker_id), f"gen_{worker_id}_{i}")
-            except Exception as e:
-                errors.append(f"Writer {worker_id}: {e}")
-
-        def reader(worker_id):
-            try:
-                for i in range(50):
-                    cache.get((f"file{i}.txt", worker_id))
-            except Exception as e:
-                errors.append(f"Reader {worker_id}: {e}")
-
-        threads = []
-        for i in range(4):
-            threads.append(threading.Thread(target=writer, args=(i,)))
-            threads.append(threading.Thread(target=reader, args=(i,)))
-
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
-
-        assert len(errors) == 0
 
 
 # =============================================================================
@@ -1069,20 +976,10 @@ class TestModuleImports:
         from ava.data import conversation
         assert conversation is not None
 
-    def test_import_data_dataloader(self):
-        """Test ava.data.dataloader imports."""
-        from ava.data import dataloader
-        assert dataloader is not None
-
     def test_import_data_distributed(self):
         """Test ava.data.distributed imports."""
         from ava.data import distributed
         assert distributed is not None
-
-    def test_import_data_dynamic_batch_iterator(self):
-        """Test ava.data.dynamic_batch_iterator imports."""
-        from ava.data import dynamic_batch_iterator
-        assert dynamic_batch_iterator is not None
 
     def test_import_data_factory(self):
         """Test ava.data.factory imports."""
@@ -1108,11 +1005,6 @@ class TestModuleImports:
         """Test ava.data.pretokenized imports."""
         from ava.data import pretokenized
         assert pretokenized is not None
-
-    def test_import_data_streaming(self):
-        """Test ava.data.streaming imports."""
-        from ava.data import streaming
-        assert streaming is not None
 
     def test_import_data_validation(self):
         """Test ava.data.validation imports."""
@@ -1321,11 +1213,6 @@ class TestModuleImports:
         from ava.training import loop
         assert loop is not None
 
-    def test_import_training_metrics(self):
-        """Test ava.training.metrics imports."""
-        from ava.training import metrics
-        assert metrics is not None
-
     def test_import_training_model_builder(self):
         """Test ava.training.model_builder imports."""
         from ava.training import model_builder
@@ -1408,16 +1295,13 @@ class TestKeyClassImports:
 
     def test_import_data_classes(self):
         """Test key data classes can be imported."""
-        from ava.data.streaming import StreamingDataset, ThreadSafeFileCache
         from ava.data.pretokenized import UltraFastPretokenizedDataset
         from ava.data.indexed import IndexedArrowDataset, LengthBinnedSampler
-        from ava.data.factory import create_streaming_dataloaders
-        assert StreamingDataset is not None
-        assert ThreadSafeFileCache is not None
+        from ava.data.factory import create_dataloaders
         assert UltraFastPretokenizedDataset is not None
         assert IndexedArrowDataset is not None
         assert LengthBinnedSampler is not None
-        assert create_streaming_dataloaders is not None
+        assert create_dataloaders is not None
 
     def test_import_training_classes(self):
         """Test key training classes can be imported."""

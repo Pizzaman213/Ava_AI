@@ -803,10 +803,6 @@ class DynamicBatchSizer:
         """Get batch size for current step and sequence length."""
         return self.batch_size
 
-    def _adapt_batch_size(self, seq_length: int):
-        """Batch size adaptation disabled - using fixed batch size."""
-        pass
-
     def report_oom(self, seq_length: int, batch_size: int):
         """Report OOM event - reduces batch size to half."""
         oom_key = (seq_length, batch_size)
@@ -824,29 +820,6 @@ class DynamicBatchSizer:
         """Report a successful batch execution."""
         config_key = (seq_length, batch_size)
         self.successful_batch_sizes[config_key] = utilization
-
-    def get_conservative_batch_size(self, seq_length: int) -> int:
-        """Get a conservative batch size estimate based on history."""
-        # If we have a known maximum, use it with conservative margin
-        if seq_length in self.max_viable_batch_sizes:
-            max_viable = self.max_viable_batch_sizes[seq_length]
-            return max(int(max_viable * 0.8), 1)
-
-        # Look for similar sequence lengths in successful batches
-        similar_configs = []
-        for (seq_len, batch_size), utilization in self.successful_batch_sizes.items():
-            if abs(seq_len - seq_length) <= seq_length * 0.1:  # Within 10% of seq length
-                similar_configs.append((batch_size, utilization))
-
-        if similar_configs:
-            # Use the largest successful batch size with good utilization
-            good_configs = [(bs, util) for bs, util in similar_configs if util >= 0.7]
-            if good_configs:
-                max_similar_batch = max(bs for bs, util in good_configs)
-                return max(int(max_similar_batch * 0.9), 1)
-
-        # Return current batch size as default
-        return self.batch_size
 
     def dry_run_batch_size(self, seq_length: int, target_batch_size: int, model: Optional[nn.Module] = None) -> Dict[str, Any]:
         """
@@ -914,17 +887,16 @@ class DynamicBatchSizer:
                     else:
                         result['risk_level'] = 'low'
 
-            # Check against successful configurations
-            conservative_max = self.get_conservative_batch_size(seq_length)
-            if target_batch_size <= conservative_max:
+            # Check against current batch size
+            if target_batch_size <= self.batch_size:
                 result['safe'] = True
                 if result['risk_level'] == 'unknown':
                     result['risk_level'] = 'low'
-                result['recommendations'].append(f"Within conservative limit ({conservative_max})")
+                result['recommendations'].append(f"Within current batch size limit ({self.batch_size})")
             else:
-                # Target is higher than conservative estimate
+                # Target is higher than current batch size
                 result['recommendations'].append(
-                    f"Above conservative estimate ({conservative_max}). Consider incremental testing."
+                    f"Above current batch size ({self.batch_size}). Consider incremental testing."
                 )
                 if result['risk_level'] == 'unknown':
                     result['risk_level'] = 'medium'

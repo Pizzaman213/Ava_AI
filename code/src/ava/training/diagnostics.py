@@ -202,6 +202,7 @@ class DiagnosticsManager(ManagerInterface):
         super().__init__(context)
         self._config: Optional['DiagnosticsConfig'] = None
         self._timing_accumulator: Dict[str, float] = {}
+        self._pending_events: Dict[str, tuple] = {}  # phase -> (start_event, end_event)
         self._current_step: int = 0
 
     def initialize(self) -> None:
@@ -212,6 +213,7 @@ class DiagnosticsManager(ManagerInterface):
     def cleanup(self) -> None:
         """Cleanup resources."""
         self._timing_accumulator.clear()
+        self._pending_events.clear()
 
     def configure(self, config: 'DiagnosticsConfig') -> None:
         """Configure diagnostics collection.
@@ -284,13 +286,23 @@ class DiagnosticsManager(ManagerInterface):
 
             if grads:
                 all_grads = torch.cat(grads)
+                # Single GPU→CPU sync for all 5 stats instead of 5 .item() calls
+                stats_tensor = torch.stack([
+                    all_grads.norm(),
+                    all_grads.mean(),
+                    all_grads.std(),
+                    all_grads.max(),
+                    all_grads.min()
+                ])
+                norm, mean, std, max_val, min_val = stats_tensor.tolist()
+
                 layer_stat = LayerGradientStats(
                     layer_name=name,
-                    grad_norm=all_grads.norm().item(),
-                    grad_mean=all_grads.mean().item(),
-                    grad_std=all_grads.std().item(),
-                    grad_max=all_grads.max().item(),
-                    grad_min=all_grads.min().item(),
+                    grad_norm=norm,
+                    grad_mean=mean,
+                    grad_std=std,
+                    grad_max=max_val,
+                    grad_min=min_val,
                     num_params=num_params,
                     has_grad=True,
                 )
@@ -462,23 +474,27 @@ class DiagnosticsManager(ManagerInterface):
             yield
             return
 
-        # Synchronize before timing to get accurate GPU measurements
+        # Use CUDA events for non-blocking GPU timing (avoids cudaStreamSynchronize)
         if torch.cuda.is_available():
-            torch.cuda.synchronize()
-
-        start = time.perf_counter()
-        yield
-
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        self._timing_accumulator[phase] = elapsed_ms
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+            start_event.record()
+            yield
+            end_event.record()
+            # Store events for deferred timing extraction (non-blocking)
+            self._pending_events[phase] = (start_event, end_event)
+        else:
+            # CPU fallback - no sync needed
+            start = time.perf_counter()
+            yield
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            self._timing_accumulator[phase] = elapsed_ms
 
     def get_timing_profile(self, step: int) -> Optional[TimingProfile]:
         """Get timing profile for current step.
 
         Only returns profile at configured frequency.
+        Extracts deferred CUDA event timings (single sync instead of 8 per step).
 
         Args:
             step: Current training step
@@ -491,6 +507,19 @@ class DiagnosticsManager(ManagerInterface):
 
         if step % self._config.timing_log_freq != 0:
             return None
+
+        # Extract timings from pending CUDA events (single sync at log time)
+        if self._pending_events and torch.cuda.is_available():
+            # Single synchronize to ensure all events are complete
+            torch.cuda.synchronize()
+            for phase, (start_event, end_event) in self._pending_events.items():
+                try:
+                    elapsed_ms = start_event.elapsed_time(end_event)
+                    self._timing_accumulator[phase] = elapsed_ms
+                except RuntimeError:
+                    # Event timing failed, skip this phase
+                    pass
+            self._pending_events.clear()
 
         profile = TimingProfile(step=step)
         profile.data_loading_ms = self._timing_accumulator.get('data_loading', 0.0)
@@ -510,8 +539,9 @@ class DiagnosticsManager(ManagerInterface):
         return profile
 
     def reset_timing(self) -> None:
-        """Reset timing accumulator."""
+        """Reset timing accumulator and pending events."""
         self._timing_accumulator.clear()
+        self._pending_events.clear()
 
     # ========================
     # Status

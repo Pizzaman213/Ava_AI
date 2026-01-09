@@ -7,6 +7,7 @@ Provides:
 - Default value handling
 - Schema validation
 - Deprecation warnings
+- Backward compatibility via path resolution
 
 Usage:
     from ava.config.validator import ConfigValidator
@@ -14,15 +15,50 @@ Usage:
     validator = ConfigValidator(config_dict)
     batch_size = validator.get('training.batch_size', default=8)
     validator.validate()  # Raises if missing required fields
+
+Path Resolution:
+    The config system has been reorganized from 38 sections into 8 categories.
+    Old paths are automatically resolved to new canonical paths with deprecation
+    warnings. See ava.config.path_mapping for the full mapping.
 """
 
 import logging
+import os
 import warnings
 from typing import Any, Dict, List, Optional, Set, Tuple, TypeVar, Union
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
+
+# Environment variable to suppress deprecation warnings
+SUPPRESS_DEPRECATION_WARNINGS = os.environ.get('SUPPRESS_CONFIG_DEPRECATION', '').lower() in ('1', 'true', 'yes')
+
+
+def _get_path_mappings() -> Dict[str, str]:
+    """
+    Get the full path mapping dictionary, combining legacy and new mappings.
+
+    Returns:
+        Dictionary mapping old paths to new canonical paths
+    """
+    # Start with legacy mappings
+    mappings = {
+        'data.tokenizer_name': 'data.tokenizer_path',
+        'training.lr': 'training.learning_rate',
+        'model.n_layers': 'model.num_layers',
+        'model.n_heads': 'model.num_attention_heads',
+    }
+
+    # Try to import the comprehensive path mappings
+    try:
+        from ava.config.path_mapping import CONFIG_PATH_MAPPINGS
+        mappings.update(CONFIG_PATH_MAPPINGS)
+    except ImportError:
+        # path_mapping module not available yet
+        pass
+
+    return mappings
 
 
 class ConfigValidationError(Exception):
@@ -40,6 +76,7 @@ class ConfigValidator:
     - Validation of required fields
     - Deprecation warnings for old config paths
     - Type checking (optional)
+    - Backward compatibility via path resolution
 
     Example:
         >>> config = {'training': {'batch_size': 32, 'lr': 0.001}}
@@ -48,15 +85,14 @@ class ConfigValidator:
         32
         >>> validator.get('training.epochs', default=10)
         10
+
+    Path Resolution:
+        Old paths (e.g., 'hardware.device') are automatically resolved to
+        new canonical paths (e.g., 'compute.device.type') with deprecation warnings.
     """
 
-    # Deprecated config paths -> new paths
-    DEPRECATED_PATHS: Dict[str, str] = {
-        'data.tokenizer_name': 'data.tokenizer_path',
-        'training.lr': 'training.learning_rate',
-        'model.n_layers': 'model.num_layers',
-        'model.n_heads': 'model.num_attention_heads',
-    }
+    # Deprecated config paths -> new paths (loaded dynamically)
+    DEPRECATED_PATHS: Dict[str, str] = _get_path_mappings()
 
     # Required fields for training
     REQUIRED_FIELDS: List[str] = [
@@ -81,6 +117,7 @@ class ConfigValidator:
         config: Dict[str, Any],
         strict: bool = False,
         warn_deprecated: bool = True,
+        auto_resolve_paths: bool = True,
     ):
         """
         Initialize the config validator.
@@ -89,12 +126,55 @@ class ConfigValidator:
             config: Raw configuration dictionary
             strict: If True, raise errors on validation failures
             warn_deprecated: If True, warn about deprecated config paths
+            auto_resolve_paths: If True, automatically resolve deprecated paths
         """
         self._config = config
         self._strict = strict
         self._warn_deprecated = warn_deprecated
+        self._auto_resolve_paths = auto_resolve_paths
         self._accessed_paths: Set[str] = set()
         self._warnings: List[str] = []
+        self._warned_deprecated: Set[str] = set()  # Track warned paths to avoid spam
+
+    def resolve_path(self, path: str) -> str:
+        """
+        Resolve a deprecated config path to its canonical form.
+
+        Args:
+            path: Configuration path (may be deprecated)
+
+        Returns:
+            Canonical path (may be same as input if not deprecated)
+        """
+        return self.DEPRECATED_PATHS.get(path, path)
+
+    def is_deprecated_path(self, path: str) -> bool:
+        """
+        Check if a config path is deprecated.
+
+        Args:
+            path: Configuration path to check
+
+        Returns:
+            True if path is deprecated
+        """
+        return path in self.DEPRECATED_PATHS
+
+    def _warn_deprecated(self, path: str, new_path: str) -> None:
+        """Emit deprecation warning (once per path)."""
+        if SUPPRESS_DEPRECATION_WARNINGS:
+            return
+
+        if path in self._warned_deprecated:
+            return
+
+        self._warned_deprecated.add(path)
+        warning = (
+            f"Config path '{path}' is deprecated, use '{new_path}' instead. "
+            f"Set SUPPRESS_CONFIG_DEPRECATION=1 to silence this warning."
+        )
+        self._warnings.append(warning)
+        warnings.warn(warning, DeprecationWarning, stacklevel=3)
 
     def get(
         self,
@@ -104,6 +184,9 @@ class ConfigValidator:
     ) -> Union[Any, T]:
         """
         Get a config value using dot notation.
+
+        Deprecated paths are automatically resolved to new canonical paths
+        with a deprecation warning.
 
         Args:
             path: Dot-separated path, e.g., 'training.batch_size'
@@ -118,14 +201,39 @@ class ConfigValidator:
         """
         self._accessed_paths.add(path)
 
-        # Check for deprecated path
-        if self._warn_deprecated and path in self.DEPRECATED_PATHS:
+        # Check for deprecated path and emit warning
+        if path in self.DEPRECATED_PATHS:
             new_path = self.DEPRECATED_PATHS[path]
-            warning = f"Config path '{path}' is deprecated, use '{new_path}' instead"
-            self._warnings.append(warning)
-            warnings.warn(warning, DeprecationWarning, stacklevel=2)
+            self._warn_deprecated(path, new_path)
+            # If auto-resolve is enabled and we can find the value at new path,
+            # use that instead
+            if self._auto_resolve_paths:
+                new_value = self._get_value(new_path)
+                if new_value is not None:
+                    return new_value
 
-        # Navigate nested dict
+        # Try to get value at the original path
+        value = self._get_value(path)
+        if value is not None:
+            return value
+
+        # Path not found
+        if required:
+            raise ConfigValidationError(
+                f"Required config field '{path}' not found"
+            )
+        return default
+
+    def _get_value(self, path: str) -> Optional[Any]:
+        """
+        Get value at a path without deprecation handling.
+
+        Args:
+            path: Dot-separated path
+
+        Returns:
+            Value at path, or None if not found
+        """
         keys = path.split('.')
         value = self._config
 
@@ -133,11 +241,7 @@ class ConfigValidator:
             if isinstance(value, dict) and key in value:
                 value = value[key]
             else:
-                if required:
-                    raise ConfigValidationError(
-                        f"Required config field '{path}' not found"
-                    )
-                return default
+                return None
 
         return value
 
@@ -289,6 +393,30 @@ class ConfigValidator:
         if nah is not None and nah <= 0:
             errors.append(f"model.num_attention_heads must be > 0, got {nah}")
 
+        # Batch size calibration validation
+        calib = self.get('training.batch_size_calibration')
+        if calib is not None and isinstance(calib, dict):
+            if calib.get('enabled', False):
+                min_bs = calib.get('min_batch_size', 1)
+                max_bs = calib.get('max_batch_size', 256)
+                if min_bs >= max_bs:
+                    errors.append(
+                        f"batch_size_calibration.min_batch_size ({min_bs}) must be < "
+                        f"max_batch_size ({max_bs})"
+                    )
+                target_mem = calib.get('target_memory', 0.75)
+                if not 0.0 < target_mem <= 1.0:
+                    errors.append(
+                        f"batch_size_calibration.target_memory must be in (0.0, 1.0], "
+                        f"got {target_mem}"
+                    )
+                calib_headroom = calib.get('calibration_headroom', 0.90)
+                if not 0.0 < calib_headroom < 1.0:
+                    errors.append(
+                        f"batch_size_calibration.calibration_headroom must be in (0.0, 1.0), "
+                        f"got {calib_headroom}"
+                    )
+
     def _validate_cross_fields(self, errors: List[str], warnings: List[str]) -> None:
         """Validate dependencies between fields."""
         # Hidden size must be divisible by attention heads
@@ -323,6 +451,24 @@ class ConfigValidator:
                 warnings.append(
                     f"Effective batch size ({effective_bs} = {bs} * {gas}) is very large"
                 )
+
+        # Warn about potentially problematic torch.compile + gradient_checkpointing + DeepSpeed
+        # This combination can cause CUDA "illegal memory access" errors due to nested
+        # gradient checkpoints conflicting with torch.compile's CUDA graphs.
+        use_torch_compile = (
+            self.get('model.use_torch_compile') or
+            self.get('performance.enable_torch_compile')
+        )
+        gradient_checkpointing = self.get('model.gradient_checkpointing')
+        deepspeed_enabled = self.get('deepspeed.enabled')
+
+        if use_torch_compile and gradient_checkpointing and deepspeed_enabled:
+            warnings.append(
+                "torch.compile + gradient_checkpointing + DeepSpeed enabled together. "
+                "Inner expert checkpointing has been automatically disabled to prevent "
+                "CUDA illegal memory access errors. If errors persist, try setting "
+                "model.use_torch_compile: false OR model.gradient_checkpointing: false"
+            )
 
     def _validate_paths(self, errors: List[str], warnings: List[str]) -> None:
         """Validate file/directory paths."""
@@ -383,6 +529,87 @@ class ConfigValidator:
                 self._merge_dicts(base[key], value, override)
             elif override or key not in base:
                 base[key] = value
+
+    def validate_against_dataclass(
+        self,
+        dataclass_type: type,
+        config_prefix: str = "",
+    ) -> Tuple[bool, List[str]]:
+        """
+        Validate config against a dataclass schema for type-safe validation.
+
+        This method uses dataclass field annotations to validate that config
+        values have the correct types and required fields are present.
+
+        Args:
+            dataclass_type: A dataclass type to validate against
+            config_prefix: Optional prefix for nested config access (e.g., 'model')
+
+        Returns:
+            Tuple of (is_valid, list of error messages)
+
+        Example:
+            >>> from dataclasses import dataclass
+            >>> @dataclass
+            ... class ModelConfig:
+            ...     hidden_size: int
+            ...     num_layers: int = 12
+            >>> validator = ConfigValidator({'model': {'hidden_size': 768}})
+            >>> is_valid, errors = validator.validate_against_dataclass(ModelConfig, 'model')
+        """
+        from dataclasses import fields, is_dataclass, MISSING
+        import typing
+
+        errors: List[str] = []
+
+        if not is_dataclass(dataclass_type):
+            errors.append(f"{dataclass_type.__name__} is not a dataclass")
+            return False, errors
+
+        for field in fields(dataclass_type):
+            # Build full path
+            path = f"{config_prefix}.{field.name}" if config_prefix else field.name
+            value = self.get(path)
+
+            # Check if required (no default value)
+            has_default = field.default is not MISSING or field.default_factory is not MISSING
+
+            if value is None:
+                if not has_default:
+                    errors.append(f"Required field '{path}' is missing")
+                continue
+
+            # Type check
+            expected_type = field.type
+
+            # Handle Optional types
+            origin = typing.get_origin(expected_type)
+            if origin is typing.Union:
+                args = typing.get_args(expected_type)
+                # Check if it's Optional (Union with NoneType)
+                if type(None) in args:
+                    if value is None:
+                        continue
+                    # Get the non-None type
+                    expected_type = next(t for t in args if t is not type(None))
+                    origin = typing.get_origin(expected_type)
+
+            # Handle generic types (List, Dict, etc.)
+            if origin is not None:
+                expected_type = origin
+
+            # Perform type check
+            if expected_type in (int, float, str, bool, list, dict):
+                # Handle int/float compatibility
+                if expected_type == float and isinstance(value, int):
+                    continue  # int is acceptable for float
+                if not isinstance(value, expected_type):
+                    errors.append(
+                        f"Field '{path}': expected {expected_type.__name__}, "
+                        f"got {type(value).__name__}"
+                    )
+
+        return len(errors) == 0, errors
 
 
 def validate_training_config(config: Dict[str, Any]) -> ConfigValidator:

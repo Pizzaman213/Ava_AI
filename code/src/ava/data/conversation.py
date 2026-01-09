@@ -639,6 +639,7 @@ class TurnAwareConversationDataLoader:
             num_workers=num_workers,
             collate_fn=collator,
             drop_last=False,
+            pin_memory=torch.cuda.is_available(),
         )
 
 

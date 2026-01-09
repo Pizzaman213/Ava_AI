@@ -40,11 +40,36 @@ Usage:
 """
 
 import logging
+import random
+import time
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from .context import ManagerInterface, TrainingComponent, TrainingContext
+
+
+@dataclass
+class RetryState:
+    """Tracks retry attempts for a component."""
+    attempt_count: int = 0
+    last_backoff: float = 0.0
+    total_retries: int = 0
+    last_error: Optional[Exception] = None
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry logic."""
+    max_retries: int = 3
+    initial_backoff: float = 1.0
+    backoff_multiplier: float = 2.0
+    max_backoff: float = 60.0
+    jitter: bool = True
+    jitter_factor: float = 0.1
+    retry_on_oom: bool = True
+    reduce_batch_on_oom: bool = True
 
 logger = logging.getLogger(__name__)
 
@@ -142,24 +167,33 @@ class TrainingPipeline:
         >>> pipeline.cleanup_all()
     """
 
-    def __init__(self, context: TrainingContext):
+    def __init__(self, context: TrainingContext, retry_config: Optional[RetryConfig] = None):
         """
         Initialize the training pipeline.
 
         Args:
             context: Training context with shared state (model, device, config, etc.)
+            retry_config: Optional retry configuration for error recovery
 
         Attributes:
             _components: OrderedDict of registered components (order preserved)
             _initialized: Flag indicating if all components have been initialized
             _errors: List of ComponentError objects for debugging
             _hook_severities: Maps hook names to ErrorSeverity levels
+            _retry_config: Configuration for retry logic
+            _retry_states: Per-component retry state tracking
         """
         self.context = context
         self._components: OrderedDict[str, TrainingComponent] = OrderedDict()
         self._initialized = False
         self._errors: List[ComponentError] = []
         self._hook_severities: Dict[str, ErrorSeverity] = DEFAULT_HOOK_SEVERITIES.copy()
+        self._retry_config = retry_config or RetryConfig()
+        self._retry_states: Dict[str, RetryState] = {}
+        # Status caching to avoid redundant get_status() calls (reduces sync overhead)
+        self._status_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._status_cache_time: float = 0.0
+        self._status_cache_ttl: float = 1.0  # 1 second TTL
 
     def set_hook_severity(self, hook_name: str, severity: ErrorSeverity) -> None:
         """
@@ -179,13 +213,72 @@ class TrainingPipeline:
         """Clear recorded errors."""
         self._errors.clear()
 
+    def _compute_backoff(self, component_name: str) -> float:
+        """
+        Compute exponential backoff delay with optional jitter.
+
+        Args:
+            component_name: Name of the component for retry state lookup
+
+        Returns:
+            Backoff delay in seconds
+        """
+        state = self._retry_states.get(component_name, RetryState())
+        config = self._retry_config
+
+        # Exponential backoff: initial * (multiplier ^ attempt)
+        backoff = config.initial_backoff * (config.backoff_multiplier ** state.attempt_count)
+        backoff = min(backoff, config.max_backoff)
+
+        # Add jitter to prevent thundering herd
+        if config.jitter:
+            jitter_range = backoff * config.jitter_factor
+            backoff += random.uniform(-jitter_range, jitter_range)
+            backoff = max(0.1, backoff)  # Ensure minimum delay
+
+        return backoff
+
+    def _is_oom_error(self, error: Exception) -> bool:
+        """Check if error is a CUDA out-of-memory error."""
+        error_str = str(error).lower()
+        return (
+            'out of memory' in error_str or
+            'cuda out of memory' in error_str or
+            'cudaerroroutofmemory' in error_str or
+            isinstance(error, RuntimeError) and 'CUDA' in str(error)
+        )
+
+    def _should_retry(self, component_name: str, error: Exception) -> bool:
+        """
+        Determine if we should retry based on error type and retry count.
+
+        Args:
+            component_name: Name of the component
+            error: The exception that occurred
+
+        Returns:
+            True if we should retry, False otherwise
+        """
+        state = self._retry_states.get(component_name, RetryState())
+        config = self._retry_config
+
+        # Check if we've exceeded max retries
+        if state.attempt_count >= config.max_retries:
+            return False
+
+        # Check for OOM errors
+        if self._is_oom_error(error):
+            return config.retry_on_oom
+
+        return True
+
     def _handle_hook_error(
         self,
         hook_name: str,
         component_name: str,
         error: Exception,
         context: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    ) -> bool:
         """
         Handle an error from a component hook.
 
@@ -195,26 +288,117 @@ class TrainingPipeline:
             error: The exception that occurred
             context: Additional context
 
+        Returns:
+            True if the error was handled and should retry, False otherwise
+
         Raises:
-            RuntimeError: If severity is FATAL
+            RuntimeError: If severity is FATAL and cannot recover
         """
         severity = self._hook_severities.get(hook_name, ErrorSeverity.WARNING)
         comp_error = ComponentError(component_name, error, severity, context)
         self._errors.append(comp_error)
 
+        # Initialize retry state for component if not exists
+        if component_name not in self._retry_states:
+            self._retry_states[component_name] = RetryState()
+        state = self._retry_states[component_name]
+        state.last_error = error
+
         # Handle error based on severity level:
         # - FATAL: Critical failure, cannot continue (e.g., model build failed)
         # - WARNING: Non-critical, log and continue (e.g., metrics logging failed)
-        # - RETRY: Reserved for future automatic retry logic (not yet implemented)
+        # - RETRY: Automatic retry with exponential backoff
         if severity == ErrorSeverity.FATAL:
             logger.error(f"FATAL error in {hook_name} for '{component_name}': {error}")
             raise RuntimeError(f"Fatal pipeline error: {comp_error}")
+
         elif severity == ErrorSeverity.WARNING:
             logger.warning(f"{hook_name} failed for '{component_name}': {error}")
+            return False
+
         elif severity == ErrorSeverity.RETRY:
-            # TODO: Implement retry logic with configurable max_retries and backoff
-            # For now, just log and continue (same as WARNING)
-            logger.info(f"{hook_name} failed for '{component_name}', will retry: {error}")
+            # Check if we should retry
+            if not self._should_retry(component_name, error):
+                logger.error(
+                    f"Max retries ({self._retry_config.max_retries}) exceeded for "
+                    f"'{component_name}' in {hook_name}. Last error: {error}"
+                )
+                # Reset retry state and escalate to WARNING
+                state.attempt_count = 0
+                return False
+
+            # Compute and apply backoff
+            backoff = self._compute_backoff(component_name)
+            state.attempt_count += 1
+            state.total_retries += 1
+            state.last_backoff = backoff
+
+            logger.info(
+                f"{hook_name} failed for '{component_name}' "
+                f"(attempt {state.attempt_count}/{self._retry_config.max_retries}), "
+                f"retrying in {backoff:.2f}s: {error}"
+            )
+
+            # Handle OOM-specific recovery
+            if self._is_oom_error(error) and self._retry_config.reduce_batch_on_oom:
+                self._handle_oom_recovery(component_name)
+
+            # Wait before retry
+            time.sleep(backoff)
+            return True
+
+        return False
+
+    def _handle_oom_recovery(self, component_name: str) -> None:
+        """
+        Handle OOM recovery by reducing batch size or clearing cache.
+
+        Args:
+            component_name: Name of the component that failed
+        """
+        import torch
+
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            logger.info(f"Cleared CUDA cache for OOM recovery in '{component_name}'")
+
+        # Try to reduce batch size in context if available
+        if hasattr(self.context, 'batch_size') and self.context.batch_size:
+            old_batch = self.context.batch_size
+            new_batch = max(1, old_batch // 2)
+            self.context.batch_size = new_batch
+            logger.info(f"Reduced batch size from {old_batch} to {new_batch} for OOM recovery")
+
+    def reset_retry_state(self, component_name: Optional[str] = None) -> None:
+        """
+        Reset retry state for a component or all components.
+
+        Args:
+            component_name: Specific component to reset, or None for all
+        """
+        if component_name:
+            if component_name in self._retry_states:
+                self._retry_states[component_name] = RetryState()
+        else:
+            self._retry_states.clear()
+
+    def get_retry_stats(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get retry statistics for all components.
+
+        Returns:
+            Dictionary mapping component names to their retry stats
+        """
+        return {
+            name: {
+                'attempt_count': state.attempt_count,
+                'total_retries': state.total_retries,
+                'last_backoff': state.last_backoff,
+                'last_error': str(state.last_error) if state.last_error else None,
+            }
+            for name, state in self._retry_states.items()
+        }
 
     def register(self, name: str, component: TrainingComponent) -> 'TrainingPipeline':
         """
@@ -459,18 +643,28 @@ class TrainingPipeline:
                         'on_error', name, e, {'original_error': str(error)}
                     )
 
-    def get_status(self) -> Dict[str, Dict[str, Any]]:
+    def get_status(self, force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
         """
-        Get status from all components.
+        Get status from all components (with caching to reduce overhead).
 
         Aggregates status dictionaries from all registered components.
         Useful for debugging, monitoring dashboards, or health checks.
+
+        Args:
+            force_refresh: If True, bypass cache and refresh status.
 
         Returns:
             Dictionary mapping component names to their status dictionaries.
             Each component's status may include: metrics, counters, flags, etc.
             If a component's get_status() fails, returns {'error': str(e)}.
         """
+        # OPTIMIZATION: Cache status to avoid repeated calls to component.get_status()
+        # Each component's get_status() may involve GPU sync operations
+        current_time = time.time()
+        if not force_refresh and self._status_cache is not None:
+            if (current_time - self._status_cache_time) < self._status_cache_ttl:
+                return self._status_cache
+
         # Aggregate status from all components for unified monitoring
         # Each ManagerInterface component provides its own status dict
         # TrainingComponent (base) only reports initialization state
@@ -484,6 +678,10 @@ class TrainingPipeline:
                     status[name] = {'error': str(e)}
             else:
                 status[name] = {'initialized': component.is_initialized()}
+
+        # Update cache
+        self._status_cache = status
+        self._status_cache_time = current_time
 
         return status
 

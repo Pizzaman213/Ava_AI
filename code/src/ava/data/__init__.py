@@ -2,29 +2,30 @@
 Data loading and processing utilities for Ava training.
 
 This package provides:
-- Streaming datasets for memory-efficient data loading
+- Pretokenized Arrow/Parquet dataloaders (ultra-fast)
+- Indexed Arrow dataloaders (map-style with true random shuffling)
 - Bucketing utilities for efficient batch formation
 - Distributed data loading support
 - Factory functions for creating dataloaders
 - Centralized Arrow I/O utilities
 
 Usage:
-    from ava.data import create_streaming_dataloaders, StreamingDataset
+    from ava.data import create_dataloaders
 
-    # Create dataloaders with all optimizations
-    train_loader, val_loader = create_streaming_dataloaders(
-        tokenizer=tokenizer,
+    # Create dataloaders with pretokenized data (default, fastest)
+    train_loader, val_loader = create_dataloaders(
+        mode='pretokenized',
         batch_size=32,
         max_length=2048,
         data_dir='/path/to/data',
     )
 
-    # Or use StreamingDataset directly
-    dataset = StreamingDataset(
-        data_dir='/path/to/data',
-        split='train',
-        tokenizer=tokenizer,
+    # Or use indexed mode for true random shuffling
+    train_loader, val_loader = create_dataloaders(
+        mode='indexed',
+        batch_size=32,
         max_length=2048,
+        data_dir='/path/to/data',
     )
 """
 
@@ -54,7 +55,7 @@ from .bucketing import (
     LengthBasedBucketing,
 )
 from .distributed import DistributedStreamingDataset, AdvancedDistributedSampler
-from .factory import create_streaming_dataloaders, create_dataloaders
+from .factory import create_dataloaders
 # Collators (unified)
 from .collators import (
     BaseCollator,
@@ -66,14 +67,6 @@ from .indexed import (
     IndexedArrowDataset,
     LengthBinnedSampler,
     create_indexed_dataloaders,
-)
-from .streaming import (
-    FileReader,
-    InfiniteStreamingDataset,
-    StreamingDataset,
-    _worker_init_fn,
-    get_worker_context,
-    retry_on_error,
 )
 
 __all__ = [
@@ -93,15 +86,7 @@ __all__ = [
     'ThreadLocalFileCache',  # Backward compatibility
     # Factory
     'create_dataloaders',  # Unified factory
-    'create_streaming_dataloaders',
     'create_indexed_dataloaders',
-    # Streaming
-    'StreamingDataset',
-    'InfiniteStreamingDataset',
-    'FileReader',
-    'get_worker_context',
-    'retry_on_error',
-    '_worker_init_fn',
     # Collators (unified)
     'BaseCollator',
     'DynamicPaddingCollator',

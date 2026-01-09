@@ -28,8 +28,10 @@ Usage:
 
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
+from queue import Queue, Empty
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 # Import TrainingComponent for MetricsManager inheritance
@@ -485,13 +487,72 @@ class MetricsManager:
         # WandB metric accumulator
         self._pending_wandb_metrics: Dict[str, Any] = {}
         self._pending_step: Optional[int] = None
+        # Async flush infrastructure
+        self._flush_queue: Queue = Queue()
+        self._flush_thread: Optional[threading.Thread] = None
+        self._flush_thread_running = False
         # Logger for this instance
         self._logger = logging.getLogger(f"{__name__}.MetricsManager")
+        # Logging config for fine-grained control (set via setup)
+        self._logging_config: Dict[str, Any] = {}
 
     @property
     def logger(self):
         """Get the logger for this instance."""
         return self._logger
+
+    def _should_log(self, log_type: str) -> bool:
+        """Check if a specific log type is enabled.
+
+        Args:
+            log_type: Type of logging (e.g., 'training', 'gradients', 'moe', etc.)
+
+        Returns:
+            True if logging should proceed, False if disabled
+        """
+        # Master disable check
+        if self._logging_config.get('disabled', False):
+            return False
+
+        # Check specific metric category
+        category_key = f'log_{log_type}_metrics'
+        return self._logging_config.get(category_key, True)
+
+    def _should_log_wandb(self, log_type: str) -> bool:
+        """Check if WandB logging is enabled for a specific type.
+
+        Args:
+            log_type: Type of logging (e.g., 'training', 'gradients', 'moe', etc.)
+
+        Returns:
+            True if WandB logging should proceed
+        """
+        if not self._use_wandb:
+            return False
+        if self._logging_config.get('disabled', False):
+            return False
+
+        # Check WandB-specific control
+        wandb_key = f'wandb_log_{log_type}'
+        return self._logging_config.get(wandb_key, True)
+
+    def _should_log_tensorboard(self, log_type: str) -> bool:
+        """Check if TensorBoard logging is enabled for a specific type.
+
+        Args:
+            log_type: Type of logging (e.g., 'training', 'gradients', 'moe', etc.)
+
+        Returns:
+            True if TensorBoard logging should proceed
+        """
+        if self._writer is None:
+            return False
+        if self._logging_config.get('disabled', False):
+            return False
+
+        # Check TensorBoard-specific control
+        tb_key = f'tensorboard_log_{log_type}'
+        return self._logging_config.get(tb_key, True)
 
     def assert_initialized(self) -> None:
         """Assert that the manager is initialized."""
@@ -505,7 +566,21 @@ class MetricsManager:
 
     def cleanup(self) -> None:
         """Close writers and finish WandB run."""
-        # Shutdown async logger first to flush pending logs
+        # Shutdown background flush thread first
+        if self._flush_thread is not None and self._flush_thread.is_alive():
+            self.logger.debug("Shutting down WandB flush thread...")
+            self._flush_thread_running = False
+            # Send shutdown signal and wait for thread to finish
+            self._flush_queue.put(None)
+            self._flush_thread.join(timeout=10.0)
+            if self._flush_thread.is_alive():
+                self.logger.warning("WandB flush thread did not stop gracefully")
+            self._flush_thread = None
+
+        # Flush any remaining pending metrics synchronously
+        self.flush_wandb_metrics(async_flush=False)
+
+        # Shutdown async logger
         if self._async_logger is not None:
             try:
                 self._async_logger.flush(timeout=30.0)
@@ -532,6 +607,7 @@ class MetricsManager:
         wandb_dir: Optional[Path] = None,
         async_logging: bool = True,
         async_batch_size: int = 10,
+        logging_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Setup logging infrastructure.
@@ -543,11 +619,21 @@ class MetricsManager:
             wandb_dir: Directory for WandB local files (optional)
             async_logging: Use async WandB logging (default True)
             async_batch_size: Number of log calls to batch before sending (default 10)
+            logging_config: Fine-grained logging controls from LoggingConfig
 
         Raises:
             RuntimeError: If log directory cannot be created
         """
         self.assert_initialized()
+
+        # Store logging config for checking in log methods
+        self._logging_config = logging_config or {}
+
+        # Check master disable flag
+        if self._logging_config.get('disabled', False):
+            self.logger.info("Logging is DISABLED via config - skipping all logging setup")
+            self._use_wandb = False
+            return
 
         self._log_dir = Path(log_dir)
 
@@ -556,15 +642,19 @@ class MetricsManager:
         except Exception as e:
             raise RuntimeError(f"Failed to create log directory {log_dir}: {e}")
 
-        # Setup TensorBoard writer
-        if TENSORBOARD_AVAILABLE and SummaryWriter is not None:
+        # Setup TensorBoard writer (check logging_config.tensorboard_enabled)
+        tensorboard_enabled = self._logging_config.get('tensorboard_enabled', True)
+        if tensorboard_enabled and TENSORBOARD_AVAILABLE and SummaryWriter is not None:
             self._writer = SummaryWriter(str(self._log_dir))
             self.logger.info(f"TensorBoard logging to: {self._log_dir}")
+        elif not tensorboard_enabled:
+            self.logger.info("TensorBoard disabled via logging config")
         else:
             self.logger.warning("TensorBoard not available")
 
-        # Setup WandB if requested and available
-        self._use_wandb = use_wandb and WANDB_AVAILABLE and wandb_config is not None
+        # Setup WandB if requested and available (check logging_config.wandb_enabled)
+        wandb_config_enabled = self._logging_config.get('wandb_enabled', True)
+        self._use_wandb = use_wandb and wandb_config_enabled and WANDB_AVAILABLE and wandb_config is not None
         self.logger.info(f"WandB setup: use_wandb={use_wandb}, WANDB_AVAILABLE={WANDB_AVAILABLE}, "
                         f"wandb_config={'provided' if wandb_config else 'None'}, _use_wandb={self._use_wandb}")
 
@@ -660,19 +750,65 @@ class MetricsManager:
         self._pending_step = step
         self._pending_wandb_metrics.update(metrics)
 
-    def flush_wandb_metrics(self) -> None:
-        """Send all accumulated metrics to wandb in a single log() call."""
+    def _start_flush_thread(self) -> None:
+        """Start the background flush thread if not running."""
+        if self._flush_thread is not None and self._flush_thread.is_alive():
+            return
+
+        self._flush_thread_running = True
+        self._flush_thread = threading.Thread(
+            target=self._background_flush_loop,
+            daemon=True,
+            name="WandBFlushThread"
+        )
+        self._flush_thread.start()
+        self.logger.debug("Started background WandB flush thread")
+
+    def _background_flush_loop(self) -> None:
+        """Background thread that flushes metrics to WandB without blocking training."""
+        while self._flush_thread_running:
+            try:
+                # Wait for metrics with timeout to allow graceful shutdown
+                item = self._flush_queue.get(timeout=1.0)
+                if item is None:  # Shutdown signal
+                    break
+                metrics, step = item
+                try:
+                    self._wandb_logger.log(metrics, step=step)
+                except Exception as e:
+                    self.logger.warning(f"Async WandB flush failed: {e}")
+            except Empty:
+                continue  # Timeout, check if we should stop
+            except Exception as e:
+                self.logger.warning(f"Error in flush thread: {e}")
+
+    def flush_wandb_metrics(self, async_flush: bool = True) -> None:
+        """Send all accumulated metrics to wandb.
+
+        Args:
+            async_flush: If True (default), queue for background flush.
+                        If False, flush synchronously (blocking).
+        """
         if not self._use_wandb:
             return
 
         if self._pending_wandb_metrics and self._pending_step is not None:
-            try:
-                self._wandb_logger.log(self._pending_wandb_metrics, step=self._pending_step)
-            except Exception as e:
-                self.logger.warning(f"Failed to flush wandb metrics: {e}")
-
+            metrics_copy = self._pending_wandb_metrics.copy()
+            step = self._pending_step
             self._pending_wandb_metrics = {}
             self._pending_step = None
+
+            if async_flush:
+                # Start background thread if not running
+                self._start_flush_thread()
+                # Queue for async flush (non-blocking)
+                self._flush_queue.put((metrics_copy, step))
+            else:
+                # Synchronous flush (blocking)
+                try:
+                    self._wandb_logger.log(metrics_copy, step=step)
+                except Exception as e:
+                    self.logger.warning(f"Failed to flush wandb metrics: {e}")
 
     def log_training_step(
         self,
@@ -692,6 +828,10 @@ class MetricsManager:
             batch_size: Current batch size
             **extra_metrics: Additional metrics to log
         """
+        # Check if training metrics logging is enabled
+        if not self._should_log('training'):
+            return
+
         # Update running average loss (EMA)
         if self._ema_loss is None:
             self._ema_loss = loss
@@ -703,8 +843,8 @@ class MetricsManager:
         self._epoch_step_count += 1
         avg_loss = self._total_epoch_loss / self._epoch_step_count
 
-        # TensorBoard logging
-        if self._writer is not None:
+        # TensorBoard logging (check tensorboard_log_training)
+        if self._should_log_tensorboard('training'):
             self._writer.add_scalar('train/loss', loss, step)
             self._writer.add_scalar('train/avg_loss', avg_loss, step)
             self._writer.add_scalar('train/smoothed_loss', self._ema_loss, step)
@@ -722,7 +862,10 @@ class MetricsManager:
         for key, value in extra_metrics.items():
             self._store_metric(key, step, value)
 
-        # WandB logging
+        # WandB logging (check wandb_log_training)
+        if not self._should_log_wandb('training'):
+            return
+
         log_dict = {
             'train/loss': loss,
             'train/avg_loss': avg_loss,
@@ -736,10 +879,13 @@ class MetricsManager:
 
     def log_gradients(self, step: int, grad_stats: Dict[str, float]) -> None:
         """Log gradient statistics."""
+        if not self._should_log('gradient'):
+            return
+
         avg_grad = grad_stats['total_norm'] / max(grad_stats['num_grads'], 1)
         grad_norm = grad_stats.get('grad_norm', grad_stats.get('total_norm', 0.0))
 
-        if self._writer is not None:
+        if self._should_log_tensorboard('gradients'):
             self._writer.add_scalar('gradients/grad_norm', grad_norm, step)
             self._writer.add_scalar('gradients/avg_gradient', avg_grad, step)
             self._writer.add_scalar('gradients/max_gradient', grad_stats['max_grad'], step)
@@ -747,54 +893,70 @@ class MetricsManager:
             self._writer.add_scalar('gradients/num_zero_grads', grad_stats['num_zero_grads'], step)
             self._writer.add_scalar('gradients/num_params_with_grads', grad_stats['num_params'], step)
 
-        log_dict = {
-            'gradients/grad_norm': grad_norm,
-            'gradients/avg_gradient': avg_grad,
-            'gradients/max_gradient': grad_stats['max_grad'],
-            'gradients/min_gradient': grad_stats['min_grad'],
-            'gradients/num_zero_grads': grad_stats['num_zero_grads'],
-            'gradients/num_params_with_grads': grad_stats['num_params'],
-        }
-        self.accumulate_wandb_metrics(log_dict, step)
+        if self._should_log_wandb('gradients'):
+            log_dict = {
+                'gradients/grad_norm': grad_norm,
+                'gradients/avg_gradient': avg_grad,
+                'gradients/max_gradient': grad_stats['max_grad'],
+                'gradients/min_gradient': grad_stats['min_grad'],
+                'gradients/num_zero_grads': grad_stats['num_zero_grads'],
+                'gradients/num_params_with_grads': grad_stats['num_params'],
+            }
+            self.accumulate_wandb_metrics(log_dict, step)
 
     def log_moe_metrics(self, step: int, moe_metrics: Dict[str, float]) -> None:
         """Log MoE-specific metrics."""
-        if self._writer is not None:
+        if not self._should_log('moe'):
+            return
+
+        if self._should_log_tensorboard('moe'):
             for key, value in moe_metrics.items():
                 self._writer.add_scalar(f'moe/{key}', value, step)
 
-        log_dict = {f'moe/{key}': value for key, value in moe_metrics.items()}
-        self.accumulate_wandb_metrics(log_dict, step)
+        if self._should_log_wandb('moe'):
+            log_dict = {f'moe/{key}': value for key, value in moe_metrics.items()}
+            self.accumulate_wandb_metrics(log_dict, step)
 
     def log_validation(self, step: int, epoch: int, val_loss: float, **extra_metrics) -> None:
         """Log validation metrics."""
-        if self._writer is not None:
+        if not self._should_log('validation'):
+            return
+
+        if self._should_log_tensorboard('validation'):
             self._writer.add_scalar('validation/loss', val_loss, step)
             self._writer.add_scalar('validation/epoch', epoch, step)
             for key, value in extra_metrics.items():
                 self._writer.add_scalar(f'validation/{key}', value, step)
 
-        log_dict = {
-            'validation/loss': val_loss,
-            'validation/epoch': epoch,
-        }
-        for key, value in extra_metrics.items():
-            log_dict[f'validation/{key}'] = value
-        self.accumulate_wandb_metrics(log_dict, step)
+        if self._should_log_wandb('validation'):
+            log_dict = {
+                'validation/loss': val_loss,
+                'validation/epoch': epoch,
+            }
+            for key, value in extra_metrics.items():
+                log_dict[f'validation/{key}'] = value
+            self.accumulate_wandb_metrics(log_dict, step)
 
         self.logger.info(f"Validation @ step {step}, epoch {epoch}: loss={val_loss:.4f}")
 
     def log_coherence(self, step: int, coherence_metrics: Dict[str, float]) -> None:
         """Log coherence metrics."""
-        if self._writer is not None:
+        if not self._should_log('coherence'):
+            return
+
+        if self._should_log_tensorboard('coherence'):
             for key, value in coherence_metrics.items():
                 self._writer.add_scalar(f'coherence/{key}', value, step)
 
-        log_dict = {f'coherence/{key}': value for key, value in coherence_metrics.items()}
-        self.accumulate_wandb_metrics(log_dict, step)
+        if self._should_log_wandb('coherence'):
+            log_dict = {f'coherence/{key}': value for key, value in coherence_metrics.items()}
+            self.accumulate_wandb_metrics(log_dict, step)
 
     def log_quality_score(self, step: int, quality_score: 'ModelQualityScore') -> None:
         """Log model quality score metrics."""
+        if not self._should_log('quality'):
+            return
+
         metrics = {
             'model_selection/quality_score': quality_score.quality_score,
             'model_selection/val_loss_normalized': quality_score.val_loss_normalized,
@@ -809,14 +971,18 @@ class MetricsManager:
         if quality_score.perplexity is not None:
             metrics['model_selection/raw_perplexity'] = quality_score.perplexity
 
-        if self._writer is not None:
+        if self._should_log_tensorboard('quality'):
             for key, value in metrics.items():
                 self._writer.add_scalar(key, value, step)
 
-        self.accumulate_wandb_metrics(metrics, step)
+        if self._should_log_wandb('quality'):
+            self.accumulate_wandb_metrics(metrics, step)
 
     def log_per_layer_gradients(self, step: int, layer_stats: List['LayerGradientStats']) -> None:
-        """Log per-layer gradient statistics."""
+        """Log per-layer gradient statistics (expensive - disabled by default)."""
+        if not self._logging_config.get('wandb_log_per_layer_grads', False):
+            return
+
         for stat in layer_stats:
             layer_key = stat.layer_name.replace('.', '/')
             prefix = f'gradients/layer/{layer_key}'
@@ -833,10 +999,14 @@ class MetricsManager:
                 for key, value in metrics.items():
                     self._writer.add_scalar(key, value, step)
 
-            self.accumulate_wandb_metrics(metrics, step)
+            if self._use_wandb:
+                self.accumulate_wandb_metrics(metrics, step)
 
     def log_routing_diagnostics(self, step: int, routing_stats: 'ExpertRoutingStats') -> None:
-        """Log expert routing diagnostics."""
+        """Log expert routing diagnostics (expensive - disabled by default)."""
+        if not self._logging_config.get('wandb_log_routing_diagnostics', False):
+            return
+
         metrics = {
             'routing/balance_score': routing_stats.balance_score,
             'routing/routing_entropy': routing_stats.routing_entropy,
@@ -852,10 +1022,14 @@ class MetricsManager:
             for key, value in metrics.items():
                 self._writer.add_scalar(key, value, step)
 
-        self.accumulate_wandb_metrics(metrics, step)
+        if self._use_wandb:
+            self.accumulate_wandb_metrics(metrics, step)
 
     def log_memory_breakdown(self, step: int, breakdown: 'MemoryBreakdown') -> None:
         """Log memory breakdown metrics."""
+        if not self._should_log('memory'):
+            return
+
         metrics = {
             'memory/total_allocated_gb': breakdown.total_allocated_gb,
             'memory/total_reserved_gb': breakdown.total_reserved_gb,
@@ -870,10 +1044,14 @@ class MetricsManager:
             for key, value in metrics.items():
                 self._writer.add_scalar(key, value, step)
 
-        self.accumulate_wandb_metrics(metrics, step)
+        if self._should_log_wandb('memory'):
+            self.accumulate_wandb_metrics(metrics, step)
 
     def log_timing_profile(self, step: int, profile: 'TimingProfile') -> None:
         """Log timing profile metrics."""
+        if not self._should_log('timing'):
+            return
+
         metrics = {
             'timing/data_loading_ms': profile.data_loading_ms,
             'timing/forward_ms': profile.forward_ms,
@@ -886,14 +1064,19 @@ class MetricsManager:
             for key, value in metrics.items():
                 self._writer.add_scalar(key, value, step)
 
-        self.accumulate_wandb_metrics(metrics, step)
+        if self._should_log_wandb('timing'):
+            self.accumulate_wandb_metrics(metrics, step)
 
     def log_generation(self, log_step: int, generation_data: Dict[str, Any]) -> None:
         """Log generation to WandB table (accumulates all generations)."""
         from tqdm import tqdm
 
-        if not self._use_wandb:
-            tqdm.write(f"  [Gen] WARNING: WandB disabled, generation NOT logged to table")
+        # Check if generation logging is disabled
+        if not self._logging_config.get('log_generation_samples', True):
+            return
+
+        if not self._use_wandb or not self._logging_config.get('wandb_log_generations', True):
+            tqdm.write(f"  [Gen] WARNING: WandB generation logging disabled")
             return
 
         try:
@@ -924,7 +1107,7 @@ class MetricsManager:
             )
 
             if self._async_logger is not None:
-                self._async_logger.update_last_step(log_step)
+                self._async_logger.update_last_step(gen_step)
 
             tqdm.write(f"  [Gen] SUCCESS: Generation at step {gen_step} logged to WandB")
 

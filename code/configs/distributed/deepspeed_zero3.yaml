@@ -136,7 +136,6 @@ data:
   tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
   train_batch_size: 1
   eval_batch_size: 2
-  use_pretokenized: true  # Use pretokenized Arrow/Parquet data (60x faster)
 
   # Data loading configuration
   streaming: true

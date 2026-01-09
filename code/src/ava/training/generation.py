@@ -290,10 +290,10 @@ class GenerationManager(ManagerInterface):
                 next_logits = logits[:, -1, :] / max(temperature, 1e-5)
 
                 # Apply repetition penalty (proper implementation for both positive and negative logits)
+                # GPU SYNC FIX: Use single .tolist() instead of per-token .item() calls
                 if repetition_penalty > 1.0 and generated_ids.shape[1] > 0:
-                    recent = generated_ids[0, -50:]
-                    for token_id in recent:
-                        token_id_int = token_id.item()
+                    recent_tokens = generated_ids[0, -50:].tolist()  # Single GPU sync
+                    for token_id_int in recent_tokens:
                         if next_logits[0, token_id_int] < 0:
                             next_logits[0, token_id_int] *= repetition_penalty
                         else:
@@ -485,6 +485,10 @@ class GenerationManager(ManagerInterface):
             # errors if we deepcopy from the background thread.
             with torch.no_grad():
                 base_model = model.module if hasattr(model, 'module') else model
+                # Unwrap torch.compile's OptimizedModule to get the actual model
+                # torch.compile wraps models in OptimizedModule with original at _orig_mod
+                if hasattr(base_model, '_orig_mod'):
+                    base_model = base_model._orig_mod
                 # Copy state dict to CPU immediately on main thread
                 state_dict_cpu = {k: v.cpu().clone() for k, v in base_model.state_dict().items()}
                 # Also capture the model class and config for reconstruction
@@ -493,13 +497,6 @@ class GenerationManager(ManagerInterface):
 
             def _run_generation():
                 try:
-                    # Debug: confirm async thread started
-                    try:
-                        from tqdm import tqdm
-                        tqdm.write(f"  [Gen] Async thread started for step {global_step}")
-                    except ImportError:
-                        pass
-
                     # Reconstruct model on CPU using captured state_dict
                     # This avoids deepcopy race conditions with model caches
                     with torch.no_grad():
@@ -604,30 +601,11 @@ class GenerationManager(ManagerInterface):
 
                         # Cleanup
                         del cpu_model
-
-                        # Debug: confirm generation completed
-                        try:
-                            from tqdm import tqdm
-                            tqdm.write(f"  [Gen] Async generation completed for step {global_step}")
-                        except ImportError:
-                            pass
-
                         return text
 
                 except Exception as e:
-                    # Log full traceback for debugging
-                    import traceback
-                    tb_str = ''.join(traceback.format_tb(e.__traceback__))
-                    self.logger.error(
-                        f"Async generation failed at step {global_step}: {e}\n"
-                        f"Traceback:\n{tb_str}"
-                    )
-                    # Also print to console for visibility
-                    try:
-                        from tqdm import tqdm
-                        tqdm.write(f"  [Gen ERROR] Step {global_step}: {type(e).__name__}: {e}")
-                    except ImportError:
-                        print(f"  [Gen ERROR] Step {global_step}: {type(e).__name__}: {e}")
+                    # Log error (logger handles formatting)
+                    self.logger.error(f"Async generation failed at step {global_step}: {e}")
 
                     # Record error in history for monitoring
                     with self._lock:
@@ -783,17 +761,8 @@ class GenerationManager(ManagerInterface):
         except Exception as e:
             # Full context for debugging
             self.logger.warning(
-                f"Coherence measurement failed at step {global_step}: {e}. "
-                f"This will result in missing coherence metrics. "
-                f"Config: {config}",
-                exc_info=True  # Include stack trace
+                f"Coherence measurement failed at step {global_step}: {e}"
             )
-            # Console output for visibility
-            try:
-                from tqdm import tqdm
-                tqdm.write(f"  [WARNING] Coherence measurement failed at step {global_step}: {e}")
-            except ImportError:
-                print(f"  [WARNING] Coherence measurement failed at step {global_step}: {e}")
             return None
 
     def is_generation_pending(self) -> bool:

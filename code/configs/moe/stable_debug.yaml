@@ -1,0 +1,321 @@
+# =============================================================================
+# Stable Debug Configuration - Minimal features for troubleshooting
+# =============================================================================
+# Use this config to identify what's causing crashes
+# Once stable, re-enable features one by one
+#
+# Configuration Schema v2.0 - 8-Section Structure:
+#   model, training, data, compute, distributed, logging, checkpoints, experimental
+# =============================================================================
+
+# =============================================================================
+# MODEL - Architecture, MoE, tokens, regularization
+# =============================================================================
+model:
+  vocab_size: 30522
+  pad_token_id: 0
+  eos_token_id: 102
+  bos_token_id: 101
+  tokenizer_path: pretokenized_data/tokenizers/vocab
+  hidden_size: 384
+  num_layers: 6
+  num_attention_heads: 6
+  intermediate_size: 1536
+  max_position_embeddings: 512
+  num_experts: 4
+  num_experts_per_token: 2
+  router_type: mixtral
+  capacity_factor: 1.25
+  quantize_kv_cache: false
+  expert_dropout: 0.0
+  activation: swiglu
+  tie_word_embeddings: false
+
+  # GPU Optimizations - keep proven ones
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: false
+  use_flash_attention: true
+  gradient_checkpointing: true
+  use_optimized_moe: true
+
+  # MoE losses - minimal
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.0
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.0
+  aux_loss_frequency: 50
+
+  # Regularization
+  entropy_regularization: 0.0
+  output_diversity_weight: 0.0
+  eos_logit_bias: 0.0
+  attention_dropout: 0.1
+  dropout: 0.1
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+# =============================================================================
+# TRAINING - Optimizer, schedule, batching, validation
+# =============================================================================
+training:
+  precision:
+    mixed_precision: bf16
+
+  batching:
+    batch_size: 16
+    gradient_accumulation_steps: 4
+    label_smoothing: 0.1
+
+  optimizer:
+    type: adamw
+    learning_rate: 1.0e-4
+    betas: [0.9, 0.98]
+    weight_decay: 0.1
+    use_fused: true
+    max_grad_norm: 1.0
+
+  schedule:
+    num_epochs: 3
+    max_steps: null
+    total_steps: 100000
+    steps_per_epoch: 50000
+    warmup_steps: 1000
+    scheduler_type: cosine
+    num_cycles: 1
+    min_lr: 1.0e-5
+
+  logging:
+    save_steps: 1000
+    eval_steps: 500
+    logging_steps: 100
+    use_tensorboard: true
+    use_wandb: true
+
+  validation:
+    enabled: true
+    batch_size: 16
+    max_batches: 10
+    compute_train_ratio: true
+    early_stopping_patience: 5
+    early_stopping_min_delta: 0.01
+
+  generation:
+    enabled: true
+    generate_every_n_steps: 500
+    num_per_step: 2
+    during_eval: true
+    test_quality: true
+    skip_until_step: 200
+    max_length: 64
+    temperature: 0.7
+    top_p: 0.85
+    top_k: 40
+    repetition_penalty: 1.5
+    no_repeat_ngram_size: 3
+    skip_special_tokens: true
+    prompt: "Once upon a time"
+
+  coherence:
+    enabled: false
+
+# =============================================================================
+# DATA - Loading, streaming, packing, splits
+# =============================================================================
+data:
+  streaming: true
+  buffer_size: 500
+  data_dir: pretokenized_data/data/TinyStories
+  val_data_dir: null
+  max_length: 512
+  add_special_tokens: false
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: true
+  validation_split_ratio: 0.05
+  tokenizer_name: pretokenized_data/tokenizers/vocab
+  padding_side: right
+  truncation: false
+
+  # Data loading - CONSERVATIVE settings
+  num_workers: 0
+  prefetch_factor: 2
+  persistent_workers: false
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  skip_dataloader_validation: true
+
+  # Packing - simplified
+  use_sequence_packing: false
+  use_all_data: true
+  max_files_to_load: 10
+  lazy_file_discovery: true
+  cache_size: 5
+  skip_validation: false
+  shuffle_files: true
+  use_indexed_loader: false
+
+# =============================================================================
+# COMPUTE - Device, precision, CUDA, kernels, memory, performance
+# =============================================================================
+compute:
+  performance:
+    enable_cudnn_benchmark: true
+    enable_tf32: true
+    torchinductor_max_autotune: 0
+    enable_torch_compile: false
+
+  kernels:
+    router_kernel_mode: auto
+    use_fused_softmax_topk: true
+    router_block_size: 4
+    use_sparse_expert_dispatch: true
+    use_fused_activations: true
+    use_selective_expert_loading: false
+    use_vectorized_capacity: true
+    use_fused_moe_kernel: false
+    enable_kernel_profiling: false
+
+  cuda:
+    streams:
+      enabled: false
+
+    graphs:
+      enabled: false
+
+  optimizations:
+    use_overlapped_checkpointing: false
+
+  calibration:
+    batch_size:
+      enabled: false
+
+# =============================================================================
+# DISTRIBUTED - Multi-GPU, DeepSpeed, load balancing
+# =============================================================================
+distributed:
+  deepspeed:
+    enabled: false
+
+# =============================================================================
+# LOGGING - Console, WandB, TensorBoard, diagnostics, frequencies
+# =============================================================================
+logging:
+  disabled: false
+  silent_mode: false
+
+  console:
+    enabled: true
+    level: info
+
+  file:
+    enabled: true
+    level: debug
+
+  progress_bar_enabled: true
+  step_logging_enabled: true
+  epoch_logging_enabled: true
+
+  metrics:
+    training: true
+    gradients: true
+    moe: true
+    validation: true
+    coherence: false
+    quality: true
+    memory: true
+    timing: false
+    generations: true
+
+  wandb:
+    enabled: true
+    project: ava-training
+    entity: null
+    tags:
+      - debug
+      - stable
+    log_freq: 10
+    log_training: true
+    log_gradients: true
+    log_moe: true
+    log_validation: true
+    log_coherence: false
+    log_quality: true
+    log_memory: true
+    log_timing: false
+    log_generations: true
+    log_per_layer_grads: false
+    log_routing_diagnostics: false
+    log_model_topology: false
+
+  tensorboard:
+    enabled: true
+    log_training: true
+    log_gradients: true
+    log_moe: true
+    log_validation: true
+
+  frequencies:
+    log_interval: 500
+    verbose_log_interval: 500
+    metrics: 500
+    memory_check: 2000
+    health_summary: 500
+    moe_metrics: 5000
+
+  features:
+    timing_breakdown: false
+    memory_profiling: true
+    health_summaries: true
+
+  diagnostics:
+    enabled: false
+
+    per_layer_gradients:
+      enabled: false
+
+    routing:
+      enabled: false
+
+    memory:
+      enabled: false
+
+    timing:
+      enabled: false
+
+# =============================================================================
+# CHECKPOINTS - Save/load, model selection, output settings
+# =============================================================================
+checkpoints:
+  output_dir: code/outputs
+  save_every: 500
+  fresh_start: true
+
+  selection:
+    enabled: true
+    val_loss_weight: 0.5
+    coherence_score_weight: 0.3
+    perplexity_weight: 0.2
+    perplexity_cap: 100.0
+    val_loss_cap: 10.0
+    higher_is_better: true
+    require_all_metrics: false
+    fallback_to_val_loss: true
+
+# =============================================================================
+# EXPERIMENTAL - Progressive, FP8, caching, advanced features
+# =============================================================================
+experimental:
+  caching:
+    enabled: false
+
+  checkpointing:
+    overlapped:
+      enabled: false
+
+    double:
+      enabled: false
+
+  fp8:
+    enabled: false

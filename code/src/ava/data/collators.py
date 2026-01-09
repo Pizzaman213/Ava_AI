@@ -134,59 +134,96 @@ class DynamicPaddingCollator(BaseCollator):
     """
 
     def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """Collate batch with dynamic padding to batch max."""
+        """
+        Collate batch with dynamic padding to batch max.
+
+        SPEED OPTIMIZED: Single-pass approach with minimal per-item overhead.
+        """
         if not batch:
             return {}
 
-        # Filter out any None items
-        batch = [b for b in batch if b is not None]
-        if not batch:
-            return {}
+        # OPTIMIZATION: Fast path - assume no None items (common case)
+        # Only filter if needed to avoid list creation overhead
+        if batch[0] is None or batch[-1] is None:
+            batch = [b for b in batch if b is not None]
+            if not batch:
+                return {}
 
-        # Get batch max length (capped at self.max_length)
-        lengths = []
-        for item in batch:
-            if 'length' in item:
-                lengths.append(item['length'])
-            elif 'input_ids' in item:
-                lengths.append(len(item['input_ids']))
-            else:
-                raise ValueError("Batch items must have 'length' or 'input_ids'")
-
-        max_len = min(max(lengths), self.max_length)
         batch_size = len(batch)
 
-        # Pre-allocate tensors
+        # OPTIMIZATION: Single-pass length extraction with fast path for 'length' field
+        # Avoid isinstance checks by using getattr with fallback
+        first_item = batch[0]
+        has_length_field = 'length' in first_item
+
+        if has_length_field:
+            # Fast path: length field present (pre-tokenized data)
+            lengths = [item['length'] for item in batch]
+        else:
+            # Slower path: compute from input_ids
+            lengths = [len(item['input_ids']) for item in batch]
+
+        max_len = min(max(lengths), self.max_length)
+
+        # Pre-allocate output tensors
         input_ids = torch.full((batch_size, max_len), self.pad_token_id, dtype=torch.long)
         attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
         labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
 
-        # Fill tensors
+        # OPTIMIZATION: Check padding side once outside loop
+        is_right_pad = self.padding_side == 'right'
+
+        # OPTIMIZATION: Single-pass fill with minimal type checks
+        # Assume tensors (standard case), handle lists only on AttributeError
+        total_padding = 0
         for i, item in enumerate(batch):
             seq_len = min(lengths[i], max_len)
-            ids = item['input_ids'][:seq_len] if isinstance(item['input_ids'], torch.Tensor) else torch.tensor(item['input_ids'][:seq_len])
-            mask = item.get('attention_mask', torch.ones(seq_len, dtype=torch.long))
-            if not isinstance(mask, torch.Tensor):
-                mask = torch.tensor(mask)
-            mask = mask[:seq_len]
-            lab = item.get('labels', ids.clone())
-            if not isinstance(lab, torch.Tensor):
-                lab = torch.tensor(lab)
-            lab = lab[:seq_len]
+            ids = item['input_ids']
 
-            if self.padding_side == 'right':
-                input_ids[i, :seq_len] = ids
-                attention_mask[i, :seq_len] = mask
-                labels[i, :seq_len] = lab
+            # Fast tensor slice (avoid isinstance)
+            try:
+                ids_slice = ids[:seq_len]
+            except TypeError:
+                # Fallback for list input
+                ids_slice = torch.tensor(ids[:seq_len], dtype=torch.long)
+
+            # Get or create attention mask
+            mask = item.get('attention_mask')
+            if mask is None:
+                # Create ones mask inline (common case for pre-tokenized data)
+                mask_slice = attention_mask.new_ones(seq_len)
+            else:
+                try:
+                    mask_slice = mask[:seq_len]
+                except TypeError:
+                    mask_slice = torch.tensor(mask[:seq_len], dtype=torch.long)
+
+            # Get or use input_ids as labels
+            lab = item.get('labels')
+            if lab is None:
+                lab_slice = ids_slice.clone() if hasattr(ids_slice, 'clone') else torch.tensor(ids_slice, dtype=torch.long)
+            else:
+                try:
+                    lab_slice = lab[:seq_len]
+                except TypeError:
+                    lab_slice = torch.tensor(lab[:seq_len], dtype=torch.long)
+
+            # Fill tensors (branch once on padding side)
+            if is_right_pad:
+                input_ids[i, :seq_len] = ids_slice
+                attention_mask[i, :seq_len] = mask_slice
+                labels[i, :seq_len] = lab_slice
             else:
                 offset = max_len - seq_len
-                input_ids[i, offset:] = ids
-                attention_mask[i, offset:] = mask
-                labels[i, offset:] = lab
+                input_ids[i, offset:] = ids_slice
+                attention_mask[i, offset:] = mask_slice
+                labels[i, offset:] = lab_slice
 
-        # Track efficiency
+            total_padding += max_len - seq_len
+
+        # Track efficiency (single computation at end)
         self._total_tokens += batch_size * max_len
-        self._padding_tokens += sum(max_len - min(l, max_len) for l in lengths)
+        self._padding_tokens += total_padding
         self._batch_count += 1
 
         return {

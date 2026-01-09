@@ -1,125 +1,124 @@
 # =============================================================================
-# COMPLETE CONFIGURATION REFERENCE - ALL AVAILABLE OPTIONS
+# COMPLETE CONFIGURATION REFERENCE v2.0
 # =============================================================================
-# This file documents ALL configuration options available in the Ava training
-# framework. Use this as a reference when creating your own configs.
 #
-# Values shown are DEFAULTS unless noted otherwise.
-# Options marked with [RECOMMENDED] are suggested for production use.
+# Reorganized into 8 main categories for clarity:
 #
-# Usage: Copy sections you need to your own config file.
+#   1. MODEL           - Architecture, MoE, tokens, regularization
+#   2. TRAINING        - Optimizer, schedule, batching, validation
+#   3. DATA            - Loading, streaming, packing, splits
+#   4. COMPUTE         - Device, precision, CUDA, kernels, memory
+#   5. DISTRIBUTED     - Multi-GPU, DeepSpeed, load balancing
+#   6. LOGGING         - Console, WandB, TensorBoard, diagnostics
+#   7. CHECKPOINTS     - Save/load, model selection
+#   8. EXPERIMENTAL    - Progressive, FP8, caching, RLHF (disabled by default)
+#
+# BACKWARD COMPATIBILITY:
+#   Old config paths (e.g., 'hardware.device') still work and are automatically
+#   resolved to new paths (e.g., 'compute.device.type') with deprecation warnings.
+#   Set SUPPRESS_CONFIG_DEPRECATION=1 to silence warnings.
+#
 # =============================================================================
 
+
 # =============================================================================
-# MODEL ARCHITECTURE
+# 1. MODEL - Architecture and Model Settings
 # =============================================================================
+
 model:
-  # === Core Architecture ===
+  # ---------------------------------------------------------------------------
+  # Core Architecture
+  # ---------------------------------------------------------------------------
   vocab_size: 50680                     # Vocabulary size (must match tokenizer)
-  hidden_size: 1024                     # Hidden dimension (must be divisible by num_attention_heads)
+  hidden_size: 1024                     # Hidden dimension (divisible by num_attention_heads)
   num_layers: 6                         # Number of transformer layers
   num_attention_heads: 16               # Number of attention heads
   intermediate_size: 8192               # FFN intermediate size (typically 4x hidden_size)
   max_position_embeddings: 512          # Maximum sequence length
+  activation: swiglu                    # Options: 'swiglu', 'geglu', 'gelu', 'relu'
 
-  # === Special Tokens (must match tokenizer) ===
+  # ---------------------------------------------------------------------------
+  # Special Tokens (must match tokenizer)
+  # ---------------------------------------------------------------------------
   pad_token_id: 0                       # Padding token ID
   eos_token_id: 1                       # End-of-sequence token ID
   bos_token_id: 2                       # Beginning-of-sequence token ID
+  tie_word_embeddings: false            # Tie input/output embeddings
 
-  # === MoE (Mixture of Experts) Settings ===
+  # ---------------------------------------------------------------------------
+  # MoE (Mixture of Experts) Settings
+  # ---------------------------------------------------------------------------
   num_experts: 4                        # Number of experts (4, 8, 16, 32)
   num_experts_per_token: 1              # Experts activated per token (top-k)
   router_type: mixtral                  # Router type: 'mixtral', 'deepseek', 'switch'
   capacity_factor: 1.25                 # Expert capacity multiplier (1.0-2.0)
   expert_dropout: 0.0                   # Dropout applied to experts
 
-  # === Activation Function ===
-  activation: swiglu                    # Options: 'swiglu', 'geglu', 'gelu', 'relu'
-
-  # === Performance Optimizations ===
-  use_grouped_gemm: true                # [RECOMMENDED] Grouped GEMM for experts (15-25% speedup)
-  use_triton_kernels: true              # [RECOMMENDED] Triton fused kernels (2-3x speedup)
-  use_torch_compile: false              # torch.compile optimization (needs 48GB+ VRAM)
-  enable_cudagraphs_safe_routing: false # CUDA graphs compatible routing
-  use_flash_attention: true             # [RECOMMENDED] Flash Attention v2+ (40% memory savings)
-  gradient_checkpointing: true          # [RECOMMENDED] Activation checkpointing (70% memory savings)
-  use_optimized_moe: true               # [RECOMMENDED] Optimized MoE implementation
-  quantize_kv_cache: false              # INT8 KV cache quantization
-
-  # === Distributed/Parallelism ===
-  expert_parallel_size: 1               # Expert parallelism across GPUs
-
-  # === MoE Auxiliary Loss Coefficients ===
-  # These should sum to <10% of CE loss for coherent training
+  # MoE Auxiliary Loss Coefficients (should sum to <10% of CE loss)
   router_z_loss_coef: 0.0001            # Router z-loss (prevents routing collapse)
   load_balance_loss_coef: 0.01          # Load balancing loss (even expert usage)
   diversity_loss_coef: 0.0001           # Expert diversity loss
   expert_dropout_loss_coef: 0.0         # Expert dropout regularization
   router_jitter_noise: 0.01             # Router noise for exploration
+  aux_loss_frequency: 10                # Compute aux losses every N steps
 
-  # === LoRA Expert Settings ===
-  use_lora_experts: false               # Use LoRA for expert parameters
-  lora_rank: 4                          # LoRA rank (4-16)
-  lora_alpha: 8                         # LoRA alpha scaling
-  freeze_lora_base: false               # Freeze base weights
+  # ---------------------------------------------------------------------------
+  # Performance Optimizations
+  # ---------------------------------------------------------------------------
+  use_flash_attention: true             # [RECOMMENDED] Flash Attention v2+ (40% memory savings)
+  gradient_checkpointing: true          # [RECOMMENDED] Activation checkpointing (70% memory savings)
+  use_grouped_gemm: true                # [RECOMMENDED] Grouped GEMM for experts (15-25% speedup)
+  use_triton_kernels: true              # [RECOMMENDED] Triton fused kernels (2-3x speedup)
+  use_optimized_moe: true               # [RECOMMENDED] Optimized MoE implementation
+  use_torch_compile: false              # torch.compile optimization (needs 48GB+ VRAM)
+  enable_cudagraphs_safe_routing: false # CUDA graphs compatible routing
+  quantize_kv_cache: false              # INT8 KV cache quantization
 
-  # === Expert Offloading (CPU) ===
-  use_expert_offloading: false          # Enable CPU offloading for experts
-  max_active_experts_gpu: 2             # Max experts on GPU simultaneously
-  offload_eviction_policy: lru          # Options: 'lru', 'random'
-
-  # === Regularization ===
+  # ---------------------------------------------------------------------------
+  # Regularization
+  # ---------------------------------------------------------------------------
   attention_dropout: 0.0                # Attention dropout (0.0-0.1)
   dropout: 0.0                          # General dropout rate
   label_smoothing: 0.0                  # Label smoothing (0.0-0.1)
   layer_norm_eps: 1.0e-5                # LayerNorm epsilon
   initializer_range: 0.01               # Weight initialization range
 
-  # === Positional Encoding ===
+  # ---------------------------------------------------------------------------
+  # Positional Encoding
+  # ---------------------------------------------------------------------------
   use_alibi: false                      # Use ALiBi instead of absolute position
   rope_theta: 10000.0                   # RoPE base theta
   rope_scaling: null                    # RoPE scaling config (dict or null)
-  tie_word_embeddings: false            # Tie input/output embeddings
 
-  # === Coherence Settings ===
+  # ---------------------------------------------------------------------------
+  # Coherence Regularization
+  # ---------------------------------------------------------------------------
   entropy_regularization: 0.0           # Output entropy regularization
   output_diversity_weight: 0.0          # Output diversity loss weight
   eos_logit_bias: 0.0                   # EOS token bias
 
 
 # =============================================================================
-# HARDWARE CONFIGURATION
+# 2. TRAINING - Training Parameters and Schedule
 # =============================================================================
-hardware:
-  device: cuda                          # Device: 'cuda', 'cpu', 'mps'
-  mixed_precision: bf16                 # Precision: 'fp32', 'fp16', 'bf16'
-  compile: false                        # Enable torch.compile
-  num_gpus: 1                           # Number of GPUs
 
-  # === GPU Load Balancing (Multi-GPU) ===
-  use_gpu_load_balancing: false         # Enable load balancing
-  balancing_strategy: adaptive          # Options: 'round_robin', 'memory_aware', 'compute_aware', 'adaptive'
-  rebalance_interval: 1000              # Steps between rebalancing
-  enable_expert_migration: true         # Allow expert migration between GPUs
-  migration_threshold: 0.2              # Load imbalance threshold (20%)
-  log_gpu_metrics: true                 # Log per-GPU metrics
-
-
-# =============================================================================
-# TRAINING CONFIGURATION
-# =============================================================================
 training:
-  # === Precision Settings ===
+  # ---------------------------------------------------------------------------
+  # Precision Settings
+  # ---------------------------------------------------------------------------
   precision:
     mixed_precision: bf16               # Options: 'fp32', 'fp16', 'bf16'
 
-  # === Batch Size ===
+  # ---------------------------------------------------------------------------
+  # Batch Size
+  # ---------------------------------------------------------------------------
   batching:
     batch_size: 32                      # Per-GPU batch size
-    gradient_accumulation_steps: 1      # Gradient accumulation (effective batch = batch_size * steps)
+    gradient_accumulation_steps: 1      # Gradient accumulation (effective = batch_size * steps)
 
-  # === Optimizer ===
+  # ---------------------------------------------------------------------------
+  # Optimizer
+  # ---------------------------------------------------------------------------
   optimizer:
     type: adamw                         # Options: 'adamw', 'adam', 'sgd', 'lion'
     learning_rate: 0.0001               # Learning rate
@@ -127,9 +126,10 @@ training:
     weight_decay: 0.01                  # Weight decay (L2 regularization)
     use_fused: true                     # Use fused optimizer (5-10% speedup)
     max_grad_norm: 1.0                  # Gradient clipping norm
-    # eps: auto                         # Adam epsilon (auto-detected based on precision)
 
-  # === Learning Rate Schedule ===
+  # ---------------------------------------------------------------------------
+  # Learning Rate Schedule
+  # ---------------------------------------------------------------------------
   schedule:
     num_epochs: 3                       # Number of training epochs
     max_steps: null                     # Max steps (null = use epochs)
@@ -138,7 +138,9 @@ training:
     num_cycles: 1                       # Cycles for cosine_with_restarts
     min_lr: 0.0                         # Minimum learning rate
 
-  # === Adaptive Learning Rate ===
+  # ---------------------------------------------------------------------------
+  # Adaptive Learning Rate
+  # ---------------------------------------------------------------------------
   adaptive_lr:
     enabled: false                      # Enable adaptive LR
     strategy: loss_plateau              # Options: 'loss_plateau', 'gradient_norm', 'combined'
@@ -146,7 +148,9 @@ training:
     factor: 0.5                         # LR reduction factor
     min_lr: 1.0e-7                      # Minimum LR floor
 
-  # === Logging & Checkpointing ===
+  # ---------------------------------------------------------------------------
+  # Logging & Checkpointing Frequency
+  # ---------------------------------------------------------------------------
   logging:
     save_steps: 500                     # Save checkpoint every N steps
     eval_steps: 500                     # Evaluate every N steps
@@ -154,14 +158,18 @@ training:
     use_tensorboard: false              # Enable TensorBoard
     use_wandb: true                     # Enable WandB
 
-  # === Validation ===
+  # ---------------------------------------------------------------------------
+  # Validation
+  # ---------------------------------------------------------------------------
   validation:
     enabled: true                       # Enable validation
     batch_size: 16                      # Validation batch size
     max_batches: 20                     # Max validation batches
     compute_train_ratio: true           # Compute train/val loss ratio
 
-  # === Text Generation During Training ===
+  # ---------------------------------------------------------------------------
+  # Text Generation During Training
+  # ---------------------------------------------------------------------------
   generation:
     enabled: true                       # Enable generation during training
     generate_every_n_steps: 1000        # Generate every N steps
@@ -180,7 +188,9 @@ training:
       - "The quick brown fox"
       - "In the beginning"
 
-  # === Coherence Evaluation ===
+  # ---------------------------------------------------------------------------
+  # Coherence Evaluation
+  # ---------------------------------------------------------------------------
   coherence:
     enabled: true                       # Enable coherence measurement
     eval_every_n_steps: 2000            # Measure every N steps
@@ -195,19 +205,39 @@ training:
     use_bf16: true                      # Use BF16 precision
     micro_batch_size: 8                 # Micro batch size
 
+  # ---------------------------------------------------------------------------
+  # Evaluation Settings
+  # ---------------------------------------------------------------------------
+  evaluation:
+    enabled: false                      # Enable evaluation during training
+    metrics: null                       # Comma-separated metrics
+    frequency: 500                      # Evaluation frequency (steps)
+
+  # ---------------------------------------------------------------------------
+  # Distributed Barrier Optimization
+  # ---------------------------------------------------------------------------
+  distributed:
+    minimize_distributed_barriers: true # [RECOMMENDED] Skip epoch barriers
+    sync_loss_across_ranks: false       # Log local loss only (faster)
+
 
 # =============================================================================
-# DATA CONFIGURATION
+# 3. DATA - Data Pipeline Configuration
 # =============================================================================
+
 data:
-  # === Data Source ===
+  # ---------------------------------------------------------------------------
+  # Data Source
+  # ---------------------------------------------------------------------------
   data_dir: code/data/processed         # Data directory path
   tokenizer_name: null                  # Tokenizer name/path (null = auto-detect)
   default_tokenizer_name: Qwen/Qwen2.5-0.5B  # Fallback tokenizer
   max_length: 512                       # Maximum sequence length
   max_samples: null                     # Max samples (null = all, for testing)
 
-  # === Streaming Data Loading ===
+  # ---------------------------------------------------------------------------
+  # Streaming Data Loading
+  # ---------------------------------------------------------------------------
   streaming: true                       # Enable streaming (memory-efficient)
   buffer_size: 50000                    # Streaming buffer size
   progressive_buffer: false             # Start small, grow buffer
@@ -215,18 +245,24 @@ data:
   warm_start_files: 3                   # Files to load initially
   skip_sequence_count: false            # Skip counting sequences
 
-  # === Data Loading Workers ===
+  # ---------------------------------------------------------------------------
+  # Data Loading Workers
+  # ---------------------------------------------------------------------------
   num_workers: 0                        # DataLoader workers (0 = main process)
   prefetch_factor: 4                    # Batches to prefetch per worker
   persistent_workers: false             # Keep workers alive between epochs
   multiprocessing_context: spawn        # MP context: 'spawn', 'fork', 'forkserver'
   timeout: 300                          # Worker timeout (seconds)
 
-  # === Tokenization Settings ===
+  # ---------------------------------------------------------------------------
+  # Tokenization Settings
+  # ---------------------------------------------------------------------------
   padding_side: right                   # Padding side: 'right', 'left'
   truncation: true                      # Enable truncation
 
-  # === Dataset Splits ===
+  # ---------------------------------------------------------------------------
+  # Dataset Splits
+  # ---------------------------------------------------------------------------
   train_split: train                    # Training split name
   eval_split: validation                # Validation split name
   auto_create_validation_split: true    # Auto-create validation from train
@@ -234,7 +270,9 @@ data:
   val_split_ratio: 0.1                  # Alias for validation_split_ratio
   val_max_samples: null                 # Max validation samples
 
-  # === DataLoader Settings ===
+  # ---------------------------------------------------------------------------
+  # DataLoader Settings
+  # ---------------------------------------------------------------------------
   dataloader_drop_last: false           # Drop incomplete last batch
   dataloader_pin_memory: false          # Pin memory for GPU transfer
   dataloader_samples_per_file: 64       # Samples per file rotation
@@ -242,817 +280,793 @@ data:
   skip_dataloader_validation: false     # Skip validation data loading
   skip_validation: false                # Skip all validation
 
-  # === Pre-tokenized Data ===
-  use_pretokenized: true                # [RECOMMENDED] Use pre-tokenized data
+  # ---------------------------------------------------------------------------
+  # Pre-tokenized Data
+  # ---------------------------------------------------------------------------
   use_all_data: false                   # Use all available data files
   max_files_to_load: null               # Max files (null = all)
   lazy_file_discovery: true             # Lazy file discovery (memory-safe)
   cache_size: 10                        # File cache size
   shuffle_files: true                   # Shuffle file order
 
-  # === Randomization Control ===
+  # ---------------------------------------------------------------------------
+  # Randomization Control
+  # ---------------------------------------------------------------------------
   shuffle_seed: null                    # Shuffle seed (null = random each run)
   enable_length_sorting: true           # Sort by length for GPU efficiency
   disable_packing_length_sort: false    # Disable length sort in packing
   enable_bucketing: true                # Use length buckets
 
-  # === Sequence Packing (20-35% speedup) ===
+  # ---------------------------------------------------------------------------
+  # Sequence Packing (20-35% speedup)
+  # ---------------------------------------------------------------------------
   use_sequence_packing: false           # Enable sequence packing
   packing_strategy: greedy              # Options: 'greedy', 'adaptive'
   packing_target_ratio: 0.95            # Target packing efficiency
-  use_dynamic_batching: false           # Dynamic batch sizing
   max_tokens_per_batch: null            # Token budget per batch
 
-  # === Indexed Loader (Map-style with true random shuffle) ===
+  # ---------------------------------------------------------------------------
+  # Indexed Loader (Map-style with true random shuffle)
+  # ---------------------------------------------------------------------------
   use_indexed_loader: false             # Use indexed dataset
   indexed_num_bins: 8                   # Number of length bins
   indexed_cache_size: 50                # Arrow table cache per worker
   indexed_index_workers: null           # Parallel indexing workers (null = auto)
 
+  # ---------------------------------------------------------------------------
+  # Multi-column Data Configuration
+  # ---------------------------------------------------------------------------
+  multi_column:
+    enabled: false                      # Enable multi-column data
+    dataset_config: null                # Dataset config file path
+    hf_dataset: null                    # HuggingFace dataset name
+    hf_dataset_config: null             # HF dataset configuration
+    column_names: null                  # Comma-separated column names
+    column_types: null                  # Comma-separated types
+    column_roles: null                  # Comma-separated roles
+    combine_strategy: concatenate       # Options: 'concatenate', 'separate', 'template'
+    column_template: null               # Template for combining columns
 
-# =============================================================================
-# MULTI-COLUMN DATA CONFIGURATION
-# =============================================================================
-multi_column_data:
-  use_multi_column: false               # Enable multi-column data
-  dataset_config: null                  # Dataset config file path
-  hf_dataset: null                      # HuggingFace dataset name
-  hf_dataset_config: null               # HF dataset configuration
-  column_names: null                    # Comma-separated column names
-  column_types: null                    # Comma-separated types (text,numeric,image)
-  column_roles: null                    # Comma-separated roles (input,target,auxiliary)
-  combine_strategy: concatenate         # Options: 'concatenate', 'separate', 'template'
-  column_template: null                 # Template for combining columns
-
-
-# =============================================================================
-# DATA LOADING CONFIGURATION
-# =============================================================================
-data_loading:
-  format_detection_samples: 10          # Files to sample for format detection
-  fallback_data_paths:                  # Fallback paths to search for data
-    - code/data/processed
-    - code/data/combined
-    - code/data
-    - ./data/processed
-    - ./data
+  # ---------------------------------------------------------------------------
+  # Data Loading Fallback Paths
+  # ---------------------------------------------------------------------------
+  loading:
+    format_detection_samples: 10        # Files to sample for format detection
+    fallback_paths:                     # Fallback paths to search for data
+      - code/data/processed
+      - code/data/combined
+      - code/data
+      - ./data/processed
+      - ./data
 
 
 # =============================================================================
-# OUTPUT CONFIGURATION
+# 4. COMPUTE - Hardware, Performance, and Optimization
 # =============================================================================
-output:
+
+compute:
+  # ---------------------------------------------------------------------------
+  # Device Settings
+  # ---------------------------------------------------------------------------
+  device:
+    type: cuda                          # Device: 'cuda', 'cpu', 'mps'
+    num_gpus: 1                         # Number of GPUs
+
+  # ---------------------------------------------------------------------------
+  # Precision Settings
+  # ---------------------------------------------------------------------------
+  precision:
+    mixed_precision: bf16               # Options: 'fp32', 'fp16', 'bf16'
+    enable_tf32: true                   # [RECOMMENDED] TF32 on Ampere+
+    float32_matmul_precision: high      # Options: 'highest', 'high', 'medium'
+
+  # ---------------------------------------------------------------------------
+  # Performance Tuning
+  # ---------------------------------------------------------------------------
+  performance:
+    ultra_fast_mode: false              # Disable all logging
+    fast_progress: false                # Enhanced progress bar
+    minimal_progress: false             # Ultra-compact progress
+    no_sync: false                      # Disable CUDA sync
+    express_mode: false                 # Async logging
+    enable_cudnn_benchmark: true        # [RECOMMENDED] Auto-tune cuDNN
+
+  # ---------------------------------------------------------------------------
+  # Kernel Optimizations
+  # ---------------------------------------------------------------------------
+  kernels:
+    # Router/gating optimizations
+    router:
+      mode: auto                        # Options: 'auto', 'triton', 'pytorch'
+      use_fused_softmax_topk: true      # Fused softmax + top-k
+      block_size: 4                     # Tokens per thread block (1-8)
+      cache_hash_on_gpu: true           # Cache hash on GPU
+      compile_routers: true             # Compile routers
+      compile_mode: default             # Compile mode
+      compile_dynamic: true             # Dynamic compilation
+
+    # Expert computation
+    expert:
+      use_sparse_dispatch: false        # Sparse vs dense dispatch
+      use_fused_activations: true       # Fused SwiGLU/GeGLU
+      use_selective_loading: false      # On-demand expert loading
+      use_vectorized_capacity: true     # Vectorized capacity limiting
+      use_fused_moe_kernel: false       # Mega kernel
+
+    # torch.compile settings
+    torch_compile:
+      enabled: false                    # Enable torch.compile
+      mode: default                     # Options: 'default', 'reduce-overhead', 'max-autotune'
+      fullgraph: false                  # Full graph compilation
+      dynamic: true                     # Dynamic shapes
+
+    # Profiling
+    enable_profiling: false             # Profile kernel times
+    torchinductor_autotune: 1           # 0=off, 1=basic, 2=aggressive
+    torchinductor_max_autotune: 0       # TorchInductor autotune level
+
+  # ---------------------------------------------------------------------------
+  # CUDA Settings
+  # ---------------------------------------------------------------------------
+  cuda:
+    # CUDA Streams
+    streams:
+      enabled: false                    # Enable CUDA stream optimization
+      num_streams: 4                    # Stream pool size
+      use_event_timing: true            # Use CUDA events for timing
+      use_stream_pool: true             # Reuse streams
+      high_priority_transfers: true     # Priority for CPU<->GPU
+
+    # CUDA Graphs
+    graphs:
+      enabled: false                    # Enable CUDA graphs
+      warmup_steps: 10                  # Steps before graph capture
+      capture_mode: automatic           # 'automatic', 'manual', 'disabled'
+      skip_dynamic_shapes: true         # Skip dynamic shapes
+      dynamic_shape_warn_limit: null    # Warning limit
+
+  # ---------------------------------------------------------------------------
+  # Memory Management
+  # ---------------------------------------------------------------------------
+  memory:
+    headroom_gb: 3.0                    # Reserve memory headroom
+    cleanup_thresholds:
+      warning: 0.85                     # Trigger warning cleanup
+      critical: 0.90                    # Trigger critical cleanup
+      emergency: 0.95                   # Trigger emergency cleanup
+
+    # Expert prefetching
+    expert_prefetch:
+      enabled: true
+      lookahead: 2
+      use_multiple_streams: true
+
+    # Expert caching
+    expert_cache:
+      auto_limit: true
+      use_lru_eviction: true
+      clear_after_optimizer_step: true
+
+    # Memory cleanup
+    cleanup:
+      fast_mode: true
+      remove_sleep: true
+
+    # Gradient checkpointing
+    gradient_checkpointing:
+      selective: false
+      checkpoint_attention: true
+
+  # ---------------------------------------------------------------------------
+  # Optimizations
+  # ---------------------------------------------------------------------------
+  optimizations:
+    use_overlapped_checkpointing: false # Overlapped recomputation
+    checkpoint:
+      async_saving: true                # Save in background thread
+    dataloader:
+      adaptive_file_reading: true
+      adaptive_multipliers:
+        large_files: 4
+        medium_files: 2
+        small_files: 1
+
+  # ---------------------------------------------------------------------------
+  # Calibration
+  # ---------------------------------------------------------------------------
+  calibration:
+    # Batch size calibration
+    batch_size:
+      enabled: false                    # Enable binary search calibration
+      target_memory: 0.85               # Target GPU memory usage
+      max_batch_size: 128               # Maximum batch size to test
+      min_batch_size: 1                 # Minimum batch size floor
+      perform_optimizer_step: true      # Include optimizer in calibration
+      calibration_timeout_sec: 90.0     # Timeout for calibration
+      calibration_headroom: 0.92        # Memory headroom
+      use_real_dataloader: true         # Use real data for calibration
+      measure_peak_utilization: true    # Track peak GPU usage
+      use_fresh_models: false           # Fresh model per test
+
+    # System calibration
+    system:
+      enabled: true                     # Enable calibration system
+      run_memory_profiling: true        # Profile memory usage
+      run_backward_profiling: true      # Measure backward memory ratio
+      run_throughput_profiling: true    # Profile throughput
+      batch_sizes_to_profile: [4, 8, 16, 32, 64, 128, 256]
+      seq_lengths_to_profile: [32, 64, 128, 256, 512, 1024, 2048]
+      num_samples_per_config: 3         # Measurements per config
+      cache_enabled: true
+      cache_dir: ~/.cache/ava_calibration
+      save_to_run_dir: true
+      cache_ttl_hours: 168              # 1 week TTL
+      max_calibration_time_seconds: 300 # 5 min max
+
+
+# =============================================================================
+# 5. DISTRIBUTED - Multi-GPU and Distributed Training
+# =============================================================================
+
+distributed:
+  # ---------------------------------------------------------------------------
+  # Strategy
+  # ---------------------------------------------------------------------------
+  strategy: ddp                         # Options: 'ddp', 'fsdp', 'deepspeed'
+
+  # ---------------------------------------------------------------------------
+  # Load Balancing (Multi-GPU MoE)
+  # ---------------------------------------------------------------------------
+  load_balancing:
+    enabled: false                      # Enable GPU load balancing
+    strategy: adaptive                  # 'round_robin', 'memory_aware', 'compute_aware', 'adaptive'
+    rebalance_interval: 1000            # Steps between rebalancing
+    enable_expert_migration: true       # Allow expert migration between GPUs
+    migration_threshold: 0.2            # Load imbalance threshold (20%)
+    log_gpu_metrics: true               # Log per-GPU metrics
+
+  # ---------------------------------------------------------------------------
+  # DeepSpeed Configuration
+  # ---------------------------------------------------------------------------
+  deepspeed:
+    enabled: false                      # Enable DeepSpeed
+    config_file: null                   # External config file path
+    zero_stage: 2                       # ZeRO stage (0, 1, 2, 3)
+
+    # Offloading
+    cpu_offload: false                  # CPU offload optimizer states
+    nvme_offload: false                 # NVMe offload
+    nvme_path: /local_nvme              # NVMe mount point
+
+    # Precision
+    precision_type: bf16                # Options: 'fp16', 'bf16', 'fp32'
+    enable_mixed_precision: false       # Enable mixed precision
+
+    # Batch Configuration
+    gradient_accumulation_steps: 1
+    train_batch_size: null              # Global batch size
+    micro_batch_size: null              # Per-GPU batch size
+
+    # Activation Checkpointing
+    activation_checkpointing: false
+    partition_activations: false
+    cpu_checkpointing: false
+
+    # Gradient Clipping
+    gradient_clipping: null             # Gradient clip value
+
+    # ZeRO Advanced Settings
+    zero_allow_untested_optimizer: false
+    zero_force_ds_cpu_optimizer: false
+    zero_reduce_scatter: false
+    zero_overlap_comm: false
+    zero_contiguous_gradients: false
+    zero_reduce_bucket_size: 500000000  # 500MB
+    zero_allgather_bucket_size: 500000000 # 500MB
+    zero_stage3_prefetch_bucket_size: 500000000
+    zero_stage3_param_persistence_threshold: 1000000
+
+    # Communication
+    communication_data_type: fp32
+    allreduce_partitions: false
+    allgather_partitions: false
+    overlap_comm: false
+    wall_clock_breakdown: false
+
+    # Advanced Features
+    contiguous_memory_optimization: false
+    synchronize_dp_processes: false
+    pipeline_parallel_size: 1
+
+
+# =============================================================================
+# 6. LOGGING - Observability and Monitoring
+# =============================================================================
+
+logging:
+  # ---------------------------------------------------------------------------
+  # Console Logging
+  # ---------------------------------------------------------------------------
+  console:
+    enabled: true                       # Enable console output
+    verbosity: info                     # Log level: 'debug', 'info', 'warning', 'error'
+    level: info                         # Console log level
+    progress_bar_enabled: true          # Enable tqdm progress bar
+    step_logging_enabled: true          # Enable per-step console output
+    epoch_logging_enabled: true         # Enable epoch summary logging
+
+  # ---------------------------------------------------------------------------
+  # File Logging
+  # ---------------------------------------------------------------------------
+  file:
+    enabled: true                       # Enable file logging
+    level: debug                        # File log level (more detailed)
+
+  # ---------------------------------------------------------------------------
+  # WandB Configuration
+  # ---------------------------------------------------------------------------
+  wandb:
+    enabled: false                      # Enable WandB logging
+    project: Ava                        # WandB project name
+    entity: null                        # WandB entity/team
+    name: null                          # Run name (null = auto)
+    tags:                               # Run tags
+      - moe
+      - training
+    notes: null                         # Run notes/description
+    group: null                         # Run group
+    log_freq: 10                        # Logging frequency (steps)
+    cache_size: 2000                    # Offline cache size
+    cache_flush_interval: 50            # Cache flush interval
+
+    # Fine-grained WandB controls
+    log_training: true                  # Log train/* metrics
+    log_gradients: true                 # Log gradients/*
+    log_moe: true                       # Log moe/* metrics
+    log_validation: true                # Log validation/*
+    log_coherence: true                 # Log coherence/*
+    log_quality: true                   # Log model_selection/*
+    log_memory: true                    # Log memory/* breakdown
+    log_timing: true                    # Log timing/* profile
+    log_generations: true               # Log generation table
+    log_per_layer_grads: false          # Per-layer gradients (expensive)
+    log_routing_diagnostics: false      # Routing/* diagnostics (expensive)
+    log_model_topology: false           # Log model graph (one-time)
+
+  # ---------------------------------------------------------------------------
+  # TensorBoard Configuration
+  # ---------------------------------------------------------------------------
+  tensorboard:
+    enabled: false                      # Enable TensorBoard
+    log_dir: null                       # Log directory (null = auto)
+    log_training: true                  # Log train/* to TensorBoard
+    log_gradients: true                 # Log gradients/* to TensorBoard
+    log_moe: true                       # Log moe/* to TensorBoard
+    log_validation: true                # Log validation/* to TensorBoard
+
+  # ---------------------------------------------------------------------------
+  # Logging Frequencies (in steps)
+  # ---------------------------------------------------------------------------
+  frequencies:
+    log_interval: 100                   # Basic logging interval
+    verbose_log_interval: 500           # Detailed logging interval
+    metrics: 500                        # Metrics logging frequency
+    memory_check: 2000                  # Memory check frequency
+    health_summary: 500                 # Health summary frequency
+    moe_metrics: 5000                   # MoE metrics frequency
+
+  # ---------------------------------------------------------------------------
+  # Logging Features
+  # ---------------------------------------------------------------------------
+  features:
+    timing_breakdown: true              # Log step timing
+    memory_profiling: true              # Memory profiling
+    health_summaries: true              # Health summaries
+    log_tensor_shapes: true             # Log shapes on errors
+    log_checkpoint_validation: true     # Validate checkpoints
+    save_sample_generations: true       # Save generation samples
+    use_structured_logging: true        # Structured logs
+    log_format: default                 # Options: 'default', 'json', 'structured'
+
+  # ---------------------------------------------------------------------------
+  # Diagnostics (Debug Mode)
+  # ---------------------------------------------------------------------------
+  diagnostics:
+    enabled: false                      # Enable diagnostics
+
+    # Per-layer gradient statistics
+    per_layer_gradients:
+      enabled: false
+      log_freq: 500
+      layer_name_patterns:
+        - layers
+        - experts
+
+    # Expert routing diagnostics
+    routing:
+      enabled: false
+      log_freq: 100
+      track_per_expert_load: true
+      track_routing_entropy: true
+      track_expert_capacity_usage: true
+
+    # Memory breakdown
+    memory:
+      enabled: false
+      log_freq: 500
+      track_activation_memory: true
+      track_gradient_memory: true
+      track_optimizer_state_memory: true
+      track_parameter_memory: true
+
+    # Timing profiling
+    timing:
+      enabled: false
+      log_freq: 100
+      profile_forward: true
+      profile_backward: true
+      profile_optimizer_step: true
+      profile_data_loading: true
+
+  # ---------------------------------------------------------------------------
+  # MoE Metrics
+  # ---------------------------------------------------------------------------
+  moe_metrics:
+    track_expert_utilization: true
+    log_frequency: 50
+    track_routing_decisions: false
+    track_load_balance: true
+
+  # ---------------------------------------------------------------------------
+  # Development Logging
+  # ---------------------------------------------------------------------------
+  dev:
+    enabled: false                      # Enable dev logging
+    show_file_timings: true             # Show file read timings
+    show_batch_timings: true            # Show batch operation timings
+    show_step_breakdown: true           # Show step component breakdown
+    report_interval: 100                # Log every N steps
+
+  # ---------------------------------------------------------------------------
+  # Run Management
+  # ---------------------------------------------------------------------------
+  run_management:
+    run_name: null                      # Custom run name
+    run_tags: null                      # Comma-separated tags
+    run_description: null               # Run description
+    disable_run_manager: false          # Disable run manager
+
+
+# =============================================================================
+# 7. CHECKPOINTS - Save/Load Configuration
+# =============================================================================
+
+checkpoints:
+  # ---------------------------------------------------------------------------
+  # Output Settings
+  # ---------------------------------------------------------------------------
   output_dir: code/outputs              # Output directory for checkpoints
   save_every: 100                       # Save checkpoint every N steps
   resume: null                          # Resume from checkpoint path
   fresh_start: false                    # Force fresh start, ignore checkpoints
-
-
-# =============================================================================
-# RUN MANAGEMENT
-# =============================================================================
-run_management:
-  run_name: null                        # Custom run name
-  run_tags: null                        # Comma-separated tags
-  run_description: null                 # Run description
-  disable_run_manager: false            # Disable run manager
-
-
-# =============================================================================
-# WEIGHTS & BIASES (WandB)
-# =============================================================================
-wandb:
-  enabled: false                        # Enable WandB logging
-  project: Ava                          # WandB project name
-  entity: null                          # WandB entity/team
-  name: null                            # Run name (null = auto)
-  tags:                                 # Run tags
-    - moe
-    - training
-  notes: null                           # Run notes/description
-  group: null                           # Run group
-  log_freq: 10                          # Logging frequency (steps)
-  cache_size: 2000                      # Offline cache size
-  cache_flush_interval: 50              # Cache flush interval
-
-
-# =============================================================================
-# TENSORBOARD
-# =============================================================================
-logging:
-  tensorboard:
-    enabled: false                      # Enable TensorBoard
-    log_dir: null                       # Log directory (null = auto)
-
-
-# =============================================================================
-# HYBRID CACHING CONFIGURATION
-# =============================================================================
-hybrid_caching:
-  enabled: false                        # Enable hybrid caching
-  mode: auto                            # Mode: 'training', 'generation', 'auto'
-
-  # Activation cache (training mode)
-  activation_cache:
-    enabled: true
-    max_size_gb: 2.0                    # Max cache size in GB
-    eviction_policy: lru                # Options: 'lru', 'lfu', 'hybrid'
-
-  # KV cache (generation mode)
-  kv_cache:
-    enabled: true
-    max_size_gb: 4.0                    # Max cache size in GB
-    eviction_policy: hybrid             # Options: 'sliding_window', 'hybrid'
-    sliding_window: null                # Window size (null = dynamic)
-    sink_tokens: 4                      # StreamingLLM sink tokens
-    recent_tokens: 256                  # Recent tokens to keep
-
-
-# =============================================================================
-# BATCH SIZE CALIBRATION
-# =============================================================================
-batch_size_calibration:
-  enabled: false                        # Enable binary search calibration
-  target_memory: 0.85                   # Target GPU memory usage
-  max_batch_size: 128                   # Maximum batch size to test
-  min_batch_size: 1                     # Minimum batch size floor
-  perform_optimizer_step: true          # Include optimizer in calibration
-  calibration_timeout_sec: 90.0         # Timeout for calibration
-  calibration_headroom: 0.92            # Memory headroom
-  use_real_dataloader: true             # Use real data for calibration
-  measure_peak_utilization: true        # Track peak GPU usage
-  use_fresh_models: false               # Fresh model per test
-
-
-# =============================================================================
-# DYNAMIC BATCHING
-# =============================================================================
-dynamic_batching:
-  enabled: false                        # Enable dynamic batch sizing
-  min_batch_size: 16                    # Minimum batch size
-  max_batch_size: 256                   # Maximum batch size
-  step_size: 16                         # Adjustment step size
-
-  # Memory thresholds (fractions 0-1)
-  target_memory: 0.75                   # Ideal memory usage
-  high_memory: 0.85                     # Start decreasing
-  critical_memory: 0.92                 # Emergency - drop to minimum
-  low_memory: 0.60                      # Can increase
-
-  smoothing_factor: 0.1                 # EMA alpha for smoothing
-  adjustment_interval: 10               # Steps between adjustments
-  warmup_steps: 100                     # Steps before increases
-  cooldown_steps: 5                     # Steps after adjustment
-
-  # Optional warmup mode
-  enable_warmup: false
-  warmup_start_batch: 16
-  warmup_end_step: 500
-
-  # Optional token budget mode
-  enable_token_budget: false
-  target_tokens: 4096
-  max_tokens: 8192
-
-
-# =============================================================================
-# PROGRESSIVE TRAINING (Curriculum Learning)
-# =============================================================================
-progressive:
-  enable_progressive_training: false    # Enable progressive training
-
-  # Sequence length scaling
-  enable_sequence_scaling: false
-  initial_seq_length: 128               # Starting sequence length
-  final_seq_length: 2048                # Final sequence length
-  length_schedule: linear               # Options: 'linear', 'exponential', 'step'
-  length_growth_epochs: 10              # Epochs to reach final length
-  enable_length_bucketing: false
-
-  # Curriculum learning
-  enable_curriculum: false
-  curriculum_metric: loss               # Options: 'loss', 'gradient', 'length'
-  enable_score_caching: false
-  cache_dir: ~/.cache/ava_difficulty
-  cache_version: v1.0
-
-  # Dynamic batch sizing
-  enable_dynamic_batch: false
-  enable_binary_search_oom: false
-  enable_dry_run_mode: false
-  min_batch_size: 1
-  max_batch_size: 64
-  target_gpu_utilization: 0.85
-  batch_size_adaptation_steps: 100
-
-
-# =============================================================================
-# CALIBRATION CONFIGURATION
-# =============================================================================
-calibration:
-  enabled: true                         # Enable calibration system
-  run_memory_profiling: true            # Profile memory usage
-  run_backward_profiling: true          # Measure backward memory ratio
-  run_throughput_profiling: true        # Profile throughput
-
-  # Profiling grid
-  batch_sizes_to_profile: [4, 8, 16, 32, 64, 128, 256]
-  seq_lengths_to_profile: [32, 64, 128, 256, 512, 1024, 2048]
-  num_samples_per_config: 3             # Measurements per config
-
-  # Persistence
-  cache_enabled: true
-  cache_dir: ~/.cache/ava_calibration
-  save_to_run_dir: true
-  cache_ttl_hours: 168                  # 1 week TTL
-
-  max_calibration_time_seconds: 300     # 5 min max
-
-
-# =============================================================================
-# CUDA STREAM OPTIMIZATIONS
-# =============================================================================
-cuda_streams:
-  enabled: false                        # Enable CUDA stream optimization
-  num_streams: 4                        # Stream pool size
-  use_event_timing: true                # Use CUDA events for timing
-  use_stream_pool: true                 # Reuse streams
-  high_priority_transfers: true         # Priority for CPU<->GPU
-
-
-# =============================================================================
-# OVERLAPPED CHECKPOINTING
-# =============================================================================
-overlapped_checkpointing:
-  enabled: false                        # Enable overlapped recomputation
-  stream_overlap: true                  # Use CUDA streams
-  target_layers: layers                 # Layers to apply to
-
-
-# =============================================================================
-# DOUBLE CHECKPOINTING (O(sqrt(n)) memory)
-# =============================================================================
-double_checkpointing:
-  enabled: false                        # Enable nested checkpointing
-  coarse_checkpoint_interval: 8         # Outer checkpoint interval
-  fine_checkpoint_interval: 2           # Inner checkpoint interval
-  use_cuda_streams: true                # Use CUDA streams
-
-
-# =============================================================================
-# FP8 TRAINING (Hopper/Ada GPUs only)
-# =============================================================================
-fp8:
-  enabled: false                        # Enable FP8 (H100, L40, RTX 4090)
-  use_transformer_engine: false         # Use NVIDIA Transformer Engine
-  format: e4m3                          # Options: 'e4m3', 'e5m2'
-  margin: 0                             # Scale margin
-
-
-# =============================================================================
-# PERFORMANCE CONFIGURATION
-# =============================================================================
-performance:
-  # Performance modes
-  ultra_fast_mode: false                # Disable all logging
-  fast_progress: false                  # Enhanced progress bar
-  minimal_progress: false               # Ultra-compact progress
-  no_sync: false                        # Disable CUDA sync
-  express_mode: false                   # Async logging
-
-  # TF32 and hardware optimizations
-  enable_tf32: true                     # [RECOMMENDED] TF32 on Ampere+
-  float32_matmul_precision: high        # Options: 'highest', 'high', 'medium'
-  enable_cudnn_benchmark: true          # [RECOMMENDED] Auto-tune cuDNN
-  cudagraph_skip_dynamic_shapes: true   # Skip dynamic shapes
-  cudagraph_dynamic_shape_warn_limit: null
-  torchinductor_max_autotune: 0         # TorchInductor autotune (0-4)
-  enable_torch_compile: false           # Enable torch.compile
-  torch_compile_mode: default           # Options: 'default', 'reduce-overhead', 'max-autotune'
-  torch_compile_fullgraph: false        # Full graph compilation
-  torch_compile_dynamic: true           # Dynamic shapes
-
-
-# =============================================================================
-# OPTIMIZATIONS CONFIGURATION
-# =============================================================================
-optimizations:
-  use_overlapped_checkpointing: false   # Overlapped recomputation
-  torchinductor_autotune: 1             # 0=off, 1=basic, 2=aggressive
-
-  # Memory management
-  memory_headroom_gb: 3.0               # Reserve memory headroom
-  memory_cleanup_thresholds:
-    warning: 0.85                       # Trigger warning cleanup
-    critical: 0.90                      # Trigger critical cleanup
-    emergency: 0.95                     # Trigger emergency cleanup
-
-  # Expert prefetching
-  expert_prefetch:
-    enabled: true
-    lookahead: 2
-    use_multiple_streams: true
-
-  # Expert caching
-  expert_cache:
-    auto_limit: true
-    use_lru_eviction: true
-    clear_after_optimizer_step: true
-
-  # Checkpoint optimizations
-  checkpoint:
-    async_saving: true                  # Save in background thread
-
-  # Memory cleanup
-  memory_cleanup:
-    fast_mode: true
-    remove_sleep: true
-
-  # Data loading optimizations
-  dataloader:
-    adaptive_file_reading: true
-    adaptive_multipliers:
-      large_files: 4
-      medium_files: 2
-      small_files: 1
-
-  # Gradient checkpointing
-  gradient_checkpointing:
-    selective: false
-    checkpoint_attention: true
-
-  # Router optimizations
-  router:
-    cache_hash_on_gpu: true
-    compile_routers: true
-    compile_mode: default
-    compile_dynamic: true
-
-
-# =============================================================================
-# KERNEL OPTIMIZATION
-# =============================================================================
-kernel_optimization:
-  # Router/gating optimizations
-  router_kernel_mode: auto              # Options: 'auto', 'triton', 'pytorch'
-  use_fused_softmax_topk: true          # Fused softmax + top-k
-  router_block_size: 4                  # Tokens per thread block (1-8)
-
-  # Expert computation
-  use_sparse_expert_dispatch: false     # Sparse vs dense dispatch
-  use_fused_activations: true           # Fused SwiGLU/GeGLU
-  use_selective_expert_loading: false   # On-demand expert loading
-
-  # Capacity limiting
-  use_vectorized_capacity: true         # Vectorized capacity limiting
-
-  # Advanced (experimental)
-  use_fused_moe_kernel: false           # Mega kernel
-  enable_kernel_profiling: false        # Profile kernel times
-
-
-# =============================================================================
-# LOGGING CONFIGURATION
-# =============================================================================
-logging_config:
-  verbosity: info                       # Log level: 'debug', 'info', 'warning', 'error'
-  console_level: info                   # Console log level
-  file_level: debug                     # File log level
-
-  # Monitoring frequencies (steps)
-  metrics_log_freq: 500                 # Metrics logging frequency
-  memory_check_freq: 2000               # Memory check frequency
-  health_summary_freq: 500              # Health summary frequency
-  moe_metrics_freq: 5000                # MoE metrics frequency
-
-  # Feature flags
-  enable_timing_breakdown: true         # Log step timing
-  enable_memory_profiling: true         # Memory profiling
-  enable_health_summaries: true         # Health summaries
-  log_tensor_shapes: true               # Log shapes on errors
-  log_checkpoint_validation: true       # Validate checkpoints
-  save_sample_generations: true         # Save generation samples
-
-  # Structured logging
-  use_structured_logging: true
-  log_format: default                   # Options: 'default', 'json', 'structured'
-
-  # WandB logging
-  log_gradients_to_wandb: false         # Log gradient histograms
-  log_model_topology: false             # Log model graph
-
-
-# =============================================================================
-# DEV LOG CONFIGURATION
-# =============================================================================
-dev_log:
-  enabled: false                        # Enable dev logging
-  show_file_timings: true               # Show file read timings
-  show_batch_timings: true              # Show batch operation timings
-  show_step_breakdown: true             # Show step component breakdown
-  report_interval: 100                  # Log every N steps
-
-
-# =============================================================================
-# MODEL SELECTION (Best Checkpoint)
+  async_saving: true                    # Save in background thread
+
+  # ---------------------------------------------------------------------------
+  # Model Selection (Best Checkpoint)
+  # ---------------------------------------------------------------------------
+  selection:
+    enabled: true                       # Enable multi-metric selection
+    val_loss_weight: 0.5                # Weight for validation loss
+    coherence_score_weight: 0.3         # Weight for coherence
+    perplexity_weight: 0.2              # Weight for perplexity
+    perplexity_cap: 100.0               # Perplexity cap for normalization
+    val_loss_cap: 10.0                  # Val loss cap
+    higher_is_better: true              # Quality score interpretation
+    require_all_metrics: false          # Require all metrics
+    fallback_to_val_loss: true          # Fallback to val_loss
+
+
+# =============================================================================
+# 8. EXPERIMENTAL - Advanced Features (Disabled by Default)
+# =============================================================================
+
+experimental:
+  # ---------------------------------------------------------------------------
+  # Progressive Training (Curriculum Learning)
+  # ---------------------------------------------------------------------------
+  progressive:
+    enabled: false                      # Enable progressive training
+
+    # Sequence length scaling
+    sequence_scaling:
+      enabled: false
+      initial_seq_length: 128           # Starting sequence length
+      final_seq_length: 2048            # Final sequence length
+      length_schedule: linear           # Options: 'linear', 'exponential', 'step'
+      length_growth_epochs: 10          # Epochs to reach final length
+      enable_length_bucketing: false
+
+    # Curriculum learning
+    curriculum:
+      enabled: false
+      metric: loss                      # Options: 'loss', 'gradient', 'length'
+      enable_score_caching: false
+      cache_dir: ~/.cache/ava_difficulty
+      cache_version: v1.0
+
+  # ---------------------------------------------------------------------------
+  # Checkpointing Optimizations
+  # ---------------------------------------------------------------------------
+  checkpointing:
+    # Overlapped checkpointing
+    overlapped:
+      enabled: false                    # Enable overlapped recomputation
+      stream_overlap: true              # Use CUDA streams
+      target_layers: layers             # Layers to apply to
+
+    # Double checkpointing (O(sqrt(n)) memory)
+    double:
+      enabled: false                    # Enable nested checkpointing
+      coarse_checkpoint_interval: 8     # Outer checkpoint interval
+      fine_checkpoint_interval: 2       # Inner checkpoint interval
+      use_cuda_streams: true            # Use CUDA streams
+
+  # ---------------------------------------------------------------------------
+  # Hybrid Caching
+  # ---------------------------------------------------------------------------
+  caching:
+    enabled: false                      # Enable hybrid caching
+    mode: auto                          # Mode: 'training', 'generation', 'auto'
+
+    # Activation cache (training mode)
+    activation_cache:
+      enabled: true
+      max_size_gb: 2.0                  # Max cache size in GB
+      eviction_policy: lru              # Options: 'lru', 'lfu', 'hybrid'
+
+    # KV cache (generation mode)
+    kv_cache:
+      enabled: true
+      max_size_gb: 4.0                  # Max cache size in GB
+      eviction_policy: hybrid           # Options: 'sliding_window', 'hybrid'
+      sliding_window: null              # Window size (null = dynamic)
+      sink_tokens: 4                    # StreamingLLM sink tokens
+      recent_tokens: 256                # Recent tokens to keep
+
+  # ---------------------------------------------------------------------------
+  # FP8 Training (Hopper/Ada GPUs only)
+  # ---------------------------------------------------------------------------
+  fp8:
+    enabled: false                      # Enable FP8 (H100, L40, RTX 4090)
+    use_transformer_engine: false       # Use NVIDIA Transformer Engine
+    format: e4m3                        # Options: 'e4m3', 'e5m2'
+    margin: 0                           # Scale margin
+
+  # ---------------------------------------------------------------------------
+  # LR Finder
+  # ---------------------------------------------------------------------------
+  lr_finder:
+    enabled: false                      # Run before training
+    start_lr: 1.0e-8                    # Starting LR
+    end_lr: 1.0                         # Ending LR
+    num_iterations: 100                 # Test iterations
+    suggestion_method: steepest         # Options: 'steepest', 'minimum', 'valley'
+    use_suggested_lr: false             # Auto-use suggested LR
+    plot_path: null                     # Plot save path
+    smooth_beta: 0.98                   # Loss smoothing
+    stop_div_threshold: 4.0             # Stop if diverges
+
+  # ---------------------------------------------------------------------------
+  # Episodic Memory
+  # ---------------------------------------------------------------------------
+  episodic_memory:
+    enabled: false
+    memory_capacity: 1000
+    memory_selection_strategy: importance # Options: 'importance', 'random', 'recent'
+    memory_importance_threshold: 0.5
+    memory_retrieval_method: cosine     # Options: 'cosine', 'euclidean', 'dot'
+    memory_replay_ratio: 0.2
+    memory_replay_strategy: importance
+    memory_adaptation_rate: 0.01
+    memory_performance_window: 100
+    task_id: 0
+    silent_mode: false
+    enable_auto_grad_accumulation: false
+
+  # ---------------------------------------------------------------------------
+  # Architecture Enhancements
+  # ---------------------------------------------------------------------------
+  architecture:
+    use_moh: false                      # Mixture of Heads
+    use_moa: false                      # Mixture of Activations
+    use_cross_attention: false          # Cross-attention
+    use_alibi: false                    # ALiBi positioning
+    expert_routing_type: switch         # Routing type
+
+  # ---------------------------------------------------------------------------
+  # RAG Configuration
+  # ---------------------------------------------------------------------------
+  rag:
+    enabled: false                      # Enable RAG
+    knowledge_base_path: null           # Knowledge base path
+    max_retrieved_docs: 5               # Max retrieved documents
+    fusion_type: attention              # Fusion strategy
+
+  # ---------------------------------------------------------------------------
+  # Advanced Losses
+  # ---------------------------------------------------------------------------
+  losses:
+    focal_loss:
+      enabled: false
+    contrastive_loss:
+      enabled: false
+    diversity_loss:
+      enabled: false
+    multi_token_prediction:
+      enabled: false
+      num_future_tokens: 3
+      weight: 0.1
+    temperature:
+      initial: 1.0
+      adaptive: false
+    label_smoothing: 0.0
+    moe_balancing:
+      enabled: false
+      gradient_balance_weight: 0.0
+      use_auxiliary_loss: false
+    ngram_penalty:
+      enabled: false
+      ngram_size: 3
+      weight: 0.0
+    adaptive_scaling: false
+
+  # ---------------------------------------------------------------------------
+  # Adaptive MTP (Multi-Token Prediction)
+  # ---------------------------------------------------------------------------
+  adaptive_mtp:
+    enabled: false
+    num_prediction_heads: 3
+    confidence_threshold_train: 0.6
+    confidence_threshold_inference: 0.7
+    gate:
+      hidden_dims: "512,256"
+      dropout: 0.1
+      activation: gelu
+      use_attention_pooling: false
+    head:
+      type: linear
+      intermediate_size: null
+      dropout: 0.1
+      share_projections: false
+    training:
+      warmup_epochs: 2
+      confidence_reg_strength: 0.01
+    loss:
+      use_confidence_weighting: false
+      primary_loss_weight: 1.0
+      additional_loss_base_weight: 0.1
+    efficiency:
+      enable_dynamic_prediction: false
+      min_confidence_for_computation: 0.3
+
+  # ---------------------------------------------------------------------------
+  # Gradient Configuration
+  # ---------------------------------------------------------------------------
+  gradient:
+    surgery:
+      enabled: false
+      adaptive: false
+      method: pcgrad
+
+  # ---------------------------------------------------------------------------
+  # Quantization Configuration
+  # ---------------------------------------------------------------------------
+  quantization:
+    aware_training: false
+    bit_width: 8
+    use_nvfp4: false
+    nvfp4_block_size: 16
+    stochastic_rounding: false
+    use_hadamard_transform: false
+    use_torchao_nvfp4: false
+
+  # ---------------------------------------------------------------------------
+  # RLHF Configuration
+  # ---------------------------------------------------------------------------
+  rlhf:
+    policy_model_path: null
+    judge_model_path: null
+    reward_model_path: null
+    use_model_to_model_reward: true
+    freeze_reward_model: true
+    rollout_batch_size: 64
+    num_rollouts_per_epoch: 500
+    max_prompt_length: 256
+    num_epochs: 3
+    save_dir: code/outputs/rlhf
+    log_dir: code/outputs/rlhf/logs
+    save_every: 500
+    eval_every: 250
+    num_eval_prompts: 50
+    prompt_dataset_path: null
+    eval_prompt_dataset_path: null
+    device: cuda
+    use_wandb: true
+    wandb_project: ava-rlhf
+    wandb_name: null
+    ref_model_strategy: cpu_snapshot
+    ppo:
+      learning_rate: 1.0e-6
+      batch_size: 64
+      mini_batch_size: 16
+      gradient_accumulation_steps: 4
+      ppo_epochs: 4
+      clip_range: 0.2
+      clip_range_value: 0.2
+      value_loss_coef: 0.5
+      entropy_coef: 0.01
+      max_grad_norm: 1.0
+      gamma: 1.0
+      lambda: 0.95
+      kl_penalty: kl
+      target_kl: 0.01
+      init_kl_coef: 0.2
+      adaptive_kl: true
+      max_gen_length: 128
+      temperature: 0.9
+      top_k: 50
+      top_p: 0.95
+      num_train_epochs: 1
+      max_steps: null
+      warmup_steps: 100
+      logging_steps: 10
+      save_steps: 500
+      eval_steps: 250
+      use_score_scaling: true
+      use_score_norm: true
+      whiten_rewards: true
+      clip_reward: 10.0
+      gradient_checkpointing: true
+      mixed_precision: bf16
+
+
+# =============================================================================
+# BACKWARD COMPATIBILITY ALIASES
+# =============================================================================
+# These top-level sections are deprecated but still supported.
+# They will emit deprecation warnings when accessed.
+# See code/src/ava/config/path_mapping.py for the full mapping.
+#
+# Old Path                      -> New Path
+# --------                         --------
+# hardware                      -> compute.device
+# performance                   -> compute.performance
+# kernel_optimization           -> compute.kernels
+# cuda_streams                  -> compute.cuda.streams
+# cuda_graphs                   -> compute.cuda.graphs
+# optimizations                 -> compute.optimizations
+# batch_size_calibration        -> compute.calibration.batch_size
+# calibration                   -> compute.calibration.system
+# wandb                         -> logging.wandb
+# logging_config                -> logging.config
+# diagnostics                   -> logging.diagnostics
+# dev_log                       -> logging.dev
+# moe_metrics                   -> logging.moe_metrics
+# output                        -> checkpoints
+# model_selection               -> checkpoints.selection
+# progressive                   -> experimental.progressive
+# hybrid_caching                -> experimental.caching
+# fp8                           -> experimental.fp8
+# overlapped_checkpointing      -> experimental.checkpointing.overlapped
+# double_checkpointing          -> experimental.checkpointing.double
+# moe_memory_optimization       -> experimental.moe_memory
+# lr_finder                     -> experimental.lr_finder
+# episodic_memory               -> experimental.episodic_memory
+# rag                           -> experimental.rag
+# rlhf                          -> experimental.rlhf
+# quantization                  -> experimental.quantization
+# losses                        -> experimental.losses
+# adaptive_mtp                  -> experimental.adaptive_mtp
+# architecture                  -> experimental.architecture
+# gradient                      -> experimental.gradient
 # =============================================================================
-model_selection:
-  enabled: true                         # Enable multi-metric selection
-  val_loss_weight: 0.5                  # Weight for validation loss
-  coherence_score_weight: 0.3           # Weight for coherence
-  perplexity_weight: 0.2                # Weight for perplexity
-  perplexity_cap: 100.0                 # Perplexity cap for normalization
-  val_loss_cap: 10.0                    # Val loss cap
-  higher_is_better: true                # Quality score interpretation
-  require_all_metrics: false            # Require all metrics
-  fallback_to_val_loss: true            # Fallback to val_loss
-
-
-# =============================================================================
-# DIAGNOSTICS
-# =============================================================================
-diagnostics:
-  enabled: false                        # Master enable
-
-  # Per-layer gradients
-  enable_per_layer_gradients: false
-  per_layer_log_freq: 500
-  layer_name_patterns:
-    - layers
-    - experts
-
-  # Expert routing
-  enable_routing_diagnostics: false
-  routing_log_freq: 100
-  track_per_expert_load: true
-  track_routing_entropy: true
-  track_expert_capacity_usage: true
-
-  # Memory breakdown
-  enable_memory_breakdown: false
-  memory_log_freq: 500
-  track_activation_memory: true
-  track_gradient_memory: true
-  track_optimizer_state_memory: true
-  track_parameter_memory: true
-
-  # Timing profiling
-  enable_timing_profiling: false
-  timing_log_freq: 100
-  profile_forward: true
-  profile_backward: true
-  profile_optimizer_step: true
-  profile_data_loading: true
-
-
-# =============================================================================
-# DEEPSPEED CONFIGURATION
-# =============================================================================
-deepspeed:
-  enabled: false                        # Enable DeepSpeed
-  config_file: null                     # External config file path
-  zero_stage: 2                         # ZeRO stage (0, 1, 2, 3)
-
-  # Offloading
-  cpu_offload: false                    # CPU offload optimizer states
-  nvme_offload: false                   # NVMe offload
-  nvme_path: /local_nvme                # NVMe mount point
-
-  # Precision
-  precision_type: bf16                  # Options: 'fp16', 'bf16', 'fp32'
-  enable_mixed_precision: false         # Enable mixed precision
-
-  # Batch configuration
-  gradient_accumulation_steps: 1
-  train_batch_size: null                # Global batch size
-  micro_batch_size: null                # Per-GPU batch size
-
-  # Activation checkpointing
-  activation_checkpointing: false
-  partition_activations: false
-  cpu_checkpointing: false
-
-  # Gradient clipping
-  gradient_clipping: null               # Gradient clip value
-
-  # ZeRO advanced settings
-  zero_allow_untested_optimizer: false
-  zero_force_ds_cpu_optimizer: false
-  zero_reduce_scatter: false
-  zero_overlap_comm: false
-  zero_contiguous_gradients: false
-  zero_reduce_bucket_size: 500000000    # 500MB
-  zero_allgather_bucket_size: 500000000 # 500MB
-  zero_stage3_prefetch_bucket_size: 500000000
-  zero_stage3_param_persistence_threshold: 1000000
-
-  # Communication
-  communication_data_type: fp32
-  allreduce_partitions: false
-  allgather_partitions: false
-  overlap_comm: false
-  wall_clock_breakdown: false
-
-  # Advanced features
-  contiguous_memory_optimization: false
-  synchronize_dp_processes: false
-  pipeline_parallel_size: 1
-
-  # Monitoring
-  monitor_config: {}
-  tensorboard: {}
-  wandb_config: {}
-
-
-# =============================================================================
-# MOE MEMORY OPTIMIZATION
-# =============================================================================
-moe_memory_optimization:
-  # LoRA expert sharing
-  use_lora_experts: false
-  lora_rank: 8
-  lora_alpha: 16
-  freeze_lora_base: false
-
-  # CPU expert offloading
-  use_expert_offloading: false
-  max_active_experts_gpu: 4
-  offload_prefetch_lookahead: 2
-  offload_eviction_policy: lru          # Options: 'lru', 'frequency', 'hybrid'
-  offload_pin_memory: true
-  offload_async_transfers: true
-
-  # Hierarchical expert loading
-  use_hierarchical_experts: false
-  num_expert_clusters: 4
-  expert_clustering_method: random      # Options: 'random', 'kmeans', 'functional'
-  load_only_active_cluster: true
-
-  # Expert quantization
-  use_expert_quantization: false
-  quantize_inactive_experts: true
-  expert_quantization_bits: 8           # 8 or 4
-  expert_quantization_method: per_channel  # Options: 'per_channel', 'per_tensor'
-  use_bitsandbytes: false
-
-
-# =============================================================================
-# MOE METRICS
-# =============================================================================
-moe_metrics:
-  track_expert_utilization: true
-  log_frequency: 50
-  track_routing_decisions: false
-  track_load_balance: true
-
-
-# =============================================================================
-# LR FINDER
-# =============================================================================
-lr_finder:
-  run_lr_finder: false                  # Run before training
-  start_lr: 1.0e-8                      # Starting LR
-  end_lr: 1.0                           # Ending LR
-  num_iterations: 100                   # Test iterations
-  suggestion_method: steepest           # Options: 'steepest', 'minimum', 'valley'
-  use_suggested_lr: false               # Auto-use suggested LR
-  plot_path: null                       # Plot save path
-  smooth_beta: 0.98                     # Loss smoothing
-  stop_div_threshold: 4.0               # Stop if diverges
-
-
-# =============================================================================
-# EPISODIC MEMORY
-# =============================================================================
-episodic_memory:
-  use_episodic_memory: false
-  memory_capacity: 1000
-  memory_selection_strategy: importance # Options: 'importance', 'random', 'recent'
-  memory_importance_threshold: 0.5
-  memory_retrieval_method: cosine       # Options: 'cosine', 'euclidean', 'dot'
-  memory_replay_ratio: 0.2
-  memory_replay_strategy: importance
-  memory_adaptation_rate: 0.01
-  memory_performance_window: 100
-  task_id: 0
-  silent_mode: false
-  enable_auto_grad_accumulation: false
-
-
-# =============================================================================
-# ARCHITECTURE ENHANCEMENTS
-# =============================================================================
-architecture:
-  use_moh: false                        # Mixture of Heads
-  use_moa: false                        # Mixture of Activations
-  use_cross_attention: false            # Cross-attention
-  use_alibi: false                      # ALiBi positioning
-  expert_routing_type: switch           # Routing type
-
-
-# =============================================================================
-# RAG CONFIGURATION
-# =============================================================================
-rag:
-  use_rag: false                        # Enable RAG
-  knowledge_base_path: null             # Knowledge base path
-  max_retrieved_docs: 5                 # Max retrieved documents
-  rag_fusion_type: attention            # Fusion strategy
-
-
-# =============================================================================
-# LOSS CONFIGURATION
-# =============================================================================
-losses:
-  use_focal_loss: false                 # Focal loss
-  use_contrastive_loss: false           # Contrastive loss
-  use_diversity_loss: false             # Diversity loss
-  adaptive_loss_scaling: false          # Adaptive scaling
-
-  # Multi-token prediction
-  use_multi_token_prediction: false
-  num_future_tokens: 3
-  mtp_weight: 0.1
-
-  # Temperature scaling
-  initial_temperature: 1.0
-  adaptive_temperature: false
-  label_smoothing: 0.0
-
-  # MoE balancing
-  use_moe_balancing: false
-  gradient_balance_weight: 0.0
-  use_auxiliary_loss: false
-
-  # N-gram penalty
-  use_ngram_penalty: false
-  ngram_size: 3
-  ngram_penalty_weight: 0.0
-  use_immediate_repetition_detector: false
-  immediate_repetition_weight: 0.0
-
-
-# =============================================================================
-# ADAPTIVE MTP (Multi-Token Prediction)
-# =============================================================================
-adaptive_mtp:
-  use_adaptive_mtp: false
-  num_prediction_heads: 3
-  confidence_threshold_train: 0.6
-  confidence_threshold_inference: 0.7
-
-  # Gate settings
-  gate_hidden_dims: "512,256"
-  gate_dropout: 0.1
-  gate_activation: gelu
-  use_attention_pooling: false
-
-  # Head settings
-  head_type: linear                     # Options: 'linear', 'mlp'
-  head_intermediate_size: null
-  head_dropout: 0.1
-  share_projections: false
-
-  # Training
-  mtp_warmup_epochs: 2
-  confidence_reg_strength: 0.01
-
-  # Loss weighting
-  use_confidence_weighting: false
-  primary_loss_weight: 1.0
-  additional_loss_base_weight: 0.1
-
-  # Efficiency
-  enable_dynamic_prediction: false
-  min_confidence_for_computation: 0.3
-
-
-# =============================================================================
-# GRADIENT CONFIGURATION
-# =============================================================================
-gradient:
-  gradient_surgery: false               # Enable gradient surgery
-  adaptive_gradient_surgery: false      # Adaptive method
-  gradient_surgery_method: pcgrad       # Options: 'pcgrad', 'cagrad', 'gradvac'
-
-
-# =============================================================================
-# EVALUATION CONFIGURATION
-# =============================================================================
-evaluation:
-  eval_during_training: false           # Enable evaluation
-  eval_metrics: null                    # Comma-separated metrics
-  eval_frequency: 500                   # Evaluation frequency
-
-
-# =============================================================================
-# QUANTIZATION CONFIGURATION
-# =============================================================================
-quantization:
-  quantization_aware: false             # QAT training
-  bit_width: 8                          # Quantization bits
-  use_nvfp4: false                      # NVFP4 training
-  nvfp4_block_size: 16                  # NVFP4 block size
-  stochastic_rounding: false            # Stochastic rounding
-  use_hadamard_transform: false         # Hadamard transforms
-  use_torchao_nvfp4: false              # TorchAO NVFP4
-
-
-# =============================================================================
-# GENERATION CONFIGURATION (Standalone)
-# =============================================================================
-generation:
-  max_length: 512                       # Max generation length
-  min_length: 10                        # Min generation length
-  temperature: 0.8                      # Sampling temperature
-  top_p: 0.9                            # Nucleus sampling
-  top_k: 50                             # Top-k sampling
-  repetition_penalty: 1.2               # Repetition penalty
-  no_repeat_ngram_size: 3               # Block n-gram repeats
-  do_sample: true                       # Enable sampling
-  num_beams: 1                          # Beam search width
-  early_stopping: false                 # Stop when beams finish
-
-
-# =============================================================================
-# RLHF CONFIGURATION
-# =============================================================================
-rlhf:
-  # Model paths
-  policy_model_path: null               # Policy model checkpoint
-  judge_model_path: null                # Judge model checkpoint
-  reward_model_path: null               # Reward model checkpoint
-
-  # Reward strategy
-  use_model_to_model_reward: true       # Use judge model for rewards
-  freeze_reward_model: true
-
-  # Experience collection
-  rollout_batch_size: 64
-  num_rollouts_per_epoch: 500
-  max_prompt_length: 256
-
-  # Training
-  num_epochs: 3
-  save_dir: code/outputs/rlhf
-  log_dir: code/outputs/rlhf/logs
-  save_every: 500
-  eval_every: 250
-  num_eval_prompts: 50
-
-  # Data
-  prompt_dataset_path: null
-  eval_prompt_dataset_path: null
-
-  # Device
-  device: cuda
-
-  # Logging
-  use_wandb: true
-  wandb_project: ava-rlhf
-  wandb_name: null
-
-  # Reference model strategy
-  ref_model_strategy: cpu_snapshot      # Options: 'deepcopy', 'cpu_snapshot', 'disk_snapshot', 'shared_params'
-
-  # PPO configuration
-  ppo:
-    learning_rate: 1.0e-6
-    batch_size: 64
-    mini_batch_size: 16
-    gradient_accumulation_steps: 4
-
-    ppo_epochs: 4
-    clip_range: 0.2
-    clip_range_value: 0.2
-    value_loss_coef: 0.5
-    entropy_coef: 0.01
-    max_grad_norm: 1.0
-
-    gamma: 1.0
-    lambda: 0.95
-
-    kl_penalty: kl                      # Options: 'kl', 'abs', 'mse', 'full'
-    target_kl: 0.01
-    init_kl_coef: 0.2
-    adaptive_kl: true
-
-    max_gen_length: 128
-    temperature: 0.9
-    top_k: 50
-    top_p: 0.95
-
-    num_train_epochs: 1
-    max_steps: null
-    warmup_steps: 100
-    logging_steps: 10
-    save_steps: 500
-    eval_steps: 250
-
-    use_score_scaling: true
-    use_score_norm: true
-    whiten_rewards: true
-    clip_reward: 10.0
-
-    gradient_checkpointing: true
-    mixed_precision: bf16

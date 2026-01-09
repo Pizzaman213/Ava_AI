@@ -247,17 +247,6 @@ model:
 
 Memory reduction: ~60% at cost of ~30% slower training.
 
-### Expert Offloading
-
-Keep inactive experts on CPU:
-
-```yaml
-moe_memory_optimization:
-  use_expert_offloading: true
-  max_active_experts_gpu: 4
-  offload_eviction_policy: 'lru'
-```
-
 ### KV Cache Quantization
 
 Reduce attention memory for long sequences:

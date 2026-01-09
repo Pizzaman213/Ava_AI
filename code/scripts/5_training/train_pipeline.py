@@ -83,6 +83,7 @@ from ava.training import (
     cleanup_distributed,
 )
 from ava.training.diagnostics import DiagnosticsManager
+from ava.training.episodic_memory import EpisodicMemoryManager
 from ava.training.distributed import DistributedStateManager
 from ava.config.yaml_loader import load_yaml_with_path_resolution
 from ava.config.training_config import DynamicConfig, ModelSelectionConfig, DiagnosticsConfig
@@ -679,9 +680,25 @@ def main(args: argparse.Namespace) -> None:
         training_config.get('learning_rate') or
         5e-5
     )
-    # Read log_interval from training.logging.logging_steps or training.log_interval
-    logging_config = training_config.get('logging', {})
-    log_interval = args.log_interval or logging_config.get('logging_steps') or training_config.get('log_interval', 50)
+
+    # Validate learning rate type and value
+    if not isinstance(learning_rate, (int, float)):
+        raise ValueError(
+            f"learning_rate must be numeric, got {type(learning_rate).__name__}: {learning_rate}"
+        )
+    if learning_rate <= 0:
+        raise ValueError(f"learning_rate must be > 0, got {learning_rate}")
+
+    # Read log_interval from multiple sources (CLI > top-level logging > training.logging > defaults)
+    # Priority: CLI arg > logging.log_interval > training.logging.logging_steps > training.log_interval > default
+    top_level_logging = config.get('logging', {})
+    training_logging = training_config.get('logging', {})
+    log_interval = (
+        args.log_interval or
+        top_level_logging.get('log_interval') or
+        training_logging.get('logging_steps') or
+        training_config.get('log_interval', 100)
+    )
     val_interval = args.val_interval
 
     # Get output directory from config or CLI args
@@ -916,6 +933,17 @@ def main(args: argparse.Namespace) -> None:
 
                 # target_memory: calibration override or 0.70
                 target_mem = calibration_config.get('target_memory', 0.70)
+
+                # Validate calibration config values
+                if min_bs >= max_bs:
+                    raise ValueError(
+                        f"Calibration min_batch_size ({min_bs}) must be < max_batch_size ({max_bs}). "
+                        f"Check training.batch_size_calibration config."
+                    )
+                if not 0.0 < target_mem <= 1.0:
+                    raise ValueError(
+                        f"Calibration target_memory must be in (0.0, 1.0], got {target_mem}"
+                    )
 
                 if rank == 0:
                     train_logger.info(f"  Calibration settings (auto-fetched from config):")
@@ -1518,16 +1546,23 @@ def main(args: argparse.Namespace) -> None:
         metrics_mgr = pipeline.get('metrics')
         metrics_mgr.initialize()
 
-        wandb_config = config.get('wandb', {})
+        # WandB config is under logging.wandb in the config schema
+        logging_config = config.get('logging', {})
+        wandb_config = logging_config.get('wandb', {})
         # Set wandb directory inside the run folder
         wandb_dir = run_manager.run_dir / 'wandb'
         wandb_enabled = wandb_config.get('enabled', False)
         train_logger.info(f"WandB config: enabled={wandb_enabled}, project={wandb_config.get('project', 'N/A')}")
+
+        # Check if all logging is disabled
+        if logging_config.get('disabled', False):
+            train_logger.info("All logging DISABLED via config for maximum training speed")
         metrics_mgr.setup(
             log_dir=log_dir,
             wandb_config=wandb_config if wandb_enabled else None,
             use_wandb=wandb_enabled,
             wandb_dir=wandb_dir,
+            logging_config=logging_config,
         )
 
         # =====================================================================
@@ -1584,6 +1619,34 @@ def main(args: argparse.Namespace) -> None:
             diagnostics_mgr.configure(diag_config)
             logger.info("Diagnostics manager initialized for detailed training insights")
 
+        # Setup episodic memory manager for experience replay
+        episodic_memory_mgr = None
+        episodic_config = config.get('experimental', {}).get('episodic_memory', {})
+        # Also check top-level episodic_memory for convenience
+        if not episodic_config:
+            episodic_config = config.get('episodic_memory', {})
+
+        if episodic_config.get('use_episodic_memory', False) or episodic_config.get('enabled', False):
+            # Create a config object that EpisodicMemoryManager expects
+            class EpisodicMemConfig:
+                use_episodic_memory = True
+                memory_capacity = episodic_config.get('memory_capacity', 10000)
+                memory_replay_ratio = episodic_config.get('memory_replay_ratio', 0.2)
+                buffer_warmup_steps = episodic_config.get('buffer_warmup_steps', 100)
+                memory_selection_strategy = episodic_config.get('memory_selection_strategy', 'importance')
+                priority_exponent = episodic_config.get('priority_exponent', 0.6)
+                importance_weight_exponent = episodic_config.get('importance_weight_exponent', 0.4)
+                store_aux_info = episodic_config.get('store_aux_info', False)
+                silent_mode = episodic_config.get('silent_mode', False)
+
+            episodic_memory_mgr = EpisodicMemoryManager(EpisodicMemConfig(), device=device)
+            if rank == 0:
+                train_logger.info(
+                    f"Episodic memory enabled: capacity={EpisodicMemConfig.memory_capacity}, "
+                    f"replay_ratio={EpisodicMemConfig.memory_replay_ratio}, "
+                    f"warmup_steps={EpisodicMemConfig.buffer_warmup_steps}"
+                )
+
         training_mgr = pipeline.get('training')
         training_mgr.initialize()
         training_mgr.set_components(
@@ -1591,7 +1654,12 @@ def main(args: argparse.Namespace) -> None:
             generation_manager=generation_mgr,
             checkpoint_manager=checkpoint_manager,
             diagnostics_manager=diagnostics_mgr,
+            episodic_memory_manager=episodic_memory_mgr,
         )
+
+        # Set up overlapped gradient sync for multi-GPU DDP (10-30% speedup)
+        is_deepspeed = config.get('deepspeed', {}).get('enabled', False)
+        training_mgr.setup_gradient_sync(model, is_deepspeed=is_deepspeed)
 
         # Issue #2 fix: Set resume info in context.metadata ONLY (single source of truth)
         # TrainingLoopManager reads from context.metadata['resume_step'] in train_epoch()
@@ -1610,8 +1678,13 @@ def main(args: argparse.Namespace) -> None:
 
         # Create training loop config
         # Logging options: 'tqdm' = clean progress bar only, 'verbose' = both tqdm + INFO logs
-        log_mode = training_config.get('log_mode', 'tqdm')
-        verbose_log_interval = training_config.get('verbose_log_interval', 500)
+        # Read from top-level logging config first, then fall back to training config
+        log_mode = top_level_logging.get('log_mode') or training_config.get('log_mode', 'tqdm')
+        verbose_log_interval = (
+            top_level_logging.get('verbose_log_interval') or
+            training_config.get('verbose_log_interval', 500)
+        )
+        tqdm_update_interval = top_level_logging.get('tqdm_update_interval', 10)
 
         # CUDA Graphs config - 15-25% throughput improvement
         cuda_graphs_config = config.get('cuda_graphs', {})

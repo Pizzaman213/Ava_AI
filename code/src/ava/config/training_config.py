@@ -69,6 +69,11 @@ class DynamicConfig:
     Provides both dictionary-style and attribute-style access to configuration values.
     Automatically converts nested dictionaries to nested DynamicConfig objects.
 
+    Backward Compatibility:
+        The config system has been reorganized from 38 sections into 8 categories.
+        Old config paths (e.g., 'hardware.device') are automatically resolved to
+        new paths (e.g., 'compute.device.type') with deprecation warnings.
+
     Example:
         config = DynamicConfig({'training': {'batch_size': 32}})
         config.training.batch_size  # Returns 32
@@ -85,6 +90,7 @@ class DynamicConfig:
     # Class-level settings for strict mode and tracking
     _strict_mode: bool = False
     _accessed_missing: Set[str] = set()
+    _enable_path_migration: bool = True  # Enable deprecated path resolution
 
     @classmethod
     def enable_strict_mode(cls) -> None:
@@ -97,6 +103,16 @@ class DynamicConfig:
         """Disable strict mode - missing keys return None (default behavior)."""
         cls._strict_mode = False
         logger.debug("DynamicConfig strict mode disabled")
+
+    @classmethod
+    def enable_path_migration(cls) -> None:
+        """Enable deprecated path resolution (default behavior)."""
+        cls._enable_path_migration = True
+
+    @classmethod
+    def disable_path_migration(cls) -> None:
+        """Disable deprecated path resolution."""
+        cls._enable_path_migration = False
 
     @classmethod
     def get_accessed_missing_keys(cls) -> Set[str]:
@@ -127,6 +143,7 @@ class DynamicConfig:
         """
         # Initialize instance attributes dict directly to avoid __setattr__ issues
         object.__setattr__(self, '_config_name', '')
+        object.__setattr__(self, '_raw_data', data or {})  # Store raw data for path resolution
         if data:
             for key, value in data.items():
                 if isinstance(value, dict):
@@ -137,12 +154,105 @@ class DynamicConfig:
                 else:
                     setattr(self, key, value)
 
+    def _try_resolve_deprecated_path(self, name: str) -> Optional[Any]:
+        """
+        Try to resolve a deprecated config path to its new location.
+
+        This provides backward compatibility for the config reorganization.
+        Old paths (e.g., 'hardware') are transparently resolved to new paths
+        (e.g., 'compute.device') with a deprecation warning.
+
+        Args:
+            name: The attribute name being accessed
+
+        Returns:
+            The resolved value, or None if no mapping exists
+        """
+        if not DynamicConfig._enable_path_migration:
+            return None
+
+        try:
+            from ava.config.path_mapping import (
+                is_deprecated_path,
+                get_new_path,
+                warn_deprecated_path,
+            )
+        except ImportError:
+            # path_mapping module not available yet
+            return None
+
+        # Build full path for checking
+        config_name = object.__getattribute__(self, '_config_name')
+        full_path = f"{config_name}.{name}" if config_name else name
+
+        # Check if this is a deprecated top-level section
+        if is_deprecated_path(name) or is_deprecated_path(full_path):
+            new_path = get_new_path(name) or get_new_path(full_path)
+            if new_path:
+                warn_deprecated_path(full_path, new_path)
+                # Try to resolve the new path
+                return self._resolve_path(new_path)
+
+        return None
+
+    def _resolve_path(self, path: str) -> Optional[Any]:
+        """
+        Resolve a dot-separated path to its value.
+
+        Args:
+            path: Dot-separated path like 'compute.device.type'
+
+        Returns:
+            The value at that path, or None if not found
+        """
+        parts = path.split('.')
+        current = self
+
+        # Navigate to root if we're a nested config
+        while hasattr(current, '_config_name'):
+            parent = object.__getattribute__(current, '_config_name')
+            if not parent:
+                break
+            # We can't navigate up, so start from root data
+            raw_data = object.__getattribute__(self, '_raw_data')
+            if raw_data:
+                # Try to resolve from raw data
+                result = raw_data
+                for part in parts:
+                    if isinstance(result, dict) and part in result:
+                        result = result[part]
+                    else:
+                        return None
+                return result
+            break
+
+        # Try to resolve from current position
+        for part in parts:
+            if current is None:
+                return None
+            if isinstance(current, DynamicConfig):
+                if hasattr(current, part) and part in current.__dict__:
+                    current = getattr(current, part)
+                else:
+                    return None
+            elif isinstance(current, dict):
+                if part in current:
+                    current = current[part]
+                else:
+                    return None
+            else:
+                return None
+
+        return current
+
     def __getattr__(self, name: str) -> Any:
         """
         Allow accessing any attribute dynamically.
 
         In default mode, returns None for missing attributes to allow safe access
         to optional config fields. In strict mode, raises AttributeError.
+
+        Deprecated paths are automatically resolved to new paths with a warning.
 
         Args:
             name: Attribute name to access
@@ -156,6 +266,11 @@ class DynamicConfig:
         # Avoid recursion for internal attributes
         if name.startswith('_'):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        # Try to resolve deprecated path first
+        resolved = self._try_resolve_deprecated_path(name)
+        if resolved is not None:
+            return resolved
 
         # Track the missing key access
         config_name = object.__getattribute__(self, '_config_name') if hasattr(self, '_config_name') else ''
@@ -219,6 +334,9 @@ class DynamicConfig:
 
         result = {}
         for key, value in self.__dict__.items():
+            # Skip internal attributes
+            if key.startswith('_'):
+                continue
             if isinstance(value, DynamicConfig):
                 result[key] = value.to_dict(_visited)
             else:
@@ -355,16 +473,16 @@ class ModelConfig:
     # Performance optimizations
     use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
     use_triton_kernels: bool = True           # Use Triton fused kernels
-    use_torch_compile: bool = False           # Enable torch.compile (15-25% speedup)
+    use_torch_compile: bool = True            # Enable torch.compile (20-30% speedup) - nanoGPT-style default
     torch_compile_mode: str = 'reduce-overhead'  # 'default', 'reduce-overhead', 'max-autotune'
-    enable_cudagraphs_safe_routing: bool = False  # Enable CUDA graphs safe routing
+    torch_compile_dynamic: bool = False       # Allow dynamic shapes (slower but flexible)
+    torch_compile_fullgraph: bool = False     # Require full graph (faster but stricter)
+    use_compile_friendly_dispatch: bool = True  # Use compile-friendly expert dispatch
+    enable_cudagraphs_safe_routing: bool = False  # Enable CUDA graphs safe routing (deprecated)
     use_flash_attention: bool = True          # Use flash attention
     gradient_checkpointing: bool = True       # Enable gradient checkpointing
     use_optimized_moe: bool = True            # Use optimized MoE implementation
     quantize_kv_cache: bool = False           # Enable KV cache quantization for memory savings
-
-    # Distributed/parallelism settings
-    expert_parallel_size: int = 1             # Expert parallelism size for distributed MoE
 
     # Auxiliary losses
     router_z_loss_coef: float = 0.0001        # Router z-loss coefficient
@@ -372,18 +490,7 @@ class ModelConfig:
     diversity_loss_coef: float = 0.0001       # Diversity loss coefficient
     expert_dropout_loss_coef: float = 0.0     # Expert dropout loss coefficient
     router_jitter_noise: float = 0.01         # Router jitter noise for exploration
-    aux_loss_frequency: int = 1               # Compute aux losses every N steps (1=every, 50=5-8% speedup)
-
-    # LoRA settings
-    use_lora_experts: bool = False            # Use LoRA for experts
-    lora_rank: int = 4                        # LoRA rank
-    lora_alpha: int = 8                       # LoRA alpha
-    freeze_lora_base: bool = False            # Freeze LoRA base weights
-
-    # Expert offloading
-    use_expert_offloading: bool = False       # Enable CPU offloading
-    max_active_experts_gpu: int = 2           # Max experts on GPU
-    offload_eviction_policy: str = 'lru'      # 'lru' or 'random'
+    aux_loss_frequency: int = 500             # Compute aux losses every N steps (500=fast, 10=detailed monitoring, 1=every step is slow)
 
     # Regularization
     attention_dropout: float = 0.0
@@ -440,6 +547,30 @@ class ModelConfig:
         if self.diversity_loss_coef < 0:
             raise ValueError(f"diversity_loss_coef cannot be negative, got {self.diversity_loss_coef}")
 
+        # torch.compile configuration validation
+        valid_compile_modes = {'default', 'reduce-overhead', 'max-autotune'}
+        if self.torch_compile_mode not in valid_compile_modes:
+            raise ValueError(
+                f"torch_compile_mode must be one of {valid_compile_modes}, "
+                f"got '{self.torch_compile_mode}'"
+            )
+
+        # Warn about incompatible compile configurations
+        if self.use_torch_compile:
+            import warnings
+            if self.enable_cudagraphs_safe_routing:
+                warnings.warn(
+                    "torch.compile + enable_cudagraphs_safe_routing may conflict. "
+                    "torch.compile already uses CUDA graphs internally with 'reduce-overhead' mode.",
+                    UserWarning
+                )
+            if self.torch_compile_dynamic and self.torch_compile_fullgraph:
+                warnings.warn(
+                    "torch_compile_dynamic=True with torch_compile_fullgraph=True may cause "
+                    "frequent recompilation. Consider setting fullgraph=False for dynamic shapes.",
+                    UserWarning
+                )
+
 
 @dataclass
 class GenerationConfig:
@@ -472,11 +603,46 @@ class ArchitectureConfig:
 
 @dataclass
 class RAGConfig:
-    """Configuration for RAG system."""
+    """Configuration for RAG (Retrieval Augmented Generation) system.
+
+    RAG enhances the model by retrieving relevant documents from a
+    knowledge base and incorporating them into the generation process.
+
+    Supported retrievers:
+        - faiss: Fast similarity search using Facebook's FAISS library
+        - chromadb: Persistent vector store with optional embedding functions
+        - memory: Simple in-memory retriever for testing
+
+    Supported fusion strategies:
+        - attention: Cross-attention over retrieved documents
+        - concat: Concatenate and project
+        - gated: Learnable gate for context mixing
+        - adaptive: Combines multiple strategies with learned routing
+    """
     use_rag: bool = False                     # Enable RAG (disabled by default - YAML controls)
-    knowledge_base_path: Optional[str] = None  # KB path
-    max_retrieved_docs: int = 5               # Max retrieved documents
-    rag_fusion_type: str = 'attention'        # Fusion strategy
+    knowledge_base_path: Optional[str] = None  # KB path (alias for index_path)
+    max_retrieved_docs: int = 5               # Max retrieved documents (alias for top_k)
+    rag_fusion_type: str = 'attention'        # Fusion strategy: attention, concat, gated, adaptive
+
+    # Retriever settings
+    retriever_type: str = 'faiss'             # Retriever backend: faiss, chromadb, memory
+    index_path: Optional[str] = None          # Path to pre-built vector index
+    embedding_dim: int = 768                  # Dimension of document embeddings
+    embedding_model: str = 'sentence-transformers/all-MiniLM-L6-v2'  # Model for encoding
+    normalize_embeddings: bool = True         # L2-normalize for cosine similarity
+
+    # ChromaDB-specific settings
+    chromadb_persist_dir: Optional[str] = None  # Persistent storage directory
+    chromadb_collection: str = 'ava_rag'        # Collection name
+
+    # Fusion settings
+    fusion_dropout: float = 0.1               # Dropout in fusion layers
+    fusion_num_heads: int = 8                 # Attention heads for cross-attention fusion
+    fusion_layer: str = 'all'                 # Where to apply fusion: 'all', 'last', or layer index
+
+    # Retrieval settings
+    retrieval_mode: str = 'once'              # 'once' (at start) or 'per_layer'
+    query_strategy: str = 'first_token'       # How to create query: 'first_token', 'mean', 'cls'
 
 
 @dataclass
@@ -556,6 +722,19 @@ class GradientConfig:
 
 
 @dataclass
+class RetryConfig:
+    """Configuration for retry logic in pipeline error handling."""
+    max_retries: int = 3                      # Maximum retry attempts per component
+    initial_backoff: float = 1.0              # Initial backoff delay in seconds
+    backoff_multiplier: float = 2.0           # Multiplier for exponential backoff
+    max_backoff: float = 60.0                 # Maximum backoff delay in seconds
+    jitter: bool = True                       # Add random jitter to backoff
+    jitter_factor: float = 0.1                # Jitter as fraction of backoff (0.0-1.0)
+    retry_on_oom: bool = True                 # Retry on CUDA OOM errors
+    reduce_batch_on_oom: bool = True          # Reduce batch size on OOM retry
+
+
+@dataclass
 class EvaluationConfig:
     """Configuration for evaluation during training."""
     eval_during_training: bool = False        # Enable evaluation (disabled by default - YAML controls)
@@ -616,11 +795,27 @@ class DoubleCheckpointingConfig:
 
 @dataclass
 class FP8Config:
-    """Configuration for FP8 training (Hopper/Ada GPUs only)."""
+    """Configuration for FP8 training (Hopper/Ada GPUs only).
+
+    FP8 provides 2-3x speedup on supported hardware (H100, L40, RTX 4090+).
+
+    Backward pass optimization (new):
+    - backward_enabled: Enable FP8 for gradient computation
+    - backward_format: Use e5m2 for gradients (higher dynamic range)
+    - exclude_layers: Skip FP8 for sensitive layers
+    """
     enabled: bool = False
     use_transformer_engine: bool = False
-    format: str = 'e4m3'                      # 'e4m3' or 'e5m2'
+    format: str = 'e4m3'                      # 'e4m3' or 'e5m2' for forward
     margin: int = 0                           # Scale margin
+
+    # Backward pass FP8 optimization
+    backward_enabled: bool = False            # Enable FP8 for backward pass
+    backward_format: str = 'e5m2'             # 'e5m2' recommended for gradients (higher range)
+    exclude_layers: List[str] = field(default_factory=lambda: ['embedding', 'lm_head'])
+    gradient_scaling_strategy: str = 'per_tensor'  # 'per_tensor' or 'per_channel'
+    amax_history_len: int = 1024              # History for dynamic scaling
+    amax_compute_algo: str = 'max'            # 'max' or 'most_recent'
 
 
 @dataclass
@@ -630,48 +825,6 @@ class MoEMetricsConfig:
     log_frequency: int = 50
     track_routing_decisions: bool = False
     track_load_balance: bool = True
-
-
-@dataclass
-class MoEMemoryOptimizationConfig:
-    """
-    Configuration for MoE memory optimization techniques.
-
-    Enables advanced memory reduction strategies for sparse MoE models:
-    - LoRA expert sharing: Shared base + low-rank deltas for memory efficiency
-    - CPU expert offloading: Keep inactive experts on CPU to reduce GPU memory
-    - Hierarchical loading: Cluster-based expert organization
-    - Quantization: INT8/INT4 for inactive experts
-
-    These optimizations can be combined for greater memory savings.
-    """
-    # === LoRA Expert Sharing ===
-    use_lora_experts: bool = False           # Enable LoRA-based expert parameter sharing
-    lora_rank: int = 8                       # Rank of LoRA matrices (4-16, lower=more savings)
-    lora_alpha: int = 16                     # LoRA scaling parameter (typically 2*rank)
-    freeze_lora_base: bool = False           # Freeze shared base parameters
-
-    # === CPU Expert Offloading ===
-    use_expert_offloading: bool = False      # Enable CPU expert offloading
-    max_active_experts_gpu: int = 4          # Max experts to keep on GPU
-    offload_prefetch_lookahead: int = 2      # Number of experts to prefetch
-    offload_eviction_policy: str = 'lru'     # Eviction policy: 'lru', 'frequency', 'hybrid'
-    offload_pin_memory: bool = True          # Use pinned memory for faster transfers
-    offload_async_transfers: bool = True     # Enable async GPU-CPU transfers
-
-    # === Hierarchical Expert Loading ===
-    use_hierarchical_experts: bool = False   # Enable hierarchical expert clustering
-    num_expert_clusters: int = 4             # Number of expert clusters
-    expert_clustering_method: str = 'random' # Clustering method: 'random', 'kmeans', 'functional'
-    load_only_active_cluster: bool = True    # Load only active cluster to GPU
-
-    # === Expert Quantization ===
-    # NOTE: Can now be combined with LoRA and offloading for hybrid mode!
-    use_expert_quantization: bool = False    # Enable expert quantization
-    quantize_inactive_experts: bool = True   # Quantize only inactive experts
-    expert_quantization_bits: int = 8        # Quantization bits (8 or 4)
-    expert_quantization_method: str = 'per_channel'  # 'per_channel' or 'per_tensor'
-    use_bitsandbytes: bool = False           # Use bitsandbytes library for quantization
 
 
 @dataclass
@@ -690,19 +843,38 @@ class LRFinderConfig:
 
 @dataclass
 class EpisodicMemoryConfig:
-    """Configuration for episodic memory."""
+    """Configuration for episodic memory.
+
+    Implements prioritized experience replay for continual learning.
+    Samples with higher loss are replayed more frequently, with
+    importance sampling weights to correct for the sampling bias.
+
+    Priority Calculation:
+        P(i) = priority_i^alpha / sum(priority_j^alpha)
+        where alpha = priority_exponent
+
+    Importance Sampling Weights:
+        w_i = (N * P(i))^(-beta) / max(w)
+        where beta = importance_weight_exponent
+    """
     use_episodic_memory: bool = False         # Enable episodic memory (disabled by default)
-    memory_capacity: int = 1000               # Memory capacity
-    memory_selection_strategy: str = 'importance'  # Selection strategy
-    memory_importance_threshold: float = 0.5  # Importance threshold
-    memory_retrieval_method: str = 'cosine'  # Retrieval method
-    memory_replay_ratio: float = 0.2         # Replay ratio
-    memory_replay_strategy: str = 'importance' # Replay strategy
-    memory_adaptation_rate: float = 0.01     # Adaptation rate
-    memory_performance_window: int = 100     # Performance window
-    task_id: int = 0                         # Task ID
-    silent_mode: bool = False                # Suppress memory warnings in console
+    memory_capacity: int = 1000               # Memory capacity (buffer size)
+    memory_selection_strategy: str = 'importance'  # Selection strategy: 'importance' or 'uniform'
+    memory_importance_threshold: float = 0.5  # Importance threshold for filtering
+    memory_retrieval_method: str = 'cosine'   # Retrieval method for similarity
+    memory_replay_ratio: float = 0.2          # Ratio of replay samples per batch (0.2 = 20%)
+    memory_replay_strategy: str = 'importance'  # Replay strategy: 'importance' or 'uniform'
+    memory_adaptation_rate: float = 0.01      # Adaptation rate for priority updates
+    memory_performance_window: int = 100      # Window for performance tracking
+    task_id: int = 0                          # Task ID for multi-task learning
+    silent_mode: bool = False                 # Suppress memory warnings in console
     enable_auto_grad_accumulation: bool = False  # Enable auto gradient accumulation adjustment
+
+    # Prioritized replay parameters (Schaul et al., 2015)
+    priority_exponent: float = 0.6            # Alpha: controls prioritization (0=uniform, 1=full priority)
+    importance_weight_exponent: float = 0.4   # Beta: controls IS weight correction (0=none, 1=full)
+    buffer_warmup_steps: int = 100            # Steps before replay starts (let buffer fill)
+    store_aux_info: bool = False              # Store MoE routing info per sample (memory intensive)
 
 
 @dataclass
@@ -731,21 +903,20 @@ class DataConfig:
     max_samples: Optional[int] = None         # Max samples (testing)
     streaming: bool = False                   # Streaming loader (YAML controls)
     buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
-    num_workers: int = 0                      # Default 0 to avoid multiprocessing deadlocks with Arrow files
-    prefetch_factor: int = 4                  # Batches to prefetch per worker
-    persistent_workers: bool = False          # Keep workers alive between epochs (YAML controls)
+    num_workers: int = 0                      # Default 0 (safe). Set to 8+ in config for better throughput
+    prefetch_factor: int = 4                  # Batches to prefetch per worker (4 is optimal)
+    persistent_workers: bool = True           # Keep workers alive between epochs (avoids spawn overhead)
     padding_side: str = 'right'               # Tokenizer padding side
     truncation: bool = True                   # Enable truncation
     max_train_examples: Optional[int] = None  # Max training examples
     max_eval_examples: Optional[int] = None   # Max evaluation examples
     dataloader_drop_last: bool = False        # Drop last incomplete batch
-    dataloader_pin_memory: bool = False       # Pin memory for faster GPU transfer
+    dataloader_pin_memory: bool = True        # Pin memory for faster GPU transfer (recommended)
     default_tokenizer_name: str = 'Qwen/Qwen2.5-0.5B'  # Default tokenizer if none specified
 
     # Sequence packing for improved throughput
     use_sequence_packing: bool = False        # Enable sequence packing
     packing_strategy: str = 'greedy'          # Packing strategy: 'greedy' or 'adaptive'
-    use_dynamic_batching: bool = False        # Enable dynamic batching
     max_tokens_per_batch: Optional[int] = None  # Max tokens per batch
 
     # Dataset splits and validation
@@ -768,13 +939,18 @@ class DataConfig:
     shuffle_seed: Optional[int] = None        # Global shuffle seed (None = non-deterministic)
     enable_length_sorting: bool = True        # Enable length sorting in distributed mode
     disable_packing_length_sort: bool = False # Disable length sorting in packing
-    examples_per_random_select: int = 20      # Examples to take per random file selection (10-50 recommended)
+    examples_per_random_select: int = 100     # Examples per file selection (higher = better I/O locality, 50-200 recommended)
 
     # Indexed loader (map-style with true random shuffling)
     use_indexed_loader: bool = False          # Enable IndexedArrowDataset (true random access)
     indexed_num_bins: int = 8                 # Number of length bins for sampling
     indexed_cache_size: int = 50              # Arrow table LRU cache size per worker
     indexed_index_workers: Optional[int] = None  # Parallel workers for indexing (None = auto)
+
+    # Fast startup options (reduce overhead)
+    fast_startup: bool = False                # Skip all validation and stats for fastest startup
+    skip_sequence_count: bool = False         # Skip dataset stats logging at startup
+    skip_dataloader_validation: bool = False  # Skip 5-batch validation at startup
 
 
 @dataclass
@@ -811,14 +987,6 @@ class ProgressiveTrainingConfig:
     cache_dir: str = field(default_factory=lambda: str(Path.home() / ".cache" / "ava_difficulty"))
     cache_version: str = "v1.0"
 
-    # Dynamic batch sizing (5.3 fixes)
-    enable_dynamic_batch: bool = False
-    enable_binary_search_oom: bool = False    # YAML controls
-    enable_dry_run_mode: bool = False         # YAML controls
-    min_batch_size: int = 1
-    max_batch_size: int = 64
-    target_gpu_utilization: float = 0.85
-    batch_size_adaptation_steps: int = 100
 
 
 @dataclass
@@ -852,62 +1020,6 @@ class CalibrationConfig:
 
 
 @dataclass
-class DynamicBatchingConfig:
-    """
-    Configuration for dynamic batch sizing based on GPU memory.
-
-    Simple, clear configuration with sensible defaults.
-    """
-    # Enable/disable
-    enabled: bool = False
-
-    # Batch size bounds
-    min_batch_size: int = 16
-    max_batch_size: int = 256
-    step_size: int = 16  # How much to increase/decrease at a time
-
-    # Memory thresholds (as fractions 0-1)
-    target_memory: float = 0.75   # Ideal memory usage
-    high_memory: float = 0.85     # Start decreasing batch size
-    critical_memory: float = 0.92 # Emergency - drop to minimum
-    low_memory: float = 0.60      # Can increase batch size
-
-    # Smoothing
-    smoothing_factor: float = 0.1  # EMA alpha (0.1 = smooth, 0.5 = responsive)
-
-    # Timing
-    adjustment_interval: int = 10  # Steps between adjustments
-    warmup_steps: int = 100        # Steps before allowing increases
-    cooldown_steps: int = 5        # Steps to wait after adjustment
-
-    # Optional: Warmup mode (disabled by default)
-    enable_warmup: bool = False
-    warmup_start_batch: int = 16
-    warmup_end_step: int = 500
-
-    # Optional: Token budget mode (disabled by default)
-    enable_token_budget: bool = False
-    target_tokens: int = 4096
-    max_tokens: int = 8192
-
-    def __post_init__(self):
-        """Validate configuration values."""
-        if self.min_batch_size <= 0:
-            raise ValueError(f"min_batch_size must be > 0, got {self.min_batch_size}")
-        if self.max_batch_size < self.min_batch_size:
-            raise ValueError(
-                f"max_batch_size ({self.max_batch_size}) must be >= "
-                f"min_batch_size ({self.min_batch_size})"
-            )
-        if self.step_size <= 0:
-            raise ValueError(f"step_size must be > 0, got {self.step_size}")
-
-
-# Backward compatibility alias
-DynamicBatchConfig = DynamicBatchingConfig
-
-
-@dataclass
 class TrainingConfig:
     """Configuration for training parameters."""
     batch_size: Optional[int] = None          # Batch size
@@ -926,9 +1038,6 @@ class TrainingConfig:
 
     # Progressive training
     progressive: ProgressiveTrainingConfig = field(default_factory=ProgressiveTrainingConfig)
-
-    # Dynamic batching
-    dynamic_batching: Optional[DynamicBatchingConfig] = None
 
     def __post_init__(self):
         """Validate training configuration values.
@@ -1098,9 +1207,9 @@ class DiagnosticsConfig:
     track_optimizer_state_memory: bool = True
     track_parameter_memory: bool = True
 
-    # Timing profiling
+    # Timing profiling (each timing log requires cuda.synchronize - use sparingly)
     enable_timing_profiling: bool = False
-    timing_log_freq: int = 100
+    timing_log_freq: int = 500  # Increased from 100 to reduce sync overhead
     profile_forward: bool = True
     profile_backward: bool = True
     profile_optimizer_step: bool = True
@@ -1154,6 +1263,73 @@ class DeepSpeedConfig:
     monitor_config: Dict[str, Any] = field(default_factory=dict)
     tensorboard: Dict[str, Any] = field(default_factory=dict)
     wandb_config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class GradientSyncConfig:
+    """Configuration for distributed gradient synchronization.
+
+    Provides three modes for gradient all-reduce:
+    - 'standard': Default DDP bucket-based all-reduce
+    - 'overlapped': Overlap gradient sync with backward computation
+    - 'fused': Combine multiple buckets into fewer all-reduce operations
+
+    Fused mode provides 5-15% speedup in multi-GPU training by reducing
+    communication overhead and network round trips.
+    """
+    mode: str = 'standard'                    # 'standard', 'overlapped', 'fused'
+
+    # Fused all-reduce settings (when mode='fused')
+    fused_bucket_mb: float = 100.0            # Maximum fused bucket size in MB
+    fusion_factor: int = 4                    # Number of DDP buckets to fuse
+    async_allreduce: bool = True              # Use async all-reduce
+
+    # Overlapped sync settings (when mode='overlapped')
+    bucket_size_mb: float = 25.0              # Bucket size for overlapped sync
+
+    # Common settings
+    use_coalesced_ops: bool = True            # Use coalesced tensor operations
+
+
+@dataclass
+class LayerwiseOptimizerConfig:
+    """Configuration for layer-wise optimizer updates.
+
+    Enables overlapping optimizer updates with backward computation by
+    beginning updates as soon as gradients for each layer become available.
+
+    Benefits:
+    - 10-20% speedup by overlapping optimizer with backward
+    - 10-30% memory savings with early gradient release
+    """
+    enabled: bool = False                     # Enable layer-wise updates
+    bucket_size_mb: float = 25.0              # Update bucket size in MB
+    release_gradients_early: bool = True      # Free gradients after update
+    align_with_ddp_buckets: bool = True       # Align with DDP gradient buckets
+
+
+@dataclass
+class CUDAGraphConfig:
+    """Configuration for CUDA graph capture of training steps.
+
+    CUDA graphs eliminate kernel launch overhead by capturing the entire
+    forward+backward+optimizer sequence as a single graph.
+
+    Benefits:
+    - 15-25% speedup for small batch sizes
+    - Reduced CPU overhead
+
+    Limitations:
+    - Incompatible with dynamic shapes
+    - Incompatible with layer-wise optimizer
+    - Incompatible with fused all-reduce
+    """
+    enabled: bool = False                     # Enable CUDA graphs
+    capture_backward: bool = True             # Include backward in graph
+    capture_optimizer_step: bool = True       # Include optimizer in graph
+    max_cached_graphs: int = 4                # Max graphs for different shapes
+    use_memory_pool: bool = True              # Pre-allocate memory pool
+    warmup_steps: int = 3                     # Warmup steps before capture
 
 
 @dataclass
@@ -1240,19 +1416,98 @@ class OptimizationsConfig:
 
 @dataclass
 class LoggingConfig:
-    """Configuration for logging and observability."""
+    """Configuration for logging and observability.
+
+    For fastest training, disable all logging:
+        logging:
+          disabled: true
+
+    Or selectively disable specific logging types:
+        logging:
+          console_enabled: false
+          file_enabled: false
+          progress_bar_enabled: false
+          wandb:
+            enabled: false
+          tensorboard:
+            enabled: false
+    """
+    # =========================================================================
+    # Master disable flags (for faster training)
+    # =========================================================================
+    disabled: bool = False                    # Master disable ALL logging (fastest mode)
+    silent_mode: bool = False                 # Only critical errors (minimal output)
+
+    # =========================================================================
+    # Console/File logging controls
+    # =========================================================================
+    console_enabled: bool = True              # Enable console output
+    file_enabled: bool = True                 # Enable file logging
+    progress_bar_enabled: bool = True         # Enable tqdm progress bar
+    tqdm_update_interval: int = 10            # Update progress bar every N batches (reduces I/O overhead)
+    step_logging_enabled: bool = True         # Enable per-step console output
+    epoch_logging_enabled: bool = True        # Enable epoch summary logging
+
+    # =========================================================================
+    # Metric category controls (affects both console and external logging)
+    # =========================================================================
+    log_training_metrics: bool = True         # train/loss, train/lr, train/batch_size
+    log_gradient_metrics: bool = True         # gradients/norm, gradients/avg, etc.
+    log_moe_metrics: bool = True              # moe/expert_load, moe/routing_entropy
+    log_validation_metrics: bool = True       # validation/loss, validation/epoch
+    log_coherence_metrics: bool = True        # coherence/* metrics
+    log_quality_metrics: bool = True          # model_selection/* quality scores
+    log_memory_metrics: bool = True           # memory/* breakdown stats
+    log_timing_metrics: bool = True           # timing/* profiling stats
+    log_generation_samples: bool = True       # Text generation samples
+
+    # =========================================================================
+    # WandB logging controls (fine-grained)
+    # =========================================================================
+    wandb_enabled: bool = True                # Master WandB enable (overrides wandb.enabled)
+    wandb_log_training: bool = True           # Log train/* metrics to WandB
+    wandb_log_gradients: bool = True          # Log gradients/* to WandB
+    wandb_log_moe: bool = True                # Log moe/* metrics to WandB
+    wandb_log_validation: bool = True         # Log validation/* to WandB
+    wandb_log_coherence: bool = True          # Log coherence/* to WandB
+    wandb_log_quality: bool = True            # Log model_selection/* to WandB
+    wandb_log_memory: bool = True             # Log memory/* breakdown to WandB
+    wandb_log_timing: bool = True             # Log timing/* profile to WandB
+    wandb_log_generations: bool = True        # Log generation table to WandB
+    wandb_log_per_layer_grads: bool = False   # Log per-layer gradients (expensive)
+    wandb_log_routing_diagnostics: bool = False  # Log routing/* (expensive)
+    wandb_log_model_topology: bool = False    # Log model graph (one-time)
+
+    # =========================================================================
+    # TensorBoard logging controls
+    # =========================================================================
+    tensorboard_enabled: bool = True          # Master TensorBoard enable
+    tensorboard_log_training: bool = True     # Log train/* to TensorBoard
+    tensorboard_log_gradients: bool = True    # Log gradients/* to TensorBoard
+    tensorboard_log_moe: bool = True          # Log moe/* to TensorBoard
+    tensorboard_log_validation: bool = True   # Log validation/* to TensorBoard
+
+    # =========================================================================
     # Verbosity settings
+    # =========================================================================
     verbosity: str = 'info'                   # Log level: 'debug', 'info', 'warning', 'error'
     console_level: str = 'info'               # Console log level (can be different from file)
     file_level: str = 'debug'                 # File log level (more detailed)
 
-    # Monitoring frequencies (in steps)
+    # =========================================================================
+    # Monitoring frequencies (in steps) - higher values = less overhead
+    # =========================================================================
+    log_interval: int = 100                   # Main logging interval (GPU->CPU sync for loss)
+    verbose_log_interval: int = 500           # Show detailed INFO logs every N steps (0 = never)
+    log_mode: str = 'tqdm'                    # 'tqdm' (progress bar only) or 'verbose' (tqdm + INFO logs)
     metrics_log_freq: int = 500               # Reduced frequency to minimize sync overhead
     memory_check_freq: int = 2000             # Reduced frequency to minimize sync overhead
     health_summary_freq: int = 500            # How often to log training health summary
     moe_metrics_freq: int = 5000              # Reduced frequency to minimize sync overhead
 
+    # =========================================================================
     # Feature flags
+    # =========================================================================
     enable_timing_breakdown: bool = True      # Log step-level timing (data, forward, backward, optimizer)
     enable_memory_profiling: bool = True      # Enable detailed memory profiling
     enable_health_summaries: bool = True      # Enable periodic health summary logs
@@ -1264,9 +1519,9 @@ class LoggingConfig:
     use_structured_logging: bool = True       # Use structured logs with contextual fields
     log_format: str = 'default'               # Log format: 'default', 'json', 'structured'
 
-    # WandB/external logging
-    log_gradients_to_wandb: bool = False      # Log gradient histograms to WandB (expensive)
-    log_model_topology: bool = False          # Log model graph to WandB (one-time)
+    # Legacy fields (kept for backward compatibility)
+    log_gradients_to_wandb: bool = False      # Deprecated: use wandb_log_per_layer_grads
+    log_model_topology: bool = False          # Deprecated: use wandb_log_model_topology
 
 
 @dataclass
@@ -1331,7 +1586,6 @@ class EnhancedTrainingConfig:
     gradient: GradientConfig = field(default_factory=GradientConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
-    moe_memory_optimization: MoEMemoryOptimizationConfig = field(default_factory=MoEMemoryOptimizationConfig)
     lr_finder: LRFinderConfig = field(default_factory=LRFinderConfig)
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
     model: BasicModelConfig = field(default_factory=BasicModelConfig)

@@ -269,7 +269,17 @@
       "Bash(CUDA_LAUNCH_BLOCKING=1 PYTHONPATH=code/src WANDB_MODE=disabled timeout 90 python:*)",
       "Bash(PYTHONPATH=code/src WANDB_MODE=disabled MASTER_PORT=29501 timeout 90 python:*)",
       "Bash(PYTHONPATH=code/src WANDB_MODE=disabled MASTER_PORT=29502 timeout 180 python:*)",
-      "Bash(tr:*)"
+      "Bash(tr:*)",
+      "Bash(git -C /root/Ava_AI diff --cached --stat)",
+      "Bash(PYTHONPATH=code/src timeout 90 python:*)",
+      "Bash(PYTHONPATH=code/src WANDB_MODE=disabled timeout 150 python:*)",
+      "Bash(# Kill any orphan Python processes that might be using GPU memory pkill -f \"\"train_pipeline.py\"\" || true sleep 2 # Clear GPU memory python -c \"\"import torch; torch.cuda.empty_cache\\(\\)\"\" || true # Check the actual test config activation setting cat /tmp/test_config3.yaml)",
+      "Bash(CUDA_LAUNCH_BLOCKING=1 python:*)",
+      "Bash(PYTHONPATH=/root/Ava_AI/code/src:$PYTHONPATH python:*)",
+      "Bash(PYTHONPATH=/root/Ava_AI/code/src pytest:*)",
+      "Bash(nvidia-modprobe:*)",
+      "Bash(echo:*)",
+      "Bash(CUDA_VISIBLE_DEVICES=0 nsys profile:*)"
     ],
     "deny": [],
     "ask": []

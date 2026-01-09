@@ -768,7 +768,10 @@ class ModelBuilder(TrainingComponent):
         Returns:
             Tuple of (model, success) where success indicates if optimization was applied
         """
-        perf_config = config.get('performance', {})
+        # Check both old path (performance) and new path (compute.performance)
+        perf_config = config.get('compute', {}).get('performance', {})
+        if not perf_config:
+            perf_config = config.get('performance', {})  # Fallback for legacy configs
 
         if not perf_config.get('enable_torch_compile', False):
             return model, True  # Not enabled is not a failure
@@ -781,6 +784,11 @@ class ModelBuilder(TrainingComponent):
             self.logger.info(f"Applying torch.compile (mode={compile_mode})...")
 
         try:
+            # Store compile settings on model for layers to use compile-friendly dispatch
+            model._use_compile_friendly = True
+            model._compile_mode = compile_mode
+            model._compile_dynamic = compile_dynamic
+
             model = torch.compile(
                 model,
                 mode=compile_mode,
@@ -790,6 +798,7 @@ class ModelBuilder(TrainingComponent):
 
             if is_main:
                 self.logger.info("  torch.compile applied (speedup visible after warmup)")
+                self.logger.info("  Using compile-friendly expert dispatch")
 
             return model, True
 

@@ -157,7 +157,6 @@ training:
 |-----------|------|---------|-------------|
 | `use_sequence_packing` | bool | false | Enable packing |
 | `packing_strategy` | str | 'greedy' | 'greedy' or 'adaptive' |
-| `use_dynamic_batching` | bool | false | Dynamic batch sizing |
 
 ### Validation
 
@@ -248,36 +247,6 @@ training:
 
 ---
 
-## MoE Memory Optimization
-
-### Expert Offloading
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `use_expert_offloading` | bool | false | CPU offloading |
-| `max_active_experts_gpu` | int | 4 | Max experts on GPU |
-| `offload_eviction_policy` | str | 'lru' | 'lru', 'frequency', 'hybrid' |
-| `offload_prefetch_lookahead` | int | 2 | Prefetch ahead |
-
-### LoRA Experts
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `use_lora_experts` | bool | false | Enable LoRA experts |
-| `lora_rank` | int | 8 | LoRA rank |
-| `lora_alpha` | int | 16 | LoRA alpha |
-| `freeze_lora_base` | bool | false | Freeze base weights |
-
-### Expert Quantization
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `use_expert_quantization` | bool | false | Enable quantization |
-| `expert_quantization_bits` | int | 8 | Bits (8 or 4) |
-| `quantize_inactive_experts` | bool | true | Only inactive experts |
-
----
-
 ## Coherence Configuration
 
 | Parameter | Type | Default | Description |
@@ -294,12 +263,24 @@ training:
 
 ## Logging Configuration
 
+### Logging Intervals
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `log_interval` | int | 100 | Main logging interval (GPU->CPU sync for loss) |
+| `verbose_log_interval` | int | 500 | Detailed INFO logs every N steps (0 = never) |
+| `tqdm_update_interval` | int | 10 | Progress bar update frequency |
+| `log_mode` | str | 'tqdm' | 'tqdm' (progress bar only) or 'verbose' (tqdm + INFO) |
+
+### Monitoring Frequencies
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `verbosity` | str | 'info' | Log level |
-| `metrics_log_freq` | int | 500 | Metrics frequency |
+| `metrics_log_freq` | int | 500 | Metrics logging frequency |
 | `memory_check_freq` | int | 2000 | Memory check frequency |
 | `health_summary_freq` | int | 500 | Health summary frequency |
+| `moe_metrics_freq` | int | 5000 | MoE metrics frequency |
 | `enable_timing_breakdown` | bool | true | Step timing logs |
 | `enable_memory_profiling` | bool | true | Memory profiling |
 

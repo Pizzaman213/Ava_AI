@@ -2,166 +2,117 @@
 # FIXED 62M Parameter Configuration (Bug Fixes + Optimized Hyperparameters)
 # =============================================================================
 # Model: ~62M parameter MoE with 4 experts
-# Use case: Training with critical bug fixes and optimized hyperparameters
+# Use case: Multi-GPU training with DeepSpeed ZeRO-2
 #
-# FIXES APPLIED:
-# - Entropy regularization coefficient reduced (sign fix makes it stronger)
-# - Learning rate reduced from 3e-4 to 1e-4 (appropriate for 62M model)
-# - Dropout increased from 0.1 to 0.15 (prevent overfitting)
-# - Label smoothing enabled at 0.1 (regularization)
-# - Warmup steps increased from 1000 to 2000 (stable training)
-# - Generation parameters aligned with training validation
-#
-# Key features:
-# ✅ BF16 mixed precision
-# ✅ Flash Attention 2
-# ✅ Gradient checkpointing
-# ✅ Parallel data loading (4 workers - safe for Arrow)
-# ✅ Sequence packing
-# For 2 GPU: torchrun --nproc_per_node=2 code/scripts/5_training/train_pipeline.py --config code/configs/moe/minimal_working.yaml
+# Configuration Schema v2.0 - 8-Section Structure:
+#   model, training, data, compute, distributed, logging, checkpoints, experimental
+# =============================================================================
 
-
+# =============================================================================
+# MODEL - Architecture, MoE, tokens, regularization
+# =============================================================================
 model:
-  vocab_size: 30522  # Matches tokenizer
-  pad_token_id: 0    # [PAD]
-  eos_token_id: 102  # [SEP] - end of sequence
-  bos_token_id: 101  # [CLS] - beginning of sequence
-  hidden_size: 384           # SMALLER: faster training, enough for TinyStories
-  num_layers: 6              # Keep depth for pattern learning
-  num_attention_heads: 6     # Match hidden_size divisibility
-  intermediate_size: 1536    # 4x hidden_size (standard ratio)
-  max_position_embeddings: 512  # Match data max_length
+  vocab_size: 30522
+  pad_token_id: 0
+  eos_token_id: 102
+  bos_token_id: 101
+  hidden_size: 384
+  num_layers: 6
+  num_attention_heads: 6
+  intermediate_size: 1536
+  max_position_embeddings: 512
   num_experts: 4
   num_experts_per_token: 2
   router_type: mixtral
-  capacity_factor: 1.25  # Slightly increased for better expert utilization
-  quantize_kv_cache: true  # INT8 KV cache - 75% memory savings
+  capacity_factor: 1.25
+  quantize_kv_cache: true
   expert_dropout: 0.0
   activation: swiglu
 
-  # CRITICAL FIX: Tie input/output embeddings (reduces params, improves training)
+  # CRITICAL: Tied embeddings for better training
   tie_word_embeddings: true
 
-  # GPU Optimizations for RTX 3090 Ti (Ampere)
-  use_grouped_gemm: true      # 15-25% speedup for expert computation
-  use_triton_kernels: true    # 2-3x speedup with fused ops
-  use_torch_compile: false    # Disabled - needs 48GB+ VRAM
-  use_flash_attention: true   # 2-4x faster attention, 40% VRAM savings
-  gradient_checkpointing: true  # Enabled - 70-80% activation memory savings
-  use_optimized_moe: true     # 10-20% speedup
+  # GPU Optimizations
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: false
+  use_flash_attention: true
+  gradient_checkpointing: true
+  use_optimized_moe: true
 
-  # MoE loss coefficients (tuned for coherence)
-  router_z_loss_coef: 0.001       # Standard value - prevents z-loss dominating
-  load_balance_loss_coef: 0.01    # Standard value - balanced expert usage
-  diversity_loss_coef: 0.02       # INCREASED - stronger expert specialization
+  # MoE loss coefficients
+  router_z_loss_coef: 0.001
+  load_balance_loss_coef: 0.01
+  diversity_loss_coef: 0.02
   expert_dropout_loss_coef: 0.0
-  router_jitter_noise: 0.00      # Slight increase for exploration
+  router_jitter_noise: 0.00
 
-  # Coherence regularization - CRITICAL FOR QUALITY OUTPUT
-  entropy_regularization: 0.01    # REDUCED from 0.025 (sign fix makes it stronger)
-  output_diversity_weight: 0.01   # ENABLED - penalizes consecutive similar outputs
-  eos_logit_bias: 0.8             # INCREASED - encourages proper sentence endings
+  # Coherence regularization - CRITICAL FOR QUALITY
+  entropy_regularization: 0.01
+  output_diversity_weight: 0.01
+  eos_logit_bias: 0.8
 
-  # Regularization - BALANCED (too much = can't learn, too little = overfits)
-  use_lora_experts: false
-  use_expert_offloading: false
-  attention_dropout: 0.15         # INCREASED from 0.1 - prevent overfitting
-  dropout: 0.15                   # INCREASED from 0.1 - prevent overfitting
+  # Regularization - BALANCED
+  attention_dropout: 0.15
+  dropout: 0.15
   layer_norm_eps: 1.0e-5
   initializer_range: 0.02
 
-# Hybrid Caching - OPTIMIZED for multi-GPU training
-# 1. ActivationCache (training): reduces gradient checkpointing recomputation
-# 2. KVCacheManager (generation): StreamingLLM-style eviction for long sequences
-hybrid_caching:
-  enabled: true
-  mode: 'auto'
-
-  activation_cache:
-    enabled: true
-    max_size_gb: 2.0
-    eviction_policy: 'lru'
-
-  kv_cache:
-    enabled: true
-    max_size_gb: 3.0
-    eviction_policy: 'hybrid'
-    sink_tokens: 4
-    recent_tokens: 256
-
-# =====================================================================
-# Batch Size Calibration - Run at startup to find optimal BS
-# =====================================================================
-# AUTO-FETCH: Uses model config (hidden_size, num_layers, num_experts, etc.)
-# NOTE: Auto-disabled when DeepSpeed is enabled (incompatible with DeepSpeed optimizer)
-batch_size_calibration:
-  enabled: true                   # Auto-disabled when DeepSpeed is enabled
-  target_memory: 0.92             # INCREASED: use more RAM for better throughput (was 0.85)
-  max_batch_size: 256             # INCREASED: push limits for maximum batch size (was 128)
-  perform_optimizer_step: true    # Include optimizer states in memory calculation
-  calibration_timeout_sec: 90.0   # Max calibration duration
-  calibration_headroom: 1.05      # REDUCED: tighter margin to use more RAM (was 1.10)
-  use_real_dataloader: true       # Use synthetic batches (faster)
-  measure_peak_utilization: true  # Track peak GPU memory/utilization during calibration
-
-
+# =============================================================================
+# TRAINING - Optimizer, schedule, batching, validation
+# =============================================================================
 training:
   precision:
-    mixed_precision: bf16  # Native BF16 on Ampere - no loss scaling needed
+    mixed_precision: bf16
 
   batching:
-    batch_size: 16  # REDUCED for DeepSpeed ZeRO-2 memory efficiency (was 64)
-    gradient_accumulation_steps: 4  # INCREASED: maintain effective BS=64 (was 2)
-    label_smoothing: 0.1  # ENABLED - prevents overconfident predictions
+    batch_size: 16
+    gradient_accumulation_steps: 4
+    label_smoothing: 0.1
 
   optimizer:
-    type: adamw  # Standard AdamW (DeepSpeed compatible, was adamw_8bit)
-    learning_rate: 1.0e-4  # REDUCED from 3.0e-4 - appropriate for 62M model
-    betas: [0.9, 0.95]  # Standard betas
-    weight_decay: 0.01   # Light regularization
-    use_fused: true  # 5-10% speedup (DeepSpeed uses its own fused optimizer)
-    # eps: AUTO-DETECTED based on mixed_precision setting
-    #      bf16 → 1e-6 (safe for bfloat16 mantissa precision ~1e-7)
-    #      fp16/fp32 → 1e-8 (standard Adam epsilon)
-    #      Override only if you need custom epsilon behavior
-    max_grad_norm: 1.0  # Standard clipping
+    type: adamw
+    learning_rate: 1.0e-4
+    betas: [0.9, 0.95]
+    weight_decay: 0.01
+    use_fused: true
+    max_grad_norm: 1.0
 
   schedule:
-    num_epochs: 5  # More epochs with lower LR
+    num_epochs: 5
     max_steps: null
-    warmup_steps: 2000  # INCREASED from 1000 - stable training
-    scheduler_type: cosine  # Simple cosine decay (no restarts)
+    warmup_steps: 2000
+    scheduler_type: cosine
     num_cycles: 1
-    min_lr: 1.0e-5  # Adjusted to 10% of peak LR
+    min_lr: 1.0e-5
 
   logging:
     save_steps: 500
-    eval_steps: 250  # INCREASED FREQUENCY: catch overfitting early
-    logging_steps: 1   # INCREASED FREQUENCY: monitor training closely
-    # Logging backends (both enabled)
-    use_tensorboard: true   # Local logging (always works)
-    use_wandb: true         # Cloud logging (requires: wandb login)
+    eval_steps: 250
+    logging_steps: 1
+    use_tensorboard: true
+    use_wandb: true
 
   validation:
     enabled: true
-    batch_size: 64  # OPTIMIZED: use same as training BS for consistency (was 24)
-    max_batches: 20  # INCREASED: better validation accuracy
+    batch_size: 64
+    max_batches: 20
     compute_train_ratio: true
-    early_stopping_patience: 5  # ADDED: stop if val_loss doesn't improve for 5 evals
-    early_stopping_min_delta: 0.01  # ADDED: minimum improvement threshold
+    early_stopping_patience: 5
+    early_stopping_min_delta: 0.01
 
   generation:
-    enabled: true  # Enable for quality monitoring
-    generate_every_n_steps: 1000   # MORE FREQUENT: catch problems immediately
-    num_per_step: 2   # INCREASED: test multiple samples
+    enabled: true
+    generate_every_n_steps: 1000
+    num_per_step: 2
     during_eval: true
     test_quality: true
-    max_length: 128  # INCREASED: longer generation with 256 context
-    temperature: 0.7  # Match inference defaults for consistent assessment
-    top_p: 0.9       # ADJUSTED from 0.85 - standard nucleus sampling
-    top_k: 40        # Match inference defaults
-    repetition_penalty: 1.2  # ADJUSTED from 1.3 - match inference defaults
-    no_repeat_ngram_size: 3  # ADDED: block 3-gram repetitions
+    max_length: 128
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 40
+    repetition_penalty: 1.2
+    no_repeat_ngram_size: 3
     skip_special_tokens: true
     prompt: "Once upon a time"
     alternative_prompts:
@@ -170,319 +121,317 @@ training:
       - "Hello, my name is"
 
   coherence:
-    enabled: true  # ENABLED - monitor coherence improvements
-    eval_every_n_steps: 100   # VERY FREQUENT - early detection of overfitting
-    num_samples: 8            # MORE SAMPLES - better statistical validity
-    max_generation_length: 100 # LONGER - test sustained coherence
-    temperature: 0.7          # Match generation/inference defaults
-    top_p: 0.9               # ADJUSTED from 0.85 - match generation defaults
-    top_k: 40                # Match generation defaults
+    enabled: true
+    eval_every_n_steps: 100
+    num_samples: 8
+    max_generation_length: 100
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 40
     log_to_wandb: true
     log_to_console: true
 
+  # DISTRIBUTED BARRIER OPTIMIZATION (nanoGPT-style)
+  distributed:
+    minimize_distributed_barriers: true
+    sync_loss_across_ranks: false
+
+# =============================================================================
+# DATA - Loading, streaming, packing, splits
+# =============================================================================
 data:
   streaming: true
-  buffer_size: 10000  # INCREASED: much larger buffer for RAM optimization (was 1000)
+  buffer_size: 10000
 
-  # =====================================================================
-  # RANDOMIZATION CONTROL - NEW PARAMETERS FOR DATA DIVERSITY
-  # =====================================================================
-  # shuffle_seed: null            # null = non-deterministic (random each run)
-                                  # integer (e.g., 42) = deterministic (reproducible)
-                                  # Default: null (good for production training)
-
-  # enable_length_sorting: true   # true = sort by length (GPU load balance, ~5-10% faster)
-                                  # false = random order (maximum diversity, ~5-10% slower)
-                                  # Default: true (good for multi-GPU efficiency)
-
-  # disable_packing_length_sort: false  # false = sort by length in packing (~10-15% faster)
-                                        # true = random packing order (more diversity)
-                                        # Default: false (good for throughput)
-
-  # enable_bucketing: true        # true = use length buckets (~15-20% faster)
-                                  # false = random bucketing (more diversity)
-                                  # Default: true (good for throughput)
-  #
-  # Performance notes:
-  # - Default config (all enabled): Full performance, good diversity
-  # - For MAXIMUM diversity: Set all to false (30-45% throughput reduction)
-  # - For reproducibility: Set shuffle_seed to 42 (no throughput impact)
-  # =====================================================================
-
-  data_dir: pretokenized_data/data/TinyStories  # Pretokenized TinyStories
-  val_data_dir: null  # Use auto_create_validation_split instead
-  max_length: 512  # Data is pre-padded to 512
-  add_special_tokens: false  # Data already has BOS/EOS tokens
+  data_dir: pretokenized_data/data/TinyStories
+  val_data_dir: null
+  max_length: 512
+  add_special_tokens: false
   train_split: train
   eval_split: validation
-  auto_create_validation_split: true  # Auto-create val split from pretokenized data
+  auto_create_validation_split: true
   validation_split_ratio: 0.05
-  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
+  tokenizer_name: pretokenized_data/tokenizers/vocab
   padding_side: right
   truncation: false
 
-  # Data loading - OPTIMIZED for maximum RAM usage
-  num_workers: 12           # INCREASED: more parallel data loading for RAM optimization (was 8)
-  prefetch_factor: 4        # INCREASED: prefetch more batches in RAM (was 2)
+  # Data loading - OPTIMIZED
+  num_workers: 12
+  prefetch_factor: 4
   persistent_workers: true
   dataloader_drop_last: true
   dataloader_pin_memory: true
-  dataloader_prefetch_factor: 4  # INCREASED: match prefetch_factor for RAM optimization (was 2)
-  dataloader_persistent_workers: true  # ENABLED: faster epoch transitions
-  dataloader_samples_per_file: 4000  # INCREASED: fewer file opens, more RAM caching (was 2000)
+  dataloader_prefetch_factor: 4
+  dataloader_persistent_workers: true
+  dataloader_samples_per_file: 4000
   skip_dataloader_validation: true
 
-  # Sequence packing - ENABLED for efficiency
-  use_sequence_packing: true   # ENABLED: eliminates padding waste
+  # Sequence packing
+  use_sequence_packing: true
   packing_strategy: greedy
   packing_target_ratio: 0.95
 
-  # USE ALL DATA with lazy discovery (memory-safe)
-  use_pretokenized: true
+  # Data discovery
   use_all_data: true
-  max_files_to_load: null  # No limit - use ALL files
-  lazy_file_discovery: true  # Lazy discovery - memory safe for large datasets
+  max_files_to_load: null
+  lazy_file_discovery: true
   multiprocessing_context: spawn
-  cache_size: 50  # INCREASED: cache more files in RAM for speed (was 20)
-  skip_validation: false  # ENABLED: use validation data for proper metrics
-  shuffle_files: true  # Shuffle file order for variety
+  cache_size: 50
+  skip_validation: false
+  shuffle_files: true
 
-  # =====================================================================
-  # INDEXED LOADER - Map-style dataset with TRUE random shuffling
-  # =====================================================================
-  use_indexed_loader: false     # DISABLED - hangs on 43-file dataset indexing
-                                # true = IndexedArrowDataset (global shuffle, efficient)
-                                # false = IterableDataset (buffer-based shuffle)
+  # Indexed loader
+  use_indexed_loader: false
+  indexed_num_bins: 8
+  indexed_cache_size: 50
+  indexed_index_workers: 16
 
-  indexed_num_bins: 8           # Number of length bins for sampling (4-16 typical)
-                                # More bins = less padding, less diversity per batch
-                                # Fewer bins = more padding, more diversity per batch
+# =============================================================================
+# COMPUTE - Device, precision, CUDA, kernels, memory, performance
+# =============================================================================
+compute:
+  performance:
+    enable_cudnn_benchmark: true
+    enable_tf32: true
+    torchinductor_max_autotune: 0
+    enable_torch_compile: false
+    torch_compile_mode: default
+    torch_compile_fullgraph: false
+    torch_compile_dynamic: true
 
-  indexed_cache_size: 50        # Arrow tables cached per worker
-                                # Higher = faster but more memory
-                                # Lower = slower but less memory
+  kernels:
+    router_kernel_mode: auto
+    use_fused_softmax_topk: true
+    router_block_size: 4
+    use_sparse_expert_dispatch: true
+    use_fused_activations: true
+    use_selective_expert_loading: true
+    use_vectorized_capacity: true
+    use_fused_moe_kernel: true
+    enable_kernel_profiling: false
 
-  indexed_index_workers: 16     # Parallel workers for initial indexing
-                                # null/omit = auto (min(cpu_count, 16))
-                                # Higher = faster startup with many files
-                                # Set to CPU count for fastest indexing
+  cuda:
+    streams:
+      enabled: false
+      num_streams: 4
+      use_event_timing: true
+      use_stream_pool: true
+      high_priority_transfers: true
 
-  # Benefits of indexed loader:
-  # - TRUE random shuffling at epoch start (not buffer-based)
-  # - Sample-level train/val split (not file-based MD5 hash)
-  # - ~5% padding waste with binning (vs 50-80% with fixed padding)
-  # - Workers read only their samples (no wasted I/O)
-  #
-  # Trade-offs:
-  # - Higher startup time (builds global index)
-  # - More memory for index storage (~24 bytes per sample)
-  # - May be slower for very large datasets (>100M samples)
-  #
-  # Recommended for:
-  # - Datasets < 50M samples
-  # - When training diversity matters
-  # - When reproducibility is important
-  # =====================================================================
+    graphs:
+      enabled: false
+      warmup_steps: 11
 
-output:
+  memory:
+    headroom_gb: 3.0
+    cleanup_thresholds:
+      warning: 0.85
+      critical: 0.90
+      emergency: 0.95
+
+  optimizations:
+    use_overlapped_checkpointing: true
+
+  calibration:
+    batch_size:
+      enabled: true
+      target_memory: 0.92
+      max_batch_size: 256
+      perform_optimizer_step: true
+      calibration_timeout_sec: 90.0
+      calibration_headroom: 1.05
+      use_real_dataloader: true
+      measure_peak_utilization: true
+
+# =============================================================================
+# DISTRIBUTED - Multi-GPU, DeepSpeed, load balancing
+# =============================================================================
+distributed:
+  deepspeed:
+    enabled: true
+    zero_stage: 2
+    cpu_offload: false
+    nvme_offload: false
+    nvme_path: "/local_nvme"
+    precision_type: "bf16"
+    gradient_accumulation_steps: 4
+    train_batch_size: 128
+    micro_batch_size: 16
+    activation_checkpointing: false
+    partition_activations: false
+    gradient_clipping: 1.0
+    zero_overlap_comm: true
+    zero_contiguous_gradients: true
+    zero_reduce_scatter: true
+    zero_reduce_bucket_size: 200000000
+    zero_allgather_bucket_size: 200000000
+
+# =============================================================================
+# LOGGING - Console, WandB, TensorBoard, diagnostics, frequencies
+# =============================================================================
+logging:
+  disabled: false
+  silent_mode: false
+
+  console:
+    enabled: true
+    level: info
+
+  file:
+    enabled: true
+    level: debug
+
+  progress_bar_enabled: true
+  step_logging_enabled: true
+  epoch_logging_enabled: true
+
+  metrics:
+    training: true
+    gradients: true
+    moe: true
+    validation: true
+    coherence: true
+    quality: true
+    memory: true
+    timing: true
+    generations: true
+
+  wandb:
+    enabled: true
+    project: ava-training
+    entity: null
+    tags:
+      - minimal
+      - 62m_params
+      - tinystories
+      - fast_iteration
+    notes: |
+      62M parameter MoE trained on TinyStories dataset (2.1M stories).
+      Key: BF16, Flash Attention, Gradient Checkpointing
+    log_freq: 10
+    log_training: true
+    log_gradients: true
+    log_moe: true
+    log_validation: true
+    log_coherence: true
+    log_quality: true
+    log_memory: true
+    log_timing: true
+    log_generations: true
+    log_per_layer_grads: false
+    log_routing_diagnostics: false
+    log_model_topology: false
+
+  tensorboard:
+    enabled: true
+    log_training: true
+    log_gradients: true
+    log_moe: true
+    log_validation: true
+
+  frequencies:
+    log_interval: 500
+    verbose_log_interval: 500
+    metrics: 500
+    memory_check: 2000
+    health_summary: 500
+    moe_metrics: 5000
+
+  features:
+    timing_breakdown: true
+    memory_profiling: true
+    health_summaries: true
+    tensor_shapes: true
+    checkpoint_validation: true
+    sample_generations: true
+    structured_logging: true
+    log_format: default
+
+  diagnostics:
+    enabled: true
+
+    per_layer_gradients:
+      enabled: false
+      log_freq: 500
+      layer_name_patterns:
+        - layers
+        - experts
+
+    routing:
+      enabled: true
+      log_freq: 100
+      track_per_expert_load: true
+      track_routing_entropy: true
+      track_expert_capacity_usage: true
+
+    memory:
+      enabled: true
+      log_freq: 500
+      track_activation_memory: true
+      track_gradient_memory: true
+      track_optimizer_state_memory: true
+      track_parameter_memory: true
+
+    timing:
+      enabled: true
+      log_freq: 100
+      profile_forward: true
+      profile_backward: true
+      profile_optimizer_step: true
+      profile_data_loading: true
+
+# =============================================================================
+# CHECKPOINTS - Save/load, model selection, output settings
+# =============================================================================
+checkpoints:
   output_dir: code/outputs
   save_every: 500
   fresh_start: true
 
-
-
-optimizations:
-  use_overlapped_checkpointing: true  # 10-20% speedup
-
-# CUDA Stream Optimizations - reduces synchronization overhead
-# Uses StreamPool (reusable streams), CUDATimer (event-based timing),
-# efficient_sync (current-stream only), NonBlockingTransfer (async CPU<->GPU)
-#
-# WARNING: cuda_streams.enabled causes "CUDA illegal memory access" errors
-# around batch 9 due to race conditions in AsyncBatchPrefetcher. Keep disabled
-# until prefetch.py is fixed to properly synchronize pinned memory lifetimes.
-cuda_streams:
-  enabled: false              # DISABLED - causes illegal memory access errors
-  num_streams: 4              # Stream pool size for recomputation
-  use_event_timing: true      # Use CUDA events instead of synchronize+time
-  use_stream_pool: true       # Reuse streams insltead of creating new
-  high_priority_transfers: true  # Priority streams for CPU<->GPU
-
-# Overlapped checkpointing - uses optimized CUDA streams
-overlapped_checkpointing:
-  enabled: true               # 10-20% speedup from overlapped recomputation
-  stream_overlap: true        # Use CUDA StreamPool for overlapping
-  target_layers: "layers"     # Apply to transformer ayers
-
-# Double checkpointing - enabled for memory efficiency
-double_checkpointing:
-  enabled: true  # O(sqrt(n)) memory for activation checkpoints
-  coarse_checkpoint_interval: 8
-  fine_checkpoint_interval: 2
-  use_cuda_streams: true      # Uses optimized stream utilities
-
-# FP8 - Not supported on RTX 3090 Ti (Ampere)
-fp8:
-  enabled: false  # Only for Hopper/Ada GPUs (H100, L40, RTX 4090)
-  use_transformer_engine: false
-  format: e4m3
-
-performance:
-  enable_cudnn_benchmark: true  # Auto-tune cuDNN kernels
-  enable_tf32: true  # 8x faster matmul on Ampere
-  torchinductor_max_autotune: 0
-  enable_torch_compile: false  # Needs 48GB+ VRAM
-  torch_compile_mode: default
-  torch_compile_fullgraph: false
-  torch_compile_dynamic: true
-
-# =============================================================================
-# CUDA Graphs - 15-25% throughput improvement
-# =============================================================================
-# Captures training step as a single GPU command, eliminating kernel launch overhead.
-# REQUIREMENTS:
-# - Fixed batch size (disable batch_size_calibration or ensure stable BS)
-# - No dynamic control flow in forward/backward pass
-# - Disable dynamic batching features
-cuda_graphs:
-  enabled: false                # DISABLED - incompatible with dropout (p > 0)
-  warmup_steps: 11              # Steps before capturing (must be > 10 for stable shapes)
-  # NOTE: CUDA graphs require deterministic execution. Dropout uses dynamic random
-  # offsets which cause "Offset increment outside graph capture" errors.
-  # To re-enable: set model.dropout=0.0 and model.attention_dropout=0.0
-  # NOTE: CUDA graphs require fixed shapes. If you see shape mismatch errors,
-  # either increase warmup_steps or disable cuda_graphs.
-
-# =============================================================================
-# Kernel Optimizations - 50-80% throughput improvement
-# =============================================================================
-# High-performance Triton kernels for MoE operations
-kernel_optimization:
-  # Router/Gating kernel optimizations
-  router_kernel_mode: auto            # 'auto', 'triton', 'pytorch'
-  use_fused_softmax_topk: true        # Fused softmax + top-k kernel (15-25% speedup)
-  router_block_size: 4                # Tokens per thread block (1-8)
-
-  # Expert computation optimizations
-  use_sparse_expert_dispatch: true   # Sparse gather (16x memory reduction, but less torch.compile friendly)
-  use_fused_activations: true         # Fused SwiGLU/GeGLU kernels (10-15% speedup)
-  use_selective_expert_loading: true # On-demand expert loading for large E (not needed for E=4)
-
-  # Capacity limiting
-  use_vectorized_capacity: true       # Vectorized O(N log N) vs loop O(N*E) (10-15x speedup)
-
-  # Advanced optimizations (experimental)
-  use_fused_moe_kernel: true         # Mega kernel - still experimental
-  enable_kernel_profiling: false      # Profile kernel execution times
-
-# =============================================================================
-# Logging Configuration - TensorBoard + WandB
-# =============================================================================
-logging:
-  # TensorBoard (local, always works)
-  tensorboard:
+  selection:
     enabled: true
-    log_dir: null  # Auto: output_dir/tensorboard
-
-# WandB (cloud, requires login: wandb login)
-# NOTE: Must be at top level, not nested under logging
-wandb:
-  enabled: true  # ENABLED - run 'wandb login' first
-  project: ava-training
-  entity: null
-  tags:
-    - minimal
-    - 62m_params
-    - tinystories
-    - fast_iteration
-  notes: |
-    62M parameter MoE trained on TinyStories dataset (2.1M stories).
-    Key: BF16, Flash Attention, Gradient Checkpointing
+    val_loss_weight: 0.5
+    coherence_score_weight: 0.3
+    perplexity_weight: 0.2
+    perplexity_cap: 100.0
+    val_loss_cap: 10.0
+    higher_is_better: true
+    require_all_metrics: false
+    fallback_to_val_loss: true
 
 # =============================================================================
-# Model Selection - Multi-metric best model selection
+# EXPERIMENTAL - Progressive, FP8, caching, advanced features
 # =============================================================================
-# Uses weighted combination of val_loss, coherence, perplexity to select best checkpoint
-model_selection:
-  enabled: true                    # Enable multi-metric selection
-  val_loss_weight: 0.5             # 50% weight on validation loss (lower = better)
-  coherence_score_weight: 0.3     # 30% weight on coherence (higher = better)
-  perplexity_weight: 0.2          # 20% weight on perplexity (lower = better)
-  perplexity_cap: 100.0           # Cap for normalization
-  val_loss_cap: 10.0              # Cap for normalization
-  higher_is_better: true          # Quality score interpretation
-  require_all_metrics: false      # Don't require all metrics present
-  fallback_to_val_loss: true      # Use val_loss alone if others unavailable
+experimental:
+  caching:
+    enabled: true
+    mode: auto
 
-# =============================================================================
-# Diagnostics - Detailed training analysis
-# =============================================================================
-# Enable for debugging training issues, expert routing, memory usage
-diagnostics:
-  enabled: true                    # Master enable for diagnostics
+    activation_cache:
+      enabled: true
+      max_size_gb: 2.0
+      eviction_policy: lru
 
-  # Per-layer gradient statistics (track vanishing/exploding gradients)
-  enable_per_layer_gradients: false
-  per_layer_log_freq: 500         # Log every 500 steps
-  layer_name_patterns:
-    - layers
-    - experts
+    kv_cache:
+      enabled: true
+      max_size_gb: 3.0
+      eviction_policy: hybrid
+      sink_tokens: 4
+      recent_tokens: 256
 
-  # Expert routing diagnostics (MoE load balancing)
-  enable_routing_diagnostics: true
-  routing_log_freq: 100           # Log every 100 steps
-  track_per_expert_load: true     # Per-expert token counts
-  track_routing_entropy: true     # Routing decision entropy
-  track_expert_capacity_usage: true
+  checkpointing:
+    overlapped:
+      enabled: true
+      stream_overlap: true
+      target_layers: layers
 
-  # Memory breakdown (debug OOM issues)
-  enable_memory_breakdown: true
-  memory_log_freq: 500            # Log every 500 steps
-  track_activation_memory: true
-  track_gradient_memory: true
-  track_optimizer_state_memory: true
-  track_parameter_memory: true
+    double:
+      enabled: true
+      coarse_checkpoint_interval: 8
+      fine_checkpoint_interval: 2
+      use_cuda_streams: true
 
-  # Timing profiling (find bottlenecks)
-  enable_timing_profiling: true
-  timing_log_freq: 100            # Log every 100 steps
-  profile_forward: true
-  profile_backward: true
-  profile_optimizer_step: true
-  profile_data_loading: true
-
-
-deepspeed:
-  enabled: true                       # ENABLED for ZeRO-2 training
-  zero_stage: 2                       # Optimizer + gradient sharding
-
-  # Offloading (disabled for speed - minimal config fits in VRAM)
-  cpu_offload: false                  # No CPU offload needed for 62M model
-  nvme_offload: false                 # No NVMe offload needed
-  nvme_path: "/local_nvme"            # NVMe mount point (if needed)
-
-  # Precision (matches training.precision.mixed_precision)
-  precision_type: "bf16"              # BF16 for Ampere GPUs
-
-  # Batch Configuration (matches training.batching)
-  gradient_accumulation_steps: 4      # Same as training config
-  train_batch_size: 128               # For 2 GPUs: 32 * 4 * 2 = 256 (single GPU: 128)
-  micro_batch_size: 16                # Same as training.batching.batch_size
-
-  # Activation Checkpointing (disabled - minimal model doesn't need it)
-  activation_checkpointing: false     # No gradient checkpointing in training config
-  partition_activations: false        # Not needed for single GPU
-
-  # Gradient Clipping (matches training.optimizer.max_grad_norm)
-  gradient_clipping: 1.0              # Same as training config
-
-  # ZeRO-2 Optimizations
-  zero_overlap_comm: true             # Overlap communication with computation
-  zero_contiguous_gradients: true     # Reduce memory fragmentation
-  zero_reduce_scatter: true           # Use reduce_scatter instead of allreduce
-  zero_reduce_bucket_size: 200000000  # 200MB (smaller for minimal model)
-  zero_allgather_bucket_size: 200000000  # 200MB (smaller for minimal model)
-
-# Run with DeepSpeed ZeRO-2:
-# Single GPU: python code/scripts/5_training/train_pipeline.py --config code/configs/moe/minimal_working_fixed.yaml
-# Multi-GPU:  torchrun --nproc_per_node=2 code/scripts/5_training/train_pipeline.py --config code/configs/moe/minimal_working_fixed.yaml
+  fp8:
+    enabled: false
+    use_transformer_engine: false
+    format: e4m3

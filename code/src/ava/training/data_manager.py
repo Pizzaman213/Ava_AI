@@ -2,8 +2,9 @@
 Data Loading Manager for Ava Training Pipeline
 
 Handles all data loading functionality including:
-- Format detection (Arrow, JSONL, multi-column)
-- Streaming and pretokenized dataloaders
+- Format detection (Arrow, Parquet, multi-column)
+- Pretokenized Arrow/Parquet dataloaders (ultra-fast)
+- Indexed Arrow dataloaders (map-style with true random shuffling)
 - Validation dataset creation
 - Data statistics logging
 
@@ -36,8 +37,6 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
-from ..data.factory import create_streaming_dataloaders
-
 # Module-level logger
 _logger = logging.getLogger(__name__)
 _logger.propagate = False  # Prevent duplicate logs
@@ -49,7 +48,6 @@ from ..core.data_utils import (
     get_prefetch_factor,
     get_persistent_workers,
     get_samples_per_file,
-    get_enable_bucketing,
     get_val_split_ratio,
 )
 from ..core.paths import get_code_dir
@@ -281,8 +279,9 @@ class DataLoaderManager(TrainingComponent):
         # Find data directory with intelligent fallback
         data_dir = self._find_data_directory(training_config)
 
-        # Log dataset information (SKIP if skip_sequence_count enabled for fast startup)
-        skip_stats = getattr(training_config.data, 'skip_sequence_count', False)
+        # Log dataset information (SKIP if skip_sequence_count or fast_startup enabled)
+        fast_startup = getattr(training_config.data, 'fast_startup', False)
+        skip_stats = fast_startup or getattr(training_config.data, 'skip_sequence_count', False)
         if not skip_stats:
             self._log_dataset_stats(data_dir, batch_size, training_config)
         else:
@@ -293,21 +292,14 @@ class DataLoaderManager(TrainingComponent):
         prefetch_factor = self._get_prefetch_factor(training_config)
         persistent_workers = self._get_persistent_workers(training_config)
         samples_per_file = self._get_samples_per_file(training_config)
-        enable_bucketing = self._get_enable_bucketing(training_config)
-
         # Get validation config
         val_split_ratio = self._get_val_split_ratio(training_config)
 
-        # Check if using pretokenized data
-        # Default to True since most modern datasets are pre-tokenized
-        use_pretokenized = getattr(training_config.data, "use_pretokenized", True)
+        # Always use pretokenized data (non-pretokenized streaming removed)
 
         # Get sequence packing config
         use_sequence_packing = getattr(training_config.data, "use_sequence_packing", False)
         packing_strategy = getattr(training_config.data, "packing_strategy", "greedy")
-
-        # Get max_tokens_per_batch config
-        max_tokens_per_batch = getattr(training_config.data, "max_tokens_per_batch", None)
 
         # Check for indexed loader (map-style with true random shuffling)
         use_indexed_loader = getattr(training_config.data, 'use_indexed_loader', False)
@@ -365,7 +357,7 @@ class DataLoaderManager(TrainingComponent):
 
         # Log GPU I/O optimizations
         self._log_io_optimizations(
-            use_pretokenized,
+            True,  # Always pretokenized
             num_workers,
             persistent_workers,
             prefetch_factor,
@@ -373,118 +365,86 @@ class DataLoaderManager(TrainingComponent):
             packing_strategy,
         )
 
-        # Create appropriate loaders
-        if use_pretokenized:
-            _logger.info(" Using pretokenized Arrow data loader")
-            # Get cache size from config or use optimized default
-            cache_size = getattr(training_config.data, "cache_size", 200)
+        # Create pretokenized loaders (always use pretokenized Arrow data)
+        _logger.info(" Using pretokenized Arrow data loader")
 
-            # Get max_files_to_load from config to limit memory usage
-            max_files_to_load = getattr(training_config.data, 'max_files_to_load', None)
+        # Get cache size from config or use optimized default
+        cache_size = getattr(training_config.data, "cache_size", 200)
 
-            # Get lazy_file_discovery from config for memory-efficient large datasets
-            lazy_file_discovery = getattr(training_config.data, 'lazy_file_discovery', False)
+        # Get max_files_to_load from config to limit memory usage
+        max_files_to_load = getattr(training_config.data, 'max_files_to_load', None)
 
-            # Get warm_start_files for fast startup (load N files initially, more progressively)
-            warm_start_files = getattr(training_config.data, 'warm_start_files', 3)
+        # Get lazy_file_discovery from config for memory-efficient large datasets
+        lazy_file_discovery = getattr(training_config.data, 'lazy_file_discovery', False)
 
-            # Get packing-specific sorting control
-            disable_packing_length_sort = getattr(training_config.data, 'disable_packing_length_sort', False)
+        # Get warm_start_files for fast startup (load N files initially, more progressively)
+        warm_start_files = getattr(training_config.data, 'warm_start_files', 3)
 
-            # Handle tokenizer being None (pretokenized data doesn't need tokenizer)
-            # First try to get token IDs from model config (most reliable source)
-            model_config = getattr(training_config, 'model', None)
-            pad_token_id = getattr(model_config, 'pad_token_id', None) if model_config else None
-            bos_token_id = getattr(model_config, 'bos_token_id', None) if model_config else None
-            eos_token_id = getattr(model_config, 'eos_token_id', None) if model_config else None
+        # Get packing-specific sorting control
+        disable_packing_length_sort = getattr(training_config.data, 'disable_packing_length_sort', False)
 
-            # Fall back to tokenizer if config doesn't have them
-            if tokenizer is not None:
-                if pad_token_id is None:
-                    pad_token_id = getattr(tokenizer, 'pad_token_id', 0)
-                if bos_token_id is None:
-                    bos_token_id = getattr(tokenizer, 'bos_token_id', 2)
-                if eos_token_id is None:
-                    eos_token_id = getattr(tokenizer, 'eos_token_id', 1)
+        # Handle tokenizer being None (pretokenized data doesn't need tokenizer)
+        # First try to get token IDs from model config (most reliable source)
+        model_config = getattr(training_config, 'model', None)
+        pad_token_id = getattr(model_config, 'pad_token_id', None) if model_config else None
+        bos_token_id = getattr(model_config, 'bos_token_id', None) if model_config else None
+        eos_token_id = getattr(model_config, 'eos_token_id', None) if model_config else None
 
-            # Final fallback to defaults matching the tokenizer vocab
-            # Default special tokens: <|pad|>=0, <|eos|>=1, <|bos|>=2
+        # Fall back to tokenizer if config doesn't have them
+        if tokenizer is not None:
             if pad_token_id is None:
-                pad_token_id = 0
+                pad_token_id = getattr(tokenizer, 'pad_token_id', 0)
             if bos_token_id is None:
-                bos_token_id = 2
+                bos_token_id = getattr(tokenizer, 'bos_token_id', 2)
             if eos_token_id is None:
-                eos_token_id = 1
+                eos_token_id = getattr(tokenizer, 'eos_token_id', 1)
 
-            # Get add_special_tokens from data config (default True for coherent generation)
-            add_special_tokens = getattr(training_config.data, 'add_special_tokens', True)
+        # Final fallback to defaults matching the tokenizer vocab
+        # Default special tokens: <|pad|>=0, <|eos|>=1, <|bos|>=2
+        if pad_token_id is None:
+            pad_token_id = 0
+        if bos_token_id is None:
+            bos_token_id = 2
+        if eos_token_id is None:
+            eos_token_id = 1
 
-            _logger.info(f"Special tokens: pad={pad_token_id}, bos={bos_token_id}, eos={eos_token_id}, add_special_tokens={add_special_tokens}")
+        # Get add_special_tokens from data config (default True for coherent generation)
+        add_special_tokens = getattr(training_config.data, 'add_special_tokens', True)
 
-            train_loader, val_loader = create_ultra_fast_dataloaders(
-                batch_size=batch_size,
-                max_length=training_config.data.max_length,
-                data_dir=data_dir,
-                num_workers=num_workers,
-                buffer_size=training_config.data.buffer_size,
-                prefetch_factor=prefetch_factor,
-                persistent_workers=persistent_workers,
-                samples_per_file=samples_per_file,
-                cache_size=cache_size,
-                pad_token_id=pad_token_id,
-                bos_token_id=bos_token_id,
-                eos_token_id=eos_token_id,
-                add_special_tokens=add_special_tokens,
-                max_samples=getattr(training_config.data, 'max_samples', None),
-                val_split_ratio=val_split_ratio,
-                use_sequence_packing=use_sequence_packing,
-                packing_strategy=packing_strategy,
-                max_files_to_load=max_files_to_load,
-                lazy_file_discovery=lazy_file_discovery,
-                warm_start_files=warm_start_files,
-                shuffle_seed=shuffle_seed,
-                enable_length_sorting=enable_length_sorting,
-                disable_packing_length_sort=disable_packing_length_sort,
-            )
-        else:
-            _logger.info(
-                " Using streaming JSONL data loader with on-the-fly tokenization"
-            )
-            train_loader, val_loader = create_streaming_dataloaders(
-                tokenizer=tokenizer,
-                batch_size=batch_size,
-                max_length=training_config.data.max_length,
-                data_dir=data_dir,
-                num_workers=num_workers,
-                buffer_size=training_config.data.buffer_size,
-                prefetch_factor=prefetch_factor,
-                persistent_workers=persistent_workers,
-                samples_per_file=samples_per_file,
-                max_samples=getattr(training_config.data, 'max_samples', None),
-                val_split_ratio=val_split_ratio,
-                enable_bucketing=enable_bucketing,
-                max_tokens_per_batch=max_tokens_per_batch,
-                use_streaming_tokenization=getattr(
-                    training_config.data, "use_streaming_tokenization", False
-                ),
-                streaming_buffer_size=getattr(
-                    training_config.data, "streaming_buffer_size", 1000
-                ),
-                dataset_name=getattr(training_config.data, "dataset_name", None),
-                dev_log_config=getattr(training_config, "dev_log", None),
-                shuffle_seed=shuffle_seed,
-                enable_length_sorting=enable_length_sorting,
-                progressive_buffer=getattr(training_config.data, "progressive_buffer", True),
-                min_buffer_size=getattr(training_config.data, "min_buffer_size", 128),
-                warm_start_files=getattr(training_config.data, "warm_start_files", None),
-            )
+        _logger.info(f"Special tokens: pad={pad_token_id}, bos={bos_token_id}, eos={eos_token_id}, add_special_tokens={add_special_tokens}")
 
-        # Validate dataloaders (skip if configured - useful for pretokenized data with spawn workers)
-        skip_validation = getattr(training_config.data, "skip_dataloader_validation", False)
+        train_loader, val_loader = create_ultra_fast_dataloaders(
+            batch_size=batch_size,
+            max_length=training_config.data.max_length,
+            data_dir=data_dir,
+            num_workers=num_workers,
+            buffer_size=training_config.data.buffer_size,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers,
+            samples_per_file=samples_per_file,
+            cache_size=cache_size,
+            pad_token_id=pad_token_id,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            add_special_tokens=add_special_tokens,
+            max_samples=getattr(training_config.data, 'max_samples', None),
+            val_split_ratio=val_split_ratio,
+            use_sequence_packing=use_sequence_packing,
+            packing_strategy=packing_strategy,
+            max_files_to_load=max_files_to_load,
+            lazy_file_discovery=lazy_file_discovery,
+            warm_start_files=warm_start_files,
+            shuffle_seed=shuffle_seed,
+            enable_length_sorting=enable_length_sorting,
+            disable_packing_length_sort=disable_packing_length_sort,
+        )
+
+        # Validate dataloaders (skip if configured or fast_startup - useful for pretokenized data)
+        skip_validation = fast_startup or getattr(training_config.data, "skip_dataloader_validation", False)
         if not skip_validation:
             self._validate_dataloaders(train_loader, batch_size)
         else:
-            _logger.info(" Skipping dataloader validation (skip_dataloader_validation=True)")
+            _logger.info(" Skipping dataloader validation (fast_startup or skip_dataloader_validation=True)")
 
         return train_loader, val_loader
 
@@ -967,11 +927,6 @@ class DataLoaderManager(TrainingComponent):
     def _get_samples_per_file(training_config: Any) -> int:
         """Get samples per file from config (using shared utility)."""
         return get_samples_per_file(training_config)
-
-    @staticmethod
-    def _get_enable_bucketing(training_config: Any) -> bool:
-        """Get bucketing enabled setting from config (using shared utility)."""
-        return get_enable_bucketing(training_config)
 
     @staticmethod
     def _get_val_split_ratio(training_config: Any) -> float:

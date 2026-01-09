@@ -315,18 +315,6 @@ python code/scripts/5_training/finetune.py \
 python code/scripts/5_training/finetune.py
 ```
 
-### LoRA Fine-Tuning
-
-Parameter-efficient fine-tuning:
-
-```yaml
-model:
-  use_lora_experts: true
-  lora_rank: 8
-  lora_alpha: 16
-  freeze_lora_base: true
-```
-
 ## Training Strategies
 
 ### Progressive Training
@@ -362,10 +350,6 @@ training:
 model:
   gradient_checkpointing: true
   use_flash_attention: true
-
-moe_memory_optimization:
-  use_expert_offloading: true
-  max_active_experts_gpu: 4
 
 hardware:
   mixed_precision: 'bf16'

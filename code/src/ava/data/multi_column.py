@@ -637,66 +637,184 @@ class MultiColumnDataset(Dataset):
 
     def _process_audio(self, audio_data: Any, config: ColumnConfig) -> torch.Tensor:
         """
-        Process audio column (placeholder implementation).
+        Process audio column using media processors.
 
-        NOTE: This is a placeholder. For production use, install torchaudio and implement
-        proper audio processing. See documentation for implementation details.
+        Supports:
+        - File paths (string or Path)
+        - Raw waveform tensors
+        - Numpy arrays
 
         Args:
-            audio_data: Audio input (currently ignored)
+            audio_data: Audio input (file path, tensor, or numpy array)
             config: Column configuration with optional preprocessing settings
 
         Returns:
-            Dummy tensor for testing [channels, samples]
+            Processed audio tensor (mel spectrogram, waveform, or MFCC)
         """
-        # Show warning only once per instance
-        if not hasattr(self, '_audio_warning_shown'):
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(
-                "Audio processing is using placeholder implementation. "
-                "Install torchaudio for real audio support: pip install torchaudio"
-            )
-            self._audio_warning_shown = True
+        # Lazy import and initialization of audio processor
+        if not hasattr(self, '_audio_processor'):
+            try:
+                from .media_processors import (
+                    AudioProcessor,
+                    AudioConfig,
+                    TORCHAUDIO_AVAILABLE,
+                )
 
-        # Return configurable dummy tensor based on config
-        sample_rate = config.preprocessing.get('sample_rate', 16000) if hasattr(config, 'preprocessing') and config.preprocessing else 16000
-        duration = config.preprocessing.get('duration', 1.0) if hasattr(config, 'preprocessing') and config.preprocessing else 1.0
-        channels = config.preprocessing.get('channels', 1) if hasattr(config, 'preprocessing') and config.preprocessing else 1
-        samples = int(sample_rate * duration)
+                # Extract config from preprocessing dict
+                preprocessing = config.preprocessing if hasattr(config, 'preprocessing') and config.preprocessing else {}
 
-        return torch.zeros(channels, samples)
+                audio_config = AudioConfig(
+                    sample_rate=preprocessing.get('sample_rate', 16000),
+                    n_mels=preprocessing.get('n_mels', 80),
+                    n_fft=preprocessing.get('n_fft', 400),
+                    hop_length=preprocessing.get('hop_length', 160),
+                    max_duration=preprocessing.get('max_duration', None),
+                    output_type=preprocessing.get('output_type', 'mel_spectrogram'),
+                )
+                self._audio_processor = AudioProcessor(audio_config)
+                self._torchaudio_available = TORCHAUDIO_AVAILABLE
+
+                if not TORCHAUDIO_AVAILABLE:
+                    logger.warning(
+                        "torchaudio not available. Install with: pip install torchaudio. "
+                        "Audio processing will return zero tensors."
+                    )
+            except ImportError as e:
+                logger.warning(f"Failed to import media_processors: {e}. Using fallback.")
+                self._audio_processor = None
+                self._torchaudio_available = False
+
+        # Handle different input types
+        if self._audio_processor is not None:
+            try:
+                if isinstance(audio_data, (str, Path)):
+                    # File path
+                    return self._audio_processor.process(audio_data)
+                elif isinstance(audio_data, torch.Tensor):
+                    # Raw tensor
+                    preprocessing = config.preprocessing if hasattr(config, 'preprocessing') and config.preprocessing else {}
+                    sample_rate = preprocessing.get('sample_rate', 16000)
+                    return self._audio_processor.process(audio_data, sample_rate=sample_rate)
+                elif isinstance(audio_data, np.ndarray):
+                    # Numpy array
+                    tensor = torch.from_numpy(audio_data).float()
+                    preprocessing = config.preprocessing if hasattr(config, 'preprocessing') and config.preprocessing else {}
+                    sample_rate = preprocessing.get('sample_rate', 16000)
+                    return self._audio_processor.process(tensor, sample_rate=sample_rate)
+                elif isinstance(audio_data, dict) and 'path' in audio_data:
+                    # Dict with path key (common in HuggingFace datasets)
+                    return self._audio_processor.process(audio_data['path'])
+                elif isinstance(audio_data, dict) and 'array' in audio_data:
+                    # Dict with array key (HuggingFace audio format)
+                    array = audio_data['array']
+                    sample_rate = audio_data.get('sampling_rate', 16000)
+                    tensor = torch.from_numpy(np.array(array)).float()
+                    if tensor.dim() == 1:
+                        tensor = tensor.unsqueeze(0)
+                    return self._audio_processor.process(tensor, sample_rate=sample_rate)
+                else:
+                    logger.warning(f"Unknown audio data type: {type(audio_data)}. Returning zeros.")
+            except Exception as e:
+                logger.warning(f"Audio processing failed: {e}. Returning zeros.")
+
+        # Fallback: return zeros
+        preprocessing = config.preprocessing if hasattr(config, 'preprocessing') and config.preprocessing else {}
+        sample_rate = preprocessing.get('sample_rate', 16000)
+        duration = preprocessing.get('duration', 1.0)
+        n_mels = preprocessing.get('n_mels', 80)
+        hop_length = preprocessing.get('hop_length', 160)
+        output_type = preprocessing.get('output_type', 'mel_spectrogram')
+
+        if output_type == 'waveform':
+            return torch.zeros(1, int(sample_rate * duration))
+        else:
+            time_frames = int(sample_rate * duration) // hop_length + 1
+            return torch.zeros(n_mels, time_frames)
 
     def _process_video(self, video_data: Any, config: ColumnConfig) -> torch.Tensor:
         """
-        Process video column (placeholder implementation).
+        Process video column using media processors.
 
-        NOTE: This is a placeholder. For production use, install torchvision with video
-        support and implement proper video processing.
+        Supports:
+        - File paths (string or Path)
+        - Raw video tensors [T, H, W, C] or [T, C, H, W]
+        - Numpy arrays
 
         Args:
-            video_data: Video input (currently ignored)
+            video_data: Video input (file path, tensor, or numpy array)
             config: Column configuration with optional preprocessing settings
 
         Returns:
-            Dummy tensor for testing [channels, frames, height, width] or [frames, channels, height, width]
+            Processed video tensor [C, T, H, W] or [T, C, H, W] depending on config
         """
-        # Show warning only once per instance
-        if not hasattr(self, '_video_warning_shown'):
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(
-                "Video processing is using placeholder implementation. "
-                "Install torchvision with video backend for real video support."
-            )
-            self._video_warning_shown = True
+        # Lazy import and initialization of video processor
+        if not hasattr(self, '_video_processor'):
+            try:
+                from .media_processors import (
+                    VideoProcessor,
+                    VideoConfig,
+                    TORCHVISION_AVAILABLE,
+                )
 
-        # Return configurable dummy tensor based on config
-        num_frames = config.preprocessing.get('num_frames', 16) if hasattr(config, 'preprocessing') and config.preprocessing else 16
-        height = config.preprocessing.get('height', 224) if hasattr(config, 'preprocessing') and config.preprocessing else 224
-        width = config.preprocessing.get('width', 224) if hasattr(config, 'preprocessing') and config.preprocessing else 224
-        channels = config.preprocessing.get('channels', 3) if hasattr(config, 'preprocessing') and config.preprocessing else 3
-        conv3d_format = config.preprocessing.get('conv3d_format', False) if hasattr(config, 'preprocessing') and config.preprocessing else False
+                # Extract config from preprocessing dict
+                preprocessing = config.preprocessing if hasattr(config, 'preprocessing') and config.preprocessing else {}
+
+                # Determine output format
+                conv3d_format = preprocessing.get('conv3d_format', False)
+                output_format = "CTHW" if conv3d_format else "TCHW"
+
+                video_config = VideoConfig(
+                    num_frames=preprocessing.get('num_frames', 16),
+                    frame_size=(
+                        preprocessing.get('height', 224),
+                        preprocessing.get('width', 224),
+                    ),
+                    channels=preprocessing.get('channels', 3),
+                    normalize=preprocessing.get('normalize', True),
+                    output_format=output_format,
+                    sampling_strategy=preprocessing.get('sampling_strategy', 'uniform'),
+                )
+                self._video_processor = VideoProcessor(video_config)
+                self._torchvision_available = TORCHVISION_AVAILABLE
+
+                if not TORCHVISION_AVAILABLE:
+                    logger.warning(
+                        "torchvision not available. Install with: pip install torchvision. "
+                        "Video processing will return zero tensors."
+                    )
+            except ImportError as e:
+                logger.warning(f"Failed to import media_processors: {e}. Using fallback.")
+                self._video_processor = None
+                self._torchvision_available = False
+
+        # Handle different input types
+        if self._video_processor is not None:
+            try:
+                if isinstance(video_data, (str, Path)):
+                    # File path
+                    return self._video_processor.process(video_data)
+                elif isinstance(video_data, torch.Tensor):
+                    # Raw tensor
+                    return self._video_processor.process(video_data)
+                elif isinstance(video_data, np.ndarray):
+                    # Numpy array
+                    tensor = torch.from_numpy(video_data)
+                    return self._video_processor.process(tensor)
+                elif isinstance(video_data, dict) and 'path' in video_data:
+                    # Dict with path key
+                    return self._video_processor.process(video_data['path'])
+                else:
+                    logger.warning(f"Unknown video data type: {type(video_data)}. Returning zeros.")
+            except Exception as e:
+                logger.warning(f"Video processing failed: {e}. Returning zeros.")
+
+        # Fallback: return zeros
+        preprocessing = config.preprocessing if hasattr(config, 'preprocessing') and config.preprocessing else {}
+        num_frames = preprocessing.get('num_frames', 16)
+        height = preprocessing.get('height', 224)
+        width = preprocessing.get('width', 224)
+        channels = preprocessing.get('channels', 3)
+        conv3d_format = preprocessing.get('conv3d_format', False)
 
         if conv3d_format:
             # [C, T, H, W] for 3D convolutions

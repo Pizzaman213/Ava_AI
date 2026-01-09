@@ -180,30 +180,24 @@ deepspeed:
 
 ## Expert Parallelism
 
-Distribute MoE experts across GPUs.
+Distribute MoE experts across GPUs using DeepSpeed or FSDP.
 
 ### Configuration
 
 ```yaml
 model:
   num_experts: 8
-  expert_parallel_size: 4     # Experts distributed over 4 GPUs
 
 hardware:
   use_gpu_load_balancing: true
   balancing_strategy: 'adaptive'
+
+deepspeed:
+  use_deepspeed: true
+  zero_stage: 3  # Full sharding for expert distribution
 ```
 
-### How It Works
-
-```
-GPU 0: Experts 0, 1
-GPU 1: Experts 2, 3
-GPU 2: Experts 4, 5
-GPU 3: Experts 6, 7
-```
-
-Tokens are routed to the GPU holding their selected expert.
+Use DeepSpeed ZeRO-3 or FSDP to distribute model parameters (including experts) across GPUs.
 
 ### Load Balancing
 
@@ -385,7 +379,6 @@ hardware:
 
 model:
   num_experts: 16
-  expert_parallel_size: 8
   gradient_checkpointing: true
 
 training:

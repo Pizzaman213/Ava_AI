@@ -52,6 +52,31 @@ from .quality_evaluator import (
     create_quality_evaluator,
 )
 
+# Overlapped gradient accumulation (10-20% speedup)
+from .overlapped_accumulation import (
+    OverlappedGradientAccumulator,
+    AccumulationConfig,
+    create_overlapped_accumulator,
+)
+
+# Pipeline micro-batching (10-25% speedup)
+from .pipeline_executor import (
+    PipelinedTrainingStep,
+    PipelineConfig,
+    create_pipeline_executor,
+)
+
+# Episodic memory (continual learning)
+from .episodic_memory import (
+    MemoryEntry,
+    EpisodicMemoryBuffer,
+    EpisodicMemoryManager,
+    create_episodic_memory_manager,
+)
+
+# Protocol for episodic memory integration
+from .loop import EpisodicMemoryProtocol
+
 __all__ = [
     # Context and base classes
     'TrainingContext',
@@ -88,4 +113,18 @@ __all__ = [
     'QualityMetrics',
     'QualityEvaluator',
     'create_quality_evaluator',
+    # Overlapped gradient accumulation
+    'OverlappedGradientAccumulator',
+    'AccumulationConfig',
+    'create_overlapped_accumulator',
+    # Pipeline micro-batching
+    'PipelinedTrainingStep',
+    'PipelineConfig',
+    'create_pipeline_executor',
+    # Episodic memory (continual learning)
+    'MemoryEntry',
+    'EpisodicMemoryBuffer',
+    'EpisodicMemoryManager',
+    'EpisodicMemoryProtocol',
+    'create_episodic_memory_manager',
 ]

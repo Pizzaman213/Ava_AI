@@ -141,7 +141,7 @@ from ava.config import EnhancedTrainingConfig, TrainingConfigManager
 #     print_compatibility_report,
 #     validate_training_config,
 # )
-from ava.data.factory import create_streaming_dataloaders
+from ava.data.pretokenized import create_ultra_fast_dataloaders
 from ava.models.moe import EnhancedMoEConfig, EnhancedMoEModel
 from ava.data.multi_column import create_multi_column_dataloader
 # Observability modules are not yet implemented:
@@ -374,39 +374,47 @@ def create_finetune_dataloaders(
     """
     Create dataloaders from discovered fine-tuning files.
 
+    Note: Fine-tuning data must be pre-tokenized Arrow/Parquet files.
+
     Args:
-        tokenizer: Tokenizer for text processing
+        tokenizer: Tokenizer for special token IDs (optional, can be None)
         batch_size: Batch size
         max_length: Maximum sequence length
-        data_files: List of data files to load
-        buffer_size: Buffer size for streaming
+        data_files: List of data files to load (must be Arrow/Parquet)
+        buffer_size: Buffer size for loading
         num_workers: Number of dataloader workers
         val_split: Fraction of data to use for validation
 
     Returns:
         Tuple of (train_loader, val_loader)
     """
-    from ava.data.factory import create_streaming_dataloaders
+    from ava.data.pretokenized import create_ultra_fast_dataloaders
 
-    # Create a temporary directory with symlinks/copies for streaming loader
-    # Or use the first file's directory as base
+    # Use the first file's directory as base
     data_dir = data_files[0].parent
 
-    print(f" Creating streaming dataloaders from {len(data_files)} file(s)...", flush=True)
+    print(f" Creating pretokenized dataloaders from {len(data_files)} file(s)...", flush=True)
     print(f"   Batch size: {batch_size}", flush=True)
     print(f"   Max length: {max_length}", flush=True)
     print(f"   Buffer size: {buffer_size}", flush=True)
     print(f"   Validation split: {val_split * 100:.1f}%", flush=True)
 
-    # Use the existing streaming dataloader infrastructure
-    train_loader, val_loader = create_streaming_dataloaders(
-        tokenizer=tokenizer,
+    # Get special token IDs from tokenizer or use defaults
+    pad_token_id = getattr(tokenizer, 'pad_token_id', 0) if tokenizer else 0
+    bos_token_id = getattr(tokenizer, 'bos_token_id', 2) if tokenizer else 2
+    eos_token_id = getattr(tokenizer, 'eos_token_id', 1) if tokenizer else 1
+
+    # Use pretokenized Arrow loader
+    train_loader, val_loader = create_ultra_fast_dataloaders(
         batch_size=batch_size,
         max_length=max_length,
         data_dir=str(data_dir),
         buffer_size=buffer_size,
-        max_samples=None,  # Use all available samples
         num_workers=num_workers,
+        val_split_ratio=val_split,
+        pad_token_id=pad_token_id,
+        bos_token_id=bos_token_id,
+        eos_token_id=eos_token_id,
     )
 
     return train_loader, val_loader

@@ -147,16 +147,6 @@ model:
 
 **Impact**: ~60% memory reduction, ~30% slower.
 
-### Expert Offloading
-
-```yaml
-moe_memory_optimization:
-  use_expert_offloading: true
-  max_active_experts_gpu: 4
-  offload_async_transfers: true
-  offload_pin_memory: true
-```
-
 ### KV Cache Quantization
 
 ```yaml
@@ -224,13 +214,6 @@ deepspeed:
   zero_stage: 2
   overlap_comm: true
   reduce_bucket_size: 1000000000  # 1GB buckets
-```
-
-### Expert Parallelism
-
-```yaml
-model:
-  expert_parallel_size: 4  # Distribute experts across GPUs
 ```
 
 ### Load Balancing
@@ -313,12 +296,6 @@ model:
   gradient_checkpointing: true
   quantize_kv_cache: true
   use_flash_attention: true
-
-moe_memory_optimization:
-  use_expert_offloading: true
-  max_active_experts_gpu: 2
-  use_lora_experts: true
-  lora_rank: 4
 
 hardware:
   mixed_precision: 'bf16'

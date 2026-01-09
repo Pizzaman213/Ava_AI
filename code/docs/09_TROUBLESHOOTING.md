@@ -42,14 +42,7 @@ model:
   gradient_checkpointing: true
 ```
 
-3. **Enable expert offloading**
-```yaml
-moe_memory_optimization:
-  use_expert_offloading: true
-  max_active_experts_gpu: 2
-```
-
-4. **Use mixed precision**
+3. **Use mixed precision**
 ```yaml
 hardware:
   mixed_precision: 'bf16'

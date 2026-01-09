@@ -205,7 +205,8 @@ class OptimizerManager(ManagerInterface):
             optimizer = torch.optim.AdamW(
                 params,
                 lr=learning_rate,
-                weight_decay=weight_decay
+                weight_decay=weight_decay,
+                fused=torch.cuda.is_available()  # 15-30% faster on CUDA
             )
 
         self.optimizer = optimizer
@@ -373,7 +374,8 @@ class OptimizerManager(ManagerInterface):
                     lr=learning_rate,
                     weight_decay=weight_decay,
                     betas=betas,
-                    eps=eps
+                    eps=eps,
+                    fused=torch.cuda.is_available()  # 15-30% faster on CUDA
                 )
 
             else:
