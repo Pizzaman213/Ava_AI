@@ -322,11 +322,13 @@ class ModelBuilder(TrainingComponent):
                 model_config, 'router_aux_loss_coef', 0.01
             ),
             router_jitter_noise=model_config.get('router_jitter_noise', 0.01),
+            # FIX: Activation function for expert layers (swiglu recommended for performance)
+            activation=model_config.get('activation', 'swiglu'),
             # Performance optimization flags (CRITICAL - these were missing!)
             gradient_checkpointing=model_config.get('gradient_checkpointing', False),
             use_grouped_gemm=model_config.get('use_grouped_gemm', False),
             use_triton_kernels=model_config.get('use_triton_kernels', False),
-            use_torch_compile=model_config.get('use_torch_compile', False),
+            use_torch_compile=config.get('compute', {}).get('performance', {}).get('enable_torch_compile', False),
             use_optimized_moe=model_config.get('use_optimized_moe', False),
             # Coherence regularization settings (fixes coherence issues)
             entropy_regularization=model_config.get('entropy_regularization', 0.0),
@@ -918,9 +920,21 @@ class ModelBuilder(TrainingComponent):
             )
             return wrapped_model, None, None
 
-        from .deepspeed import build_deepspeed_config, validate_deepspeed_config
+        from .deepspeed import build_deepspeed_config, validate_deepspeed_config, validate_model_for_deepspeed
 
-        deepspeed_cfg = config.get('deepspeed', {})
+        # Support both v2.0 path (distributed.deepspeed) and legacy path (deepspeed)
+        distributed_cfg = config.get('distributed', {})
+        deepspeed_cfg = distributed_cfg.get('deepspeed', {})
+        if not deepspeed_cfg:
+            deepspeed_cfg = config.get('deepspeed', {})
+
+        # Validate model for DeepSpeed compatibility BEFORE building config
+        # This catches tie_word_embeddings=True which causes "parameter already reduced" errors
+        try:
+            validate_model_for_deepspeed(model, config)
+        except ValueError as e:
+            self.logger.error(f"Model incompatible with DeepSpeed: {e}")
+            raise
 
         # Build DeepSpeed JSON config from YAML
         try:
@@ -968,7 +982,14 @@ class ModelBuilder(TrainingComponent):
             DDP-wrapped model or DeepSpeed engine, or original model if single-GPU
         """
         # Check if DeepSpeed is enabled
-        deepspeed_config = self.context.config.get('deepspeed', {}) if self.context.config else {}
+        # Support both v2.0 path (distributed.deepspeed) and legacy path (deepspeed)
+        deepspeed_config = {}
+        if self.context.config:
+            distributed_cfg = self.context.config.get('distributed', {})
+            deepspeed_config = distributed_cfg.get('deepspeed', {})
+            # Fallback to legacy top-level 'deepspeed' key for backward compatibility
+            if not deepspeed_config:
+                deepspeed_config = self.context.config.get('deepspeed', {})
 
         # Allow DeepSpeed even with world_size=1 (useful for CPU/NVMe offloading)
         if deepspeed_config.get('enabled', False) and DISTRIBUTED_AVAILABLE:

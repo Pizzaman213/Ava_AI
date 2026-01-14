@@ -307,17 +307,45 @@ def build_deepspeed_config(config: Dict[str, Any]) -> Dict[str, Any]:
         ...     model=model, config=ds_config
         ... )
     """
-    deepspeed_cfg = config.get('deepspeed', {})
+    # Support both v2.0 path (distributed.deepspeed) and legacy path (deepspeed)
+    distributed_cfg = config.get('distributed', {})
+    deepspeed_cfg = distributed_cfg.get('deepspeed', {})
+    if not deepspeed_cfg:
+        deepspeed_cfg = config.get('deepspeed', {})
+
     training_cfg = config.get('training', {})
 
-    # Base config
-    train_batch_size = deepspeed_cfg.get('train_batch_size')
-    if train_batch_size is None:
-        train_batch_size = (training_cfg.get('batch_size', 32) *
-                           training_cfg.get('gradient_accumulation_steps', 1))
+    # Get batch configuration from nested structure (v2.0) or flat structure (legacy)
+    batching_cfg = training_cfg.get('batching', {})
+    batch_size = int(batching_cfg.get('batch_size') or training_cfg.get('batch_size', 32))
 
-    micro_batch_size = deepspeed_cfg.get('micro_batch_size') or training_cfg.get('batch_size', 32)
-    grad_accum = deepspeed_cfg.get('gradient_accumulation_steps') or training_cfg.get('gradient_accumulation_steps', 1)
+    # Gradient accumulation steps - check DeepSpeed config first, then training config
+    grad_accum = int(
+        deepspeed_cfg.get('gradient_accumulation_steps') or
+        batching_cfg.get('gradient_accumulation_steps') or
+        training_cfg.get('gradient_accumulation_steps', 1)
+    )
+
+    # Micro batch size is the per-GPU batch size
+    micro_batch_size = int(deepspeed_cfg.get('micro_batch_size') or batch_size)
+
+    # train_batch_size = micro_batch_size * grad_accum * world_size
+    # DeepSpeed does NOT support 'auto' for train_batch_size - it must be an integer
+    train_batch_size_raw = deepspeed_cfg.get('train_batch_size')
+    if train_batch_size_raw is not None:
+        train_batch_size = int(train_batch_size_raw)
+    else:
+        # Calculate based on world_size (get from torch.distributed if available)
+        import torch.distributed as dist
+        if dist.is_initialized():
+            world_size = dist.get_world_size()
+        else:
+            world_size = 1
+        train_batch_size = micro_batch_size * grad_accum * world_size
+        logger.info(
+            f"DeepSpeed train_batch_size calculated: {train_batch_size} "
+            f"(micro_batch_size={micro_batch_size} × grad_accum={grad_accum} × world_size={world_size})"
+        )
 
     ds_config = {
         'train_batch_size': train_batch_size,
@@ -360,6 +388,16 @@ def build_deepspeed_config(config: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     # Optimizer (DeepSpeed manages it)
+    # Map unsupported optimizer types to DeepSpeed equivalents
+    # 8-bit optimizers (bitsandbytes) are not supported by DeepSpeed
+    DEEPSPEED_OPTIMIZER_MAP = {
+        'adamw_8bit': 'AdamW',
+        'adam_8bit': 'Adam',
+        'adamw': 'AdamW',
+        'adam': 'Adam',
+        'sgd': 'SGD',
+    }
+
     optimizer_cfg = training_cfg.get('optimizer', {})
     if isinstance(optimizer_cfg, dict):
         opt_type = optimizer_cfg.get('type', 'AdamW')
@@ -369,11 +407,23 @@ def build_deepspeed_config(config: Dict[str, Any]) -> Dict[str, Any]:
         opt_wd = optimizer_cfg.get('weight_decay') or training_cfg.get('weight_decay', 0.01)
     else:
         # optimizer is a string like 'adamw'
-        opt_type = 'AdamW'
+        opt_type = str(optimizer_cfg) if optimizer_cfg else 'AdamW'
         opt_lr = training_cfg.get('learning_rate', 1e-4)
         opt_betas = [0.9, 0.999]
         opt_eps = 1e-8
         opt_wd = training_cfg.get('weight_decay', 0.01)
+
+    # Normalize to DeepSpeed-compatible optimizer type
+    original_opt_type = opt_type
+    opt_type_lower = opt_type.lower()
+    if opt_type_lower in DEEPSPEED_OPTIMIZER_MAP:
+        opt_type = DEEPSPEED_OPTIMIZER_MAP[opt_type_lower]
+        if '8bit' in opt_type_lower:
+            logger.warning(
+                f"Optimizer '{original_opt_type}' is not compatible with DeepSpeed. "
+                f"Using '{opt_type}' instead. Note: ZeRO optimization already provides "
+                f"significant memory savings similar to 8-bit optimizers."
+            )
 
     ds_config['optimizer'] = {
         'type': opt_type,
@@ -394,20 +444,35 @@ def build_deepspeed_config(config: Dict[str, Any]) -> Dict[str, Any]:
     total_steps = training_cfg.get('max_steps') or scheduler_cfg.get('total_steps')
 
     if total_steps is None:
-        # Estimate from num_epochs and data size
-        # Use a conservative estimate: assume ~10K steps per epoch for typical datasets
-        # This can be overridden by setting explicit max_steps or total_steps in config
-        num_epochs = scheduler_cfg.get('num_epochs', training_cfg.get('num_epochs', 5))
-        steps_per_epoch = scheduler_cfg.get('steps_per_epoch', training_cfg.get('steps_per_epoch', 200000))
-        batch_size = training_cfg.get('batching', {}).get('batch_size', training_cfg.get('batch_size', 32))
-        grad_accum = training_cfg.get('batching', {}).get('gradient_accumulation_steps',
-                                                          training_cfg.get('gradient_accumulation_steps', 1))
+        # Estimate from num_epochs - use reasonable defaults
+        num_epochs = scheduler_cfg.get('num_epochs', training_cfg.get('num_epochs', 1))
+
+        # Check for explicit steps_per_epoch first
+        steps_per_epoch = scheduler_cfg.get('steps_per_epoch') or training_cfg.get('steps_per_epoch')
+
+        if steps_per_epoch is None:
+            # Use a conservative fallback and warn the user
+            logger.warning(
+                "DeepSpeed scheduler: steps_per_epoch not set. "
+                "Consider setting 'training.schedule.max_steps' or 'training.schedule.steps_per_epoch' explicitly. "
+                "Using fallback estimate of 10,000 steps/epoch."
+            )
+            steps_per_epoch = 10000
+
+        # Get gradient accumulation for calculation
+        batching_cfg = training_cfg.get('batching', {})
+        grad_accum_for_calc = (
+            batching_cfg.get('gradient_accumulation_steps') or
+            training_cfg.get('gradient_accumulation_steps', 1)
+        )
 
         # Calculate: total_steps = num_epochs * steps_per_epoch / grad_accum
-        total_steps = (num_epochs * steps_per_epoch) // max(grad_accum, 1)
+        total_steps = (num_epochs * steps_per_epoch) // max(grad_accum_for_calc, 1)
 
-        logger.info(f"DeepSpeed scheduler: estimated total_steps={total_steps} "
-                    f"(epochs={num_epochs}, steps_per_epoch={steps_per_epoch}, grad_accum={grad_accum})")
+        logger.info(
+            f"DeepSpeed scheduler: estimated total_steps={total_steps} "
+            f"(epochs={num_epochs}, steps_per_epoch={steps_per_epoch}, grad_accum={grad_accum_for_calc})"
+        )
 
     # Get min_lr for end of training
     min_lr = scheduler_cfg.get('min_lr', training_cfg.get('min_lr', opt_lr * 0.1))
@@ -563,3 +628,44 @@ def validate_deepspeed_config(ds_config: Dict[str, Any]) -> None:
         raise ValueError("Parameter offloading requires ZeRO stage 3")
 
     logger.info(f"DeepSpeed config validated: ZeRO-{zero_stage}")
+
+
+def validate_model_for_deepspeed(model: Any, config: Dict[str, Any]) -> None:
+    """
+    Validate model configuration for DeepSpeed compatibility.
+
+    Args:
+        model: The PyTorch model
+        config: Full Ava config dictionary
+
+    Raises:
+        ValueError: If model has incompatible settings for DeepSpeed
+    """
+    # Check for tie_word_embeddings which is incompatible with ZeRO
+    # Weight tying causes "parameter has already been reduced" errors
+    # because DeepSpeed tries to reduce the shared parameter twice
+    model_cfg = config.get('model', {})
+    tie_word_embeddings = model_cfg.get('tie_word_embeddings', False)
+
+    # Also check the model directly if it has the attribute
+    if hasattr(model, '_tie_word_embeddings'):
+        tie_word_embeddings = model._tie_word_embeddings
+    elif hasattr(model, 'module') and hasattr(model.module, '_tie_word_embeddings'):
+        tie_word_embeddings = model.module._tie_word_embeddings
+
+    if tie_word_embeddings:
+        raise ValueError(
+            "tie_word_embeddings=True is INCOMPATIBLE with DeepSpeed ZeRO.\n"
+            "Weight tying causes 'The parameter X has already been reduced' errors "
+            "because DeepSpeed tries to reduce the shared parameter twice.\n"
+            "Fix: Set 'model.tie_word_embeddings: false' in your config file."
+        )
+
+    # Warn about gradient checkpointing compatibility
+    # PyTorch's gradient checkpointing with use_reentrant=True causes the same issue
+    if model_cfg.get('gradient_checkpointing', False):
+        logger.info(
+            "gradient_checkpointing + DeepSpeed ZeRO detected. "
+            "Ensure use_reentrant=False in torch.utils.checkpoint.checkpoint() calls "
+            "to avoid 'parameter already reduced' errors."
+        )

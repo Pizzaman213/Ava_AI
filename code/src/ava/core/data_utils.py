@@ -160,14 +160,12 @@ def collate_batch(
         if ids is None:
             continue
 
-        # Handle both tensor and numpy array inputs
-        if hasattr(ids, 'numpy'):
-            ids = ids
-        elif hasattr(ids, '__len__'):
-            ids = torch.tensor(ids) if not isinstance(ids, torch.Tensor) else ids
+        # Convert to tensor if needed (handles numpy arrays and lists)
+        if not isinstance(ids, torch.Tensor):
+            ids = torch.tensor(ids)
 
         seq_len = min(len(ids), pad_len)
-        input_ids[i, :seq_len] = ids[:seq_len] if isinstance(ids, torch.Tensor) else torch.tensor(ids[:seq_len])
+        input_ids[i, :seq_len] = ids[:seq_len]
 
         mask = item.get('attention_mask')
         if mask is not None:

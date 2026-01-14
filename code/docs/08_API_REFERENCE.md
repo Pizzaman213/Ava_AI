@@ -348,15 +348,16 @@ train_loader, val_loader = create_streaming_dataloaders(
 
 ### `ava.data.pretokenized`
 
-#### PreTokenizedDataset
+#### UltraFastPretokenizedDataset
 
-High-performance pre-tokenized loading.
+High-performance pre-tokenized loading with zero-copy Arrow access.
 
 ```python
-from ava.data.pretokenized import PreTokenizedDataset
+from ava.data.pretokenized import UltraFastPretokenizedDataset
 
-dataset = PreTokenizedDataset(
-    data_path="data/tokenized.arrow",
+dataset = UltraFastPretokenizedDataset(
+    data_dir="data/tokenized",
+    split="train",
     max_length=512,
 )
 ```

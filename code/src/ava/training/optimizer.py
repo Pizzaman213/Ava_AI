@@ -79,6 +79,20 @@ try:
 except ImportError:
     ADAFACTOR_AVAILABLE = False
 
+# SYMI optimizer decoupling for MoE (arXiv 2504.19925)
+try:
+    from ava.optimizations.symi_optimizer import (
+        SYMIOptimizerWrapper,
+        SYMIConfig as SYMIOptimizerConfig,
+        wrap_optimizer_with_symi,
+    )
+    SYMI_AVAILABLE = True
+except ImportError:
+    SYMI_AVAILABLE = False
+    SYMIOptimizerWrapper = None
+    SYMIOptimizerConfig = None
+    wrap_optimizer_with_symi = None
+
 
 class OptimizerManager(ManagerInterface):
     """
@@ -175,12 +189,21 @@ class OptimizerManager(ManagerInterface):
         """
         self.assert_initialized()
 
-        # CRITICAL: Check if DeepSpeed already created optimizer
-        if hasattr(self.context, 'deepspeed_optimizer') and self.context.deepspeed_optimizer is not None:
-            self.logger.info("Using DeepSpeed-managed optimizer")
-            self.optimizer = self.context.deepspeed_optimizer
-            self.context.optimizer = self.optimizer
-            return self.optimizer
+        # Check if DeepSpeed engine exists and manages optimizer
+        # DeepSpeed creates its own optimizer when initialized - we should use it, not create another
+        if hasattr(self.context, 'model'):
+            try:
+                from .deepspeed import is_deepspeed_engine
+                if is_deepspeed_engine(self.context.model):
+                    # DeepSpeed engine has its own optimizer - extract and use it
+                    engine = self.context.model
+                    if hasattr(engine, 'optimizer') and engine.optimizer is not None:
+                        self.logger.info("Using DeepSpeed-managed optimizer from engine")
+                        self.optimizer = engine.optimizer
+                        self.context.optimizer = self.optimizer
+                        return self.optimizer
+            except ImportError:
+                pass  # DeepSpeed not available
 
         # Get optimizer type from config (check both root level and training.optimizer)
         optimizer_config = config.get('optimizer', {}) or config.get('training', {}).get('optimizer', {})
@@ -208,6 +231,25 @@ class OptimizerManager(ManagerInterface):
                 weight_decay=weight_decay,
                 fused=torch.cuda.is_available()  # 15-30% faster on CUDA
             )
+
+        # SYMI optimizer decoupling for MoE (arXiv 2504.19925)
+        # Provides ~30% speedup through optimizer state partitioning
+        symi_config = config.get('symi', {})
+        if symi_config.get('enabled', False) and SYMI_AVAILABLE:
+            self.logger.info("Wrapping optimizer with SYMI decoupling for MoE speedup")
+            symi_cfg = SYMIOptimizerConfig(
+                enabled=True,
+                num_partitions=symi_config.get('num_partitions', 0),
+                sync_frequency=symi_config.get('sync_frequency', 100),
+                use_async_sync=symi_config.get('use_async_sync', True),
+                gradient_averaging=symi_config.get('gradient_averaging', 'partition'),
+                state_precision=symi_config.get('state_precision', 'fp32'),
+                enable_checkpointing=symi_config.get('enable_checkpointing', True),
+            )
+            optimizer = wrap_optimizer_with_symi(optimizer, model, symi_cfg)
+            self.logger.info(f"SYMI enabled: partitions={symi_cfg.num_partitions}, sync_freq={symi_cfg.sync_frequency}")
+        elif symi_config.get('enabled', False) and not SYMI_AVAILABLE:
+            self.logger.warning("SYMI requested but not available, using standard optimizer")
 
         self.optimizer = optimizer
         self.context.optimizer = optimizer
@@ -413,12 +455,20 @@ class OptimizerManager(ManagerInterface):
         """
         self.assert_initialized()
 
-        # CRITICAL: Check if DeepSpeed already created scheduler
-        if hasattr(self.context, 'deepspeed_scheduler') and self.context.deepspeed_scheduler is not None:
-            self.logger.info("Using DeepSpeed-managed scheduler")
-            self.scheduler = self.context.deepspeed_scheduler
-            self.context.scheduler = self.scheduler
-            return self.scheduler
+        # Check if DeepSpeed engine manages the scheduler
+        # DeepSpeed can create its own scheduler when initialized - we should use it
+        if hasattr(self.context, 'model'):
+            try:
+                from .deepspeed import is_deepspeed_engine
+                if is_deepspeed_engine(self.context.model):
+                    engine = self.context.model
+                    if hasattr(engine, 'lr_scheduler') and engine.lr_scheduler is not None:
+                        self.logger.info("Using DeepSpeed-managed scheduler from engine")
+                        self.scheduler = engine.lr_scheduler
+                        self.context.scheduler = self.scheduler
+                        return self.scheduler
+            except ImportError:
+                pass  # DeepSpeed not available
 
         self._warmup_steps = warmup_steps
         self._total_steps = total_steps

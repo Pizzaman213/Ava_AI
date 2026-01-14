@@ -990,10 +990,19 @@ class EnhancedMoEModel(nn.Module):
 
         # CRITICAL FIX: Only tie weights if explicitly enabled in config
         # Tying can cause gradient conflicts with large vocabularies
+        # WARNING: tie_word_embeddings=True is INCOMPATIBLE with DeepSpeed ZeRO
+        # because the shared parameter gets gradient reduction attempted twice,
+        # causing "parameter has already been reduced" errors
         tie_word_embeddings = getattr(config, 'tie_word_embeddings', False)
+        self._tie_word_embeddings = tie_word_embeddings  # Store for validation
         if tie_word_embeddings:
             # Tie input and output embeddings (saves memory but can hurt training)
             self.lm_head.weight = self.token_embedding.weight
+            logger.warning(
+                "tie_word_embeddings=True: Incompatible with DeepSpeed ZeRO. "
+                "If using DeepSpeed, set tie_word_embeddings: false in your config "
+                "to avoid 'parameter already reduced' errors."
+            )
         else:
             # Keep separate (better for training, especially with large vocab)
             pass  # lm_head already has independent weights
@@ -1306,6 +1315,9 @@ class EnhancedMoEModel(nn.Module):
                             context_embeddings.append(batch_ctx.to(device))
                         rag_context = torch.stack(context_embeddings).to(device)  # [batch, num_docs, hidden]
                 except Exception as e:
+                    # Re-raise PyTorch internal exceptions used by gradient checkpointing
+                    if type(e).__name__ in ('_StopRecomputationError', 'StopIteration'):
+                        raise
                     logger.warning(f"RAG retrieval failed: {e}")
                     rag_context = None
 
@@ -1349,15 +1361,16 @@ class EnhancedMoEModel(nn.Module):
                                 )
                             return custom_forward
 
-                        # FIX: use_reentrant=True handles dropout correctly during recomputation
-                        # use_reentrant=False is stricter and fails with dropout's random tensors
+                        # FIX: use_reentrant=False is required for DeepSpeed ZeRO compatibility
+                        # Reentrant mode re-runs forward during backward, causing DeepSpeed to
+                        # see parameters being reduced twice ("parameter already reduced" error)
                         hidden_states, aux_info, present_key_value = torch.utils.checkpoint.checkpoint(
                             create_custom_forward(layer, position_ids, cu_seqlens, max_seqlen),
                             hidden_states,
                             attention_mask,
                             past_key_value,
                             use_cache,
-                            use_reentrant=True,
+                            use_reentrant=False,
                         )
                     else:
                         # CRITICAL FIX: Pass position_ids for correct RoPE in sequence packing
@@ -2162,11 +2175,17 @@ class OptimizedMoETransformer(nn.Module):
                 ignore_index=-100
             )
 
-            # Add MoE auxiliary losses (scaled by coefficient)
-            router_aux_coef = getattr(self.config, 'router_aux_loss_coef', 0.01)
-            if all_aux_info and router_aux_coef > 0:
-                total_aux_loss = sum(info['aux_loss'] for info in all_aux_info) / len(all_aux_info)
-                loss = loss + router_aux_coef * total_aux_loss
+            # Add MoE auxiliary losses
+            # FIX: aux_loss from SparseMoELayer is already scaled by coefficients at the router level
+            # (load_balance_loss_coef, router_z_loss_coef, etc. are applied in the router forward pass)
+            # So we should NOT apply router_aux_coef again here - that would be double scaling.
+            if all_aux_info:
+                total_aux_loss = sum(info['aux_loss'] for info in all_aux_info if info.get('aux_loss') is not None)
+                num_layers = sum(1 for info in all_aux_info if info.get('aux_loss') is not None)
+                if num_layers > 0:
+                    # Average across layers (consistent with EnhancedMoEModel)
+                    total_aux_loss = total_aux_loss / num_layers
+                    loss = loss + total_aux_loss
 
         if return_dict:
             return {
@@ -2249,6 +2268,9 @@ class OptimizedMoETransformer(nn.Module):
                 )
                 logits = outputs['logits']
             except Exception as e:
+                # Re-raise PyTorch internal exceptions used by gradient checkpointing
+                if type(e).__name__ in ('_StopRecomputationError', 'StopIteration'):
+                    raise
                 # CRITICAL FIX: Add comprehensive error context for debugging
                 error_msg = (
                     f"Generation failed at step {step_idx}:\n"

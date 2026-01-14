@@ -151,11 +151,17 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
     training_config = config.get('training', {})
     batching_config = training_config.get('batching', {})
     data_config = config.get('data', {})
-    perf_config = config.get('performance', {})
-    hybrid_config = config.get('hybrid_caching', {})
-    overlapped_config = config.get('overlapped_checkpointing', {})
-    double_config = config.get('double_checkpointing', {})
-    fp8_config = config.get('fp8', {})
+
+    # v2.0 config schema: compute.performance, experimental.caching, etc.
+    compute_config = config.get('compute', {})
+    perf_config = compute_config.get('performance', {})
+
+    experimental_config = config.get('experimental', {})
+    hybrid_config = experimental_config.get('caching', {})
+    checkpointing_config = experimental_config.get('checkpointing', {})
+    overlapped_config = checkpointing_config.get('overlapped', {})
+    double_config = checkpointing_config.get('double', {})
+    fp8_config = experimental_config.get('fp8', {})
 
     print_header("OPTIMIZATIONS", icon=Icons.GEAR)
 
@@ -234,24 +240,41 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.TARGET} Training Configuration")
 
-    batch_size = training_config.get('batch_size', 32)
-    grad_accum = training_config.get('gradient_accumulation_steps', 1)
+    # v2.0: training.batching.batch_size, training.optimizer.learning_rate, etc.
+    batch_size = batching_config.get('batch_size', training_config.get('batch_size', 32))
+    grad_accum = batching_config.get('gradient_accumulation_steps', training_config.get('gradient_accumulation_steps', 1))
     effective_batch = batch_size * grad_accum
     print(f"  {Colors.WHITE}batch_size:{Colors.RESET}            {_format_value(batch_size)}")
     print(f"  {Colors.WHITE}grad_accumulation:{Colors.RESET}     {_format_value(grad_accum)} {Colors.GRAY}(effective: {effective_batch}){Colors.RESET}")
 
-    lr = training_config.get('learning_rate', 1e-4)
+    optimizer_config = training_config.get('optimizer', {})
+    lr = optimizer_config.get('learning_rate', training_config.get('learning_rate', 1e-4))
     print(f"  {Colors.WHITE}learning_rate:{Colors.RESET}         {Colors.CYAN}{lr:.2e}{Colors.RESET}")
 
-    optimizer = training_config.get('optimizer', 'adamw')
-    weight_decay = training_config.get('weight_decay', 0.01)
+    optimizer = optimizer_config.get('type', training_config.get('optimizer', 'adamw'))
+    weight_decay = optimizer_config.get('weight_decay', training_config.get('weight_decay', 0.01))
+    max_grad_norm = optimizer_config.get('max_grad_norm', 1.0)
+    use_fused = optimizer_config.get('use_fused', False)
     print(f"  {Colors.WHITE}optimizer:{Colors.RESET}             {_format_value(optimizer)} {Colors.GRAY}(wd={weight_decay}){Colors.RESET}")
+    print(f"  {Colors.WHITE}max_grad_norm:{Colors.RESET}         {_format_value(max_grad_norm)}")
+    print(f"  {Colors.WHITE}use_fused_optimizer:{Colors.RESET}   {_status_indicator(use_fused, '5-10% speedup')}")
 
     mixed_precision = get_mixed_precision(config)
     print(f"  {Colors.WHITE}mixed_precision:{Colors.RESET}       {_format_value(mixed_precision, color=Colors.GREEN if mixed_precision in ['bf16', 'fp16'] else Colors.GRAY)}")
 
     max_length = data_config.get('max_length', 512)
     print(f"  {Colors.WHITE}max_seq_length:{Colors.RESET}        {_format_value(max_length)}")
+
+    # Schedule settings (v2.0: training.schedule.*)
+    schedule_config = training_config.get('schedule', {})
+    num_epochs = schedule_config.get('num_epochs', training_config.get('num_epochs', 1))
+    warmup_steps = schedule_config.get('warmup_steps', training_config.get('warmup_steps', 1000))
+    scheduler_type = schedule_config.get('scheduler_type', training_config.get('scheduler_type', 'cosine'))
+    min_lr = schedule_config.get('min_lr', 0.0)
+    print(f"  {Colors.WHITE}num_epochs:{Colors.RESET}            {_format_value(num_epochs)}")
+    print(f"  {Colors.WHITE}warmup_steps:{Colors.RESET}          {_format_value(warmup_steps)}")
+    print(f"  {Colors.WHITE}scheduler_type:{Colors.RESET}        {_format_value(scheduler_type)}")
+    print(f"  {Colors.WHITE}min_lr:{Colors.RESET}                {Colors.CYAN}{min_lr:.2e}{Colors.RESET}")
 
     # ═══════════════════════════════════════════════════════════════════
     # Data Loading
@@ -266,17 +289,33 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
 
     seq_packing = data_config.get('use_sequence_packing', False)
     packing_strategy = data_config.get('packing_strategy', 'greedy')
+    packing_target = data_config.get('packing_target_ratio', 0.95)
     if seq_packing:
         print(f"  {Colors.WHITE}sequence_packing:{Colors.RESET}      {_status_indicator(seq_packing, '20-35% speedup')}")
         print(f"    {Colors.GRAY}└─ strategy:{Colors.RESET} {_format_value(packing_strategy)}")
+        print(f"    {Colors.GRAY}└─ target_ratio:{Colors.RESET} {_format_value(packing_target)}")
     else:
         print(f"  {Colors.WHITE}sequence_packing:{Colors.RESET}      {_status_indicator(seq_packing)}")
+
+    streaming = data_config.get('streaming', False)
+    buffer_size = data_config.get('buffer_size', 10000)
+    if streaming:
+        print(f"  {Colors.WHITE}streaming:{Colors.RESET}             {_status_indicator(streaming, 'memory-efficient')}")
+        print(f"    {Colors.GRAY}└─ buffer_size:{Colors.RESET} {_format_value(buffer_size)}")
+    else:
+        print(f"  {Colors.WHITE}streaming:{Colors.RESET}             {_status_indicator(streaming)}")
 
     lazy_discovery = data_config.get('lazy_file_discovery', False)
     print(f"  {Colors.WHITE}lazy_file_discovery:{Colors.RESET}   {_status_indicator(lazy_discovery, 'memory-efficient for large datasets')}")
 
     num_workers = data_config.get('num_workers', 4)
+    prefetch_factor = data_config.get('prefetch_factor', 2)
+    persistent_workers = data_config.get('persistent_workers', False)
+    pin_memory = data_config.get('dataloader_pin_memory', True)
     print(f"  {Colors.WHITE}num_workers:{Colors.RESET}           {_format_value(num_workers)}")
+    print(f"  {Colors.WHITE}prefetch_factor:{Colors.RESET}       {_format_value(prefetch_factor)}")
+    print(f"  {Colors.WHITE}persistent_workers:{Colors.RESET}    {_status_indicator(persistent_workers)}")
+    print(f"  {Colors.WHITE}pin_memory:{Colors.RESET}            {_status_indicator(pin_memory)}")
 
     # ═══════════════════════════════════════════════════════════════════
     # Advanced Memory Optimizations
@@ -324,22 +363,237 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
     print(f"  {Colors.WHITE}cudnn_benchmark:{Colors.RESET}       {_status_indicator(cudnn_bench, 'auto-tune convolutions')}")
 
     # ═══════════════════════════════════════════════════════════════════
+    # Distributed Training / DeepSpeed
+    # Multi-GPU training configurations and memory optimization strategies
+    # ═══════════════════════════════════════════════════════════════════
+    distributed_config = config.get('distributed', {})
+    deepspeed_config = distributed_config.get('deepspeed', {})
+    print_subheader(f"{Icons.NETWORK} Distributed / DeepSpeed")
+
+    deepspeed_enabled = deepspeed_config.get('enabled', False)
+    zero_stage = deepspeed_config.get('zero_stage', 0)
+    cpu_offload = deepspeed_config.get('cpu_offload', False)
+    nvme_offload = deepspeed_config.get('nvme_offload', False)
+    if deepspeed_enabled:
+        print(f"  {Colors.WHITE}deepspeed:{Colors.RESET}             {_status_indicator(deepspeed_enabled, 'distributed training')}")
+        print(f"    {Colors.GRAY}└─ zero_stage:{Colors.RESET} {_format_value(zero_stage)}")
+        print(f"    {Colors.GRAY}└─ cpu_offload:{Colors.RESET} {_status_indicator(cpu_offload)}")
+        print(f"    {Colors.GRAY}└─ nvme_offload:{Colors.RESET} {_status_indicator(nvme_offload)}")
+        overlap_comm = deepspeed_config.get('zero_overlap_comm', False)
+        print(f"    {Colors.GRAY}└─ overlap_comm:{Colors.RESET} {_status_indicator(overlap_comm)}")
+    else:
+        print(f"  {Colors.WHITE}deepspeed:{Colors.RESET}             {_status_indicator(deepspeed_enabled)}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # CUDA Settings
+    # Low-level CUDA configuration: streams, graphs, kernels
+    # ═══════════════════════════════════════════════════════════════════
+    cuda_config = compute_config.get('cuda', {})
+    kernels_config = compute_config.get('kernels', {})
+    memory_config = compute_config.get('memory', {})
+    print_subheader(f"{Icons.GPU} CUDA Settings")
+
+    # Streams
+    streams_config = cuda_config.get('streams', {})
+    streams_enabled = streams_config.get('enabled', False)
+    num_streams = streams_config.get('num_streams', 2)
+    if streams_enabled:
+        print(f"  {Colors.WHITE}cuda_streams:{Colors.RESET}          {_status_indicator(streams_enabled, 'parallel execution')}")
+        print(f"    {Colors.GRAY}└─ num_streams:{Colors.RESET} {_format_value(num_streams)}")
+    else:
+        print(f"  {Colors.WHITE}cuda_streams:{Colors.RESET}          {_status_indicator(streams_enabled)}")
+
+    # Graphs
+    graphs_config = cuda_config.get('graphs', {})
+    graphs_enabled = graphs_config.get('enabled', False)
+    if graphs_enabled:
+        warmup_steps_graphs = graphs_config.get('warmup_steps', 10)
+        print(f"  {Colors.WHITE}cuda_graphs:{Colors.RESET}           {_status_indicator(graphs_enabled, 'reduced kernel launch overhead')}")
+        print(f"    {Colors.GRAY}└─ warmup_steps:{Colors.RESET} {_format_value(warmup_steps_graphs)}")
+    else:
+        print(f"  {Colors.WHITE}cuda_graphs:{Colors.RESET}           {_status_indicator(graphs_enabled)}")
+
+    # Kernels
+    fused_softmax = kernels_config.get('use_fused_softmax_topk', False)
+    fused_activations = kernels_config.get('use_fused_activations', False)
+    fused_moe = kernels_config.get('use_fused_moe_kernel', False)
+    print(f"  {Colors.WHITE}fused_softmax_topk:{Colors.RESET}    {_status_indicator(fused_softmax)}")
+    print(f"  {Colors.WHITE}fused_activations:{Colors.RESET}     {_status_indicator(fused_activations)}")
+    print(f"  {Colors.WHITE}fused_moe_kernel:{Colors.RESET}      {_status_indicator(fused_moe)}")
+
+    # Memory settings
+    expert_prefetch = memory_config.get('expert_prefetch', {})
+    prefetch_enabled = expert_prefetch.get('enabled', False)
+    prefetch_lookahead = expert_prefetch.get('lookahead', 1)
+    if prefetch_enabled:
+        print(f"  {Colors.WHITE}expert_prefetch:{Colors.RESET}       {_status_indicator(prefetch_enabled, 'hide memory latency')}")
+        print(f"    {Colors.GRAY}└─ lookahead:{Colors.RESET} {_format_value(prefetch_lookahead)}")
+    else:
+        print(f"  {Colors.WHITE}expert_prefetch:{Colors.RESET}       {_status_indicator(prefetch_enabled)}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Logging & Monitoring
+    # Configuration for logging, metrics, and diagnostics
+    # ═══════════════════════════════════════════════════════════════════
+    logging_config = config.get('logging', {})
+    wandb_config = logging_config.get('wandb', {})
+    diagnostics_config = logging_config.get('diagnostics', {})
+    frequencies_config = logging_config.get('frequencies', {})
+    print_subheader(f"{Icons.CHART} Logging & Monitoring")
+
+    wandb_enabled = wandb_config.get('enabled', False)
+    wandb_project = wandb_config.get('project', 'ava-training')
+    if wandb_enabled:
+        print(f"  {Colors.WHITE}wandb:{Colors.RESET}                 {_status_indicator(wandb_enabled, 'experiment tracking')}")
+        print(f"    {Colors.GRAY}└─ project:{Colors.RESET} {_format_value(wandb_project)}")
+    else:
+        print(f"  {Colors.WHITE}wandb:{Colors.RESET}                 {_status_indicator(wandb_enabled)}")
+
+    tensorboard_config = logging_config.get('tensorboard', {})
+    tensorboard_enabled = tensorboard_config.get('enabled', False)
+    print(f"  {Colors.WHITE}tensorboard:{Colors.RESET}           {_status_indicator(tensorboard_enabled)}")
+
+    diagnostics_enabled = diagnostics_config.get('enabled', False)
+    print(f"  {Colors.WHITE}diagnostics:{Colors.RESET}           {_status_indicator(diagnostics_enabled)}")
+
+    log_interval = frequencies_config.get('log_interval', 100)
+    metrics_freq = frequencies_config.get('metrics', 500)
+    print(f"  {Colors.WHITE}log_interval:{Colors.RESET}          {_format_value(log_interval)}")
+    print(f"  {Colors.WHITE}metrics_freq:{Colors.RESET}          {_format_value(metrics_freq)}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Experimental Features
+    # Advanced/experimental capabilities (MTP, MoH, MoA, ALiBi, etc.)
+    # ═══════════════════════════════════════════════════════════════════
+    print_subheader(f"{Icons.EXPERIMENT} Experimental Features")
+
+    # Multi-Token Prediction
+    mtp_config = experimental_config.get('mtp', {})
+    mtp_enabled = mtp_config.get('enabled', False)
+    if mtp_enabled:
+        num_heads = mtp_config.get('num_prediction_heads', 4)
+        print(f"  {Colors.WHITE}multi_token_pred:{Colors.RESET}      {_status_indicator(mtp_enabled, 'parallel token prediction')}")
+        print(f"    {Colors.GRAY}└─ num_heads:{Colors.RESET} {_format_value(num_heads)}")
+    else:
+        print(f"  {Colors.WHITE}multi_token_pred:{Colors.RESET}      {_status_indicator(mtp_enabled)}")
+
+    # Mixture of Heads
+    moh_config = experimental_config.get('moh', {})
+    moh_enabled = moh_config.get('enabled', False)
+    if moh_enabled:
+        active_heads = moh_config.get('num_active_heads', 4)
+        print(f"  {Colors.WHITE}mixture_of_heads:{Colors.RESET}      {_status_indicator(moh_enabled, 'sparse attention heads')}")
+        print(f"    {Colors.GRAY}└─ active_heads:{Colors.RESET} {_format_value(active_heads)}")
+    else:
+        print(f"  {Colors.WHITE}mixture_of_heads:{Colors.RESET}      {_status_indicator(moh_enabled)}")
+
+    # Mixture of Activations
+    moa_config = experimental_config.get('moa', {})
+    moa_enabled = moa_config.get('enabled', False)
+    if moa_enabled:
+        num_activations = moa_config.get('num_activations', 4)
+        print(f"  {Colors.WHITE}mixture_of_activations:{Colors.RESET} {_status_indicator(moa_enabled, 'learned activation routing')}")
+        print(f"    {Colors.GRAY}└─ num_activations:{Colors.RESET} {_format_value(num_activations)}")
+    else:
+        print(f"  {Colors.WHITE}mixture_of_activations:{Colors.RESET} {_status_indicator(moa_enabled)}")
+
+    # ALiBi
+    alibi_config = experimental_config.get('alibi', {})
+    alibi_enabled = alibi_config.get('enabled', False)
+    print(f"  {Colors.WHITE}alibi_positions:{Colors.RESET}       {_status_indicator(alibi_enabled, 'linear attention bias')}")
+
+    # Cross Attention (multimodal)
+    cross_attn_config = experimental_config.get('cross_attention', {})
+    cross_attn_enabled = cross_attn_config.get('enabled', False)
+    print(f"  {Colors.WHITE}cross_attention:{Colors.RESET}       {_status_indicator(cross_attn_enabled, 'multimodal support')}")
+
+    # Gradient Surgery
+    grad_surgery_config = experimental_config.get('gradient_surgery', {})
+    grad_surgery_enabled = grad_surgery_config.get('enabled', False)
+    if grad_surgery_enabled:
+        method = grad_surgery_config.get('method', 'pcgrad')
+        print(f"  {Colors.WHITE}gradient_surgery:{Colors.RESET}      {_status_indicator(grad_surgery_enabled, 'multi-task optimization')}")
+        print(f"    {Colors.GRAY}└─ method:{Colors.RESET} {_format_value(method)}")
+    else:
+        print(f"  {Colors.WHITE}gradient_surgery:{Colors.RESET}      {_status_indicator(grad_surgery_enabled)}")
+
+    # Aux-Free Router
+    aux_free_config = experimental_config.get('aux_free_router', {})
+    aux_free_enabled = aux_free_config.get('enabled', False)
+    print(f"  {Colors.WHITE}aux_free_router:{Colors.RESET}       {_status_indicator(aux_free_enabled, 'no auxiliary losses')}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Validation & Generation Settings
+    # Settings for validation and sample generation during training
+    # ═══════════════════════════════════════════════════════════════════
+    validation_config = training_config.get('validation', {})
+    generation_config = training_config.get('generation', {})
+    print_subheader(f"{Icons.CHECK} Validation & Generation")
+
+    val_enabled = validation_config.get('enabled', False)
+    val_batch_size = validation_config.get('batch_size', 16)
+    val_max_batches = validation_config.get('max_batches', 20)
+    if val_enabled:
+        print(f"  {Colors.WHITE}validation:{Colors.RESET}            {_status_indicator(val_enabled)}")
+        print(f"    {Colors.GRAY}└─ batch_size:{Colors.RESET} {_format_value(val_batch_size)}")
+        print(f"    {Colors.GRAY}└─ max_batches:{Colors.RESET} {_format_value(val_max_batches)}")
+    else:
+        print(f"  {Colors.WHITE}validation:{Colors.RESET}            {_status_indicator(val_enabled)}")
+
+    gen_enabled = generation_config.get('enabled', False)
+    gen_every = generation_config.get('generate_every_n_steps', 1000)
+    gen_temp = generation_config.get('temperature', 0.8)
+    gen_top_p = generation_config.get('top_p', 0.9)
+    if gen_enabled:
+        print(f"  {Colors.WHITE}sample_generation:{Colors.RESET}     {_status_indicator(gen_enabled, 'quality monitoring')}")
+        print(f"    {Colors.GRAY}└─ every_n_steps:{Colors.RESET} {_format_value(gen_every)}")
+        print(f"    {Colors.GRAY}└─ temperature:{Colors.RESET} {_format_value(gen_temp)}")
+        print(f"    {Colors.GRAY}└─ top_p:{Colors.RESET} {_format_value(gen_top_p)}")
+    else:
+        print(f"  {Colors.WHITE}sample_generation:{Colors.RESET}     {_status_indicator(gen_enabled)}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Checkpointing
+    # Checkpoint saving and model selection settings
+    # ═══════════════════════════════════════════════════════════════════
+    checkpoints_config = config.get('checkpoints', {})
+    selection_config = checkpoints_config.get('selection', {})
+    print_subheader(f"{Icons.SAVE} Checkpointing")
+
+    output_dir = checkpoints_config.get('output_dir', 'outputs')
+    save_every = checkpoints_config.get('save_every', 1000)
+    fresh_start = checkpoints_config.get('fresh_start', False)
+    print(f"  {Colors.WHITE}output_dir:{Colors.RESET}            {_format_value(output_dir)}")
+    print(f"  {Colors.WHITE}save_every:{Colors.RESET}            {_format_value(save_every)}")
+    print(f"  {Colors.WHITE}fresh_start:{Colors.RESET}           {_status_indicator(fresh_start)}")
+
+    selection_enabled = selection_config.get('enabled', False)
+    if selection_enabled:
+        print(f"  {Colors.WHITE}model_selection:{Colors.RESET}       {_status_indicator(selection_enabled, 'best model tracking')}")
+    else:
+        print(f"  {Colors.WHITE}model_selection:{Colors.RESET}       {_status_indicator(selection_enabled)}")
+
+    # ═══════════════════════════════════════════════════════════════════
     # Summary with Recommendations
     # ═══════════════════════════════════════════════════════════════════
     print_subheader(f"{Icons.STAR} Optimization Summary")
 
-    # Count enabled optimizations
-    enabled_count = sum([
-        flash_attn, grad_ckpt, grouped_gemm, triton, torch_compile, opt_moe,
-        pretokenized, seq_packing, hybrid_enabled, overlapped_enabled,
-        double_enabled, fp8_enabled, tf32, cudnn_bench
-    ])
-    total_opts = 14
+    # Count enabled optimizations - expanded to cover all features
+    model_opts = sum([flash_attn, grad_ckpt, grouped_gemm, triton, torch_compile, opt_moe])
+    data_opts = sum([pretokenized, seq_packing, streaming, persistent_workers])
+    memory_opts = sum([hybrid_enabled, overlapped_enabled, double_enabled, fp8_enabled])
+    perf_opts = sum([tf32, cudnn_bench, perf_compile, use_fused])
+    cuda_opts = sum([streams_enabled, graphs_enabled, fused_softmax, fused_activations, fused_moe, prefetch_enabled])
+    dist_opts = sum([deepspeed_enabled])
+    exp_opts = sum([mtp_enabled, moh_enabled, moa_enabled, alibi_enabled, aux_free_enabled])
 
-    if enabled_count >= 10:
+    enabled_count = model_opts + data_opts + memory_opts + perf_opts + cuda_opts + dist_opts + exp_opts
+    total_opts = 28  # Updated total
+
+    if enabled_count >= 18:
         score_color = Colors.GREEN
         score_text = "Highly optimized"
-    elif enabled_count >= 5:
+    elif enabled_count >= 10:
         score_color = Colors.YELLOW
         score_text = "Moderately optimized"
     else:
@@ -347,6 +601,13 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
         score_text = "Minimal optimization"
 
     print(f"  {Colors.WHITE}Enabled optimizations:{Colors.RESET} {score_color}{enabled_count}/{total_opts}{Colors.RESET} {Colors.GRAY}({score_text}){Colors.RESET}")
+    print(f"    {Colors.GRAY}├─ Model:{Colors.RESET} {model_opts}/6")
+    print(f"    {Colors.GRAY}├─ Data:{Colors.RESET} {data_opts}/4")
+    print(f"    {Colors.GRAY}├─ Memory:{Colors.RESET} {memory_opts}/4")
+    print(f"    {Colors.GRAY}├─ Performance:{Colors.RESET} {perf_opts}/4")
+    print(f"    {Colors.GRAY}├─ CUDA:{Colors.RESET} {cuda_opts}/6")
+    print(f"    {Colors.GRAY}├─ Distributed:{Colors.RESET} {dist_opts}/1")
+    print(f"    {Colors.GRAY}└─ Experimental:{Colors.RESET} {exp_opts}/5")
 
     # Memory impact estimate
     mem_savings = []
@@ -356,6 +617,8 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
         mem_savings.append("70-80%")
     if mixed_precision in ['fp16', 'bf16']:
         mem_savings.append("50%")
+    if deepspeed_enabled and zero_stage >= 2:
+        mem_savings.append(f"ZeRO-{zero_stage}")
     if mem_savings:
         print(f"  {Colors.WHITE}Est. memory savings:{Colors.RESET}  {Colors.GREEN}{' + '.join(mem_savings)}{Colors.RESET}")
 
@@ -374,10 +637,14 @@ def log_optimization_status(config: dict, rank: int = 0) -> None:
             pass
     if not pretokenized:
         recommendations.append("Use pretokenized data for 60x faster loading")
+    if not seq_packing:
+        recommendations.append("Enable sequence_packing for 20-35% throughput boost")
+    if not use_fused:
+        recommendations.append("Enable fused optimizer for 5-10% speedup")
 
     if recommendations:
         print(f"  {Colors.YELLOW}{Icons.WARNING} Recommendations:{Colors.RESET}")
-        for rec in recommendations[:3]:  # Show top 3 recommendations
+        for rec in recommendations[:4]:  # Show top 4 recommendations
             print(f"    {Colors.GRAY}*{Colors.RESET} {rec}")
 
     print()  # Extra newline at end
@@ -591,12 +858,22 @@ def main(args: argparse.Namespace) -> None:
     # =========================================================================
     rank, world_size = setup_distributed()
 
+    # Set TF32 precision early, before any CUDA operations (PyTorch 2.9+ API)
+    # This prevents deprecation warnings from the old allow_tf32 API
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.fp32_precision = 'tf32'
+        torch.backends.cudnn.conv.fp32_precision = 'tf32'
+
     # For single-GPU training, select the best available GPU
     if world_size == 1 and torch.cuda.is_available():
         best_gpu = select_best_gpu()
         torch.cuda.set_device(best_gpu)
         device = torch.device(f'cuda:{best_gpu}')
     else:
+        # Multi-GPU: Set CUDA device context to rank's GPU BEFORE creating device tensor
+        # This ensures all CUDA operations default to the correct GPU for this rank
+        if torch.cuda.is_available():
+            torch.cuda.set_device(rank)
         device = torch.device(f'cuda:{rank}' if torch.cuda.is_available() else 'cpu')
 
     # =========================================================================
@@ -1687,7 +1964,10 @@ def main(args: argparse.Namespace) -> None:
         tqdm_update_interval = top_level_logging.get('tqdm_update_interval', 10)
 
         # CUDA Graphs config - 15-25% throughput improvement
-        cuda_graphs_config = config.get('cuda_graphs', {})
+        # Config path: compute.cuda.graphs (v2.0 schema)
+        compute_config = config.get('compute', {})
+        cuda_config = compute_config.get('cuda', {})
+        cuda_graphs_config = cuda_config.get('graphs', {})
         use_cuda_graphs = cuda_graphs_config.get('enabled', False)
         cuda_graph_warmup_steps = cuda_graphs_config.get('warmup_steps', 10)
 

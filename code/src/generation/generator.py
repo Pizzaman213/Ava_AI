@@ -48,12 +48,35 @@ class TextGenerator:
         self.tokenizer: "PreTrainedTokenizerBase" = tokenizer
         self.device = device or next(model.parameters()).device
 
-        # Special tokens - critical for proper sequence handling
-        self.eos_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 1
-        self.bos_token_id = getattr(tokenizer, 'bos_token_id', None)
-        if self.bos_token_id is None:
-            self.bos_token_id = 2  # Default BOS token matching tokenizer vocab
-        self.pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
+        # Special tokens - get from model config first, then tokenizer, then defaults
+        # This ensures we match the tokens the model was trained with
+        model_config = getattr(model, 'config', None)
+
+        # EOS token
+        if model_config and hasattr(model_config, 'eos_token_id') and model_config.eos_token_id is not None:
+            self.eos_token_id = model_config.eos_token_id
+        elif tokenizer.eos_token_id is not None:
+            self.eos_token_id = tokenizer.eos_token_id
+        else:
+            self.eos_token_id = 102  # Default to [SEP] for BERT-style tokenizers
+
+        # BOS token
+        if model_config and hasattr(model_config, 'bos_token_id') and model_config.bos_token_id is not None:
+            self.bos_token_id = model_config.bos_token_id
+        elif getattr(tokenizer, 'bos_token_id', None) is not None:
+            self.bos_token_id = tokenizer.bos_token_id
+        else:
+            self.bos_token_id = 101  # Default to [CLS] for BERT-style tokenizers
+
+        # PAD token
+        if model_config and hasattr(model_config, 'pad_token_id') and model_config.pad_token_id is not None:
+            self.pad_token_id = model_config.pad_token_id
+        elif tokenizer.pad_token_id is not None:
+            self.pad_token_id = tokenizer.pad_token_id
+        else:
+            self.pad_token_id = 0
+
+        logger.debug(f"Generator tokens: BOS={self.bos_token_id}, EOS={self.eos_token_id}, PAD={self.pad_token_id}")
 
     @torch.no_grad()
     def generate(
@@ -195,8 +218,16 @@ class TextGenerator:
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=self.device)
 
         while cur_len < max_length:
-            # Get model predictions
-            outputs = self.model(generated)
+            # Create attention mask and position ids for proper model inference
+            attention_mask = torch.ones(
+                (batch_size, generated.shape[1]),
+                dtype=torch.long,
+                device=self.device
+            )
+            position_ids = torch.arange(generated.shape[1], device=self.device).unsqueeze(0).expand(batch_size, -1)
+
+            # Get model predictions with attention mask and position ids
+            outputs = self.model(generated, attention_mask=attention_mask, position_ids=position_ids)
             next_token_logits = outputs['logits'][:, -1, :]
 
             # Apply EOS penalty
@@ -296,10 +327,19 @@ class TextGenerator:
         # Track generated sequences
         generated = expanded_input.clone()
         done = [False] * batch_size
+        effective_batch = batch_size * num_beams
 
         while cur_len < max_length:
-            # Get model predictions
-            outputs = self.model(generated)
+            # Create attention mask and position ids for proper model inference
+            attention_mask = torch.ones(
+                (effective_batch, generated.shape[1]),
+                dtype=torch.long,
+                device=self.device
+            )
+            position_ids = torch.arange(generated.shape[1], device=self.device).unsqueeze(0).expand(effective_batch, -1)
+
+            # Get model predictions with attention mask and position ids
+            outputs = self.model(generated, attention_mask=attention_mask, position_ids=position_ids)
             next_token_logits = outputs['logits'][:, -1, :]
 
             # Apply EOS penalty
@@ -454,6 +494,8 @@ class TextGenerator:
         Block n-grams that would repeat earlier sequences.
 
         This prevents patterns like "time time time" or repeating phrases.
+
+        Uses set-based lookup for O(sequence_length) instead of O(vocab_size * sequence_length).
         """
         batch_size, vocab_size = logits.shape
 
@@ -464,20 +506,137 @@ class TextGenerator:
             if len(gen_tokens) < ngram_size - 1:
                 continue
 
+            # Build a set of all existing n-grams for O(1) lookup
+            existing_ngrams: set = set()
+            for j in range(len(gen_tokens) - ngram_size + 1):
+                ngram = tuple(gen_tokens[j:j + ngram_size])
+                existing_ngrams.add(ngram)
+
             # Get the context (last ngram_size - 1 tokens)
-            context = gen_tokens[-(ngram_size - 1):]
+            context = tuple(gen_tokens[-(ngram_size - 1):])
 
-            # For each possible next token, check if it would create a repeated n-gram
-            for token_id in range(vocab_size):
-                # Construct the potential n-gram
-                potential_ngram = context + [token_id]
+            # Only check tokens that would create a repeated n-gram
+            # by looking for ngrams that start with our context
+            for ngram in existing_ngrams:
+                if ngram[:-1] == context:
+                    # This token would create a repeated n-gram - block it
+                    token_to_block = ngram[-1]
+                    if 0 <= token_to_block < vocab_size:
+                        logits[i, token_to_block] = float('-inf')
 
-                # Search for this n-gram in the already generated sequence
-                for j in range(len(gen_tokens) - ngram_size + 1):
-                    if gen_tokens[j:j + ngram_size] == potential_ngram:
-                        # This n-gram already exists - block it
-                        logits[i, token_id] = float('-inf')
-                        break
+    @torch.no_grad()
+    def generate_stream(
+        self,
+        prompt: Union[str, List[int]],
+        max_length: int = 100,
+        min_length: int = 1,
+        temperature: float = 0.7,
+        top_k: int = 40,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.2,
+        eos_penalty: float = 1.0,
+        do_sample: bool = True,
+        use_ngram_blocking: bool = False,
+        ngram_size: int = 3
+    ):
+        """
+        Generate text token by token, yielding each token as it's generated.
+
+        This is a streaming version of generate() that yields tokens one at a time,
+        allowing for real-time display of generated text.
+
+        Yields:
+            str: Each generated token as text
+        """
+        # Encode prompt with BOS token prepended
+        if isinstance(prompt, str):
+            encoded = self.tokenizer.encode(prompt, return_tensors='pt')
+            input_ids = torch.tensor(encoded) if not isinstance(encoded, torch.Tensor) else encoded
+            if input_ids.dim() == 1:
+                input_ids = input_ids.unsqueeze(0)
+            if input_ids[0, 0].item() != self.bos_token_id:
+                bos_tensor = torch.tensor([[self.bos_token_id]], dtype=input_ids.dtype)
+                input_ids = torch.cat([bos_tensor, input_ids], dim=1)
+        else:
+            input_ids = torch.tensor([prompt]) if not isinstance(prompt, torch.Tensor) else prompt
+            if input_ids.dim() == 1:
+                input_ids = input_ids.unsqueeze(0)
+            if input_ids[0, 0].item() != self.bos_token_id:
+                bos_tensor = torch.tensor([[self.bos_token_id]], dtype=input_ids.dtype)
+                input_ids = torch.cat([bos_tensor, input_ids], dim=1)
+
+        input_ids = input_ids.to(self.device)
+        generated = input_ids.clone()
+        cur_len = input_ids.shape[1]
+
+        while cur_len < max_length:
+            # Create attention mask and position ids for proper model inference
+            attention_mask = torch.ones(
+                (1, generated.shape[1]),
+                dtype=torch.long,
+                device=self.device
+            )
+            position_ids = torch.arange(generated.shape[1], device=self.device).unsqueeze(0)
+
+            # Get model predictions with attention mask and position ids
+            outputs = self.model(generated, attention_mask=attention_mask, position_ids=position_ids)
+            next_token_logits = outputs['logits'][:, -1, :]
+
+            # Apply EOS penalty
+            if eos_penalty != 1.0:
+                self._apply_eos_penalty(next_token_logits, eos_penalty)
+
+            # Apply repetition penalty
+            if repetition_penalty != 1.0:
+                self._apply_repetition_penalty(
+                    next_token_logits,
+                    generated,
+                    repetition_penalty
+                )
+
+            # Apply n-gram blocking
+            if use_ngram_blocking:
+                self._apply_ngram_blocking(
+                    next_token_logits,
+                    generated,
+                    ngram_size
+                )
+
+            # Apply temperature
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
+
+            # Apply top-k and top-p filtering
+            if do_sample:
+                filtered_logits = self._top_k_top_p_filtering(
+                    next_token_logits,
+                    top_k=top_k,
+                    top_p=top_p
+                )
+                probs = F.softmax(filtered_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            else:
+                next_token = torch.argmax(next_token_logits, dim=-1)
+
+            # Get the token id as scalar (next_token is shape [1] for batch_size=1)
+            next_token_id = next_token[0].item() if next_token.dim() > 0 else next_token.item()
+
+            # Force minimum length
+            if cur_len < min_length and next_token_id == self.eos_token_id:
+                next_token = torch.full_like(next_token, self.pad_token_id)
+                next_token_id = self.pad_token_id
+
+            # Check for EOS
+            if next_token_id == self.eos_token_id:
+                break
+
+            # Decode and yield the token
+            token_text = self.tokenizer.decode(next_token.tolist(), skip_special_tokens=True)
+            yield token_text
+
+            # Update generated sequence - next_token is [batch_size], need [batch_size, 1]
+            generated = torch.cat([generated, next_token.unsqueeze(-1)], dim=1)
+            cur_len += 1
 
     def _top_k_top_p_filtering(
         self,

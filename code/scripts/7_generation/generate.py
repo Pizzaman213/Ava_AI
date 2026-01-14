@@ -67,6 +67,7 @@ This script is part of the comprehensive Ava training pipeline supporting:
 """
 
 import argparse
+import logging
 import sys
 import warnings
 import torch  # type: ignore[import-not-found]
@@ -74,6 +75,8 @@ import yaml
 from pathlib import Path
 from typing import Optional, List, Union
 import json
+import threading
+import time
 from tqdm import tqdm
 
 # Suppress Pydantic field attribute warnings early (these come from dependencies)
@@ -86,11 +89,195 @@ except ImportError:
 
 # Add project root to path
 sys.path.append('/root/Ava_AI/code')
+sys.path.insert(0, '/root/Ava_AI/code/src')
 
 from ava.models.moe import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
+from ava.core.logging import (
+    Colors, Icons, supports_color,
+    print_header, print_subheader, print_success, print_info,
+    print_box, print_metric
+)
 from src.generation.generator import TextGenerator
 from transformers import AutoTokenizer  # type: ignore[import-not-found]
 from datetime import datetime
+
+
+class Spinner:
+    """Spinning indicator for long-running operations."""
+
+    def __init__(self, message: str = ""):
+        self.spinner_chars = ['|', '/', '-', '\\']
+        self.message = message
+        self.running = False
+        self.thread = None
+        self.idx = 0
+
+    def _spin(self):
+        while self.running:
+            char = self.spinner_chars[self.idx % len(self.spinner_chars)]
+            print(f'\r{self.message}{char}', end='', flush=True)
+            self.idx += 1
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._spin, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.5)
+        # Clear the spinner character
+        print(f'\r{self.message}', end='', flush=True)
+
+
+# ============================================================================
+# Generation Display Helper Functions
+# ============================================================================
+
+def print_generation_header():
+    """Print header for generation session."""
+    if supports_color():
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}  {Icons.BRAIN} Ava Text Generation{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.RESET}\n")
+    else:
+        print("\n" + "=" * 70)
+        print("  [MODEL] Ava Text Generation")
+        print("=" * 70 + "\n")
+
+
+def print_prompt(prompt_text: str, label: str = "Prompt"):
+    """Print the input prompt with styling."""
+    if supports_color():
+        print(f"{Colors.BOLD}{Colors.LIGHT_BLUE}{Icons.ARROW_RIGHT} {label}:{Colors.RESET}")
+        print(f"  {Colors.WHITE}{prompt_text}{Colors.RESET}")
+    else:
+        print(f"-> {label}:")
+        print(f"  {prompt_text}")
+
+
+def print_generated_text(text: str, label: str = "Generated"):
+    """Print the generated text with styling."""
+    if supports_color():
+        print(f"\n{Colors.BOLD}{Colors.GREEN}{Icons.SUCCESS} {label}:{Colors.RESET}")
+        print(f"  {Colors.LIME}{text}{Colors.RESET}")
+    else:
+        print(f"\n[OK] {label}:")
+        print(f"  {text}")
+
+
+def print_generation_separator():
+    """Print a visual separator between generations."""
+    if supports_color():
+        print(f"\n{Colors.GRAY}{'-' * 50}{Colors.RESET}\n")
+    else:
+        print("\n" + "-" * 50 + "\n")
+
+
+def print_generation_params(args):
+    """Print generation parameters in a formatted way."""
+    if supports_color():
+        print(f"{Colors.DARK_CYAN}{Icons.GEAR} Generation Parameters:{Colors.RESET}")
+        print(f"  {Colors.WHITE}Temperature:{Colors.RESET} {Colors.GOLD}{args.temperature}{Colors.RESET}")
+        print(f"  {Colors.WHITE}Top-p:{Colors.RESET}       {Colors.GOLD}{args.top_p}{Colors.RESET}")
+        print(f"  {Colors.WHITE}Top-k:{Colors.RESET}       {Colors.GOLD}{args.top_k}{Colors.RESET}")
+        print(f"  {Colors.WHITE}Max Length:{Colors.RESET}  {Colors.GOLD}{args.max_length}{Colors.RESET}")
+        if args.repetition_penalty != 1.0:
+            print(f"  {Colors.WHITE}Rep. Penalty:{Colors.RESET} {Colors.GOLD}{args.repetition_penalty}{Colors.RESET}")
+    else:
+        print("[*] Generation Parameters:")
+        print(f"  Temperature: {args.temperature}")
+        print(f"  Top-p:       {args.top_p}")
+        print(f"  Top-k:       {args.top_k}")
+        print(f"  Max Length:  {args.max_length}")
+        if args.repetition_penalty != 1.0:
+            print(f"  Rep. Penalty: {args.repetition_penalty}")
+
+
+def print_batch_progress(current: int, total: int, prompt: str):
+    """Print batch progress with truncated prompt."""
+    truncated = prompt[:40] + "..." if len(prompt) > 40 else prompt
+    if supports_color():
+        print(f"{Colors.LIGHT_BLUE}[{current}/{total}]{Colors.RESET} {Colors.GRAY}{truncated}{Colors.RESET}")
+    else:
+        print(f"[{current}/{total}] {truncated}")
+
+
+def print_interactive_banner():
+    """Print banner for interactive mode."""
+    if supports_color():
+        print(f"\n{Colors.BOLD}{Colors.PURPLE}{'=' * 60}{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.PURPLE}  {Icons.BRAIN} Interactive Generation Mode (Raw Mode){Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.PURPLE}{'=' * 60}{Colors.RESET}")
+        print(f"{Colors.CYAN}Enter prompts for text completion (type 'quit' to exit){Colors.RESET}")
+        print(f"\n{Colors.GRAY}Commands:{Colors.RESET}")
+        print(f"  {Colors.WHITE}/settings{Colors.RESET}          {Colors.GRAY}- show current settings{Colors.RESET}")
+        print(f"  {Colors.WHITE}/set NAME VALUE{Colors.RESET}    {Colors.GRAY}- update parameter{Colors.RESET}")
+        print(f"  {Colors.WHITE}/chat{Colors.RESET}              {Colors.GRAY}- toggle chat mode (OpenOrca){Colors.RESET}")
+        print(f"  {Colors.WHITE}/system <msg>{Colors.RESET}      {Colors.GRAY}- change system prompt{Colors.RESET}")
+        print(f"  {Colors.WHITE}/clear{Colors.RESET}             {Colors.GRAY}- clear conversation history{Colors.RESET}")
+        print(f"\n{Colors.GRAY}Parameters: temperature, top_p, top_k, max_length, repetition_penalty{Colors.RESET}")
+        print(f"{Colors.GRAY}Example: /set temperature 0.8{Colors.RESET}")
+        print(f"{Colors.BOLD}{Colors.PURPLE}{'=' * 60}{Colors.RESET}\n")
+    else:
+        print("\n" + "=" * 60)
+        print("  [MODEL] Interactive Generation Mode (Raw Mode)")
+        print("=" * 60)
+        print("Enter prompts for text completion (type 'quit' to exit)")
+        print("\nCommands:")
+        print("  /settings          - show current settings")
+        print("  /set NAME VALUE    - update parameter")
+        print("  /chat              - toggle chat mode (OpenOrca)")
+        print("  /system <msg>      - change system prompt")
+        print("  /clear             - clear conversation history")
+        print("\nParameters: temperature, top_p, top_k, max_length, repetition_penalty")
+        print("Example: /set temperature 0.8")
+        print("=" * 60 + "\n")
+
+
+def print_assistant_response(response: str):
+    """Print assistant response in interactive mode."""
+    if supports_color():
+        print(f"{Colors.BOLD}{Colors.GREEN}Assistant:{Colors.RESET} {Colors.LIME}{response}{Colors.RESET}")
+    else:
+        print(f"Assistant: {response}")
+
+
+def print_system_prompt_display(prompt: str):
+    """Print the system prompt."""
+    if supports_color():
+        print(f"{Colors.MAGENTA}System:{Colors.RESET} {Colors.GRAY}{prompt}{Colors.RESET}\n")
+    else:
+        print(f"System: {prompt}\n")
+
+
+def print_interactive_settings(settings: dict, system_prompt: str, use_openorca_format: bool):
+    """Print interactive mode settings with colors."""
+    if supports_color():
+        print(f"\n{Colors.DARK_CYAN}{Icons.GEAR} Current settings:{Colors.RESET}")
+        for k, v in settings.items():
+            print(f"  {Colors.WHITE}{k}:{Colors.RESET} {Colors.GOLD}{v}{Colors.RESET}")
+        print(f"  {Colors.WHITE}system_prompt:{Colors.RESET} {Colors.GRAY}{system_prompt}{Colors.RESET}")
+        print(f"  {Colors.WHITE}openorca_format:{Colors.RESET} {Colors.GOLD}{use_openorca_format}{Colors.RESET}")
+    else:
+        print("\nCurrent settings:")
+        for k, v in settings.items():
+            print(f"  {k}: {v}")
+        print(f"  system_prompt: {system_prompt}")
+        print(f"  openorca_format: {use_openorca_format}")
+
+
+def get_user_prompt_label(use_openorca_format: bool) -> str:
+    """Get the colored user prompt label."""
+    if use_openorca_format:
+        if supports_color():
+            return f"{Colors.BOLD}{Colors.CYAN}User:{Colors.RESET} "
+        return "User: "
+    else:
+        if supports_color():
+            return f"{Colors.BOLD}{Colors.CYAN}>{Colors.RESET} "
+        return "> "
 
 
 def find_latest_run(base_dir: str = '/root/Ava_AI/code/outputs/runs') -> Optional[Path]:
@@ -149,6 +336,298 @@ def get_checkpoint_path_from_run(run_dir: Path, checkpoint_type: str = 'latest')
         return checkpoints_dir / f'step_{step_num}' / 'model.pt'
     else:
         raise ValueError(f"Unknown checkpoint type: {checkpoint_type}")
+
+
+def strip_torch_compile_prefix(state_dict: dict) -> dict:
+    """
+    Strip '_orig_mod.' prefix from state dict keys.
+
+    When a model is saved after torch.compile(), the state dict keys get
+    prefixed with '_orig_mod.'. This function removes that prefix so the
+    weights can be loaded into a non-compiled model.
+
+    Args:
+        state_dict: Model state dictionary (potentially with _orig_mod. prefix)
+
+    Returns:
+        State dictionary with cleaned keys
+    """
+    fixed_state_dict = {}
+    prefix = '_orig_mod.'
+    had_prefix = False
+
+    for key, value in state_dict.items():
+        if key.startswith(prefix):
+            new_key = key[len(prefix):]
+            fixed_state_dict[new_key] = value
+            had_prefix = True
+        else:
+            fixed_state_dict[key] = value
+
+    if had_prefix:
+        print(f" Stripped torch.compile prefix from {len(fixed_state_dict)} keys")
+
+    return fixed_state_dict
+
+
+def generate_text(
+    model: torch.nn.Module,
+    tokenizer,
+    prompt: str,
+    max_length: int = 100,
+    temperature: float = 0.8,
+    top_k: int = 50,
+    top_p: float = 0.9,
+    repetition_penalty: float = 1.2,
+    device: str = 'cpu',
+) -> str:
+    """
+    Generate text using the same proven logic as training generation.
+
+    This function properly handles:
+    - BOS/EOS token handling
+    - Attention mask and position IDs
+    - Repetition penalty for both positive and negative logits
+    - Top-k + top-p (nucleus) sampling
+
+    Args:
+        model: The model to use for generation
+        tokenizer: Tokenizer for encoding/decoding
+        prompt: Input prompt text
+        max_length: Maximum tokens to generate
+        temperature: Sampling temperature (higher = more random)
+        top_k: Keep only top-k tokens for sampling
+        top_p: Nucleus sampling threshold
+        repetition_penalty: Penalty for repeating tokens
+        device: Device to run on ('cpu' or 'cuda')
+
+    Returns:
+        Generated text (excluding prompt)
+    """
+    model.eval()
+
+    # Get special token IDs from model config or use BERT defaults
+    model_config = getattr(model, 'config', None)
+    bos_token_id = getattr(model_config, 'bos_token_id', 101) if model_config else 101
+    eos_token_id = getattr(model_config, 'eos_token_id', 102) if model_config else 102
+
+    # Encode prompt
+    token_ids = tokenizer.encode(prompt)
+
+    # NOTE: Removed EOS stripping - models trained with BERT tokenizer expect [SEP] at context end
+    # The model learned to predict continuations after [SEP], not after regular tokens.
+    # If generation produces garbage, the training format might expect EOS at context end.
+
+    # Prepend BOS if not present
+    if token_ids[0] != bos_token_id:
+        token_ids = [bos_token_id] + token_ids
+
+    prompt_len = len(token_ids)
+    generated_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
+    attention_mask = torch.ones_like(generated_ids, dtype=torch.long)
+
+    with torch.no_grad():
+        for _ in range(max_length):
+            # Create position IDs
+            current_len = generated_ids.shape[1]
+            position_ids = torch.arange(current_len, device=device).unsqueeze(0)
+
+            # Forward pass with attention mask and position IDs
+            outputs = model(generated_ids, attention_mask=attention_mask, position_ids=position_ids)
+            logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+
+            # Get next token logits and apply temperature
+            next_logits = logits[:, -1, :] / max(temperature, 1e-5)
+
+            # Apply repetition penalty (handles both positive and negative logits)
+            if repetition_penalty > 1.0 and generated_ids.shape[1] > 0:
+                recent_tokens = generated_ids[0, -50:].tolist()
+                for token_id_int in recent_tokens:
+                    if next_logits[0, token_id_int] < 0:
+                        next_logits[0, token_id_int] *= repetition_penalty
+                    else:
+                        next_logits[0, token_id_int] /= repetition_penalty
+
+            # Compute probabilities
+            probs = torch.softmax(next_logits, dim=-1)
+
+            # Top-k filtering
+            if top_k > 0 and top_k < probs.shape[-1]:
+                top_k_probs, top_k_indices = torch.topk(probs, min(top_k, probs.shape[-1]), dim=-1)
+
+                # Apply top-p within top-k
+                sorted_probs, sort_idx = torch.sort(top_k_probs, descending=True, dim=-1)
+                cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                mask = cum_probs > top_p
+                mask[..., 0] = False  # Always keep at least one token
+                sorted_probs[mask] = 0.0
+
+                # Normalize
+                prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                if prob_sum < 1e-10:
+                    sorted_probs = torch.ones_like(sorted_probs) / sorted_probs.shape[-1]
+                else:
+                    sorted_probs = sorted_probs / (prob_sum + 1e-10)
+
+                # Sample
+                sampled_idx = torch.multinomial(sorted_probs, num_samples=1)
+                local_idx = sort_idx.gather(-1, sampled_idx)
+                next_token = top_k_indices.gather(-1, local_idx)
+            else:
+                # Just use top-p on full distribution
+                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                mask = cum_probs > top_p
+                mask[..., 0] = False
+                sorted_probs[mask] = 0.0
+                sorted_probs = sorted_probs / (sorted_probs.sum(dim=-1, keepdim=True) + 1e-10)
+                sampled_idx = torch.multinomial(sorted_probs, num_samples=1)
+                next_token = sorted_indices.gather(-1, sampled_idx)
+
+            # Append token
+            generated_ids = torch.cat([generated_ids, next_token], dim=1)
+            attention_mask = torch.cat([
+                attention_mask,
+                torch.ones((1, 1), dtype=torch.long, device=device)
+            ], dim=-1)
+
+            # Stop on EOS
+            if next_token[0, 0].item() == eos_token_id:
+                break
+
+    # Decode only the generated part (excluding prompt)
+    generated_tokens = generated_ids[0, prompt_len:].tolist()
+    return tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+
+def generate_text_stream(
+    model: torch.nn.Module,
+    tokenizer,
+    prompt: str,
+    max_length: int = 100,
+    temperature: float = 0.8,
+    top_k: int = 50,
+    top_p: float = 0.9,
+    repetition_penalty: float = 1.2,
+    device: str = 'cpu',
+):
+    """
+    Stream text generation token by token using proven training logic.
+
+    Yields tokens as they are generated for real-time display.
+    Handles WordPiece tokenization properly by decoding incrementally.
+
+    Args:
+        model: The model to use for generation
+        tokenizer: Tokenizer for encoding/decoding
+        prompt: Input prompt text
+        max_length: Maximum tokens to generate
+        temperature: Sampling temperature
+        top_k: Keep only top-k tokens for sampling
+        top_p: Nucleus sampling threshold
+        repetition_penalty: Penalty for repeating tokens
+        device: Device to run on
+
+    Yields:
+        str: Each generated token/word as text with proper spacing
+    """
+    model.eval()
+
+    # Get special token IDs from model config or use BERT defaults
+    model_config = getattr(model, 'config', None)
+    bos_token_id = getattr(model_config, 'bos_token_id', 101) if model_config else 101
+    eos_token_id = getattr(model_config, 'eos_token_id', 102) if model_config else 102
+
+    # Encode prompt
+    token_ids = tokenizer.encode(prompt)
+
+    # NOTE: Removed EOS stripping - models trained with BERT tokenizer expect [SEP] at context end
+    # The model learned to predict continuations after [SEP], not after regular tokens.
+
+    # Prepend BOS if not present
+    if token_ids[0] != bos_token_id:
+        token_ids = [bos_token_id] + token_ids
+
+    prompt_len = len(token_ids)
+    generated_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
+    attention_mask = torch.ones_like(generated_ids, dtype=torch.long)
+
+    # Track previously decoded text to yield only new content
+    prev_decoded = ""
+
+    with torch.no_grad():
+        for _ in range(max_length):
+            # Create position IDs
+            current_len = generated_ids.shape[1]
+            position_ids = torch.arange(current_len, device=device).unsqueeze(0)
+
+            # Forward pass
+            outputs = model(generated_ids, attention_mask=attention_mask, position_ids=position_ids)
+            logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+
+            # Get next token logits and apply temperature
+            next_logits = logits[:, -1, :] / max(temperature, 1e-5)
+
+            # Apply repetition penalty
+            if repetition_penalty > 1.0 and generated_ids.shape[1] > 0:
+                recent_tokens = generated_ids[0, -50:].tolist()
+                for token_id_int in recent_tokens:
+                    if next_logits[0, token_id_int] < 0:
+                        next_logits[0, token_id_int] *= repetition_penalty
+                    else:
+                        next_logits[0, token_id_int] /= repetition_penalty
+
+            # Compute probabilities
+            probs = torch.softmax(next_logits, dim=-1)
+
+            # Top-k + top-p sampling
+            if top_k > 0 and top_k < probs.shape[-1]:
+                top_k_probs, top_k_indices = torch.topk(probs, min(top_k, probs.shape[-1]), dim=-1)
+                sorted_probs, sort_idx = torch.sort(top_k_probs, descending=True, dim=-1)
+                cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                mask = cum_probs > top_p
+                mask[..., 0] = False
+                sorted_probs[mask] = 0.0
+                prob_sum = sorted_probs.sum(dim=-1, keepdim=True)
+                if prob_sum < 1e-10:
+                    sorted_probs = torch.ones_like(sorted_probs) / sorted_probs.shape[-1]
+                else:
+                    sorted_probs = sorted_probs / (prob_sum + 1e-10)
+                sampled_idx = torch.multinomial(sorted_probs, num_samples=1)
+                local_idx = sort_idx.gather(-1, sampled_idx)
+                next_token = top_k_indices.gather(-1, local_idx)
+            else:
+                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                cum_probs = torch.cumsum(sorted_probs, dim=-1)
+                mask = cum_probs > top_p
+                mask[..., 0] = False
+                sorted_probs[mask] = 0.0
+                sorted_probs = sorted_probs / (sorted_probs.sum(dim=-1, keepdim=True) + 1e-10)
+                sampled_idx = torch.multinomial(sorted_probs, num_samples=1)
+                next_token = sorted_indices.gather(-1, sampled_idx)
+
+            # Append token first
+            generated_ids = torch.cat([generated_ids, next_token], dim=1)
+            attention_mask = torch.cat([
+                attention_mask,
+                torch.ones((1, 1), dtype=torch.long, device=device)
+            ], dim=-1)
+
+            # Decode full generated sequence and yield the new part
+            # This handles WordPiece properly (spaces are added correctly)
+            generated_tokens = generated_ids[0, prompt_len:].tolist()
+            current_decoded = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+            # Yield only the new part
+            if len(current_decoded) > len(prev_decoded):
+                new_text = current_decoded[len(prev_decoded):]
+                if new_text:
+                    yield new_text
+                prev_decoded = current_decoded
+
+            # Stop on EOS
+            if next_token[0, 0].item() == eos_token_id:
+                break
 
 
 class GenerationPipeline:
@@ -268,6 +747,42 @@ class GenerationPipeline:
         valid_keys = set(EnhancedMoEConfig.__dataclass_fields__.keys())
         filtered_config = {k: v for k, v in model_config.items() if k in valid_keys}
 
+        # FIX: Detect expert format from checkpoint state dict and override activation if needed
+        # This handles checkpoints trained with non-gated experts (gelu) despite config saying swiglu
+        ckpt_state_dict = None
+        if 'model_state_dict' in checkpoint:
+            ckpt_state_dict = checkpoint['model_state_dict']
+        elif 'module' in checkpoint:
+            ckpt_state_dict = checkpoint['module']
+
+        if ckpt_state_dict is not None:
+            # Check for gated vs non-gated expert weights
+            has_gated = any('gate_up_weights' in k for k in ckpt_state_dict.keys())
+            has_non_gated = any('.experts.up_weights' in k for k in ckpt_state_dict.keys())
+
+            if has_non_gated and not has_gated:
+                # Checkpoint uses non-gated experts (trained with gelu despite config claiming swiglu)
+                filtered_config['activation'] = 'gelu'
+                print("  Note: Detected non-gated expert weights, using activation='gelu'")
+            elif has_gated and not has_non_gated:
+                # Checkpoint uses gated experts (swiglu/geglu)
+                if filtered_config.get('activation', 'gelu') == 'gelu':
+                    filtered_config['activation'] = 'swiglu'
+                    print("  Note: Detected gated expert weights, using activation='swiglu'")
+
+            # FIX: Detect tied vs untied embeddings mismatch
+            # If checkpoint has separate lm_head.weight and token_embedding.weight,
+            # don't tie them even if config says to (checkpoint may have been saved incorrectly)
+            has_separate_lm_head = 'lm_head.weight' in ckpt_state_dict and 'token_embedding.weight' in ckpt_state_dict
+            if has_separate_lm_head and filtered_config.get('tie_word_embeddings', False):
+                # Check if they're actually different (torch is already imported at module level)
+                lm_w = ckpt_state_dict['lm_head.weight']
+                emb_w = ckpt_state_dict['token_embedding.weight']
+                # Use simple comparison to avoid torch import issue
+                if lm_w.shape == emb_w.shape and not (lm_w == emb_w).all().item():
+                    filtered_config['tie_word_embeddings'] = False
+                    print("  Note: Checkpoint has separate lm_head weights, disabling tie_word_embeddings")
+
         # Initialize model
         print(" Initializing model...")
         self.config = EnhancedMoEConfig(**filtered_config)
@@ -278,79 +793,62 @@ class GenerationPipeline:
             print(f" Loading DeepSpeed model state from {deepspeed_path}")
             ds_checkpoint = torch.load(deepspeed_path, map_location=self.device, weights_only=False)
             if 'module' in ds_checkpoint:
-                self.model.load_state_dict(ds_checkpoint['module'])
+                state_dict = strip_torch_compile_prefix(ds_checkpoint['module'])
+                self.model.load_state_dict(state_dict, strict=False)
                 print(f" DeepSpeed model loaded successfully")
             else:
                 raise ValueError("Invalid DeepSpeed checkpoint format")
         elif is_train_100m and 'model_state_dict' in checkpoint:
             # train_100m_full.py format
             print(" Loading model state (train_100m_full.py)")
-            self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            state_dict = strip_torch_compile_prefix(checkpoint['model_state_dict'])
+            self.model.load_state_dict(state_dict, strict=False)
             print(f" Model loaded successfully")
             print(f"  Epoch: {checkpoint.get('epoch', '?')}, Step: {checkpoint.get('step', '?')}")
         elif is_new_framework and 'model_state_dict' in checkpoint:
             # New framework format
             print(" Loading model state (new framework)")
-            self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            state_dict = strip_torch_compile_prefix(checkpoint['model_state_dict'])
+            self.model.load_state_dict(state_dict, strict=False)
             print(f" Model loaded from run: {checkpoint.get('run_id', 'unknown')}")
             print(f"  Epoch: {checkpoint.get('epoch', '?')}, Step: {checkpoint.get('step', '?')}, Loss: {checkpoint.get('loss', '?'):.4f}")
         elif 'model_state_dict' in checkpoint:
             # Old framework format
             print(" Loading model state (old framework)")
-            self.model.load_state_dict(checkpoint['model_state_dict'])
+            state_dict = strip_torch_compile_prefix(checkpoint['model_state_dict'])
+            self.model.load_state_dict(state_dict, strict=False)
             print(f" Model loaded successfully")
         elif 'module' in checkpoint:
             # DeepSpeed format
             print(" Loading model state (DeepSpeed)")
-            self.model.load_state_dict(checkpoint['module'])
+            state_dict = strip_torch_compile_prefix(checkpoint['module'])
+            self.model.load_state_dict(state_dict, strict=False)
             print(f" Model loaded successfully")
         else:
             # Raw state dict
             print(" Loading model state (raw state dict)")
-            self.model.load_state_dict(checkpoint)
+            state_dict = strip_torch_compile_prefix(checkpoint)
+            self.model.load_state_dict(state_dict, strict=False)
             print(f" Model loaded successfully")
+
+        # FIX: Verify expert weights loaded correctly (defensive check)
+        if ckpt_state_dict is not None:
+            model_keys = set(self.model.state_dict().keys())
+            ckpt_keys = set(ckpt_state_dict.keys())
+            missing_in_ckpt = model_keys - ckpt_keys
+            expert_missing = [k for k in missing_in_ckpt if 'expert' in k and 'weight' in k]
+            if len(expert_missing) > 10:
+                print(f" WARNING: {len(expert_missing)} expert weight keys not loaded!")
+                print(f"          This may cause garbage output. Check activation mismatch.")
+                print(f"          Checkpoint has: {'gate_up_weights' if 'gate_up_weights' in str(ckpt_keys) else 'up_weights'}")
+                print(f"          Model expects: {'gate_up_weights' if 'gate_up_weights' in str(model_keys) else 'up_weights'}")
 
         self.model.to(self.device)
         self.model.eval()
 
-        # Initialize tokenizer - try to get from config, fallback to vocab_size mapping
-        tokenizer_path = None
-
-        # First, try to get tokenizer path from checkpoint config
-        if (is_train_100m or is_new_framework) and 'config' in checkpoint:
-            config_data = checkpoint['config']
-            # Check if there's a data section with tokenizer_name
-            if isinstance(config_data, dict) and 'data' in config_data:
-                tokenizer_path = config_data['data'].get('tokenizer_name')
-
-        # Fallback: auto-detect from model vocab size
-        if not tokenizer_path:
-            model_vocab_size = self.config.vocab_size
-            tokenizer_map = {
-                500: 'enhanced-500',
-                1000: 'enhanced-1000',
-                27000: 'enhanced-27000',
-                57000: 'enhanced-57000',
-                65536: 'enhanced-65536'
-            }
-            tokenizer_name = tokenizer_map.get(model_vocab_size, 'enhanced-65536')
-            tokenizer_path = f'/root/Ava_AI/code/models/tokenizer/{tokenizer_name}'
-            print(f" Auto-detected vocab_size={model_vocab_size}, using tokenizer: {tokenizer_name}")
-        else:
-            print(f" Using tokenizer from checkpoint config: {tokenizer_path}")
-
-        # Handle relative paths and fix duplicated project paths
-        tokenizer_path_resolved = tokenizer_path
-
-        # Fix paths with /root/Ava_AI/code/code/ (duplicated /code/)
-        if tokenizer_path_resolved and '/code/code/' in tokenizer_path_resolved:
-            tokenizer_path_resolved = tokenizer_path_resolved.replace('/code/code/', '/code/')
-
-        if tokenizer_path_resolved and not tokenizer_path_resolved.startswith('/'):
-            # Try to resolve as absolute path first
-            potential_path = Path('/root/Ava_AI') / tokenizer_path_resolved if not tokenizer_path_resolved.startswith('/root/Ava_AI') else Path(tokenizer_path_resolved)
-            if potential_path.exists():
-                tokenizer_path_resolved = str(potential_path)
+        # Initialize tokenizer - use default path
+        default_tokenizer_path = '/root/Ava_AI/pretokenized_data/tokenizers/vocab'
+        tokenizer_path_resolved = default_tokenizer_path
 
         print(f" Loading tokenizer from {tokenizer_path_resolved}")
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path_resolved)
@@ -358,7 +856,7 @@ class GenerationPipeline:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         print(f" Tokenizer loaded: vocab_size={len(self.tokenizer)}")
 
-        # Initialize generator
+        # Initialize generator (kept for backward compatibility, but we use generate_text directly)
         self.generator = TextGenerator(self.model, self.tokenizer)
 
     def generate(
@@ -366,7 +864,7 @@ class GenerationPipeline:
         prompt: Union[str, List[str]],
         max_length: int = 100,
         min_length: int = 0,
-        temperature: float = 1.0,
+        temperature: float = 0.8,
         top_p: float = 0.9,
         top_k: int = 50,
         num_beams: int = 1,
@@ -377,7 +875,7 @@ class GenerationPipeline:
         ngram_size: int = 3
     ) -> Union[str, List[str]]:
         """
-        Generate text from prompt(s).
+        Generate text from prompt(s) using the proven training generation logic.
 
         Args:
             prompt: Input prompt(s) for generation
@@ -386,10 +884,10 @@ class GenerationPipeline:
             temperature: Sampling temperature (higher = more random)
             top_p: Nucleus sampling probability threshold
             top_k: Top-k sampling parameter
-            num_beams: Number of beams for beam search
+            num_beams: Number of beams for beam search (not used, kept for API compat)
             repetition_penalty: Penalty for repeating tokens
-            eos_penalty: Penalty multiplier for EOS token (>1.0 = discourage EOS)
-            do_sample: Whether to use sampling (vs greedy decoding)
+            eos_penalty: Penalty multiplier for EOS token (not used, kept for API compat)
+            do_sample: Whether to use sampling (not used, kept for API compat)
 
         Returns:
             Generated text(s)
@@ -399,42 +897,65 @@ class GenerationPipeline:
             prompt = [prompt]
 
         generated_texts = []
+        device_str = str(self.device)
 
         for p in tqdm(prompt, desc="Generating", disable=len(prompt) == 1):
-            output = self.generator.generate(
+            # Use the new generate_text function with proven logic
+            output = generate_text(
+                model=self.model,
+                tokenizer=self.tokenizer,
                 prompt=p,
                 max_length=max_length,
-                min_length=min_length,
                 temperature=temperature,
-                top_p=top_p,
                 top_k=top_k,
-                num_beams=num_beams,
+                top_p=top_p,
                 repetition_penalty=repetition_penalty,
-                eos_penalty=eos_penalty,
-                do_sample=do_sample,
-                use_ngram_blocking=use_ngram_blocking,
-                ngram_size=ngram_size
+                device=device_str,
             )
             generated_texts.append(output)
 
         return generated_texts[0] if single_prompt else generated_texts
+
+    def generate_stream(
+        self,
+        prompt: str,
+        max_length: int = 100,
+        min_length: int = 0,
+        temperature: float = 0.8,
+        top_p: float = 0.9,
+        top_k: int = 50,
+        repetition_penalty: float = 1.2,
+        eos_penalty: float = 1.0,
+        do_sample: bool = True,
+        use_ngram_blocking: bool = False,
+        ngram_size: int = 3
+    ):
+        """
+        Stream generate text token by token using proven training logic.
+
+        Yields:
+            str: Each token as it's generated
+        """
+        device_str = str(self.device)
+        for token in generate_text_stream(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            prompt=prompt,
+            max_length=max_length,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            device=device_str,
+        ):
+            yield token
 
     def interactive_generation(self):
         """
         Interactive generation mode for real-time text generation.
         Uses OpenOrca format (System/User/Assistant) for prompts.
         """
-        print("\n" + "="*60)
-        print(" Interactive Generation Mode (OpenOrca Format)")
-        print("="*60)
-        print("Enter your messages (type 'quit' to exit)")
-        print("\nCommands:")
-        print("  /settings     - show current settings")
-        print("  /set <p> <v>  - update parameter (e.g., /set temperature 0.7)")
-        print("  /system <msg> - change system prompt")
-        print("  /clear        - clear conversation history")
-        print("  /raw          - toggle raw mode (no OpenOrca formatting)")
-        print("="*60 + "\n")
+        print_interactive_banner()
 
         # Default settings
         settings = {
@@ -447,25 +968,20 @@ class GenerationPipeline:
 
         # OpenOrca format settings
         system_prompt = "You are a helpful assistant that provides clear and accurate information."
-        use_openorca_format = True
+        use_openorca_format = False  # Raw mode by default
         conversation_history = []
-
-        print(f"System: {system_prompt}\n")
 
         while True:
             try:
-                user_input = input("User: ").strip()
+                prompt_label = get_user_prompt_label(use_openorca_format)
+                user_input = input(prompt_label).strip()
 
                 if user_input.lower() == 'quit':
-                    print("\nGoodbye!")
+                    print_info("Goodbye!")
                     break
 
                 if user_input.startswith('/settings'):
-                    print("\nCurrent settings:")
-                    for k, v in settings.items():
-                        print(f"  {k}: {v}")
-                    print(f"  system_prompt: {system_prompt}")
-                    print(f"  openorca_format: {use_openorca_format}")
+                    print_interactive_settings(settings, system_prompt, use_openorca_format)
                     continue
 
                 if user_input.startswith('/set '):
@@ -475,30 +991,42 @@ class GenerationPipeline:
                         if param in settings:
                             try:
                                 settings[param] = type(settings[param])(value)
-                                print(f"Updated {param} to {value}")
+                                print_success(f"Updated {param} to {value}")
                             except ValueError:
-                                print(f"Invalid value for {param}")
+                                if supports_color():
+                                    print(f"{Colors.RED}Invalid value for {param}{Colors.RESET}")
+                                else:
+                                    print(f"Invalid value for {param}")
                         else:
-                            print(f"Unknown parameter: {param}")
+                            valid_params = ', '.join(settings.keys())
+                            if supports_color():
+                                print(f"{Colors.YELLOW}Unknown parameter: {param}{Colors.RESET}")
+                                print(f"{Colors.GRAY}Valid parameters: {valid_params}{Colors.RESET}")
+                            else:
+                                print(f"Unknown parameter: {param}")
+                                print(f"Valid parameters: {valid_params}")
                     else:
-                        print("Usage: /set <parameter> <value>")
+                        valid_params = ', '.join(settings.keys())
+                        print_info(f"Usage: /set <parameter> <value>")
+                        print_info(f"Parameters: {valid_params}")
                     continue
 
                 if user_input.startswith('/system '):
                     system_prompt = user_input[8:].strip()
-                    print(f"System prompt updated to: {system_prompt}")
+                    print_success("System prompt updated")
+                    print_system_prompt_display(system_prompt)
                     conversation_history = []  # Clear history on system change
                     continue
 
                 if user_input == '/clear':
                     conversation_history = []
-                    print("Conversation history cleared.")
+                    print_success("Conversation history cleared")
                     continue
 
-                if user_input == '/raw':
+                if user_input == '/chat' or user_input == '/raw':
                     use_openorca_format = not use_openorca_format
-                    mode = "disabled" if not use_openorca_format else "enabled"
-                    print(f"OpenOrca formatting {mode}")
+                    mode = "Chat mode (OpenOrca)" if use_openorca_format else "Raw mode"
+                    print_info(f"Switched to: {mode}")
                     continue
 
                 if not user_input:
@@ -518,19 +1046,57 @@ class GenerationPipeline:
                 else:
                     full_prompt = user_input
 
-                print("\nAssistant: ", end="", flush=True)
-                response = self.generate(full_prompt, **settings)
+                # Stream tokens as they're generated
+                # Show spinner until first token arrives
+                if use_openorca_format:
+                    output_prefix = "Assistant: "
+                else:
+                    # In raw mode, show the prompt being continued
+                    output_prefix = f"{user_input}"
+                spinner = Spinner(output_prefix)
+                spinner.start()
+                response_tokens = []
+                stop_generation = False
+                first_token = True
 
-                # Extract just the assistant's response (remove the prompt echo if present)
-                if use_openorca_format and response.startswith(full_prompt):
-                    response = response[len(full_prompt):].strip()
+                for token in self.generate_stream(full_prompt, **settings):
+                    # Stop spinner on first token
+                    if first_token:
+                        spinner.stop()
+                        first_token = False
+                    # Check for stop tokens
+                    response_tokens.append(token)
+                    response_so_far = ''.join(response_tokens)
 
-                # Clean up response - stop at next "User:" or "System:" if present
+                    # Check if we hit a stop sequence
+                    for stop_token in ["\nUser:", "\nSystem:", "\n\nUser:", "\n\nSystem:"]:
+                        if stop_token in response_so_far:
+                            # Print only up to the stop token
+                            clean_response = response_so_far.split(stop_token)[0]
+                            # Calculate what we haven't printed yet
+                            already_printed = ''.join(response_tokens[:-1])
+                            remaining = clean_response[len(already_printed):]
+                            print(remaining, end="", flush=True)
+                            stop_generation = True
+                            break
+
+                    if stop_generation:
+                        break
+
+                    # Print the token
+                    print(token, end="", flush=True)
+
+                # Stop spinner if no tokens were generated
+                if first_token:
+                    spinner.stop()
+
+                print()  # Newline after response
+                response = ''.join(response_tokens)
+
+                # Clean up response for history
                 for stop_token in ["\nUser:", "\nSystem:", "\n\nUser:", "\n\nSystem:"]:
                     if stop_token in response:
                         response = response.split(stop_token)[0].strip()
-
-                print(response)
 
                 # Save to conversation history
                 if use_openorca_format:
@@ -612,8 +1178,8 @@ Examples:
                        help='Top-k sampling parameter')
     parser.add_argument('--num-beams', type=int, default=1,
                        help='Number of beams for beam search')
-    parser.add_argument('--repetition-penalty', type=float, default=2.0,
-                       help='Penalty for repeating tokens')
+    parser.add_argument('--repetition-penalty', type=float, default=1.2,
+                       help='Penalty for repeating tokens (default: 1.2)')
     parser.add_argument('--eos-penalty', type=float, default=1.0,
                        help='Penalty multiplier for EOS token (>1.0 = discourage EOS)')
     parser.add_argument('--use-ngram-blocking', action='store_true',
@@ -723,6 +1289,10 @@ Examples:
 
     elif args.prompt:
         # Single prompt generation
+        print_generation_header()
+        print_generation_params(args)
+        print_generation_separator()
+
         output = pipeline.generate(
             prompt=args.prompt,
             max_length=args.max_length,
@@ -738,8 +1308,8 @@ Examples:
             ngram_size=args.ngram_size
         )
 
-        print(f"\n Prompt: {args.prompt}")
-        print(f" Generated:\n{output}")
+        print_prompt(args.prompt)
+        print_generated_text(output)
 
         if args.output_file:
             with open(args.output_file, 'w') as f:
@@ -747,14 +1317,18 @@ Examples:
                     f.write('\n'.join(output))
                 else:
                     f.write(output)
-            print(f"\n Saved to {args.output_file}")
+            print_success(f"Saved to {args.output_file}")
 
     elif args.input_file:
         # Batch generation from file
+        print_generation_header()
+
         with open(args.input_file, 'r') as f:
             prompts = [line.strip() for line in f if line.strip()]
 
-        print(f" Loaded {len(prompts)} prompts from {args.input_file}")
+        print_info(f"Loaded {len(prompts)} prompts from {args.input_file}")
+        print_generation_params(args)
+        print_generation_separator()
 
         outputs = pipeline.generate(
             prompt=prompts,
@@ -777,12 +1351,13 @@ Examples:
                     f.write(f"Prompt: {prompt}\n")
                     f.write(f"Response: {output}\n")
                     f.write("-" * 50 + "\n")
-            print(f" Saved {len(outputs)} responses to {args.output_file}")
+            print_success(f"Saved {len(outputs)} responses to {args.output_file}")
         else:
-            for prompt, output in zip(prompts, outputs):
-                print(f"\n Prompt: {prompt}")
-                print(f" Generated: {output}")
-                print("-" * 50)
+            for i, (prompt, output) in enumerate(zip(prompts, outputs), 1):
+                print_batch_progress(i, len(prompts), prompt)
+                print_prompt(prompt, label=f"Prompt {i}")
+                print_generated_text(output, label="Response")
+                print_generation_separator()
 
 
 if __name__ == "__main__":

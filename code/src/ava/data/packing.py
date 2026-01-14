@@ -147,6 +147,87 @@ def validate_attention_mask(
                 )
 
 
+def validate_document_boundaries(
+    attention_mask: torch.Tensor,
+    document_ids: torch.Tensor,
+    name: str = "packed_batch"
+) -> bool:
+    """
+    Validate that attention mask correctly blocks cross-document attention.
+
+    This is a critical runtime check to ensure document boundary masking is working.
+    Cross-document attention causes the model to learn broken grammar from unrelated
+    sequences, which can silently degrade model quality.
+
+    Args:
+        attention_mask: [batch_size, seq_len, seq_len] or [seq_len, seq_len] attention mask
+        document_ids: [batch_size, seq_len] or [seq_len] document IDs (-1 for padding)
+        name: Name for error messages
+
+    Returns:
+        True if validation passes
+
+    Raises:
+        ValueError: If cross-document attention is detected (mask allows attention
+                   between positions with different document IDs)
+    """
+    if attention_mask is None or document_ids is None:
+        return True
+
+    # Handle both batched and unbatched inputs
+    if attention_mask.ndim == 2:
+        attention_mask = attention_mask.unsqueeze(0)
+        document_ids = document_ids.unsqueeze(0)
+
+    batch_size, seq_len, _ = attention_mask.shape
+
+    # Check each batch item
+    violations_found = []
+    for b in range(min(batch_size, 4)):  # Check first 4 items for performance
+        mask = attention_mask[b]
+        doc_ids = document_ids[b]
+
+        # Find positions where attention is allowed (mask value is 0, not -inf)
+        # For additive masks: 0 means attend, -inf means block
+        can_attend = torch.isfinite(mask) & (mask > -1e9)
+
+        # For each attending pair, check if they're in the same document
+        for i in range(min(seq_len, 64)):  # Check first 64 positions
+            for j in range(i + 1):  # Only check causal positions
+                if can_attend[i, j]:
+                    # Position i attends to position j - must be same document
+                    doc_i = doc_ids[i].item()
+                    doc_j = doc_ids[j].item()
+
+                    # Skip padding positions
+                    if doc_i == -1 or doc_j == -1:
+                        continue
+
+                    if doc_i != doc_j:
+                        violations_found.append((b, i, j, doc_i, doc_j))
+                        if len(violations_found) >= 5:  # Limit violations to report
+                            break
+            if len(violations_found) >= 5:
+                break
+        if len(violations_found) >= 5:
+            break
+
+    if violations_found:
+        violation_str = "\n".join([
+            f"  batch[{b}]: pos {i} (doc={di}) attends to pos {j} (doc={dj})"
+            for b, i, j, di, dj in violations_found[:5]
+        ])
+        raise ValueError(
+            f"{name}: Cross-document attention detected! "
+            f"Document boundary masking is NOT working correctly.\n"
+            f"Violations found:\n{violation_str}\n"
+            f"This will cause the model to learn broken grammar. "
+            f"Check that document_ids are correctly assigned during packing."
+        )
+
+    return True
+
+
 def create_document_attention_mask(
     document_ids: torch.Tensor,
     dtype: torch.dtype = torch.float32
@@ -1031,6 +1112,13 @@ class SequencePackingCollator:
                 attention_mask_2d,
                 expected_shape=(batch_size, seq_len, seq_len),
                 expected_dtype=self.mask_dtype,
+                name="packed_attention_mask"
+            )
+            # FIX: Also validate document boundaries are correctly enforced
+            # This catches silent bugs where cross-document attention occurs
+            validate_document_boundaries(
+                attention_mask_2d,
+                document_ids,
                 name="packed_attention_mask"
             )
 

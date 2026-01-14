@@ -37,7 +37,7 @@ from torch.utils.data import IterableDataset, Dataset, DataLoader
 import random
 import pyarrow as pa
 import pyarrow.ipc as ipc
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 
@@ -203,443 +203,6 @@ except ImportError as e:
     logger.warning("If use_sequence_packing=true in config, it will be ignored!")
     logger.warning("To enable: ensure sequence_packing.py exists in Ava/data/")
     logger.warning("=" * 60)
-
-
-class PreTokenizedSequenceReader:
-    """
-    Memory-mapped reader for a single pre-tokenized Arrow file.
-
-    Provides zero-copy random access to tokenized sequences with chunk prefetching
-    for 10-20x faster per-row access.
-    """
-
-    def __init__(self, data_path: Path, prefetch_chunk_size: int = 256):
-        self.data_path = data_path
-        self.prefetch_chunk_size = prefetch_chunk_size
-
-        # Open Arrow file (supports both IPC File and Stream formats)
-        self.table = read_arrow_table(data_path)
-
-        self.num_sequences = len(self.table)
-
-        # Chunk prefetch cache for faster per-row access
-        self._chunk_start: int = -1
-        self._chunk_end: int = -1
-        self._chunk_input_ids: Optional[List[np.ndarray]] = None
-        self._chunk_attention_mask: Optional[List[np.ndarray]] = None
-
-        # Determine column names once
-        col_names = self.table.schema.names
-        self._token_col = 'input_ids' if 'input_ids' in col_names else 'token_ids'
-        self._has_attention_mask = 'attention_mask' in col_names
-
-    def __len__(self):
-        return self.num_sequences
-
-    def _load_chunk(self, idx: int) -> None:
-        """
-        Load a chunk of rows containing the given index.
-
-        Loads prefetch_chunk_size rows centered around idx for efficient
-        sequential and near-sequential access patterns.
-        """
-        # Calculate chunk boundaries (align to chunk size for cache efficiency)
-        chunk_start = (idx // self.prefetch_chunk_size) * self.prefetch_chunk_size
-        chunk_end = min(chunk_start + self.prefetch_chunk_size, self.num_sequences)
-        chunk_size = chunk_end - chunk_start
-
-        # Extract chunk from table
-        chunk = self.table.slice(chunk_start, chunk_size)
-
-        # Convert to numpy arrays for fast access
-        input_ids_col = chunk.column(self._token_col)
-        self._chunk_input_ids = []
-        for i in range(chunk_size):
-            arr = input_ids_col[i]
-            try:
-                # Try Arrow's efficient numpy conversion first
-                self._chunk_input_ids.append(
-                    np.asarray(arr.values.to_numpy(zero_copy_only=False), dtype=np.int32)
-                )
-            except (AttributeError, TypeError):
-                # Fallback to as_py() for complex types
-                self._chunk_input_ids.append(np.array(arr.as_py(), dtype=np.int32))
-
-        if self._has_attention_mask:
-            attention_mask_col = chunk.column('attention_mask')
-            self._chunk_attention_mask = []
-            for i in range(chunk_size):
-                arr = attention_mask_col[i]
-                try:
-                    self._chunk_attention_mask.append(
-                        np.asarray(arr.values.to_numpy(zero_copy_only=False), dtype=np.int32)
-                    )
-                except (AttributeError, TypeError):
-                    self._chunk_attention_mask.append(np.array(arr.as_py(), dtype=np.int32))
-        else:
-            self._chunk_attention_mask = None
-
-        self._chunk_start = chunk_start
-        self._chunk_end = chunk_end
-
-    def __getitem__(self, idx: int) -> Dict[str, np.ndarray]:
-        """Get a tokenized sequence by index with chunk prefetching (10-20x faster)."""
-        if idx < 0 or idx >= self.num_sequences:
-            raise IndexError(f"Index {idx} out of range [0, {self.num_sequences})")
-
-        # Check if idx is in current chunk
-        if not (self._chunk_start <= idx < self._chunk_end):
-            self._load_chunk(idx)
-
-        # Get from chunk cache (O(1) access)
-        local_idx = idx - self._chunk_start
-        input_ids = self._chunk_input_ids[local_idx]
-
-        if self._chunk_attention_mask is not None:
-            attention_mask = self._chunk_attention_mask[local_idx]
-        else:
-            attention_mask = np.ones(len(input_ids), dtype=np.int32)
-
-        return {'input_ids': input_ids, 'attention_mask': attention_mask}
-
-    def close(self):
-        """Clear chunk cache."""
-        self._chunk_input_ids = None
-        self._chunk_attention_mask = None
-        self._chunk_start = -1
-        self._chunk_end = -1
-
-    def __del__(self):
-        """Cleanup on deletion."""
-        self.close()
-
-
-class PreTokenizedDataset(IterableDataset):
-    """
-    Streaming dataset for pre-tokenized binary data.
-
-    Features:
-    - Zero-copy memory-mapped loading
-    - Shuffling with configurable buffer
-    - Distributed training support
-    - No tokenization overhead
-    """
-
-    def __init__(
-        self,
-        data_dir: str,
-        split: str,
-        max_length: int,
-        max_samples: Optional[int] = None,
-        buffer_size: int = 10000,
-        enable_bucketing: bool = False,  # Bucketing less useful with pre-tokenized data
-        pad_token_id: int = 0,
-        world_size: Optional[int] = None,
-        rank: Optional[int] = None,
-        skip_sequence_count: bool = True,  # Fast startup: estimate instead of count
-        shuffle_seed: Optional[int] = None,  # Shuffle seed for reproducibility
-    ):
-        self.data_dir = Path(data_dir)
-        self.split = split
-        self.max_length = max_length
-        self.max_samples = max_samples
-        self.buffer_size = buffer_size
-        self.enable_bucketing = enable_bucketing
-        self.pad_token_id = pad_token_id
-        self.skip_sequence_count = skip_sequence_count
-        self.shuffle_seed = shuffle_seed
-
-        # Distributed training
-        self.world_size = world_size or 1
-        self.rank = rank or 0
-
-        # Find data files
-        self.data_files = self._find_data_files()
-
-        if not self.data_files:
-            raise ValueError(f"No pre-tokenized files found for {split} split in {data_dir}")
-
-        logger.debug(f"Found {len(self.data_files)} pre-tokenized files for {split} split")
-
-        # Calculate total sequences from Arrow files
-        self.file_sequences = []
-
-        if self.skip_sequence_count:
-            # Fast estimation from file sizes (no table loading)
-            self.total_sequences = self._estimate_sequence_count()
-            logger.debug(f"[FAST] Estimated sequences: {self.total_sequences:,}")
-        else:
-            # Exact counting (slow - loads all tables)
-            self.total_sequences = 0
-            for file_path in self.data_files:
-                table = read_arrow_table(file_path)
-                num_sequences = len(table)
-                self.file_sequences.append(num_sequences)
-                self.total_sequences += num_sequences
-            logger.debug(f"Total sequences: {self.total_sequences:,}")
-
-    def _estimate_sequence_count(self) -> int:
-        """Fast estimation of sequence count from file sizes."""
-        if not self.data_files:
-            return 0
-
-        # Sample first few files for estimation
-        sample_files = self.data_files[:min(5, len(self.data_files))]
-        total_sample_bytes = 0
-        total_sample_sequences = 0
-
-        for file_path in sample_files:
-            try:
-                total_sample_bytes += file_path.stat().st_size
-                table = read_arrow_table(file_path)
-                total_sample_sequences += len(table)
-            except Exception:
-                pass
-
-        if total_sample_bytes == 0 or total_sample_sequences == 0:
-            # Fallback: rough estimate of 500 sequences per file
-            return len(self.data_files) * 500
-
-        # Calculate bytes per sequence and extrapolate
-        bytes_per_seq = total_sample_bytes / total_sample_sequences
-        total_bytes = sum(f.stat().st_size for f in self.data_files)
-        estimated = int(total_bytes / bytes_per_seq)
-
-        return estimated
-
-    def _find_data_files(self) -> List[Path]:
-        """Find pre-tokenized Arrow files (using shared utility)."""
-        return find_data_files(
-            data_dir=self.data_dir,
-            split=self.split,
-            patterns=[
-                f"**/{self.split}/**/*.arrow",
-                f"{self.split}_*.arrow",
-                f"{self.split}/*.arrow",
-            ],
-            min_file_size=0,
-        )
-
-    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
-        """Iterate over dataset with shuffling."""
-        worker_info = torch.utils.data.get_worker_info()
-
-        if worker_info is not None:
-            num_workers = worker_info.num_workers
-            worker_id = worker_info.id
-        else:
-            num_workers = 1
-            worker_id = 0
-
-        # Shuffle files with configurable seed
-        shuffled_files = list(self.data_files)
-        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
-        random.Random(base_seed + worker_id).shuffle(shuffled_files)
-
-        # Open readers for all files
-        readers = []
-        failed_files = []
-        for file_path in shuffled_files:
-            try:
-                reader = PreTokenizedSequenceReader(file_path)
-                readers.append((file_path, reader))
-            except Exception as e:
-                failed_files.append((file_path, str(e)))
-                logger.warning(f"Failed to open {file_path}: {e}")
-
-        if failed_files:
-            logger.warning(
-                f"Failed to open {len(failed_files)}/{len(shuffled_files)} files"
-            )
-
-        if not readers:
-            raise ValueError(f"No files could be opened from {self.data_dir}")
-
-        # OPTIMIZATION: Compute worker indices on-demand without building full list
-        # This reduces memory from O(total_sequences) to O(num_files)
-        # Build cumulative sequence counts for fast index lookup
-        cumsum = [0]
-        total_sequences = 0
-        for _, reader in readers:
-            total_sequences += len(reader)
-            cumsum.append(total_sequences)
-
-        # Compute how many sequences this worker processes
-        stride = self.world_size * num_workers
-        worker_offset = self.rank * num_workers + worker_id
-        base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
-
-        # Generate a permutation using numpy for efficiency (single allocation)
-        rng = np.random.default_rng(base_seed + worker_id)
-        # Only shuffle once, compute worker indices via modular arithmetic
-        perm = rng.permutation(total_sequences)
-
-        # Extract only this worker's indices (O(n/stride) instead of O(n))
-        worker_perm = perm[worker_offset::stride]
-
-        # Convert flat indices to (file_idx, seq_idx) pairs on-demand
-        def flat_to_pair(flat_idx):
-            """Convert flat index to (file_idx, seq_idx) using binary search."""
-            # Binary search for file index
-            file_idx = np.searchsorted(cumsum[1:], flat_idx, side='right')
-            seq_idx = flat_idx - cumsum[file_idx]
-            return file_idx, seq_idx
-
-        # Build worker indices efficiently
-        worker_indices = [flat_to_pair(int(idx)) for idx in worker_perm]
-
-        # Stream sequences
-        count = 0
-        for file_idx, seq_idx in worker_indices:
-            if self.max_samples and count >= self.max_samples:
-                break
-
-            file_path, reader = readers[file_idx]
-
-            try:
-                # Read sequence (zero-copy)
-                data = reader[seq_idx]
-
-                # Convert to tensors
-                yield {
-                    'input_ids': torch.from_numpy(data['input_ids']).long(),
-                    'attention_mask': torch.from_numpy(data['attention_mask']).long(),
-                    'labels': torch.from_numpy(data['input_ids']).long()
-                }
-
-                count += 1
-
-            except Exception as e:
-                logger.warning(
-                    f"Error reading sequence {seq_idx} from {file_path.name}: {e}"
-                )
-                continue
-
-        # Close all readers
-        for file_path, reader in readers:
-            reader.close()
-
-    def collate_fn(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """
-        Collate function with FIXED padding to self.max_length.
-
-        Uses shared collate_batch utility to eliminate code duplication.
-
-        Uses fixed-length padding to prevent torch.compile recompilation.
-        Dynamic padding causes shape changes that trigger recompilation.
-        """
-        return collate_batch(
-            batch,
-            max_length=self.max_length,
-            pad_token_id=self.pad_token_id,
-            use_fixed_padding=True,  # Fixed padding for torch.compile compatibility
-        )
-
-
-class PreTokenizedMapDataset(Dataset):
-    """
-    Map-style dataset for pre-tokenized data.
-
-    Use this for validation/testing where you need deterministic ordering
-    and random access.
-    """
-
-    def __init__(
-        self,
-        data_dir: str,
-        split: str,
-        max_length: int,
-        pad_token_id: int = 0
-    ):
-        self.data_dir = Path(data_dir)
-        self.split = split
-        self.max_length = max_length
-        self.pad_token_id = pad_token_id
-
-        # Find and load all files
-        self.data_files = self._find_data_files()
-
-        if not self.data_files:
-            raise ValueError(f"No pre-tokenized files found for {split} split in {data_dir}")
-
-        # Open all readers
-        self.readers = []
-        self.file_offsets = [0]
-        total_sequences = 0
-
-        failed_count = 0
-        for file_path in self.data_files:
-            try:
-                reader = PreTokenizedSequenceReader(file_path)
-                self.readers.append(reader)
-                total_sequences += len(reader)
-                self.file_offsets.append(total_sequences)
-            except Exception as e:
-                failed_count += 1
-                logger.warning(f"Failed to open {file_path}: {e}")
-
-        if failed_count > 0:
-            logger.warning(
-                f"Failed to open {failed_count}/{len(self.data_files)} files"
-            )
-
-        self.total_sequences = total_sequences
-        logger.info(f"Loaded {len(self.readers)} files with {self.total_sequences:,} sequences")
-
-    def _find_data_files(self) -> List[Path]:
-        """Find pre-tokenized Arrow files (using shared utility)."""
-        return find_data_files(
-            data_dir=self.data_dir,
-            split=self.split,
-            patterns=[
-                f"**/{self.split}/**/*.arrow",
-                f"{self.split}_*.arrow",
-                f"{self.split}/*.arrow",
-            ],
-            min_file_size=0,
-        )
-
-    def __len__(self):
-        return self.total_sequences
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Get sequence by global index."""
-        if idx < 0 or idx >= self.total_sequences:
-            raise IndexError(f"Index {idx} out of range [0, {self.total_sequences})")
-
-        # Find which file contains this index
-        file_idx = 0
-        for i, offset in enumerate(self.file_offsets[1:], start=1):
-            if idx < offset:
-                file_idx = i - 1
-                break
-
-        # Get local index within file
-        local_idx = idx - self.file_offsets[file_idx]
-
-        # Read from appropriate reader
-        reader = self.readers[file_idx]
-        data = reader[local_idx]
-
-        return {
-            'input_ids': torch.from_numpy(data['input_ids']).long(),
-            'attention_mask': torch.from_numpy(data['attention_mask']).long(),
-            'labels': torch.from_numpy(data['input_ids']).long()
-        }
-
-    def collate_fn(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
-        """
-        Collate function with dynamic padding.
-
-        Uses shared collate_batch utility to eliminate code duplication.
-        Uses dynamic padding (pad to batch max) for memory efficiency in validation.
-        """
-        return collate_batch(
-            batch,
-            max_length=self.max_length,
-            pad_token_id=self.pad_token_id,
-            use_fixed_padding=False,  # Dynamic padding for memory efficiency in validation
-        )
 
 
 # ============================================================================
@@ -912,7 +475,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
         vocab_size: int = DEFAULT_VOCAB_SIZE,  # Vocab size for token ID validation
         shuffle_seed: Optional[int] = None,  # Global shuffle seed (None = non-deterministic)
         warm_start_files: int = 3,  # Number of files to load initially for fast startup
-        examples_per_random_select: int = 20,  # Examples to take per random file selection
+        examples_per_random_select: int = 100,  # Examples to take per random file selection (increased for throughput)
     ):
         self.data_dir = Path(data_dir)
         self.vocab_size = vocab_size  # Store for validation
@@ -1427,16 +990,30 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # Reproducible seeding with distributed training support
         base_seed = self.shuffle_seed if self.shuffle_seed is not None else int(time.time() * 1000000) % (2**31)
         rank = dist.get_rank() if dist.is_initialized() else 0
-        combined_seed = base_seed + epoch_num * 1000000 + rank * 10000 + worker_id
+        combined_seed = base_seed + epoch_num * 1000000 + rank * 10000
         rng = random.Random(combined_seed)
 
-        # Examples per random selection (configurable, default 20)
+        # Examples per random selection (increased from 20 to 100 for better throughput)
         examples_per_select = self.examples_per_random_select
 
-        # Group files by parent folder for diversity
+        # FILE-LEVEL WORKER DISTRIBUTION: Each worker gets a subset of files
+        # This avoids the wasteful sample-level filtering that discards 7/8 of work
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+
+        # Shuffle all files deterministically (same order for all workers)
+        all_files = list(self.data_files)
+        rng.shuffle(all_files)
+
+        # Distribute files to workers (round-robin ensures even distribution)
+        worker_files = [f for i, f in enumerate(all_files) if i % num_workers == worker_id]
+
+        if should_print:
+            print(f"  [FILE-DISTRIBUTION] Worker {worker_id}/{num_workers}: {len(worker_files)}/{len(all_files)} files")
+
+        # Group files by parent folder for diversity (only for this worker's files)
         from collections import defaultdict
         files_by_folder = defaultdict(list)
-        for file_path in self.data_files:
+        for file_path in worker_files:
             folder = file_path.parent
             files_by_folder[folder].append(file_path)
 
@@ -2066,29 +1643,19 @@ class UltraFastPretokenizedDataset(IterableDataset):
         }
 
     def __iter__(self) -> Iterator[Dict[str, np.ndarray]]:
-        """Iterate over dataset with ultra-fast streaming."""
-        worker_info = torch.utils.data.get_worker_info()
+        """Iterate over dataset with ultra-fast streaming.
 
-        if worker_info is not None:
-            num_workers = worker_info.num_workers
-            worker_id = worker_info.id
-        else:
-            num_workers = 1
-            worker_id = 0
+        Note: Worker distribution is now handled at file level in _stream_examples_ultra_fast,
+        NOT at sample level. This eliminates the 7/8 computation waste from sample filtering.
+        """
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
 
         count = 0
-        sample_index = 0
 
-        # Stream examples with worker distribution and error handling
+        # Stream examples - file distribution already handled in _stream_examples_ultra_fast
         try:
             for sample in self._stream_examples_ultra_fast():
-                # Worker-level sample distribution
-                if sample_index % num_workers != worker_id:
-                    sample_index += 1
-                    continue
-
-                sample_index += 1
-
                 if self.max_samples and count >= self.max_samples:
                     break
 
@@ -2169,7 +1736,7 @@ def create_ultra_fast_dataloaders(
     enable_length_sorting: bool = True,  # Enable length sorting in distributed mode
     disable_packing_length_sort: bool = False,  # Disable length sorting in packing
     warm_start_files: int = 3,  # Number of files to load initially for fast startup
-    examples_per_random_select: int = 20,  # Examples to take per random file selection
+    examples_per_random_select: int = 100,  # Examples to take per random file selection (increased for throughput)
 ) -> Tuple[Any, Any]:  # Returns DataLoader
     """
     Create ultra-fast pretokenized dataloaders.

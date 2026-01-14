@@ -140,6 +140,17 @@ def setup_distributed(strict: bool = False) -> Tuple[int, int]:
         rank = int(os.environ['RANK'])
         world_size = int(os.environ['WORLD_SIZE'])
 
+        # Validate RANK and WORLD_SIZE to catch misconfiguration early
+        if world_size < 1:
+            raise DistributedSetupError(
+                f"Invalid WORLD_SIZE={world_size}. WORLD_SIZE must be >= 1."
+            )
+        if rank < 0 or rank >= world_size:
+            raise DistributedSetupError(
+                f"Invalid RANK={rank} for WORLD_SIZE={world_size}. "
+                f"RANK must be in range [0, {world_size - 1}]."
+            )
+
         # Set NCCL timeout environment variable if not set
         if 'NCCL_TIMEOUT' not in os.environ:
             os.environ['NCCL_TIMEOUT'] = '1800'  # 30 minutes
@@ -826,7 +837,9 @@ class FusedGradientAllReduce:
                 self._comm_events.append(event)
 
             # Store info for reconstruction after wait
-            self._pending_futures.append((fut, buffers, sizes, fused_buffer))
+            # FIX: Clone fused_buffer to prevent corruption if it's reallocated
+            # before wait_for_completion() processes pending futures
+            self._pending_futures.append((fut, buffers, sizes, fused_buffer.clone()))
         else:
             # Synchronous all-reduce
             handle = dist.all_reduce(
@@ -1340,10 +1353,12 @@ class DistributedStateManager:
 
         # Phase 1: All-reduce to get synchronized value
         # Use int64 for integers, float32 for floats
+        # Use rank-specific device to ensure correct GPU placement in multi-GPU setup
+        device = f'cuda:{self.rank}' if torch.cuda.is_available() else 'cpu'
         if isinstance(value, int):
-            tensor = torch.tensor([value], dtype=torch.int64, device='cuda')
+            tensor = torch.tensor([value], dtype=torch.int64, device=device)
         else:
-            tensor = torch.tensor([value], dtype=torch.float32, device='cuda')
+            tensor = torch.tensor([value], dtype=torch.float32, device=device)
 
         try:
             dist.all_reduce(tensor, op=reduction_op)

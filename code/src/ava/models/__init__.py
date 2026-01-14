@@ -6,9 +6,6 @@ This package provides:
 - SparseMoELayer: Sparse mixture of experts layer
 - Expert layers: HighPerformanceExpert, ExpertParallelGroup, SequentialExpertGroup
 - Routing: MixtralRouter, DeepSeekRouter, UnifiedMoERouter
-- Multi-Token Prediction: MultiTokenPredictionHead
-- Mixture of Heads: MixtureOfHeads
-- Mixture of Activations: MixtureOfActivations
 - ALiBi: ALiBiPositionalBias, ALiBiAttention
 - Cross-Attention: CrossAttentionLayer, MultiModalFusion
 - Modality Encoders: VisionEncoder, AudioEncoder
@@ -27,32 +24,6 @@ from .experts import (
 
 # Routing
 from .routing import MixtralRouter, DeepSeekRouter, UnifiedMoERouter
-
-# Multi-Token Prediction
-from .mtp_head import (
-    MTPConfig,
-    MultiTokenPredictionHead,
-    create_mtp_head_from_config,
-)
-
-# Mixture of Heads
-from .moh import (
-    MoHConfig,
-    HeadRouter,
-    MixtureOfHeads,
-    MoHAttentionLayer,
-)
-
-# Mixture of Activations
-from .moa import (
-    MoAConfig,
-    ActivationRouter,
-    GatedActivation,
-    MixtureOfActivations,
-    MoAExpertLayer,
-    create_moa_from_config,
-    ACTIVATION_REGISTRY,
-)
 
 # ALiBi Positional Encoding
 from .alibi import (
@@ -101,23 +72,6 @@ __all__ = [
     'MixtralRouter',
     'DeepSeekRouter',
     'UnifiedMoERouter',
-    # Multi-Token Prediction
-    'MTPConfig',
-    'MultiTokenPredictionHead',
-    'create_mtp_head_from_config',
-    # Mixture of Heads
-    'MoHConfig',
-    'HeadRouter',
-    'MixtureOfHeads',
-    'MoHAttentionLayer',
-    # Mixture of Activations
-    'MoAConfig',
-    'ActivationRouter',
-    'GatedActivation',
-    'MixtureOfActivations',
-    'MoAExpertLayer',
-    'create_moa_from_config',
-    'ACTIVATION_REGISTRY',
     # ALiBi
     'get_alibi_slopes',
     'build_alibi_bias',

@@ -176,30 +176,22 @@ class OOMRecoveryManager:
     def _reset_optimizer_state(self, optimizer: torch.optim.Optimizer) -> None:
         """Reset optimizer state to free momentum/Adam buffers.
 
+        VRAM OPTIMIZATION: Uses optimizer.state.clear() instead of O(n) loop
+        through all parameters. This is faster for large models (100K+ params).
+
         Args:
             optimizer: PyTorch optimizer
         """
         try:
-            # Zero gradients first
+            # Zero gradients first (set_to_none=True frees memory immediately)
             optimizer.zero_grad(set_to_none=True)
 
-            # Clear state for all parameters
-            state_cleared = 0
-            for group in optimizer.param_groups:
-                for p in group['params']:
-                    if p in optimizer.state:
-                        # Get state dict for this parameter
-                        param_state = optimizer.state[p]
+            # VRAM OPTIMIZATION: Single operation to clear all state instead of O(n) loop
+            # This clears momentum buffers, Adam variance state, etc.
+            state_count = len(optimizer.state)
+            optimizer.state.clear()
 
-                        # Clear all state entries (momentum, exp_avg, exp_avg_sq, etc.)
-                        for key in list(param_state.keys()):
-                            del param_state[key]
-                            state_cleared += 1
-
-                        # Remove the parameter from state dict entirely
-                        del optimizer.state[p]
-
-            logger.debug(f"Cleared {state_cleared} optimizer state entries")
+            logger.debug(f"Cleared optimizer state ({state_count} parameter entries)")
 
         except Exception as e:
             logger.warning(f"Error resetting optimizer state: {e}")
@@ -261,3 +253,123 @@ class OOMRecoveryManager:
             'min_batch_size': self.min_batch_size,
             'reduction_factor': self.reduction_factor,
         }
+
+
+def get_memory_fragmentation() -> float:
+    """Calculate GPU memory fragmentation ratio.
+
+    Fragmentation occurs when allocated memory is much smaller than reserved memory,
+    indicating the CUDA allocator is holding onto freed blocks that can't be coalesced.
+
+    Returns:
+        Fragmentation ratio (0.0 = no fragmentation, 1.0 = fully fragmented)
+        Returns 0.0 if CUDA is not available or no memory is reserved.
+    """
+    if not torch.cuda.is_available():
+        return 0.0
+
+    try:
+        stats = torch.cuda.memory_stats()
+        allocated = stats.get('allocated_bytes.all.current', 0)
+        reserved = stats.get('reserved_bytes.all.current', 0)
+
+        if reserved == 0:
+            return 0.0
+
+        # Fragmentation = 1 - (allocated / reserved)
+        # High fragmentation means lots of reserved but unused memory
+        return 1.0 - (allocated / reserved)
+    except Exception:
+        return 0.0
+
+
+def get_memory_stats() -> dict:
+    """Get detailed GPU memory statistics.
+
+    Returns:
+        Dictionary with memory statistics:
+        - allocated_gb: Currently allocated GPU memory in GB
+        - reserved_gb: Total reserved GPU memory in GB
+        - fragmentation: Fragmentation ratio (0.0-1.0)
+        - free_gb: Free GPU memory in GB (total - reserved)
+        - total_gb: Total GPU memory in GB
+    """
+    if not torch.cuda.is_available():
+        return {
+            'allocated_gb': 0.0,
+            'reserved_gb': 0.0,
+            'fragmentation': 0.0,
+            'free_gb': 0.0,
+            'total_gb': 0.0,
+        }
+
+    try:
+        stats = torch.cuda.memory_stats()
+        allocated = stats.get('allocated_bytes.all.current', 0)
+        reserved = stats.get('reserved_bytes.all.current', 0)
+        total = torch.cuda.get_device_properties(0).total_memory
+
+        gb = 1024 ** 3
+        return {
+            'allocated_gb': allocated / gb,
+            'reserved_gb': reserved / gb,
+            'fragmentation': get_memory_fragmentation(),
+            'free_gb': (total - reserved) / gb,
+            'total_gb': total / gb,
+        }
+    except Exception:
+        return {
+            'allocated_gb': 0.0,
+            'reserved_gb': 0.0,
+            'fragmentation': 0.0,
+            'free_gb': 0.0,
+            'total_gb': 0.0,
+        }
+
+
+def proactive_memory_cleanup(
+    fragmentation_threshold: float = 0.30,
+    force: bool = False
+) -> bool:
+    """Proactively clean up GPU memory if fragmentation is high.
+
+    This helps prevent OOM errors by periodically defragmenting the CUDA allocator.
+    Call this during natural pauses in training (after validation, generation, etc.).
+
+    Args:
+        fragmentation_threshold: Trigger cleanup when fragmentation exceeds this (default: 0.30)
+        force: If True, always perform cleanup regardless of fragmentation level
+
+    Returns:
+        True if cleanup was performed, False otherwise
+    """
+    if not torch.cuda.is_available():
+        return False
+
+    fragmentation = get_memory_fragmentation()
+
+    if force or fragmentation > fragmentation_threshold:
+        # Get stats before cleanup for logging
+        stats_before = get_memory_stats()
+
+        # Perform cleanup
+        torch.cuda.empty_cache()
+
+        # Force Python garbage collection to release any PyTorch tensors
+        import gc
+        gc.collect()
+
+        # Get stats after cleanup
+        stats_after = get_memory_stats()
+
+        freed_gb = stats_before['reserved_gb'] - stats_after['reserved_gb']
+
+        if freed_gb > 0.01:  # Only log if we freed more than 10MB
+            logger.debug(
+                f"Proactive memory cleanup: freed {freed_gb:.2f} GB, "
+                f"fragmentation {stats_before['fragmentation']:.1%} -> {stats_after['fragmentation']:.1%}"
+            )
+
+        return True
+
+    return False

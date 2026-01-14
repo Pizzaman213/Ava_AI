@@ -239,9 +239,13 @@ class AdaptiveLearningRateManager:
 
         # Regular interval checks - USING TRAINING LOSS
         if self.step_count % self.config.lr_check_interval == 0:
-            # Initialize best_training_loss on first check if still at infinity
-            if self.best_training_loss == float('inf') and len(self.batch_losses) > 0:
-                self.best_training_loss = avg_recent_loss
+            # FIX: Initialize best_training_loss on first check if still at infinity
+            # This allows first batch to trigger improvement detection properly
+            if self.best_training_loss == float('inf'):
+                if len(self.batch_losses) > 0:
+                    self.best_training_loss = avg_recent_loss
+                    # Also initialize recent_best_loss for spike detection
+                    self.recent_best_loss = avg_recent_loss
 
             # Check for improvement in training loss
             if avg_recent_loss < self.best_training_loss - self.config.min_improvement:
@@ -389,7 +393,11 @@ class AdaptiveLearningRateManager:
 
         # Add grace period after warmup before reducing LR
         # Allow 2x plateau_patience steps after warmup for model to start learning
-        grace_period = self.config.warmup_steps + (2 * self.config.plateau_patience)
+        # FIX: plateau_patience is in batches (incremented by lr_check_interval),
+        # so multiply by lr_check_interval to get equivalent step count
+        grace_batches = 2 * self.config.plateau_patience
+        grace_steps = grace_batches * self.config.lr_check_interval
+        grace_period = self.config.warmup_steps + grace_steps
         in_post_warmup_grace = self.step_count < grace_period
 
         # Check for plateau (but not during post-warmup grace period)

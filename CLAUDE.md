@@ -27,6 +27,10 @@ python code/scripts/1_data_download/train_custom_tokenizer.py
 python code/scripts/7_generation/generate.py --prompt "Once upon a time"
 ```
 
+## Development Guidelines
+
+**Testing Hardware**: All testing must be performed on the RTX 3060. Do not run tests on the RTX 3090 Ti (reserved for production training).
+
 ## Project Structure
 
 ```

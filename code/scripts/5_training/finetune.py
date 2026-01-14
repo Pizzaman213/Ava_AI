@@ -150,7 +150,7 @@ from ava.data.multi_column import create_multi_column_dataloader
 # from ava.observability.training_validator import TrainingValidator
 from ava.optimizations import AdaptiveLearningRateManager, AdaptiveLRConfig
 from ava.training.progressive import (
-    ProgressiveTrainingConfig,
+    ProgressiveStrategyConfig,
     ProgressiveTrainingManager,
 )
 from ava.training.run_manager import RunManager
@@ -760,6 +760,7 @@ def main():
     import tempfile
     import json
     import shutil
+    import os
 
     # Create a temporary config file with our modifications
     # FIX: Close the file descriptor immediately - we use open() to write, not the fd

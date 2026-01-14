@@ -389,7 +389,6 @@ class BatchSizeController:
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-            time.sleep(0.05)  # 50ms stabilization delay
 
             # Run for measure_duration_sec and collect peak memory readings
             measurements: List[float] = []
@@ -629,7 +628,6 @@ class BatchSizeController:
                     gc.collect()
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
-                    time.sleep(0.1)  # 100ms stabilization delay for GPU memory manager
 
                     if use_fresh_models:
                         # Create fresh model with completely new states
@@ -711,28 +709,25 @@ class BatchSizeController:
             # With DDP, backward() has gradient synchronization that requires all ranks
             # With DeepSpeed, optimizer.step() requires collective communication
             # Both ranks must either call them together or skip them together
-            if use_training_mode and not oom_on_this_rank:
-                if is_distributed:
-                    pass
-                    # Check if ANY rank hit OOM during forward
-                    oom_check_tensor = torch.tensor([1 if oom_on_this_rank else 0], dtype=torch.int64, device=device)
-                    oom_check_list = [torch.zeros_like(oom_check_tensor) for _ in range(world_size)]
-                    dist.all_gather(oom_check_list, oom_check_tensor)
-                    any_rank_oom = any(t.item() > 0 for t in oom_check_list)
+            #
+            # FIX: ALL ranks must participate in the OOM check, not just non-OOM ranks.
+            # Otherwise the all_gather will deadlock because OOM ranks won't participate.
+            any_rank_oom = oom_on_this_rank  # Default for single GPU
 
-                    if any_rank_oom:
-                        # Don't call backward - would deadlock with DDP gradient sync
-                        try:
-                            test_model.zero_grad(set_to_none=True)
-                        except (NameError, UnboundLocalError):
-                            pass
-                    else:
-                        # All ranks succeeded forward - safe to call backward()
-                        loss.backward()
-                        # CRITICAL: Use barrier instead of cuda.synchronize() to prevent NCCL deadlock
-                        # cuda.synchronize() can block on pending NCCL ops while another rank
-                        # moves to a different collective, causing deadlock
-                        dist.barrier(timeout=_BARRIER_TIMEOUT)
+            if is_distributed:
+                # ALL ranks must participate in this all_reduce, regardless of OOM status
+                oom_check_tensor = torch.tensor([1 if oom_on_this_rank else 0], dtype=torch.int64, device=device)
+                dist.all_reduce(oom_check_tensor, op=dist.ReduceOp.MAX)
+                any_rank_oom = oom_check_tensor.item() > 0
+
+            if use_training_mode and not any_rank_oom:
+                if is_distributed:
+                    # All ranks succeeded forward - safe to call backward()
+                    loss.backward()
+                    # CRITICAL: Use barrier instead of cuda.synchronize() to prevent NCCL deadlock
+                    # cuda.synchronize() can block on pending NCCL ops while another rank
+                    # moves to a different collective, causing deadlock
+                    dist.barrier(timeout=_BARRIER_TIMEOUT)
                 else:
                     # Single GPU - just check this rank, wrap backward in try-except
                     if not oom_on_this_rank:
@@ -754,39 +749,41 @@ class BatchSizeController:
                                 raise
 
             # Now check for optimizer.step() - only if backward succeeded
-            if use_training_mode and perform_optimizer_step and not oom_on_this_rank:
+            # FIX: ALL ranks must participate in OOM sync, even those that hit OOM
+            if use_training_mode and perform_optimizer_step:
+                # Check if ANY rank hit OOM (must happen before conditional logic)
+                any_rank_oom_opt = oom_on_this_rank  # Default for single GPU
+
                 if is_distributed:
                     # CRITICAL: Synchronize CUDA before collective ops
                     # DDP backward() triggers async gradient sync via NCCL hooks
-                    # If these haven't completed, the next all_gather can deadlock
                     torch.cuda.synchronize()
 
-                    # Check if ANY rank hit OOM
+                    # ALL ranks must participate in this all_reduce
                     oom_check_tensor = torch.tensor([1 if oom_on_this_rank else 0], dtype=torch.int64, device=device)
-                    oom_check_list = [torch.zeros_like(oom_check_tensor) for _ in range(world_size)]
-                    dist.all_gather(oom_check_list, oom_check_tensor)
-                    any_rank_oom = any(t.item() > 0 for t in oom_check_list)
+                    dist.all_reduce(oom_check_tensor, op=dist.ReduceOp.MAX)
+                    any_rank_oom_opt = oom_check_tensor.item() > 0
 
-                    if any_rank_oom:
-                        # Clear gradients if we have any
-                        try:
-                            test_model.zero_grad(set_to_none=True)
-                        except (NameError, UnboundLocalError):
-                            pass
-                    else:
-                        # All ranks succeeded - safe to call optimizer.step()
-                        try:
-                            test_optimizer.step()
-                            test_optimizer.zero_grad(set_to_none=True)
-                        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                            if "out of memory" in str(e).lower():
-                                oom_on_this_rank = True
-                                gc.collect()
-                                torch.cuda.empty_cache()
-                                logger.info(f"  BS={test_size}: OOM during optimizer.step() ✗")
-                            else:
-                                raise
-                else:
+                if any_rank_oom_opt:
+                    # Clear gradients if we have any
+                    try:
+                        test_model.zero_grad(set_to_none=True)
+                    except (NameError, UnboundLocalError):
+                        pass
+                elif is_distributed:
+                    # All ranks succeeded - safe to call optimizer.step()
+                    try:
+                        test_optimizer.step()
+                        test_optimizer.zero_grad(set_to_none=True)
+                    except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                        if "out of memory" in str(e).lower():
+                            oom_on_this_rank = True
+                            gc.collect()
+                            torch.cuda.empty_cache()
+                            logger.info(f"  BS={test_size}: OOM during optimizer.step() ✗")
+                        else:
+                            raise
+                elif not is_distributed:
                     # Single GPU - optimizer step with OOM handling
                     try:
                         test_optimizer.step()
@@ -959,7 +956,6 @@ class BatchSizeController:
                 gc.collect()
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                time.sleep(0.1)  # 100ms stabilization delay for GPU memory manager
 
                 # Create fresh model and optimizer
                 if use_fresh_models:
@@ -1197,7 +1193,6 @@ class BatchSizeController:
                     gc.collect()
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
-                    time.sleep(0.1)  # 100ms stabilization delay for GPU memory manager
 
                     # Create fresh model and optimizer
                     if use_fresh_models:

@@ -79,14 +79,10 @@ def create_dataloaders(
         loader = create_multi_column_dataloader(**kwargs)
         return loader, None
 
-    elif mode == 'conversation':
-        from .conversation import create_turn_aware_dataloaders
-        return create_turn_aware_dataloaders(**kwargs)
-
     else:
         raise ValueError(
             f"Unknown dataloader mode: {mode}. "
-            f"Valid modes: pretokenized, indexed, multi_column, conversation"
+            f"Valid modes: pretokenized, indexed, multi_column"
         )
 
 

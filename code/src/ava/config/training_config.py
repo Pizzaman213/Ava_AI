@@ -473,7 +473,7 @@ class ModelConfig:
     # Performance optimizations
     use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
     use_triton_kernels: bool = True           # Use Triton fused kernels
-    use_torch_compile: bool = True            # Enable torch.compile (20-30% speedup) - nanoGPT-style default
+    # torch.compile settings moved to compute.performance.enable_torch_compile
     torch_compile_mode: str = 'reduce-overhead'  # 'default', 'reduce-overhead', 'max-autotune'
     torch_compile_dynamic: bool = False       # Allow dynamic shapes (slower but flexible)
     torch_compile_fullgraph: bool = False     # Require full graph (faster but stricter)
@@ -819,6 +819,80 @@ class FP8Config:
 
 
 @dataclass
+class SYMIConfig:
+    """Configuration for SYMI optimizer decoupling (arXiv 2504.19925).
+
+    SYMI (State-Yield Method for MoE Inference/training) decouples optimizer
+    states (momentum, variance) from expert parameters for ~30% training speedup.
+
+    Key insight: Static partitioning of optimizer state across workers while
+    allowing dynamic expert parameter placement reduces memory and sync overhead.
+
+    Best for multi-GPU training. Limited benefit on single GPU.
+    """
+    enabled: bool = False                      # Enable SYMI decoupling
+    num_partitions: int = 0                    # State partitions (0 = auto = num_gpus)
+    sync_frequency: int = 100                  # Steps between full state sync
+    use_async_sync: bool = True                # Async state transfer during backward
+    gradient_averaging: str = 'partition'      # 'partition' or 'global' averaging
+    state_precision: str = 'fp32'              # Optimizer state dtype
+    enable_checkpointing: bool = True          # Checkpoint partitioned states
+
+
+@dataclass
+class Sparse24Config:
+    """Configuration for 2:4 activation sparsity (arXiv 2503.16672).
+
+    2:4 structured sparsity leverages NVIDIA Tensor Cores on Ampere+ GPUs.
+    Every 4 contiguous elements have exactly 2 zeros, enabling hardware-
+    accelerated sparse matmul with 2x throughput and near-lossless accuracy.
+
+    Provides 1.2-1.3x speedup on Ampere+ GPUs (SM >= 8.0: A100, RTX 3090, etc.)
+    Falls back to dense computation on older hardware.
+    """
+    enabled: bool = False                      # Enable 2:4 sparsity
+    warmup_steps: int = 1000                   # Steps before enabling sparsity
+    apply_to_gate: bool = True                 # Apply to gate projection
+    apply_to_up: bool = True                   # Apply to up projection
+    apply_to_down: bool = False                # Apply to down projection (usually dense)
+    use_ste_scaling: bool = True               # Gradient scaling in STE
+    ste_scale_factor: float = 1.0              # STE gradient multiplier
+    sparsity_granularity: str = 'activation'   # 'activation' or 'weight' sparsity
+    use_triton_kernel: bool = True             # Use Triton kernel (fallback: cuSPARSELt)
+    log_sparsity_stats: bool = False           # Log sparsity statistics
+
+
+@dataclass
+class StableMoEConfig:
+    """Configuration for Stable-MoE routing (arXiv 2512.06784).
+
+    Uses Lyapunov-based load balancing with adaptive capacity factors and
+    temperature annealing for 40% throughput improvement over fixed capacity.
+
+    Key innovation: Control-theoretic approach maintains expert utilization
+    within target bounds with stability guarantees, replacing fixed aux losses.
+    """
+    enabled: bool = False                      # Enable Stable-MoE routing
+    target_utilization: float = 0.0            # Target per-expert util (0 = auto = 1/E)
+    utilization_tolerance: float = 0.1         # Allowed deviation from target
+    adaptation_rate: float = 0.01              # Lyapunov controller gain
+
+    # Temperature annealing for exploration/exploitation
+    temperature_init: float = 1.0              # Initial routing temperature
+    temperature_min: float = 0.1               # Minimum temperature
+    temperature_decay: float = 0.9999          # Per-step temperature decay
+
+    # Adaptive capacity bounds
+    capacity_min: float = 1.0                  # Minimum capacity factor
+    capacity_max: float = 2.0                  # Maximum capacity factor
+
+    # Metrics
+    log_utilization_histogram: bool = True     # Log per-expert utilization
+    log_capacity_factors: bool = True          # Log adaptive capacities
+    log_temperature: bool = True               # Log temperature schedule
+
+
+@dataclass
 class MoEMetricsConfig:
     """Configuration for MoE-specific metrics tracking."""
     track_expert_utilization: bool = True
@@ -947,10 +1021,10 @@ class DataConfig:
     indexed_cache_size: int = 50              # Arrow table LRU cache size per worker
     indexed_index_workers: Optional[int] = None  # Parallel workers for indexing (None = auto)
 
-    # Fast startup options (reduce overhead)
+    # Fast startup options (reduce overhead) - PERF: defaults optimized for speed
     fast_startup: bool = False                # Skip all validation and stats for fastest startup
-    skip_sequence_count: bool = False         # Skip dataset stats logging at startup
-    skip_dataloader_validation: bool = False  # Skip 5-batch validation at startup
+    skip_sequence_count: bool = True          # Skip dataset stats logging at startup (saves 10-30s)
+    skip_dataloader_validation: bool = True   # Skip 5-batch validation at startup (saves 1-2s)
 
 
 @dataclass
@@ -1389,6 +1463,15 @@ class OptimizationsConfig:
         'remove_sleep': True            # Remove sleep between cleanup
     })
 
+    # Proactive Memory Fragmentation Cleanup
+    proactive_memory_cleanup: Dict[str, Any] = field(default_factory=lambda: {
+        'enabled': True,                 # Enable proactive fragmentation cleanup
+        'fragmentation_threshold': 0.30, # Trigger cleanup when fragmentation exceeds this (0.0-1.0)
+        'cleanup_frequency': 2000,       # Check fragmentation every N steps
+        'cleanup_after_validation': True, # Also cleanup after validation runs
+        'cleanup_after_generation': True  # Also cleanup after generation runs
+    })
+
     # Phase 2: Data Loading
     dataloader: Dict[str, Any] = field(default_factory=lambda: {
         'adaptive_file_reading': True,  # Adjust samples per file
@@ -1504,6 +1587,7 @@ class LoggingConfig:
     memory_check_freq: int = 2000             # Reduced frequency to minimize sync overhead
     health_summary_freq: int = 500            # How often to log training health summary
     moe_metrics_freq: int = 5000              # Reduced frequency to minimize sync overhead
+    routing_metrics_freq: int = 0             # Per-layer routing metrics (0=disabled, 1000+ recommended if enabled)
 
     # =========================================================================
     # Feature flags

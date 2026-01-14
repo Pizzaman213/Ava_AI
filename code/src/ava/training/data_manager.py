@@ -93,6 +93,24 @@ class DataLoaderManager(TrainingComponent):
         import signal
         import os
 
+        def _force_terminate_worker(w, timeout: float = 2.0):
+            """Terminate a worker with SIGTERM, then SIGKILL if needed."""
+            if not w.is_alive():
+                return
+            try:
+                w.terminate()  # Send SIGTERM
+                w.join(timeout=timeout)
+                if w.is_alive():
+                    # Still alive? Send SIGKILL
+                    try:
+                        os.kill(w.pid, signal.SIGKILL)
+                        w.join(timeout=1.0)  # Brief wait after SIGKILL
+                        _logger.debug(f"Force killed worker {w.pid}")
+                    except ProcessLookupError:
+                        pass  # Already dead
+            except Exception as e:
+                _logger.debug(f"Error terminating worker: {e}")
+
         for loader in [self.train_loader, self.val_loader]:
             if loader is not None:
                 try:
@@ -107,19 +125,7 @@ class DataLoaderManager(TrainingComponent):
                             if hasattr(iterator, '_workers') and iterator._workers:
                                 _logger.debug(f"Aggressively terminating {len(iterator._workers)} dataloader workers")
                                 for w in iterator._workers:
-                                    if w.is_alive():
-                                        try:
-                                            w.terminate()  # Send SIGTERM
-                                            w.join(timeout=1.0)  # Brief wait
-                                            if w.is_alive():
-                                                # Still alive? Send SIGKILL
-                                                try:
-                                                    os.kill(w.pid, signal.SIGKILL)
-                                                    _logger.debug(f"Force killed worker {w.pid}")
-                                                except ProcessLookupError:
-                                                    pass  # Already dead
-                                        except Exception as e:
-                                            _logger.debug(f"Error terminating worker: {e}")
+                                    _force_terminate_worker(w, timeout=1.0)
                         else:
                             # Normal graceful shutdown
                             # Issue #4 fix: Check method existence before calling (PyTorch version compat)
@@ -131,11 +137,13 @@ class DataLoaderManager(TrainingComponent):
                                     # Fallback to aggressive termination if graceful fails
                                     if hasattr(iterator, '_workers') and iterator._workers:
                                         for w in iterator._workers:
-                                            if w.is_alive():
-                                                w.terminate()
+                                            _force_terminate_worker(w, timeout=2.0)
                             else:
                                 # Fallback: delete iterator to trigger __del__ cleanup
-                                del loader._iterator
+                                try:
+                                    del loader._iterator
+                                except Exception:
+                                    pass
                 except Exception as e:
                     _logger.debug(f"DataLoader cleanup: {e}")
         # Clear references
@@ -805,14 +813,18 @@ class DataLoaderManager(TrainingComponent):
         Returns:
             Format detection results
         """
-        # Check cache first (thread-safe)
+        # PERF: Double-checked locking - fast path without lock acquisition
         cache_key = str(data_dir.absolute())
+        if cache_key in _format_detection_cache:
+            cached_result = _format_detection_cache[cache_key]
+            _logger.debug(f"Using cached format detection: {cached_result['detected_format']}")
+            return cached_result
+
+        # Slow path: acquire lock and check again
         with _format_cache_lock:
             if cache_key in _format_detection_cache:
                 cached_result = _format_detection_cache[cache_key]
-                _logger.info(
-                    f"Using cached format detection: {cached_result['detected_format']}"
-                )
+                _logger.debug(f"Using cached format detection: {cached_result['detected_format']}")
                 return cached_result
 
         # Get max_samples from config with fallback

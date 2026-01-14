@@ -343,8 +343,6 @@ class TrainingPipeline:
             if self._is_oom_error(error) and self._retry_config.reduce_batch_on_oom:
                 self._handle_oom_recovery(component_name)
 
-            # Wait before retry
-            time.sleep(backoff)
             return True
 
         return False

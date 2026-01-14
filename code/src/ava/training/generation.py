@@ -58,7 +58,27 @@ from .context import ManagerInterface, TrainingContext
 logger = logging.getLogger(__name__)
 
 # Maximum history entries to prevent memory leak
-MAX_HISTORY_SIZE = 100
+# Reduced from 100 to 20 to limit memory usage during long training runs
+MAX_HISTORY_SIZE = 20
+
+
+def _unwrap_model(model: nn.Module) -> nn.Module:
+    """
+    Unwrap DDP and torch.compile wrappers to get the base model.
+
+    Args:
+        model: Model that may be wrapped with DDP and/or torch.compile
+
+    Returns:
+        The unwrapped base model
+    """
+    # Unwrap DDP (DistributedDataParallel wraps model in .module)
+    if hasattr(model, 'module'):
+        model = model.module
+    # Unwrap torch.compile (OptimizedModule stores original model at ._orig_mod)
+    if hasattr(model, '_orig_mod'):
+        model = model._orig_mod
+    return model
 
 
 class GenerationManager(ManagerInterface):
@@ -184,7 +204,7 @@ class GenerationManager(ManagerInterface):
 
         # Get special token IDs with fallback chain: explicit param -> model config -> tokenizer -> default
         # This ensures generation uses the same token IDs the model was trained with
-        base_model = model.module if hasattr(model, 'module') else model
+        base_model = _unwrap_model(model)
         model_config = getattr(base_model, 'config', None)
 
         # EOS token ID: param -> model config -> tokenizer -> default (1)
@@ -226,7 +246,9 @@ class GenerationManager(ManagerInterface):
         # Get device from model, not self.device (supports CPU generation)
         device = next(model.parameters()).device
 
-        with torch.no_grad():
+        # MEMORY OPTIMIZATION: Use inference_mode instead of no_grad
+        # inference_mode disables version counters and autograd, saving ~5-10% memory
+        with torch.inference_mode():
             # Prepare input - ALWAYS start with BOS token for coherent generation
             # The model was trained with BOS at position 0, so we must include it
             if prompt is not None and tokenizer is not None:
@@ -402,6 +424,11 @@ class GenerationManager(ManagerInterface):
                     f"3) training data quality."
                 )
 
+        # MEMORY OPTIMIZATION: Explicitly release GPU tensors after generation
+        del generated_ids, attention_mask
+        if device.type == 'cuda' and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         if tokenizer is not None:
             try:
                 text = tokenizer.decode(generated_list, skip_special_tokens=skip_special_tokens)
@@ -443,7 +470,7 @@ class GenerationManager(ManagerInterface):
         self.assert_initialized()
 
         # Get special token IDs with fallback chain: explicit param -> model config -> tokenizer -> default
-        base_model = model.module if hasattr(model, 'module') else model
+        base_model = _unwrap_model(model)
         model_config = getattr(base_model, 'config', None)
 
         # Auto-detect EOS token ID from model config/tokenizer if not provided
@@ -484,11 +511,7 @@ class GenerationManager(ManagerInterface):
             # change during training, causing "dictionary keys changed during iteration"
             # errors if we deepcopy from the background thread.
             with torch.no_grad():
-                base_model = model.module if hasattr(model, 'module') else model
-                # Unwrap torch.compile's OptimizedModule to get the actual model
-                # torch.compile wraps models in OptimizedModule with original at _orig_mod
-                if hasattr(base_model, '_orig_mod'):
-                    base_model = base_model._orig_mod
+                base_model = _unwrap_model(model)
                 # Copy state dict to CPU immediately on main thread
                 state_dict_cpu = {k: v.cpu().clone() for k, v in base_model.state_dict().items()}
                 # Also capture the model class and config for reconstruction
@@ -499,7 +522,8 @@ class GenerationManager(ManagerInterface):
                 try:
                     # Reconstruct model on CPU using captured state_dict
                     # This avoids deepcopy race conditions with model caches
-                    with torch.no_grad():
+                    # MEMORY OPTIMIZATION: Use inference_mode for reduced memory overhead
+                    with torch.inference_mode():
                         if model_config is not None:
                             cpu_model = model_class(model_config)
                         else:

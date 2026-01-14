@@ -143,8 +143,19 @@ class IndexedArrowDataset(Dataset):
                             # Sum along sequence dimension (axis 1 if 2D, else count non-zero)
                             if mask_col.ndim == 2:
                                 lengths = mask_col.sum(axis=1).tolist()
+                            elif mask_col.ndim == 1:
+                                # FIX: For 1D array of variable-length sequences (object array),
+                                # iterate and sum each element. Use np.sum for proper array summation.
+                                lengths = []
+                                for m in mask_col:
+                                    if hasattr(m, '__iter__') and not isinstance(m, (int, float)):
+                                        # It's a sequence - sum its values
+                                        lengths.append(int(np.sum(m)))
+                                    else:
+                                        # Scalar or unknown - use max_length
+                                        lengths.append(self.max_length)
                             else:
-                                lengths = [sum(m) if hasattr(m, '__iter__') else self.max_length for m in mask_col]
+                                lengths = [self.max_length] * num_rows
                         elif 'input_ids' in schema_names:
                             # Convert column to numpy and get lengths
                             ids_col = table.column('input_ids').to_numpy(zero_copy_only=False)
@@ -323,13 +334,13 @@ class IndexedArrowDataset(Dataset):
         # Try zero-copy first (faster, no memory allocation)
         try:
             return column.to_numpy(zero_copy_only=True)
-        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError, ValueError):
             pass
 
         # Fallback: convert with copy
         try:
             return column.to_numpy(zero_copy_only=False)
-        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError, ValueError):
             pass
 
         # Last resort for list columns: use to_pylist() for bulk conversion
@@ -353,18 +364,21 @@ class IndexedArrowDataset(Dataset):
         cols = self._get_numpy_columns(str(file_path), table)
 
         # Extract row data via direct numpy indexing
+        # FIX: Use np.array() with copy=True to ensure data is owned by the returned array
+        # This prevents data corruption if the numpy cache evicts the source array
+        # while GPU tensors still reference the data via torch.from_numpy()
         row_data = cols['input_ids'][row_idx]
-        input_ids = np.asarray(row_data, dtype=np.int64)
+        input_ids = np.array(row_data, dtype=np.int64, copy=True)
 
         if 'attention_mask' in cols:
             row_data = cols['attention_mask'][row_idx]
-            attention_mask = np.asarray(row_data, dtype=np.int64)
+            attention_mask = np.array(row_data, dtype=np.int64, copy=True)
         else:
             attention_mask = np.ones(len(input_ids), dtype=np.int64)
 
         if 'labels' in cols:
             row_data = cols['labels'][row_idx]
-            labels = np.asarray(row_data, dtype=np.int64)
+            labels = np.array(row_data, dtype=np.int64, copy=True)
         else:
             labels = input_ids.copy()
 

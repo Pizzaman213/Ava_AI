@@ -33,12 +33,23 @@ Usage:
 import atexit
 import logging
 import queue
+import re
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
+
+# Pre-compiled regex patterns for metric highlighting (performance optimization)
+_RE_LOSS = re.compile(r'(Loss[:\s=]+)(\d+\.\d+)', re.IGNORECASE)
+_RE_LR = re.compile(r'(LR[:\s=]+)(\d+\.\d+e[+-]?\d+)', re.IGNORECASE)
+_RE_PARAMS = re.compile(r'(\d+[\d,]*\.?\d*[MBK]?\s*params?)', re.IGNORECASE)
+_RE_DEVICE = re.compile(r'(cuda:\d+|GPU\s*\d+)', re.IGNORECASE)
+_RE_MEMORY = re.compile(r'(\d+\.?\d*\s*[GM]B)', re.IGNORECASE)
+_RE_PERCENT = re.compile(r'(\d+\.?\d*%)')
+_RE_STEP_EPOCH = re.compile(r'(step|epoch)\s*(\d+)', re.IGNORECASE)
+_RE_THROUGHPUT = re.compile(r'(\d+[\d,]*\.?\d*)\s*(samples?|tokens?)/s(ec)?', re.IGNORECASE)
 
 
 class Colors:
@@ -120,6 +131,8 @@ class Icons:
     HOURGLASS = '[WAIT]'
     SAVE = '[SAVE]'
     LOAD = '[LOAD]'
+    NETWORK = '[NET]'
+    EXPERIMENT = '[EXP]'
 
 
 def supports_color() -> bool:
@@ -276,72 +289,16 @@ class ColoredFormatter(logging.Formatter):
         return f"{icon} {self._highlight_metrics(message)}"
 
     def _highlight_metrics(self, message: str) -> str:
-        """Highlight important metrics in the message."""
-        import re
-
-        # Highlight loss values (Loss: X.XXXX or loss=X.XXXX)
-        message = re.sub(
-            r'(Loss[:\s=]+)(\d+\.\d+)',
-            f'\\1{Colors.GOLD}{Colors.BOLD}\\2{Colors.RESET}',
-            message,
-            flags=re.IGNORECASE
-        )
-
-        # Highlight learning rate (LR: X.XXe-XX)
-        message = re.sub(
-            r'(LR[:\s=]+)(\d+\.\d+e[+-]?\d+)',
-            f'\\1{Colors.PURPLE}{Colors.BOLD}\\2{Colors.RESET}',
-            message,
-            flags=re.IGNORECASE
-        )
-
-        # Highlight parameter counts (XXX.XM or XXX params)
-        message = re.sub(
-            r'(\d+[\d,]*\.?\d*[MBK]?\s*params?)',
-            f'{Colors.LIME}{Colors.BOLD}\\1{Colors.RESET}',
-            message,
-            flags=re.IGNORECASE
-        )
-
-        # Highlight device info (cuda:X, GPU X)
-        message = re.sub(
-            r'(cuda:\d+|GPU\s*\d+)',
-            f'{Colors.MAGENTA}{Colors.BOLD}\\1{Colors.RESET}',
-            message,
-            flags=re.IGNORECASE
-        )
-
-        # Highlight memory info (XX.XX GB, XX MB)
-        message = re.sub(
-            r'(\d+\.?\d*\s*[GM]B)',
-            f'{Colors.ORANGE}\\1{Colors.RESET}',
-            message,
-            flags=re.IGNORECASE
-        )
-
-        # Highlight percentages
-        message = re.sub(
-            r'(\d+\.?\d*%)',
-            f'{Colors.CYAN}{Colors.BOLD}\\1{Colors.RESET}',
-            message
-        )
-
-        # Highlight step/epoch numbers
-        message = re.sub(
-            r'(step|epoch)\s*(\d+)',
-            f'\\1 {Colors.LIGHT_BLUE}{Colors.BOLD}\\2{Colors.RESET}',
-            message,
-            flags=re.IGNORECASE
-        )
-
-        # Highlight throughput (samples/sec, tokens/sec)
-        message = re.sub(
-            r'(\d+[\d,]*\.?\d*)\s*(samples?|tokens?)/s(ec)?',
-            f'{Colors.GREEN}{Colors.BOLD}\\1{Colors.RESET} \\2/s\\3',
-            message,
-            flags=re.IGNORECASE
-        )
-
+        """Highlight important metrics in the message using pre-compiled patterns."""
+        # Use pre-compiled module-level regex patterns for performance
+        message = _RE_LOSS.sub(f'\\1{Colors.GOLD}{Colors.BOLD}\\2{Colors.RESET}', message)
+        message = _RE_LR.sub(f'\\1{Colors.PURPLE}{Colors.BOLD}\\2{Colors.RESET}', message)
+        message = _RE_PARAMS.sub(f'{Colors.LIME}{Colors.BOLD}\\1{Colors.RESET}', message)
+        message = _RE_DEVICE.sub(f'{Colors.MAGENTA}{Colors.BOLD}\\1{Colors.RESET}', message)
+        message = _RE_MEMORY.sub(f'{Colors.ORANGE}\\1{Colors.RESET}', message)
+        message = _RE_PERCENT.sub(f'{Colors.CYAN}{Colors.BOLD}\\1{Colors.RESET}', message)
+        message = _RE_STEP_EPOCH.sub(f'\\1 {Colors.LIGHT_BLUE}{Colors.BOLD}\\2{Colors.RESET}', message)
+        message = _RE_THROUGHPUT.sub(f'{Colors.GREEN}{Colors.BOLD}\\1{Colors.RESET} \\2/s\\3', message)
         return message
 
 
@@ -540,7 +497,7 @@ class AsyncLoggingHandler(logging.Handler):
         timeout = 5.0
         start = time.time()
         while not self._queue.empty() and (time.time() - start) < timeout:
-            time.sleep(0.05)
+            pass
 
     def close(self) -> None:
         """Shutdown the handler gracefully."""

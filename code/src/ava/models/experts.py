@@ -59,6 +59,18 @@ except ImportError:
 import logging
 logger = logging.getLogger(__name__)
 
+# Import 2:4 sparsity kernels
+try:
+    from ..cuda.sparse24_kernels import (
+        is_sparse24_supported,
+        sparse24_ste,
+        TRITON_AVAILABLE as SPARSE24_AVAILABLE,
+    )
+except ImportError:
+    SPARSE24_AVAILABLE = False
+    is_sparse24_supported = lambda: False
+    sparse24_ste = None
+
 
 class HighPerformanceExpert(nn.Module):
     """
@@ -91,12 +103,23 @@ class HighPerformanceExpert(nn.Module):
         dropout: float = 0.0,
         use_bias: bool = False,
         dtype: Optional[torch.dtype] = None,
+        # 2:4 sparsity parameters (arXiv 2503.16672)
+        use_sparse24: bool = False,
+        sparse24_warmup_steps: int = 1000,
+        sparse24_gradient_scale: float = 1.0,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
         self.activation_type = activation
         self.dropout_prob = dropout
+
+        # 2:4 sparsity configuration
+        self.use_sparse24 = use_sparse24
+        self.sparse24_warmup_steps = sparse24_warmup_steps
+        self.sparse24_gradient_scale = sparse24_gradient_scale
+        self._sparse24_supported = SPARSE24_AVAILABLE and is_sparse24_supported()
+        self.register_buffer('_sparse24_step', torch.tensor(0, dtype=torch.long))
 
         # For gated activations (SwiGLU/GeGLU), we need 2 projections
         if activation in ['swiglu', 'geglu']:
@@ -138,9 +161,28 @@ class HighPerformanceExpert(nn.Module):
             activation in ['swiglu', 'geglu']
         )
 
+        # OPTIMIZATION: Cache sparse24 warmup completion to avoid .item() sync every forward
+        self._sparse24_warmup_complete = False
+
+    @property
+    def sparse24_enabled(self) -> bool:
+        """Check if 2:4 sparsity is currently enabled (past warmup)."""
+        if not (self.use_sparse24 and self._sparse24_supported and self.training):
+            return False
+        # Use cached warmup completion flag to avoid .item() GPU->CPU sync
+        # Once warmup is complete, it stays complete for rest of training
+        if self._sparse24_warmup_complete:
+            return True
+        # One-time check: compare on GPU, but only sync when transitioning
+        # This happens at most once per training run at warmup_steps
+        if self._sparse24_step.item() >= self.sparse24_warmup_steps:
+            self._sparse24_warmup_complete = True
+            return True
+        return False
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with gated activation.
+        Forward pass with gated activation and optional 2:4 sparsity.
 
         Args:
             x: Input tensor [batch_size, seq_len, hidden_size] or [tokens, hidden_size]
@@ -148,6 +190,10 @@ class HighPerformanceExpert(nn.Module):
         Returns:
             Output tensor with same shape as input
         """
+        # Increment step counter for sparse24 warmup
+        if self.training and self.use_sparse24:
+            self._sparse24_step += 1
+
         if self.activation_type in ['swiglu', 'geglu']:
             # Gated activation: use fused kernel if available
             gate_up = self.gate_up_proj(x)
@@ -166,6 +212,11 @@ class HighPerformanceExpert(nn.Module):
         else:
             # Standard activation
             hidden = self.activation(self.up_proj(x))
+
+        # Apply 2:4 sparsity to activations (arXiv 2503.16672)
+        # This provides 1.2-1.3x speedup on Ampere+ GPUs
+        if self.sparse24_enabled and sparse24_ste is not None:
+            hidden = sparse24_ste(hidden, self.sparse24_gradient_scale)
 
         if self.dropout is not None:
             hidden = self.dropout(hidden)
@@ -274,6 +325,16 @@ class ExpertParallelGroup(nn.Module):
         self.register_buffer('_gate_up_weights_t', None)
         self.register_buffer('_down_weights_t', None)
 
+        # VRAM OPTIMIZATION: Buffer pool for forward pass allocations
+        # These are lazily allocated and reused to avoid per-forward allocations
+        self._expert_counts_buffer: Optional[torch.Tensor] = None
+        self._ones_buffer: Optional[torch.Tensor] = None
+        self._ones_buffer_size: int = 0
+        self._sorted_output_buffer: Optional[torch.Tensor] = None
+        self._sorted_output_size: int = 0
+        self._output_buffer: Optional[torch.Tensor] = None
+        self._output_buffer_size: int = 0
+
         # Initialize weights (may also initialize transposed weights)
         self._init_weights()
 
@@ -370,6 +431,59 @@ class ExpertParallelGroup(nn.Module):
                 )
             except Exception as e:
                 logger.debug(f"Kernel calibration skipped: {e}")
+
+    # VRAM OPTIMIZATION: Buffer pool helper methods
+    def _get_expert_counts_buffer(self, device: torch.device) -> torch.Tensor:
+        """Get pre-allocated expert counts buffer, zeroed and ready to use."""
+        if self._expert_counts_buffer is None or self._expert_counts_buffer.device != device:
+            self._expert_counts_buffer = torch.zeros(self.num_experts, device=device, dtype=torch.int64)
+        else:
+            self._expert_counts_buffer.zero_()
+        return self._expert_counts_buffer
+
+    def _get_ones_buffer(self, size: int, device: torch.device) -> torch.Tensor:
+        """Get pre-allocated ones buffer, resizing if needed."""
+        if self._ones_buffer is None or self._ones_buffer_size < size or self._ones_buffer.device != device:
+            # Allocate with headroom to reduce reallocations
+            alloc_size = max(size, self._ones_buffer_size * 2, 8192)
+            self._ones_buffer = torch.ones(alloc_size, device=device, dtype=torch.int64)
+            self._ones_buffer_size = alloc_size
+        return self._ones_buffer[:size]
+
+    def _get_sorted_output_buffer(
+        self, size: int, hidden_size: int, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        """Get pre-allocated sorted output buffer, resizing if needed."""
+        if (self._sorted_output_buffer is None or
+            self._sorted_output_size < size or
+            self._sorted_output_buffer.device != device or
+            self._sorted_output_buffer.dtype != dtype):
+            # Allocate with headroom
+            alloc_size = max(size, self._sorted_output_size * 2, 8192)
+            self._sorted_output_buffer = torch.zeros(alloc_size, hidden_size, device=device, dtype=dtype)
+            self._sorted_output_size = alloc_size
+        # Zero only the portion we'll use
+        result = self._sorted_output_buffer[:size]
+        result.zero_()
+        return result
+
+    def _get_output_buffer(
+        self, num_tokens: int, k: int, hidden_size: int, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        """Get pre-allocated output buffer [num_tokens, k, hidden_size], resizing if needed."""
+        size = num_tokens * k * hidden_size
+        if (self._output_buffer is None or
+            self._output_buffer_size < size or
+            self._output_buffer.device != device or
+            self._output_buffer.dtype != dtype):
+            # Allocate with headroom
+            alloc_size = max(size, self._output_buffer_size * 2, 8192 * hidden_size)
+            self._output_buffer = torch.zeros(alloc_size // hidden_size, hidden_size, device=device, dtype=dtype)
+            self._output_buffer_size = alloc_size
+        # Return reshaped view and zero it
+        result = self._output_buffer[:num_tokens * k].view(num_tokens, k, hidden_size)
+        result.zero_()
+        return result
 
     def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
         """
@@ -487,14 +601,10 @@ class ExpertParallelGroup(nn.Module):
         unsort_order = sort_order.argsort()  # To restore original order
 
         # Compute expert boundaries using scatter_add_ (compile-friendly)
-        expert_counts = torch.zeros(
-            self.num_experts, device=device, dtype=torch.int64
-        )
-        expert_counts.scatter_add_(
-            0,
-            flat_indices,
-            torch.ones(num_tokens * k, device=device, dtype=torch.int64)
-        )
+        # VRAM OPTIMIZATION: Use pre-allocated buffers instead of per-forward allocation
+        expert_counts = self._get_expert_counts_buffer(device)
+        ones = self._get_ones_buffer(num_tokens * k, device)
+        expert_counts.scatter_add_(0, flat_indices, ones)
         expert_boundaries = torch.cat([
             torch.zeros(1, device=device, dtype=torch.int64),
             expert_counts.cumsum(0)
@@ -517,18 +627,14 @@ class ExpertParallelGroup(nn.Module):
             sorted_weights = expert_weights.view(-1)[sort_order]
 
         # Pre-allocate output (sorted order)
-        sorted_output = torch.zeros(num_tokens * k, hidden_size, device=device, dtype=dtype)
+        # VRAM OPTIMIZATION: Use pre-allocated buffer
+        sorted_output = self._get_sorted_output_buffer(num_tokens * k, hidden_size, device, dtype)
 
         # Process each expert (no conditional skipping - always process all)
         # Pre-convert boundaries to Python list to avoid GPU sync per expert
-        # FIX: Synchronize CUDA before GPU->CPU transfer to prevent illegal memory access
-        # This is required when running inside gradient checkpointing which may
-        # recompute this during backward pass with async CUDA operations in flight.
-        # IMPORTANT: Sync on expert_boundaries' stream (not hidden_states) since we're
-        # reading from expert_boundaries. This ensures scatter_add_/cumsum are complete.
-        if expert_boundaries.is_cuda:
-            stream = torch.cuda.current_stream(expert_boundaries.device)
-            stream.synchronize()
+        # NOTE: .tolist() is a synchronous blocking call that implicitly waits for
+        # the tensor data to be ready, so explicit synchronize() is not needed.
+        # The implicit sync in tolist() ensures scatter_add_/cumsum are complete.
         boundaries_cpu = expert_boundaries.tolist()
         # SPARSE EXPERT SKIPPING: Also get active mask on CPU for fast iteration
         active_mask_cpu = active_expert_mask.tolist()
@@ -587,10 +693,10 @@ class ExpertParallelGroup(nn.Module):
                 if self.down_bias is not None:
                     expert_output = expert_output + self.down_bias[expert_idx]
 
-                # Apply routing weights if provided
-                if sorted_weights is not None:
-                    segment_weights = sorted_weights[start_idx:end_idx].unsqueeze(-1)
-                    expert_output = expert_output * segment_weights
+                # NOTE: Routing weights are NOT applied here - they are applied in
+                # SparseMoELayer after this method returns. Applying here would cause
+                # double-application (weights squared) since SparseMoELayer also applies them.
+                # See SparseMoELayer._forward_grouped_gemm() line ~1072 for weight application.
 
                 # Store in sorted output
                 sorted_output[start_idx:end_idx] = expert_output
@@ -647,7 +753,8 @@ class ExpertParallelGroup(nn.Module):
         expert_indices = expert_indices.clamp(0, self.num_experts - 1)
 
         # Pre-allocate output tensor
-        output = torch.zeros(num_tokens, k, hidden_size, device=device, dtype=dtype)
+        # VRAM OPTIMIZATION: Use pre-allocated buffer
+        output = self._get_output_buffer(num_tokens, k, hidden_size, device, dtype)
 
         # Process each expert
         for expert_idx in range(self.num_experts):
@@ -784,10 +891,14 @@ class ExpertParallelGroup(nn.Module):
                     if self._gate_up_weights_t is not None:
                         if log_kernel_path:
                             log_kernel_path('experts:transposed_triton', num_tokens)
+                        # FIX: Default weights should be normalized (1/k) not ones (sum to k)
+                        # When expert_weights is None, use uniform probability distribution
+                        k = expert_indices.shape[1]
+                        default_weights = torch.full_like(expert_indices, 1.0 / k, dtype=hidden_states.dtype)
                         return fused_expert_forward(
                             hidden_states,
                             expert_indices,
-                            expert_weights if expert_weights is not None else torch.ones_like(expert_indices, dtype=hidden_states.dtype),
+                            expert_weights if expert_weights is not None else default_weights,
                             self._gate_up_weights_t,
                             self._down_weights_t,
                             activation=self.activation_type,
@@ -795,6 +906,9 @@ class ExpertParallelGroup(nn.Module):
                             transposed_weights=True,  # Use optimized transposed kernel
                         )
                 except Exception as e:
+                    # Re-raise PyTorch internal exceptions used by gradient checkpointing
+                    if type(e).__name__ in ('_StopRecomputationError', 'StopIteration'):
+                        raise
                     if log_kernel_path:
                         log_kernel_path('experts:transposed_triton_failed', num_tokens, str(e)[:50])
 
@@ -808,6 +922,9 @@ class ExpertParallelGroup(nn.Module):
                     hidden_states, expert_indices, expert_weights, self
                 )
             except Exception as e:
+                # Re-raise PyTorch internal exceptions used by gradient checkpointing
+                if type(e).__name__ in ('_StopRecomputationError', 'StopIteration'):
+                    raise
                 if log_kernel_path:
                     log_kernel_path('experts:async_pipeline_failed', num_tokens, str(e)[:50])
 
@@ -817,16 +934,22 @@ class ExpertParallelGroup(nn.Module):
                 try:
                     if log_kernel_path:
                         log_kernel_path('experts:fused_triton', num_tokens)
+                    # FIX: Default weights should be normalized (1/k) not ones (sum to k)
+                    k = expert_indices.shape[1]
+                    default_weights = torch.full_like(expert_indices, 1.0 / k, dtype=hidden_states.dtype)
                     return fused_expert_forward(
                         hidden_states,
                         expert_indices,
-                        expert_weights if expert_weights is not None else torch.ones_like(expert_indices, dtype=hidden_states.dtype),
+                        expert_weights if expert_weights is not None else default_weights,
                         self.gate_up_weights,
                         self.down_weights,
                         activation=self.activation_type,
                         use_triton=True,
                     )
                 except Exception as e:
+                    # Re-raise PyTorch internal exceptions used by gradient checkpointing
+                    if type(e).__name__ in ('_StopRecomputationError', 'StopIteration'):
+                        raise
                     if log_kernel_path:
                         log_kernel_path('experts:fused_triton_failed', num_tokens, str(e)[:50])
 
@@ -955,8 +1078,9 @@ class ExpertParallelGroup(nn.Module):
         output = output.view(num_tokens, k, hidden_size)
 
         # Apply routing weights if provided
+        # VRAM OPTIMIZATION: Use in-place multiplication to avoid tensor allocation
         if expert_weights is not None:
-            output = output * expert_weights.unsqueeze(-1)
+            output.mul_(expert_weights.unsqueeze(-1))
 
         return output
 
@@ -1063,8 +1187,9 @@ class ExpertParallelGroup(nn.Module):
         output = output.view(num_tokens, k, hidden_size)
 
         # Apply routing weights if provided
+        # VRAM OPTIMIZATION: Use in-place multiplication to avoid tensor allocation
         if expert_weights is not None:
-            output = output * expert_weights.unsqueeze(-1)
+            output.mul_(expert_weights.unsqueeze(-1))
 
         return output
 
@@ -1267,9 +1392,9 @@ class SequentialExpertGroup(nn.Module):
         # Pre-allocate output
         sorted_output = torch.zeros(num_tokens * k, hidden_size, device=device, dtype=dtype)
 
-        # Sync before CPU transfer for gradient checkpointing compatibility
-        if expert_boundaries.is_cuda:
-            torch.cuda.current_stream(expert_boundaries.device).synchronize()
+        # Pre-convert boundaries to Python list
+        # NOTE: .tolist() is a synchronous blocking call that implicitly waits for
+        # the tensor data to be ready, so explicit synchronize() is not needed.
         boundaries_cpu = expert_boundaries.tolist()
 
         # Process each expert

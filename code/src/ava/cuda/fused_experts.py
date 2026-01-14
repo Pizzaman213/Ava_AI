@@ -40,6 +40,9 @@ except ImportError:
     triton = None
     tl = None
 
+# FIX: Track if we've warned about Triton unavailability to avoid spam
+_TRITON_WARNING_SHOWN = False
+
 
 @dataclass
 class ExpertKernelStats:
@@ -1017,8 +1020,19 @@ def fused_expert_forward(
         )
 
     if not TRITON_AVAILABLE or not use_triton:
+        global _TRITON_WARNING_SHOWN
         reason = 'triton_unavailable' if not TRITON_AVAILABLE else 'triton_disabled'
         _kernel_stats.record_pytorch(reason, num_tokens)
+
+        # FIX: Warn user once when Triton is unavailable (10-50x slower fallback)
+        if not TRITON_AVAILABLE and not _TRITON_WARNING_SHOWN:
+            _TRITON_WARNING_SHOWN = True
+            logger.warning(
+                "Triton is not available - using PyTorch fallback for expert computation. "
+                "This is 10-50x SLOWER than Triton kernels. "
+                "Install Triton with: pip install triton>=2.0.0"
+            )
+
         return _pytorch_expert_forward(
             hidden_states, expert_indices, expert_weights,
             gate_up_weights, down_weights, activation

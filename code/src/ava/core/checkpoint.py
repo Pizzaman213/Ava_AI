@@ -43,6 +43,31 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _unwrap_model(model: nn.Module) -> nn.Module:
+    """
+    Unwrap DDP and torch.compile wrappers to get the base model for saving.
+
+    When saving checkpoints, we need the underlying model without wrappers so that:
+    1. DDP's 'module.' prefix is not included in state dict keys
+    2. torch.compile's '_orig_mod.' prefix is not included in state dict keys
+
+    This ensures checkpoints are compatible with non-distributed, non-compiled models.
+
+    Args:
+        model: Model that may be wrapped with DDP and/or torch.compile
+
+    Returns:
+        The unwrapped base model
+    """
+    # Unwrap DDP (DistributedDataParallel wraps model in .module)
+    if isinstance(model, nn.parallel.DistributedDataParallel):
+        model = model.module
+    # Unwrap torch.compile (OptimizedModule stores original model at ._orig_mod)
+    if hasattr(model, '_orig_mod'):
+        model = model._orig_mod
+    return model
+
+
 def remap_state_dict_keys(
     state_dict: Dict[str, Any],
     expected_keys: Optional[set] = None
@@ -244,6 +269,12 @@ class CheckpointManager:
         # FIX: Add per-buffer locks for proper synchronization during async saves
         self._buffer_write_locks = [threading.Lock(), threading.Lock()]
 
+        # Cache best loss/quality to avoid loading checkpoint from disk on every save
+        self._cached_best_loss: Optional[float] = None
+        self._cached_best_quality: Optional[float] = None
+        self._best_cache_lock = threading.Lock()
+        self._init_best_cache()
+
     def save(
         self,
         model: nn.Module,
@@ -285,7 +316,7 @@ class CheckpointManager:
     ) -> Path:
         """Synchronous checkpoint save (original behavior)."""
         # Handle DDP models
-        actual_model = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
+        actual_model = _unwrap_model(model)
 
         checkpoint = {
             'epoch': epoch,
@@ -321,6 +352,11 @@ class CheckpointManager:
 
         if should_save_best:
             torch.save(checkpoint, best_path)
+            # Update cache with new best values
+            self._update_best_cache(
+                loss=metrics.get('val_loss'),
+                quality=quality_score.quality_score if quality_score else None
+            )
 
         # Cleanup old checkpoints
         if len(self.checkpoints) > self.max_keep:
@@ -352,7 +388,7 @@ class CheckpointManager:
         self._cleanup_completed_saves()
 
         # Get the model state dict reference (this is fast, just gets references)
-        actual_model = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
+        actual_model = _unwrap_model(model)
 
         # Select buffer with lock to prevent race conditions
         with self._buffer_lock:
@@ -480,6 +516,11 @@ class CheckpointManager:
 
                 if should_save_best:
                     torch.save(final_checkpoint, best_path)
+                    # Update cache with new best values
+                    self._update_best_cache(
+                        loss=metrics.get('val_loss'),
+                        quality=qs.quality_score if qs else None
+                    )
 
             except Exception as e:
                 # FIX: Always release lock on error
@@ -555,7 +596,7 @@ class CheckpointManager:
         """Async save for CPU-only training."""
         self._cleanup_completed_saves()
 
-        actual_model = model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
+        actual_model = _unwrap_model(model)
 
         checkpoint = {
             'epoch': epoch,
@@ -591,6 +632,11 @@ class CheckpointManager:
 
                 if should_save_best:
                     torch.save(checkpoint, best_path)
+                    # Update cache with new best values
+                    self._update_best_cache(
+                        loss=metrics.get('val_loss'),
+                        quality=qs.quality_score if qs else None
+                    )
             except Exception as e:
                 self._save_errors.append(e)
                 logger.error(f"Async checkpoint save failed: {e}")
@@ -702,41 +748,59 @@ class CheckpointManager:
         if self._checkpoint_stream is not None:
             self._checkpoint_stream.synchronize()
 
-    def _get_best_loss(self, best_path: Path) -> float:
-        """Get best loss from existing checkpoint."""
+    def _init_best_cache(self) -> None:
+        """Initialize the best loss/quality cache from existing checkpoint on disk."""
+        best_path = self.save_dir / 'best_model.pt'
         if not best_path.exists():
-            return float('inf')
+            self._cached_best_loss = float('inf')
+            self._cached_best_quality = 0.0
+            return
+
         try:
             checkpoint = torch.load(best_path, weights_only=False)
-            return checkpoint.get('metrics', {}).get('val_loss', float('inf'))
-        except Exception as e:
-            logger.warning(f"Could not load best checkpoint for loss comparison: {e}")
-            return float('inf')
 
-    def _get_best_quality_score(self, best_path: Path) -> float:
-        """Get best quality score from existing checkpoint.
+            # Cache best loss
+            self._cached_best_loss = checkpoint.get('metrics', {}).get('val_loss', float('inf'))
 
-        Args:
-            best_path: Path to best checkpoint file
-
-        Returns:
-            Quality score (0-1, higher is better), or 0.0 if not available
-        """
-        if not best_path.exists():
-            return 0.0
-        try:
-            checkpoint = torch.load(best_path, weights_only=False)
+            # Cache best quality
             qs = checkpoint.get('quality_score')
             if qs and isinstance(qs, dict) and 'quality_score' in qs:
-                return qs['quality_score']
-            # Fallback: compute from val_loss if quality_score not stored
-            val_loss = checkpoint.get('metrics', {}).get('val_loss')
-            if val_loss is not None:
-                return max(0.0, 1.0 - min(val_loss / 10.0, 1.0))
-            return 0.0
+                self._cached_best_quality = qs['quality_score']
+            elif self._cached_best_loss != float('inf'):
+                # Fallback: compute from val_loss
+                self._cached_best_quality = max(0.0, 1.0 - min(self._cached_best_loss / 10.0, 1.0))
+            else:
+                self._cached_best_quality = 0.0
+
+            logger.debug(f"Initialized best cache: loss={self._cached_best_loss}, quality={self._cached_best_quality}")
         except Exception as e:
-            logger.warning(f"Could not load best checkpoint for quality score comparison: {e}")
-            return 0.0
+            logger.warning(f"Could not load best checkpoint for cache initialization: {e}")
+            self._cached_best_loss = float('inf')
+            self._cached_best_quality = 0.0
+
+    def _update_best_cache(self, loss: Optional[float], quality: Optional[float]) -> None:
+        """Update the cached best loss/quality values (thread-safe)."""
+        with self._best_cache_lock:
+            if loss is not None:
+                self._cached_best_loss = loss
+            if quality is not None:
+                self._cached_best_quality = quality
+
+    def _get_best_loss(self, best_path: Path) -> float:
+        """Get best loss from cache (fast, no disk I/O)."""
+        with self._best_cache_lock:
+            if self._cached_best_loss is not None:
+                return self._cached_best_loss
+        # Fallback: load from disk if cache not initialized
+        return float('inf')
+
+    def _get_best_quality_score(self, best_path: Path) -> float:
+        """Get best quality score from cache (fast, no disk I/O)."""
+        with self._best_cache_lock:
+            if self._cached_best_quality is not None:
+                return self._cached_best_quality
+        # Fallback: return default if cache not initialized
+        return 0.0
 
     def get_save_errors(self) -> list:
         """Get list of save errors that occurred during async saves."""

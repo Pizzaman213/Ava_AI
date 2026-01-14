@@ -4,7 +4,6 @@ Data loading and processing utilities for Ava training.
 This package provides:
 - Pretokenized Arrow/Parquet dataloaders (ultra-fast)
 - Indexed Arrow dataloaders (map-style with true random shuffling)
-- Bucketing utilities for efficient batch formation
 - Distributed data loading support
 - Factory functions for creating dataloaders
 - Centralized Arrow I/O utilities
@@ -49,11 +48,6 @@ from .arrow_io import (
     ThreadSafeFileCache,
     ThreadLocalFileCache,
 )
-from .bucketing import (
-    AsyncFilePrefetcher,
-    DynamicTokenBatcher,
-    LengthBasedBucketing,
-)
 from .distributed import DistributedStreamingDataset, AdvancedDistributedSampler
 from .factory import create_dataloaders
 # Collators (unified)
@@ -95,10 +89,6 @@ __all__ = [
     # Indexed (Map-style with true random shuffling)
     'IndexedArrowDataset',
     'LengthBinnedSampler',
-    # Bucketing
-    'DynamicTokenBatcher',
-    'LengthBasedBucketing',
-    'AsyncFilePrefetcher',
     # Distributed
     'DistributedStreamingDataset',
     'AdvancedDistributedSampler',

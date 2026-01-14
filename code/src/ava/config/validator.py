@@ -455,10 +455,7 @@ class ConfigValidator:
         # Warn about potentially problematic torch.compile + gradient_checkpointing + DeepSpeed
         # This combination can cause CUDA "illegal memory access" errors due to nested
         # gradient checkpoints conflicting with torch.compile's CUDA graphs.
-        use_torch_compile = (
-            self.get('model.use_torch_compile') or
-            self.get('performance.enable_torch_compile')
-        )
+        use_torch_compile = self.get('compute.performance.enable_torch_compile')
         gradient_checkpointing = self.get('model.gradient_checkpointing')
         deepspeed_enabled = self.get('deepspeed.enabled')
 
@@ -467,7 +464,7 @@ class ConfigValidator:
                 "torch.compile + gradient_checkpointing + DeepSpeed enabled together. "
                 "Inner expert checkpointing has been automatically disabled to prevent "
                 "CUDA illegal memory access errors. If errors persist, try setting "
-                "model.use_torch_compile: false OR model.gradient_checkpointing: false"
+                "compute.performance.enable_torch_compile: false OR model.gradient_checkpointing: false"
             )
 
     def _validate_paths(self, errors: List[str], warnings: List[str]) -> None:

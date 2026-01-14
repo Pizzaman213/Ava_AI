@@ -143,7 +143,25 @@ class UnifiedMoERouter(nn.Module):
         self._cached_aux_loss: Optional[torch.Tensor] = None
 
     def _get_tokens_per_expert_buffer(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """Get pre-allocated buffer for tokens_per_expert, zeroed and ready to use."""
+        """Get buffer for tokens_per_expert, zeroed and ready to use.
+
+        NOTE: When torch.compile uses CUDA graphs, buffer reuse causes errors because
+        the graph captures tensor memory addresses. We detect this and create fresh
+        tensors to avoid 'tensor output of CUDAGraphs has been overwritten' errors.
+        """
+        # Check if we're inside a torch.compile region (CUDA graphs may be active)
+        # In compiled mode, we must create fresh tensors to avoid graph capture issues
+        try:
+            is_compiling = torch.compiler.is_compiling()
+        except AttributeError:
+            # Older PyTorch versions don't have this
+            is_compiling = False
+
+        if is_compiling:
+            # Create fresh tensor to avoid CUDA graph buffer reuse issues
+            return torch.zeros(self.num_experts, device=device, dtype=dtype)
+
+        # Non-compiled path: reuse buffer for efficiency
         buf = self._tokens_per_expert_buffer
         if buf.device != device or buf.dtype != dtype:
             # Move buffer to correct device/dtype on first use
@@ -153,7 +171,22 @@ class UnifiedMoERouter(nn.Module):
         return buf
 
     def _get_ones_buffer(self, size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """Get pre-allocated ones buffer, resizing if needed."""
+        """Get ones buffer of specified size.
+
+        NOTE: When torch.compile uses CUDA graphs, buffer reuse causes errors.
+        We detect this and create fresh tensors to avoid graph capture issues.
+        """
+        # Check if we're inside a torch.compile region
+        try:
+            is_compiling = torch.compiler.is_compiling()
+        except AttributeError:
+            is_compiling = False
+
+        if is_compiling:
+            # Create fresh tensor to avoid CUDA graph buffer reuse issues
+            return torch.ones(size, device=device, dtype=dtype)
+
+        # Non-compiled path: reuse buffer for efficiency
         if self._ones_buffer is None or self._ones_buffer_size < size or self._ones_buffer.device != device:
             # Allocate with some headroom to reduce reallocations
             alloc_size = max(size, self._ones_buffer_size * 2, 4096)
@@ -480,8 +513,9 @@ class MixtralRouter(UnifiedMoERouter):
         top_k_indices = torch.clamp(top_k_indices, 0, self.num_experts - 1)
 
         # Determine if we should compute aux losses this step
-        self._aux_loss_step += 1
-        compute_aux_loss = training and (self._aux_loss_step % self.aux_loss_frequency == 0)
+        # NOTE: Removed step counter mutation - it breaks gradient checkpointing
+        # (recomputation increments twice, causing state inconsistency)
+        compute_aux_loss = training  # Always compute aux loss during training
 
         # Initialize aux_loss
         aux_loss = torch.zeros(1, device=hidden_states.device, dtype=hidden_states.dtype).squeeze()
@@ -761,6 +795,34 @@ class AuxFreeLoadBalancer:
         # Learnable bias adjustments (optional)
         self.expert_biases = torch.zeros(num_experts, device=device)
 
+        # VRAM OPTIMIZATION: Pre-allocated ones buffer to avoid repeated allocations
+        self._ones_buffer: Optional[torch.Tensor] = None
+        self._ones_buffer_size: int = 0
+
+    def _get_ones_buffer(self, size: int, device: torch.device) -> torch.Tensor:
+        """Get ones buffer of specified size.
+
+        NOTE: When torch.compile uses CUDA graphs, buffer reuse causes errors.
+        We detect this and create fresh tensors to avoid graph capture issues.
+        """
+        # Check if we're inside a torch.compile region
+        try:
+            is_compiling = torch.compiler.is_compiling()
+        except AttributeError:
+            is_compiling = False
+
+        if is_compiling:
+            # Create fresh tensor to avoid CUDA graph buffer reuse issues
+            return torch.ones(size, device=device)
+
+        # Non-compiled path: reuse buffer for efficiency
+        if self._ones_buffer is None or self._ones_buffer_size < size or self._ones_buffer.device != device:
+            # Allocate with headroom to reduce reallocations
+            alloc_size = max(size, self._ones_buffer_size * 2, 4096)
+            self._ones_buffer = torch.ones(alloc_size, device=device)
+            self._ones_buffer_size = alloc_size
+        return self._ones_buffer[:size]
+
     def update_utilization(
         self,
         expert_indices: torch.Tensor,
@@ -778,10 +840,11 @@ class AuxFreeLoadBalancer:
             self.expert_utilization = self.expert_utilization.to(device)
             self.expert_biases = self.expert_biases.to(device)
 
-        # Count tokens per expert
+        # Count tokens per expert - use pre-allocated ones buffer
         counts = torch.zeros(self.num_experts, device=device)
+        ones = self._get_ones_buffer(num_tokens, device)
         for idx in range(expert_indices.shape[1]):
-            counts.scatter_add_(0, expert_indices[:, idx], torch.ones(num_tokens, device=device))
+            counts.scatter_add_(0, expert_indices[:, idx], ones)
 
         # Normalize to probability
         current_utilization = counts / (num_tokens * expert_indices.shape[1])
@@ -849,10 +912,11 @@ class AuxFreeLoadBalancer:
 
         # Apply capacity masking
         if self.use_capacity_masking and expert_indices is not None:
-            # Count current assignments
+            # Count current assignments - use pre-allocated ones buffer
             counts = torch.zeros(self.num_experts, device=device)
+            ones = self._get_ones_buffer(num_tokens, device)
             for idx in range(expert_indices.shape[1]):
-                counts.scatter_add_(0, expert_indices[:, idx], torch.ones(num_tokens, device=device))
+                counts.scatter_add_(0, expert_indices[:, idx], ones)
 
             # Compute capacity
             k = expert_indices.shape[1]
@@ -1050,10 +1114,334 @@ class AuxFreeRouter(UnifiedMoERouter):
         return top_k_indices, top_k_weights, aux_loss, metrics
 
 
+class StableMoERouter(UnifiedMoERouter):
+    """
+    Stable-MoE Router with Lyapunov-based adaptive load balancing (arXiv 2512.06784).
+
+    Uses control-theoretic approach to maintain expert utilization within target
+    bounds with stability guarantees. Provides 40% throughput improvement over
+    fixed capacity factors through adaptive load balancing.
+
+    Key features:
+    - Lyapunov-based capacity adjustment: Guarantees convergence to balanced state
+    - Temperature annealing: Exploration (high T) -> Exploitation (low T)
+    - Adaptive capacity bounds: Dynamic capacity factors per expert
+    - No auxiliary loss conflict: Direct control instead of competing losses
+
+    Args:
+        hidden_size: Input dimension
+        num_experts: Number of experts
+        num_selected_experts: Experts per token (k)
+        target_utilization: Target per-expert utilization (0 = auto = 1/E)
+        utilization_tolerance: Allowed deviation from target
+        adaptation_rate: Lyapunov controller gain (higher = faster adaptation)
+        temperature_init: Initial routing temperature
+        temperature_min: Minimum temperature (annealing floor)
+        temperature_decay: Per-step temperature decay
+        capacity_min: Minimum capacity factor
+        capacity_max: Maximum capacity factor
+        dtype: Parameter dtype
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        num_selected_experts: int = 2,
+        target_utilization: float = 0.0,  # 0 = auto
+        utilization_tolerance: float = 0.1,
+        adaptation_rate: float = 0.01,
+        temperature_init: float = 1.0,
+        temperature_min: float = 0.1,
+        temperature_decay: float = 0.9999,
+        capacity_min: float = 1.0,
+        capacity_max: float = 2.0,
+        router_z_loss_coef: float = 0.001,
+        router_jitter_noise: float = 0.0,
+        use_router_bias: bool = True,
+        dtype: Optional[torch.dtype] = None,
+        use_triton_kernels: bool = True,
+        log_metrics: bool = True,
+    ):
+        # Initialize with capacity_factor=1.0 (we'll use per-expert adaptive factors)
+        super().__init__(
+            hidden_size=hidden_size,
+            num_experts=num_experts,
+            num_selected_experts=num_selected_experts,
+            capacity_factor=1.0,  # Will be overridden by adaptive factors
+            router_z_loss_coef=router_z_loss_coef,
+            load_balance_loss_coef=0.0,  # Disabled: we use Lyapunov control instead
+            router_jitter_noise=router_jitter_noise,
+            use_router_bias=use_router_bias,
+            dtype=dtype,
+            use_triton_kernels=use_triton_kernels,
+            aux_loss_frequency=1,  # Always compute for Lyapunov updates
+        )
+
+        # Lyapunov controller parameters
+        self.target_utilization = target_utilization if target_utilization > 0 else 1.0 / num_experts
+        self.utilization_tolerance = utilization_tolerance
+        self.adaptation_rate = adaptation_rate
+
+        # Temperature annealing
+        self.temperature_init = temperature_init
+        self.temperature_min = temperature_min
+        self.temperature_decay = temperature_decay
+        self.register_buffer('_temperature', torch.tensor(temperature_init))
+
+        # Per-expert adaptive capacity factors
+        self.capacity_min = capacity_min
+        self.capacity_max = capacity_max
+        self.register_buffer(
+            'capacity_factors',
+            torch.ones(num_experts) * ((capacity_min + capacity_max) / 2)
+        )
+
+        # Utilization tracking with exponential moving average
+        self.register_buffer('expert_utilization_ema', torch.ones(num_experts) / num_experts)
+        self.ema_decay = 0.99
+
+        # Lyapunov stability tracking
+        self.register_buffer('_lyapunov_value', torch.tensor(0.0))
+        self.register_buffer('_step', torch.tensor(0, dtype=torch.long))
+
+        # Metrics logging
+        self.log_metrics = log_metrics
+
+    @property
+    def temperature(self) -> float:
+        """Current routing temperature."""
+        return self._temperature.item()
+
+    def _anneal_temperature(self) -> None:
+        """Apply temperature decay."""
+        new_temp = max(
+            self.temperature_min,
+            self._temperature.item() * self.temperature_decay
+        )
+        self._temperature.fill_(new_temp)
+
+    def _compute_lyapunov_function(self, utilization: torch.Tensor) -> torch.Tensor:
+        """
+        Compute Lyapunov function V(e) = 0.5 * sum((u_i - target)^2).
+
+        The Lyapunov function measures deviation from target utilization.
+        Our controller ensures dV/dt < 0 (always decreasing), guaranteeing
+        convergence to the balanced state.
+        """
+        error = utilization - self.target_utilization
+        return 0.5 * (error ** 2).sum()
+
+    def _compute_lyapunov_update(
+        self,
+        utilization: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute Lyapunov-based capacity adjustment.
+
+        For stability guarantee (dV/dt < 0), we update:
+            capacity_i += adaptation_rate * (target - u_i)
+
+        This ensures:
+        - Underutilized experts get higher capacity (more tokens allowed)
+        - Overutilized experts get lower capacity (fewer tokens allowed)
+        - System converges to balanced utilization
+        """
+        error = self.target_utilization - utilization
+
+        # Apply adaptation with tolerance (don't adjust if within tolerance)
+        update = torch.where(
+            error.abs() > self.utilization_tolerance,
+            self.adaptation_rate * error,
+            torch.zeros_like(error)
+        )
+
+        # Clamp update magnitude for stability
+        update = update.clamp(-0.1, 0.1)
+
+        return update
+
+    def _update_expert_utilization(
+        self,
+        top_k_indices: torch.Tensor,
+        num_tokens: int,
+    ) -> torch.Tensor:
+        """Update expert utilization EMA and return current utilization."""
+        # Count tokens per expert
+        tokens_per_expert = torch.zeros(
+            self.num_experts,
+            device=top_k_indices.device,
+            dtype=torch.float32
+        )
+        tokens_per_expert.scatter_add_(
+            0,
+            top_k_indices.flatten(),
+            torch.ones(top_k_indices.numel(), device=top_k_indices.device, dtype=torch.float32)
+        )
+
+        # Normalize to get utilization
+        total_assignments = num_tokens * self.num_selected_experts
+        utilization = tokens_per_expert / max(total_assignments, 1)
+
+        # Update EMA
+        self.expert_utilization_ema = (
+            self.ema_decay * self.expert_utilization_ema +
+            (1 - self.ema_decay) * utilization
+        )
+
+        return utilization
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        expert_mask: Optional[torch.Tensor] = None,
+        output_router_logits: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+        """
+        Forward pass with Lyapunov-based adaptive routing.
+
+        Args:
+            hidden_states: [batch, seq, hidden] or [num_tokens, hidden]
+            expert_mask: Optional mask for specific experts
+            output_router_logits: Return raw logits in metrics
+
+        Returns:
+            Tuple of:
+            - top_k_indices: [num_tokens, k] expert indices
+            - top_k_weights: [num_tokens, k] normalized weights
+            - aux_loss: Auxiliary loss (z-loss only, no load balance)
+            - metrics: Dict with routing statistics
+        """
+        training = self.training
+
+        # Flatten input if needed
+        original_shape = hidden_states.shape
+        if hidden_states.dim() == 3:
+            hidden_states = hidden_states.view(-1, hidden_states.size(-1))
+        num_tokens = hidden_states.size(0)
+
+        # Increment step and anneal temperature
+        if training:
+            self._step += 1
+            self._anneal_temperature()
+
+        # Apply jitter noise for exploration during training
+        if training and self.router_jitter_noise > 0:
+            noise = torch.empty_like(hidden_states).uniform_(
+                -self.router_jitter_noise, self.router_jitter_noise
+            )
+            hidden_states = hidden_states + noise
+
+        # Compute router logits
+        router_logits = self.gate(hidden_states)
+
+        # Apply temperature scaling
+        scaled_logits = router_logits / self._temperature
+
+        # Apply expert mask if provided
+        if expert_mask is not None:
+            scaled_logits = scaled_logits.masked_fill(~expert_mask, float('-inf'))
+
+        # Top-k selection with renormalized softmax
+        if self._triton_available and TRITON_AVAILABLE:
+            try:
+                top_k_weights, top_k_indices = fused_softmax_topk_renorm(
+                    scaled_logits, top_k=self.num_selected_experts, use_triton=True
+                )
+            except Exception as e:
+                # Re-raise PyTorch internal exceptions used by gradient checkpointing
+                if type(e).__name__ in ('_StopRecomputationError', 'StopIteration'):
+                    raise
+                probs = F.softmax(scaled_logits, dim=-1)
+                top_k_weights, top_k_indices = probs.topk(self.num_selected_experts, dim=-1)
+                top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+        else:
+            probs = F.softmax(scaled_logits, dim=-1)
+            top_k_weights, top_k_indices = probs.topk(self.num_selected_experts, dim=-1)
+            top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+        # Update utilization and apply Lyapunov control
+        if training:
+            with torch.no_grad():
+                utilization = self._update_expert_utilization(top_k_indices, num_tokens)
+
+                # Compute Lyapunov update
+                capacity_update = self._compute_lyapunov_update(utilization)
+
+                # Update capacity factors
+                self.capacity_factors = (self.capacity_factors + capacity_update).clamp(
+                    self.capacity_min, self.capacity_max
+                )
+
+                # Track Lyapunov value for stability monitoring
+                self._lyapunov_value = self._compute_lyapunov_function(utilization)
+
+                # Update expert counts
+                tokens_per_expert = self._compute_tokens_per_expert(
+                    top_k_indices, top_k_indices.device, torch.float32
+                )
+                self.expert_counts += tokens_per_expert
+                self.total_routing_calls += 1
+
+        # Compute auxiliary loss (z-loss only)
+        aux_loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype)
+        if training and self.router_z_loss_coef > 0:
+            z_loss = self._compute_router_z_loss(router_logits)
+            aux_loss = self.router_z_loss_coef * z_loss
+
+        # Compute metrics
+        router_probs = F.softmax(router_logits, dim=-1)
+        metrics = self._compute_routing_metrics(router_probs, top_k_indices)
+
+        # Add Stable-MoE specific metrics
+        # PERFORMANCE: Keep as tensors to avoid multiple GPU->CPU syncs per forward pass
+        # The training loop will extract these lazily when logging
+        if self.log_metrics:
+            metrics['stable_moe_temperature'] = self._temperature.detach()  # Avoid .item() sync
+            metrics['stable_moe_lyapunov'] = self._lyapunov_value.detach()
+            metrics['stable_moe_capacity_mean'] = self.capacity_factors.mean().detach()
+            metrics['stable_moe_capacity_std'] = self.capacity_factors.std().detach()
+            metrics['stable_moe_utilization_mean'] = self.expert_utilization_ema.mean().detach()
+            metrics['stable_moe_utilization_std'] = self.expert_utilization_ema.std().detach()
+
+            if output_router_logits:
+                metrics['router_logits'] = router_logits
+
+        return top_k_indices, top_k_weights, aux_loss, metrics
+
+    def get_capacity_factor(self, expert_idx: Optional[int] = None) -> torch.Tensor:
+        """
+        Get capacity factor(s).
+
+        Args:
+            expert_idx: Specific expert index, or None for all
+
+        Returns:
+            Capacity factor(s)
+        """
+        if expert_idx is not None:
+            return self.capacity_factors[expert_idx]
+        return self.capacity_factors
+
+    def reset_temperature(self) -> None:
+        """Reset temperature to initial value."""
+        self._temperature.fill_(self.temperature_init)
+
+    def extra_repr(self) -> str:
+        return (
+            f'hidden_size={self.hidden_size}, num_experts={self.num_experts}, '
+            f'num_selected_experts={self.num_selected_experts}, '
+            f'target_utilization={self.target_utilization:.4f}, '
+            f'adaptation_rate={self.adaptation_rate}, '
+            f'temperature={self.temperature:.4f}'
+        )
+
+
 __all__ = [
     'UnifiedMoERouter',
     'MixtralRouter',
     'DeepSeekRouter',
     'AuxFreeLoadBalancer',
     'AuxFreeRouter',
+    'StableMoERouter',
 ]

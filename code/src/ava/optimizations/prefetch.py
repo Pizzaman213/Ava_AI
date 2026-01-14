@@ -79,8 +79,8 @@ class AsyncBatchPrefetcher:
         # MEMORY FIX: Limit total pinned memory to prevent 6GB+ unbounded growth
         self._preallocate_buffers = preallocate_buffers
         self._pinned_buffer_pool: Dict[Tuple, Deque[torch.Tensor]] = {}  # (shape, dtype) -> deque of buffers
-        self._max_pinned_pools = 8  # Max number of different (shape, dtype) pools
-        self._max_buffers_per_pool = prefetch_count + 2  # Max buffers per pool
+        self._max_pinned_pools = 4  # Max number of different (shape, dtype) pools (reduced from 8 for memory savings)
+        self._max_buffers_per_pool = prefetch_count + 1  # Max buffers per pool (reduced from +2)
         self._pinned_pool_access_count: Dict[Tuple, int] = {}  # Track access frequency for eviction
 
         # Memory pressure check caching (OPTIMIZATION: reduces sync overhead)
@@ -93,7 +93,7 @@ class AsyncBatchPrefetcher:
                 pass
         self._memory_cache_time = 0.0
         self._memory_cache_value = 0.0
-        self._memory_cache_interval = 5.0  # OPTIMIZED: Check every 5 seconds (responsive to memory changes)
+        self._memory_cache_interval = 2.0  # OPTIMIZED: Check every 2 seconds (faster response to memory pressure)
 
         # Start prefetch thread
         self.thread = threading.Thread(target=self._prefetch_loop, daemon=True)
@@ -129,7 +129,11 @@ class AsyncBatchPrefetcher:
         # Use cached value if fresh enough (OPTIMIZATION: avoids GPU sync)
         now = time.monotonic()
         if now - self._memory_cache_time < self._memory_cache_interval:
+            # FIX: Return cached result, not stale comparison
+            # The cached value IS the utilization ratio, compare against threshold
             return self._memory_cache_value > self.memory_threshold
+
+        # Cache is stale - refresh it below
 
         # Cache is stale - refresh
         # OPTIMIZATION: Use memory_reserved() instead of memory_allocated()
@@ -180,12 +184,32 @@ class AsyncBatchPrefetcher:
             except IndexError:
                 pass  # Pool empty, fall through to create new
 
-        # MEMORY FIX: Evict least-used pools if we have too many
+        # MEMORY FIX: Evict pools if we have too many
+        # VRAM OPTIMIZATION: Use hybrid eviction score = size / (access_count + 1)
+        # This prioritizes evicting large, infrequently-used buffers
         if len(self._pinned_buffer_pool) >= self._max_pinned_pools:
-            # Find least accessed pool that isn't the one we need
+            def compute_eviction_score(pool_key_candidate):
+                """Higher score = more likely to evict (large + infrequent)."""
+                shape, dtype = pool_key_candidate
+                # Compute size in bytes
+                element_count = 1
+                for dim in shape:
+                    element_count *= dim
+                bytes_per_element = 4  # Assume float32, adjust if needed
+                if dtype in (torch.float16, torch.bfloat16):
+                    bytes_per_element = 2
+                elif dtype == torch.float64:
+                    bytes_per_element = 8
+                size_bytes = element_count * bytes_per_element
+                # Score: size / (access_count + 1)
+                access_count = self._pinned_pool_access_count.get(pool_key_candidate, 0)
+                return size_bytes / (access_count + 1)
+
+            # Find pool with highest eviction score
             sorted_pools = sorted(
-                [(k, v) for k, v in self._pinned_pool_access_count.items() if k != pool_key],
-                key=lambda x: x[1]
+                [(k, compute_eviction_score(k)) for k in self._pinned_pool_access_count.keys() if k != pool_key],
+                key=lambda x: x[1],
+                reverse=True  # Highest score first
             )
             if sorted_pools:
                 evict_key = sorted_pools[0][0]
@@ -195,7 +219,7 @@ class AsyncBatchPrefetcher:
                     if evicted_pool:
                         evicted_pool.clear()
                     self._pinned_pool_access_count.pop(evict_key, None)
-                    logger.debug(f"Evicted pinned buffer pool for shape {evict_key[0]}")
+                    logger.debug(f"Evicted pinned buffer pool for shape {evict_key[0]} (size-based)")
 
         # Create new pinned buffer (no lock needed - worst case is duplicate pools)
         try:
@@ -268,7 +292,6 @@ class AsyncBatchPrefetcher:
                                 f"(>{self.memory_threshold:.0%}), count: {self._memory_pressure_count}, "
                                 f"waited: {total_waited:.2f}s"
                             )
-                        time.sleep(wait_time)
                         total_waited += wait_time
                         # HYBRID backoff: Linear for quick recovery, exponential for persistent pressure
                         if pressure_iterations <= 3:
@@ -405,7 +428,8 @@ class AsyncBatchPrefetcher:
         # so we must synchronize the oldest event BEFORE appending to prevent race condition.
         if pinned_sources:
             # Check if deque is full and will evict on next append
-            if len(self._pinned_history) >= self._pinned_history.maxlen - 1:
+            # FIX: Use >= maxlen (not maxlen - 1) since deque evicts when len == maxlen
+            if len(self._pinned_history) >= self._pinned_history.maxlen:
                 # Deque will evict on next append - return oldest buffers to pool
                 if self._pinned_history:
                     oldest_sources, oldest_event = self._pinned_history[0]
