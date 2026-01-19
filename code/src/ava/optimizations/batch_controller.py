@@ -258,9 +258,13 @@ class BatchSizeController:
 
         The key is based on:
         - Model parameter count (determines memory footprint)
+        - Model architecture hash (different architectures with same param count have different memory profiles)
         - Max batch size setting
         - Target memory threshold
         - GPU name (different GPUs have different memory)
+
+        Phase 4 Optimization: Added architecture hash to prevent cache mismatches between
+        different model architectures with the same parameter count.
 
         Returns:
             12-character hash key
@@ -270,7 +274,20 @@ class BatchSizeController:
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name().replace(" ", "_")
 
-        key_str = f"{param_count}_{self._max_batch_size}_{self._target_memory:.2f}_{gpu_name}"
+        # Phase 4: Add architecture-specific information to cache key
+        # This prevents cache mismatches when different model configs have same param count
+        arch_info = ""
+        base_model = model.module if hasattr(model, 'module') else model
+        if hasattr(base_model, 'config'):
+            config = base_model.config
+            # Extract key architectural parameters that affect memory
+            arch_parts = []
+            for attr in ['hidden_size', 'num_layers', 'num_experts', 'intermediate_size', 'max_position_embeddings']:
+                if hasattr(config, attr):
+                    arch_parts.append(f"{attr}={getattr(config, attr)}")
+            arch_info = "_".join(arch_parts)
+
+        key_str = f"{param_count}_{arch_info}_{self._max_batch_size}_{self._target_memory:.2f}_{gpu_name}"
         return hashlib.md5(key_str.encode()).hexdigest()[:12]
 
     def _load_cached_calibration(self, cache_key: str) -> Optional[int]:
@@ -549,7 +566,8 @@ class BatchSizeController:
             dist.all_gather(vram_list, vram_tensor)
 
             # Find rank with minimum VRAM
-            vram_sizes = [v.item() for v in vram_list]
+            # GPU SYNC FIX: Single .tolist() call instead of N .item() calls
+            vram_sizes = torch.stack(vram_list).tolist()
             min_vram_rank = vram_sizes.index(min(vram_sizes))
             calibrating_rank = min_vram_rank
 
@@ -880,10 +898,9 @@ class BatchSizeController:
             if is_distributed:
                 break_tensor = torch.tensor([should_break, test_size, first_bad, last_good], dtype=torch.int64, device=device)
                 dist.broadcast(break_tensor, src=calibrating_rank)
-                should_break = int(break_tensor[0].item())
-                test_size = int(break_tensor[1].item())
-                first_bad = int(break_tensor[2].item())
-                last_good = int(break_tensor[3].item())
+                # GPU SYNC FIX: Single .tolist() call instead of 4 .item() calls
+                values = break_tensor.tolist()
+                should_break, test_size, first_bad, last_good = int(values[0]), int(values[1]), int(values[2]), int(values[3])
 
             if should_break:
                 break
@@ -892,8 +909,9 @@ class BatchSizeController:
         if is_distributed:
             sync_tensor = torch.tensor([last_good, first_bad], dtype=torch.int64, device=device)
             dist.broadcast(sync_tensor, src=calibrating_rank)
-            last_good = int(sync_tensor[0].item())
-            first_bad = int(sync_tensor[1].item())
+            # GPU SYNC FIX: Single .tolist() call instead of 2 .item() calls
+            sync_values = sync_tensor.tolist()
+            last_good, first_bad = int(sync_values[0]), int(sync_values[1])
 
         # Phase 2: Binary search for optimal with full reset before each test
         # Use calibration_step_size for alignment to avoid testing every batch size
@@ -1033,7 +1051,8 @@ class BatchSizeController:
                     oom_check = torch.tensor([1 if oom_on_this_rank else 0], dtype=torch.int64, device=device)
                     oom_list = [torch.zeros_like(oom_check) for _ in range(world_size)]
                     dist.all_gather(oom_list, oom_check)
-                    any_oom = any(t.item() > 0 for t in oom_list)
+                    # GPU SYNC FIX: Single .tolist() call instead of N .item() calls
+                    any_oom = any(v > 0 for v in torch.stack(oom_list).tolist())
 
                     if any_oom:
                         try:
@@ -1143,8 +1162,9 @@ class BatchSizeController:
             if is_distributed:
                 decision_tensor = torch.tensor([last_good, first_bad], dtype=torch.int64, device=device)
                 dist.broadcast(decision_tensor, src=calibrating_rank)
-                last_good = int(decision_tensor[0].item())
-                first_bad = int(decision_tensor[1].item())
+                # GPU SYNC FIX: Single .tolist() call instead of 2 .item() calls
+                decision_values = decision_tensor.tolist()
+                last_good, first_bad = int(decision_values[0]), int(decision_values[1])
 
         # Phase 3: Fine-tuning - step-based search when gap is small but utilization is far from target
         # This catches cases where BS=48 gives 72% but BS=56 OOMs (gap too small for binary search)
@@ -1310,7 +1330,8 @@ class BatchSizeController:
                     oom_check = torch.tensor([1 if oom_on_this_rank else 0], dtype=torch.int64, device=device)
                     oom_list = [torch.zeros_like(oom_check) for _ in range(world_size)]
                     dist.all_gather(oom_list, oom_check)
-                    any_oom = any(t.item() > 0 for t in oom_list)
+                    # GPU SYNC FIX: Single .tolist() call instead of N .item() calls
+                    any_oom = any(v > 0 for v in torch.stack(oom_list).tolist())
                     if any_oom:
                         should_stop = True
 
@@ -1332,8 +1353,10 @@ class BatchSizeController:
                 if is_distributed:
                     fine_result = torch.tensor([last_good, 1 if should_stop else 0], dtype=torch.int64, device=device)
                     dist.broadcast(fine_result, src=calibrating_rank)
-                    last_good = int(fine_result[0].item())
-                    if fine_result[1].item() > 0:
+                    # GPU SYNC FIX: Single .tolist() call instead of 2 .item() calls
+                    fine_values = fine_result.tolist()
+                    last_good = int(fine_values[0])
+                    if fine_values[1] > 0:
                         break
 
                 if should_stop:

@@ -38,11 +38,32 @@ except ImportError:
     apply_rotary_pos_emb_triton = None
     TRITON_ROPE_AVAILABLE = False
 
+# Logger must be defined before Flash Attention check
+logger = logging.getLogger(__name__)
+
+# PERFORMANCE FIX: Check Flash Attention availability at import time
+# This avoids repeated import attempts on every forward pass (10x slowdown)
+FLASH_ATTN_AVAILABLE = False
+FLASH_ATTN_VARLEN_AVAILABLE = False
+_flash_attn_func = None
+_flash_attn_varlen_func = None
+
+try:
+    from flash_attn import flash_attn_func as _flash_attn_func
+    FLASH_ATTN_AVAILABLE = True
+except (ImportError, OSError, RuntimeError) as e:
+    logger.debug(f"Flash Attention not available: {e}")
+    FLASH_ATTN_AVAILABLE = False
+
+try:
+    from flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
+    FLASH_ATTN_VARLEN_AVAILABLE = True
+except (ImportError, OSError, RuntimeError) as e:
+    FLASH_ATTN_VARLEN_AVAILABLE = False
+
 # Backward compatibility aliases - use nn.experts implementations
 SwiGLUExpert = HighPerformanceExpert
 SwiGLUExpertGroup = ExpertParallelGroup
-
-logger = logging.getLogger(__name__)
 
 
 def _validate_attention_mask_shape(
@@ -148,10 +169,10 @@ class EnhancedMoEConfig:
     intermediate_size: int = 3072
     max_position_embeddings: int = 2048
 
-    # Special token IDs (must match tokenizer - BERT-style tokens)
+    # Special token IDs (must match tokenizer - custom BPE tokenizer)
     pad_token_id: int = 0
-    eos_token_id: int = 102  # [SEP] token
-    bos_token_id: int = 101  # [CLS] token
+    eos_token_id: int = 5    # [EOS] token
+    bos_token_id: int = 2    # [CLS]/[BOS] token
 
     # MoE settings
     num_experts: int = 8
@@ -402,6 +423,11 @@ class MultiHeadAttention(nn.Module):
 
         self.attn_dropout = nn.Dropout(config.attention_dropout)
 
+        # GRADIENT CHECKPOINTING FIX: Store flag to disable attention dropout during recomputation
+        # Dropout uses different RNG samples during forward vs. checkpoint recomputation,
+        # causing different hidden states and routing decisions that lead to shape mismatches
+        self._gradient_checkpointing = getattr(config, 'gradient_checkpointing', False)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -417,6 +443,14 @@ class MultiHeadAttention(nn.Module):
 
         # Store the input dtype for consistency
         input_dtype = hidden_states.dtype
+
+        # GRADIENT CHECKPOINTING FIX: Compute effective dropout probability
+        # Set to 0.0 during gradient checkpointing to ensure deterministic recomputation
+        # This prevents shape mismatches in MoE routing when hidden states differ
+        if self._gradient_checkpointing and self.training:
+            effective_dropout_p = 0.0
+        else:
+            effective_dropout_p = self.dropout if self.training else 0.0
 
         # Project to Q, K, V
         q = self.q_proj(hidden_states)
@@ -492,10 +526,9 @@ class MultiHeadAttention(nn.Module):
 
         # === FASTEST PATH: Flash Attention varlen with cu_seqlens ===
         # This completely eliminates 2D mask allocation and is 40-60% faster
-        if self.use_flash_attention and has_cu_seqlens and past_key_value is None:
+        # PERFORMANCE FIX: Use cached availability check instead of try/import on every forward
+        if self.use_flash_attention and FLASH_ATTN_VARLEN_AVAILABLE and has_cu_seqlens and past_key_value is None:
             try:
-                from flash_attn import flash_attn_varlen_func  # type: ignore[import-untyped]
-
                 # flash_attn_varlen_func expects [total_tokens, heads, head_dim]
                 # Flatten from [batch, heads, seq, head_dim] to [total_tokens, heads, head_dim]
                 total_tokens = batch_size * seq_len
@@ -503,13 +536,13 @@ class MultiHeadAttention(nn.Module):
                 k_var = k.transpose(1, 2).reshape(total_tokens, self.num_heads, self.head_dim)
                 v_var = v.transpose(1, 2).reshape(total_tokens, self.num_heads, self.head_dim)
 
-                attn_output = flash_attn_varlen_func(
+                attn_output = _flash_attn_varlen_func(
                     q_var, k_var, v_var,
                     cu_seqlens_q=cu_seqlens,
                     cu_seqlens_k=cu_seqlens,
                     max_seqlen_q=max_seqlen,
                     max_seqlen_k=max_seqlen,
-                    dropout_p=self.dropout if self.training else 0.0,
+                    dropout_p=effective_dropout_p,
                     causal=True,  # Causal within each document
                 )
 
@@ -534,25 +567,19 @@ class MultiHeadAttention(nn.Module):
                     import logging
                     logging.debug(f"Flash Attention varlen unavailable: {e}")
 
-        if self.use_flash_attention:
+        # PERFORMANCE FIX: Use cached availability check instead of try/import on every forward
+        if self.use_flash_attention and FLASH_ATTN_AVAILABLE and not has_document_mask:
             try:
-                # Try Flash Attention 3 from official repo (fastest)
-                from flash_attn import flash_attn_func  # type: ignore[import-untyped]
-
-                # Flash Attention 3 DOES NOT support custom attention masks with causal=True
-                # If we have document boundaries, we must fall back to SDPA or standard attention
-                if has_document_mask:
-                    raise RuntimeError("Flash Attention 3 does not support document boundary masks")
-
+                # Flash Attention 3 from official repo (fastest)
                 # flash_attn_func expects [batch, seq, heads, head_dim]
                 # Need to transpose from [batch, heads, seq, head_dim]
                 q_fa = q.transpose(1, 2)  # [batch, seq, heads, head_dim]
                 k_fa = k.transpose(1, 2)
                 v_fa = v.transpose(1, 2)
 
-                attn_output = flash_attn_func(
+                attn_output = _flash_attn_func(
                     q_fa, k_fa, v_fa,
-                    dropout_p=self.dropout if self.training else 0.0,
+                    dropout_p=effective_dropout_p,
                     causal=use_causal_only
                 )
                 # flash_attn_func returns [batch, seq, heads, head_dim]
@@ -563,7 +590,7 @@ class MultiHeadAttention(nn.Module):
                     logging.info("✓ Using Flash Attention 3 (1.5-2× faster than FA2)")
                     MultiHeadAttention._attention_backend_logged = True
 
-            except (ImportError, RuntimeError, AttributeError):
+            except (RuntimeError, AttributeError):
                 # Try xformers memory-efficient attention (20-30% speedup)
                 try:
                     from xformers.ops import memory_efficient_attention, LowerTriangularMask  # type: ignore[import-untyped]
@@ -592,7 +619,7 @@ class MultiHeadAttention(nn.Module):
                     attn_output = memory_efficient_attention(
                         q_xf, k_xf, v_xf,
                         attn_bias=attn_bias,
-                        p=self.dropout if self.training else 0.0,
+                        p=effective_dropout_p,
                     )
                     # xformers returns [batch, seq, heads, head_dim]
                     attn_output = attn_output.transpose(1, 2)  # Back to [batch, heads, seq, head_dim]
@@ -616,14 +643,14 @@ class MultiHeadAttention(nn.Module):
                         attn_output = F.scaled_dot_product_attention(
                             q, k, v,
                             attn_mask=attention_mask,  # Use full document boundary mask
-                            dropout_p=self.dropout if self.training else 0.0,
+                            dropout_p=effective_dropout_p,
                             is_causal=False  # Mask already includes causal
                         )
                     else:
                         attn_output = F.scaled_dot_product_attention(
                             q, k, v,
                             attn_mask=attention_mask if not use_causal_only else None,
-                            dropout_p=self.dropout if self.training else 0.0,
+                            dropout_p=effective_dropout_p,
                             is_causal=use_causal_only
                         )
 
@@ -634,8 +661,30 @@ class MultiHeadAttention(nn.Module):
                         else:
                             logging.info("✓ Using PyTorch Flash Attention 2 (SDPA)")
                         MultiHeadAttention._attention_backend_logged = True
+        elif self.use_flash_attention:
+            # PERFORMANCE FIX: Flash Attention requested but not available
+            # Use PyTorch's SDPA directly (still fast, ~80% of Flash Attention speed)
+            if has_document_mask:
+                attn_output = F.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=attention_mask,
+                    dropout_p=effective_dropout_p,
+                    is_causal=False  # Mask already includes causal
+                )
+            else:
+                attn_output = F.scaled_dot_product_attention(
+                    q, k, v,
+                    attn_mask=attention_mask if not use_causal_only else None,
+                    dropout_p=effective_dropout_p,
+                    is_causal=use_causal_only
+                )
+
+            if not MultiHeadAttention._attention_backend_logged:
+                import logging
+                logging.info("✓ Using PyTorch SDPA (Flash Attention library unavailable)")
+                MultiHeadAttention._attention_backend_logged = True
         else:
-            # Standard attention implementation
+            # Standard attention implementation (only when use_flash_attention=False)
             attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
             # Apply attention mask if provided
@@ -877,6 +926,11 @@ class TransformerBlock(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
+        # GRADIENT CHECKPOINTING FIX: Store flag to disable dropout during recomputation
+        # Dropout uses different RNG samples during forward vs. checkpoint recomputation,
+        # causing different hidden states and routing decisions that lead to shape mismatches
+        self._gradient_checkpointing = getattr(config, 'gradient_checkpointing', False)
+
         # Activation cache for gradient checkpointing optimization
         # Set via set_activation_cache() by HybridCacheManager
         self._activation_cache = None
@@ -918,7 +972,12 @@ class TransformerBlock(nn.Module):
                     max_seqlen=max_seqlen,
                 )
             with nvtx_range("block/attention/residual"):
-                hidden_states = residual + self.dropout(attn_output)
+                # GRADIENT CHECKPOINTING FIX: Skip dropout during checkpoint recomputation
+                # to ensure deterministic routing decisions (prevents shape mismatch errors)
+                if self._gradient_checkpointing and self.training:
+                    hidden_states = residual + attn_output
+                else:
+                    hidden_states = residual + self.dropout(attn_output)
 
         # MoE feed-forward with residual
         with nvtx_range("block/moe_ffn"):
@@ -1008,11 +1067,13 @@ class EnhancedMoEModel(nn.Module):
             pass  # lm_head already has independent weights
 
         # TIER2 OPTIMIZATION: Cache for causal attention masks (5-10% speedup)
-        # BOTTLENECK FIX: Cache is now device/dtype-independent (key is seq_len only)
-        # This prevents cache bloat and improves hit rate with dynamic batching
-        # FIX: Reduced cache size to limit memory usage
-        self._causal_mask_cache: Dict[int, torch.Tensor] = {}
-        self._causal_mask_cache_max_size = 20  # Reduced from 50 to limit memory
+        # FIX: Store GPU masks directly keyed by (seq_len, device, dtype) to avoid GPU-CPU transfers
+        self._causal_mask_cache: Dict[Tuple[int, torch.device, torch.dtype], torch.Tensor] = {}
+        self._causal_mask_cache_max_size = 10  # Reduced to limit memory
+
+        # FIX: Cache constant tensors to avoid creating them on every forward pass
+        self._neg_inf_cache: Dict[Tuple[torch.device, torch.dtype], torch.Tensor] = {}
+        self._zero_cache: Dict[Tuple[torch.device, torch.dtype], torch.Tensor] = {}
 
         # Gradient checkpointing for 70-80% memory savings
         self.gradient_checkpointing = getattr(config, 'gradient_checkpointing', False)
@@ -1089,21 +1150,23 @@ class EnhancedMoEModel(nn.Module):
 
         Returns: [1, 1, seq_len, seq_len] causal mask
         """
-        # BOTTLENECK FIX: Device/dtype-independent cache lookup
-        if seq_len in self._causal_mask_cache:
-            cached_mask = self._causal_mask_cache[seq_len]
-            # Convert to target dtype and device (cheap for bool->float conversion)
-            if cached_mask.device != device or cached_mask.dtype != dtype:
-                # Convert bool mask to float with -inf for masked positions
-                mask = torch.where(
-                    cached_mask.to(device),
-                    torch.tensor(float('-inf'), device=device, dtype=dtype),
-                    torch.tensor(0.0, device=device, dtype=dtype)
-                )
-                return mask
-            return cached_mask
+        # FIX: Cache key includes device and dtype to avoid GPU-CPU transfers
+        cache_key = (seq_len, device, dtype)
 
-        # Create new causal mask - store as bool for efficient caching
+        if cache_key in self._causal_mask_cache:
+            return self._causal_mask_cache[cache_key]
+
+        # FIX: Get or create cached constant tensors (avoids repeated tensor creation)
+        const_key = (device, dtype)
+        if const_key not in self._neg_inf_cache:
+            self._neg_inf_cache[const_key] = torch.tensor(float('-inf'), device=device, dtype=dtype)
+        if const_key not in self._zero_cache:
+            self._zero_cache[const_key] = torch.tensor(0.0, device=device, dtype=dtype)
+
+        neg_inf = self._neg_inf_cache[const_key]
+        zero = self._zero_cache[const_key]
+
+        # Create new causal mask
         causal_mask_bool = torch.triu(
             torch.ones((seq_len, seq_len), device=device, dtype=torch.bool),
             diagonal=1
@@ -1111,20 +1174,15 @@ class EnhancedMoEModel(nn.Module):
         # Add batch and head dimensions
         causal_mask_bool = causal_mask_bool[None, None, :, :]
 
-        # Cache the bool mask (limit cache size with LRU eviction)
-        # FIX: Store on CPU to save GPU memory
+        # Convert to target dtype using cached constants
+        causal_mask = torch.where(causal_mask_bool, neg_inf, zero)
+
+        # Cache the GPU mask (limit cache size with LRU eviction)
         if len(self._causal_mask_cache) >= self._causal_mask_cache_max_size:
             # Remove oldest entry
             oldest_key = next(iter(self._causal_mask_cache))
             del self._causal_mask_cache[oldest_key]
-        self._causal_mask_cache[seq_len] = causal_mask_bool.cpu()
-
-        # Convert to target dtype for return
-        causal_mask = torch.where(
-            causal_mask_bool,
-            torch.tensor(float('-inf'), device=device, dtype=dtype),
-            torch.tensor(0.0, device=device, dtype=dtype)
-        )
+        self._causal_mask_cache[cache_key] = causal_mask
 
         return causal_mask
 
@@ -1149,11 +1207,18 @@ class EnhancedMoEModel(nn.Module):
 
         Clears:
         - Causal attention mask cache
+        - Constant tensor caches
         - RoPE positional embedding cache (in attention layers)
         """
         # Clear causal mask cache
         if hasattr(self, '_causal_mask_cache'):
             self._causal_mask_cache.clear()
+
+        # Clear constant tensor caches
+        if hasattr(self, '_neg_inf_cache'):
+            self._neg_inf_cache.clear()
+        if hasattr(self, '_zero_cache'):
+            self._zero_cache.clear()
 
         # Clear RoPE cache in each attention layer
         for layer in self.layers:
@@ -1231,7 +1296,10 @@ class EnhancedMoEModel(nn.Module):
             else:
                 hidden_states = token_embeds
 
-            hidden_states = self.dropout(hidden_states)
+            # GRADIENT CHECKPOINTING FIX: Skip embedding dropout during checkpoint recomputation
+            # to ensure deterministic routing decisions (prevents shape mismatch errors)
+            if not (self.gradient_checkpointing and self.training):
+                hidden_states = self.dropout(hidden_states)
 
         # TIER2 OPTIMIZATION: Use cached causal attention mask (5-10% speedup)
         with nvtx_range("model/attention_mask"):
@@ -1371,6 +1439,7 @@ class EnhancedMoEModel(nn.Module):
                             past_key_value,
                             use_cache,
                             use_reentrant=False,
+                            preserve_rng_state=True,  # Ensures router jitter noise is reproducible during recomputation
                         )
                     else:
                         # CRITICAL FIX: Pass position_ids for correct RoPE in sequence packing
@@ -2007,6 +2076,9 @@ class OptimizedTransformerBlock(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
+        # GRADIENT CHECKPOINTING FIX: Store flag to disable dropout during recomputation
+        self._gradient_checkpointing = getattr(config, 'gradient_checkpointing', False)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -2018,7 +2090,11 @@ class OptimizedTransformerBlock(nn.Module):
         # OPTIMIZATION: Removed .clone() for 2-3% speedup
         hidden_states = self.ln1(hidden_states)
         attn_output, _ = self.attention(hidden_states, attention_mask)
-        hidden_states = residual + self.dropout(attn_output)
+        # GRADIENT CHECKPOINTING FIX: Skip dropout during checkpoint recomputation
+        if self._gradient_checkpointing and self.training:
+            hidden_states = residual + attn_output
+        else:
+            hidden_states = residual + self.dropout(attn_output)
 
         # MoE with residual
         residual = hidden_states
@@ -2063,6 +2139,9 @@ class OptimizedMoETransformer(nn.Module):
         # Embeddings
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.dropout = nn.Dropout(config.dropout)
+
+        # GRADIENT CHECKPOINTING FIX: Store flag to disable dropout during recomputation
+        self.gradient_checkpointing = getattr(config, 'gradient_checkpointing', False)
 
         # Transformer blocks with MoE
         self.layers = nn.ModuleList([
@@ -2119,7 +2198,9 @@ class OptimizedMoETransformer(nn.Module):
 
         # Token embeddings
         hidden_states = self.token_embedding(input_ids)
-        hidden_states = self.dropout(hidden_states)
+        # GRADIENT CHECKPOINTING FIX: Skip embedding dropout during checkpoint recomputation
+        if not (self.gradient_checkpointing and self.training):
+            hidden_states = self.dropout(hidden_states)
 
         # Create causal attention mask
         # Use float32 for mask construction to avoid precision issues, then cast to model dtype

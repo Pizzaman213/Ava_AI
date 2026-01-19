@@ -13,11 +13,12 @@ Async Generation Pattern:
     |
     +-> generate_async(model, step)
     |   |
+    |   +-> start async GPU->CPU transfer (non_blocking=True, returns immediately)
     |   +-> submit(_async_generate)    -> _async_generate() starts
     |       (returns immediately)         |
-    |                                     +-> copy model to CPU (slow, ~1-5s)
-    train_step()  (continues)             |
-    |                                     +-> generate tokens (slow)
+    |                                     +-> wait for transfer (synchronize)
+    train_step()  (continues)             +-> reconstruct model on CPU
+    |                                     +-> generate tokens
     train_step()                          |
     |                                     +-> decode & return result
     +-> process_completed_generations()
@@ -25,7 +26,7 @@ Async Generation Pattern:
 
     Key design decisions:
     1. ThreadPoolExecutor with max_workers=1 ensures only one generation at a time
-    2. Model is deep-copied to CPU for generation to avoid blocking GPU
+    2. Model state is transferred async (non_blocking) to CPU - main thread returns immediately
     3. History is capped at MAX_HISTORY_SIZE=100 to prevent memory leaks
     4. Lock protects _pending_future and _generation_history from race conditions
 
@@ -214,7 +215,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 eos_token_id = getattr(tokenizer, 'eos_token_id', None)
             if eos_token_id is None:
-                eos_token_id = 102  # [SEP] token (BERT-style)
+                eos_token_id = 5  # [EOS] token (matches 32k BPE tokenizer)
                 self.logger.debug(f"Using default eos_token_id={eos_token_id}")
 
         # BOS token ID: param -> model config -> tokenizer -> default (2)
@@ -224,7 +225,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 bos_token_id = getattr(tokenizer, 'bos_token_id', None)
             if bos_token_id is None:
-                bos_token_id = 101  # [CLS] token (BERT-style)
+                bos_token_id = 2  # [BOS]/[CLS] token (matches 32k BPE tokenizer)
                 self.logger.debug(f"Using default bos_token_id={bos_token_id}")
 
         # PAD token ID: param -> model config -> tokenizer -> default (0)
@@ -293,6 +294,16 @@ class GenerationManager(ManagerInterface):
 
             # Initialize attention mask (all 1s = attend to all tokens)
             attention_mask = torch.ones_like(generated_ids, dtype=torch.long)
+
+            # OPTIMIZATION: Create EOS token tensor on GPU for efficient comparison
+            eos_token_gpu = torch.tensor([eos_token_id], device=device, dtype=torch.long)
+
+            # OPTIMIZATION: Batch EOS checking to reduce GPU->CPU syncs
+            # Check every EOS_CHECK_INTERVAL tokens instead of every token
+            # This reduces sync overhead from 5-20ms per token to once per batch
+            EOS_CHECK_INTERVAL = 8  # Check for EOS every 8 tokens
+            tokens_since_eos_check = 0
+            found_eos = False
 
             # Generate tokens
             for _ in range(effective_max - 1):
@@ -396,18 +407,39 @@ class GenerationManager(ManagerInterface):
                     torch.ones((attention_mask.shape[0], 1), device=device, dtype=attention_mask.dtype)
                 ], dim=-1)
 
-                # EOS check: stop generation immediately when EOS token is produced
-                # This uses a single .item() call per token, which is acceptable for
-                # generation (not training) since we want to stop ASAP
-                next_token_val = next_token[0, 0].item()
-                if next_token_val == eos_token_id:
-                    self.logger.debug(f"Generation stopped at EOS token ({eos_token_id}) after {generated_ids.shape[1]} tokens")
-                    break
+                # BATCHED EOS check: Only sync every EOS_CHECK_INTERVAL tokens
+                # This reduces GPU->CPU sync overhead from per-token to per-batch
+                tokens_since_eos_check += 1
+                if tokens_since_eos_check >= EOS_CHECK_INTERVAL:
+                    tokens_since_eos_check = 0
+                    # Check last N tokens for EOS (single sync for batch)
+                    recent_tokens = generated_ids[0, -EOS_CHECK_INTERVAL:]
+                    eos_positions = (recent_tokens == eos_token_gpu).nonzero(as_tuple=True)[0]
+                    if len(eos_positions) > 0:
+                        # Found EOS - truncate to first EOS position
+                        first_eos_offset = eos_positions[0].item()
+                        eos_abs_pos = generated_ids.shape[1] - EOS_CHECK_INTERVAL + first_eos_offset + 1
+                        generated_ids = generated_ids[:, :eos_abs_pos]
+                        attention_mask = attention_mask[:, :eos_abs_pos]
+                        found_eos = True
+                        self.logger.debug(f"Generation stopped at EOS token ({eos_token_id}) after {generated_ids.shape[1]} tokens")
+                        break
+
+        # Final EOS check for remaining tokens not checked in the loop
+        if not found_eos and tokens_since_eos_check > 0:
+            remaining_tokens = generated_ids[0, -tokens_since_eos_check:]
+            eos_positions = (remaining_tokens == eos_token_gpu).nonzero(as_tuple=True)[0]
+            if len(eos_positions) > 0:
+                first_eos_offset = eos_positions[0].item()
+                eos_abs_pos = generated_ids.shape[1] - tokens_since_eos_check + first_eos_offset + 1
+                generated_ids = generated_ids[:, :eos_abs_pos]
+                self.logger.debug(f"Generation truncated at EOS token ({eos_token_id}) after {generated_ids.shape[1]} tokens")
 
         # Decode with single sync point
-        generated_cpu = generated_ids[0].cpu()
+        # PERF FIX: Use non_blocking transfer for async DMA, sync only when needed
+        generated_cpu = generated_ids[0].to('cpu', non_blocking=True)
         if torch.cuda.is_available():
-            torch.cuda.current_stream().synchronize()
+            torch.cuda.current_stream().synchronize()  # Sync here to ensure transfer complete
         generated_list = generated_cpu.tolist()
 
         # COHERENCE FIX: Detect and warn about repetitive/degenerate generation
@@ -480,7 +512,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 eos_token_id = getattr(tokenizer, 'eos_token_id', None)
             if eos_token_id is None:
-                eos_token_id = 102  # [SEP] token (BERT-style)
+                eos_token_id = 5  # [EOS] token (matches 32k BPE tokenizer)
 
         # Auto-detect BOS token ID from model config/tokenizer if not provided
         if bos_token_id is None:
@@ -489,7 +521,7 @@ class GenerationManager(ManagerInterface):
             elif tokenizer is not None:
                 bos_token_id = getattr(tokenizer, 'bos_token_id', None)
             if bos_token_id is None:
-                bos_token_id = 101  # [CLS] token (BERT-style)
+                bos_token_id = 2  # [BOS]/[CLS] token (matches 32k BPE tokenizer)
 
         # Auto-detect PAD token ID from model config/tokenizer if not provided
         if pad_token_id is None:
@@ -510,16 +542,25 @@ class GenerationManager(ManagerInterface):
             # during deepcopy. The model's internal caches (RoPE, causal mask) can
             # change during training, causing "dictionary keys changed during iteration"
             # errors if we deepcopy from the background thread.
+            #
+            # PERFORMANCE FIX: Use non_blocking=True to start async GPU->CPU transfer.
+            # Main thread returns immediately, background thread waits for transfer.
             with torch.no_grad():
                 base_model = _unwrap_model(model)
-                # Copy state dict to CPU immediately on main thread
-                state_dict_cpu = {k: v.cpu().clone() for k, v in base_model.state_dict().items()}
+                # Start async transfer to CPU - returns immediately
+                state_dict_cpu = {k: v.detach().to('cpu', non_blocking=True) for k, v in base_model.state_dict().items()}
+                # Record event to track when transfer completes
+                transfer_done = torch.cuda.Event()
+                transfer_done.record()
                 # Also capture the model class and config for reconstruction
                 model_class = type(base_model)
                 model_config = getattr(base_model, 'config', None)
 
             def _run_generation():
                 try:
+                    # Wait for async GPU->CPU transfer to complete (runs in background thread)
+                    transfer_done.synchronize()
+
                     # Reconstruct model on CPU using captured state_dict
                     # This avoids deepcopy race conditions with model caches
                     # MEMORY OPTIMIZATION: Use inference_mode for reduced memory overhead

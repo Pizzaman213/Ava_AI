@@ -339,8 +339,10 @@ class OverlappedGradientAccumulator:
 
             backward_events[num_batches - 1].record(self.backward_stream)
 
-        # Synchronize backward stream before optimizer step
-        self.backward_stream.synchronize()
+        # FIX: Use GPU-side event synchronization instead of blocking CPU sync
+        # This ensures optimizer runs after backward completes without blocking CPU
+        # Old: self.backward_stream.synchronize()  # Blocks CPU, defeating async benefits
+        torch.cuda.current_stream().wait_event(backward_events[num_batches - 1])
 
         # Optimizer step
         self._optimizer_step(model, optimizer, scheduler, scaler)
@@ -374,7 +376,7 @@ class OverlappedGradientAccumulator:
         if scheduler is not None and not self.is_deepspeed:
             scheduler.step()
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
     def get_stats(self) -> Dict[str, float]:
         """Get timing statistics."""

@@ -531,9 +531,18 @@ class AudioEncoder(nn.Module):
         if self.dropout is not None:
             x = self.dropout(x)
 
-        # Transformer layers
+        # Transformer layers - convert output_mask to attention mask format
+        # output_mask: [batch, seq_len] bool -> attention_mask: [batch, 1, 1, seq_len] float
+        if output_mask is not None:
+            # Expand mask to [batch, 1, 1, seq_len] for broadcast with attention scores
+            attn_mask = output_mask.unsqueeze(1).unsqueeze(2).float()
+            # Convert to additive mask: True (valid) -> 0, False (padding) -> -inf
+            attn_mask = (1.0 - attn_mask) * -1e9
+        else:
+            attn_mask = None
+
         for layer in self.layers:
-            x = layer(x, attention_mask=None)  # Mask handling TODO
+            x = layer(x, attention_mask=attn_mask)
 
         # Final norm
         x = self.norm(x)

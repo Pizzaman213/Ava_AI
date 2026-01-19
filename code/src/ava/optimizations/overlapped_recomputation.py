@@ -51,9 +51,29 @@ _recompute_stream_pool: Optional['StreamPool'] = None
 # interleave their recomputations in undefined order.
 _last_recompute_event: Optional[torch.cuda.Event] = None
 
+# OPTIMIZATION: Pool of reusable CUDA events to avoid allocation overhead
+# Creating events is ~100us each; reusing saves significant time with many layers
+_event_pool: List[torch.cuda.Event] = []
+_event_pool_maxsize: int = 16  # Enough for typical layer counts
+
 # Initialize lock at module load time to prevent race conditions
 import threading
 _recompute_event_lock: threading.Lock = threading.Lock()
+
+
+def _get_pooled_event() -> torch.cuda.Event:
+    """Get an event from pool or create new if pool is empty."""
+    global _event_pool
+    if _event_pool:
+        return _event_pool.pop()
+    return torch.cuda.Event(enable_timing=False)
+
+
+def _return_event_to_pool(event: torch.cuda.Event) -> None:
+    """Return an event to the pool for reuse."""
+    global _event_pool
+    if len(_event_pool) < _event_pool_maxsize:
+        _event_pool.append(event)
 
 
 def _get_recompute_event_lock() -> threading.Lock:
@@ -203,8 +223,13 @@ class StreamedCheckpointFunction(torch.autograd.Function):
 
             # Record completion event for next layer to wait on
             with _get_recompute_event_lock():
-                _last_recompute_event = torch.cuda.Event()
+                # Return old event to pool before getting new one
+                old_event = _last_recompute_event
+                _last_recompute_event = _get_pooled_event()
                 _last_recompute_event.record(recompute_stream)
+                # Return old event after recording new one (safe to reuse)
+                if old_event is not None:
+                    _return_event_to_pool(old_event)
 
             # Wait for recomputation to finish before backward
             torch.cuda.current_stream().wait_stream(recompute_stream)

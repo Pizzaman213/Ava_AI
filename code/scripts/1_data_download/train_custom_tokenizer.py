@@ -48,18 +48,69 @@ def train_custom_bpe_tokenizer(
         from tokenizers.pre_tokenizers import Whitespace, ByteLevel
         from tokenizers.processors import ByteLevel as ByteLevelProcessor
 
-        # Collect text files
-        print("Collecting text files...")
+        # Collect text files and extract from parquet
+        print("Collecting text data...")
         text_files = []
+
+        # Collect raw text files
         for path in source_dir.rglob("*"):
             if path.is_file() and path.suffix in ['.json', '.jsonl', '.txt']:
                 text_files.append(str(path))
 
+        print(f"  Found {len(text_files)} raw text files")
+
+        # Extract text from parquet files into temp file
+        parquet_files = list(source_dir.rglob("*.parquet"))
+        if parquet_files:
+            print(f"  Found {len(parquet_files)} parquet files, extracting text...")
+            temp_text_file = output_path / "_parquet_corpus.txt"
+            extracted_count = 0
+
+            try:
+                import pyarrow.parquet as pq
+                with open(temp_text_file, 'w', encoding='utf-8') as out_f:
+                    for pq_path in parquet_files:
+                        try:
+                            table = pq.read_table(pq_path)
+                            # Find text columns
+                            text_cols = [c for c in table.column_names
+                                        if c.lower() in ['text', 'content', 'question', 'response',
+                                                         'instruction', 'output', 'completion', 'input']]
+                            if not text_cols:
+                                # Try first string column
+                                for col in table.column_names:
+                                    try:
+                                        sample = table.column(col)[0].as_py()
+                                        if isinstance(sample, str) and len(sample) > 20:
+                                            text_cols = [col]
+                                            break
+                                    except:
+                                        pass
+
+                            for col in text_cols:
+                                try:
+                                    for val in table.column(col).to_pylist():
+                                        if val and isinstance(val, str) and len(val.strip()) > 20:
+                                            out_f.write(val.strip() + '\n')
+                                            extracted_count += 1
+                                except:
+                                    pass
+                        except Exception as e:
+                            print(f"    Skipping {pq_path.name}: {e}")
+
+                if extracted_count > 0:
+                    text_files.append(str(temp_text_file))
+                    print(f"  ✓ Extracted {extracted_count:,} text samples from parquet files")
+                else:
+                    temp_text_file.unlink(missing_ok=True)
+            except ImportError:
+                print("  ⚠ pyarrow not installed, skipping parquet files")
+
         if not text_files:
-            print("❌ No text files found for training!")
+            print("❌ No text data found for training!")
             return False
 
-        print(f"✓ Found {len(text_files)} text files\n")
+        print(f"✓ Total: {len(text_files)} text sources\n")
 
         # Create tokenizer
         print("Creating BPE tokenizer...")

@@ -80,7 +80,10 @@ from datetime import datetime
 from typing import Optional, Tuple, Dict, Any, List, Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from collections import defaultdict
+from collections import defaultdict, deque
+
+# Maximum history size for profiler lists to prevent memory leaks
+MAX_PROFILER_HISTORY = 200  # Keep last 200 entries per metric
 
 import torch
 
@@ -230,7 +233,7 @@ class NsightProfiler:
         self._profiler = None
         self._step_count = 0
         self._is_profiling = False
-        self._profile_data: List[Dict[str, Any]] = []
+        self._profile_data: deque = deque(maxlen=MAX_PROFILER_HISTORY)  # Bounded to prevent memory leak
 
         # Create timestamped output directory
         if self.config.enabled:
@@ -624,15 +627,15 @@ class KernelStats:
     total_time_us: float = 0.0
     min_time_us: float = float('inf')
     max_time_us: float = 0.0
-    times_us: List[float] = field(default_factory=list)
+    times_us: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
 
     # Memory stats
     total_memory_bytes: int = 0
     peak_memory_bytes: int = 0
 
-    # Grid/block dimensions (for compute analysis)
-    grid_dims: List[Tuple[int, int, int]] = field(default_factory=list)
-    block_dims: List[Tuple[int, int, int]] = field(default_factory=list)
+    # Grid/block dimensions (for compute analysis) - bounded to prevent memory leak
+    grid_dims: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
+    block_dims: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
 
     def add_invocation(self, time_us: float, memory_bytes: int = 0,
                        grid: Tuple[int, int, int] = None,
@@ -687,18 +690,18 @@ class LayerProfile:
     name: str
     layer_type: str
 
-    # Timing
-    forward_times_ms: List[float] = field(default_factory=list)
-    backward_times_ms: List[float] = field(default_factory=list)
+    # Timing - bounded to prevent memory leak
+    forward_times_ms: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
+    backward_times_ms: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
 
-    # Memory
-    activation_memory_mb: List[float] = field(default_factory=list)
-    gradient_memory_mb: List[float] = field(default_factory=list)
+    # Memory - bounded to prevent memory leak
+    activation_memory_mb: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
+    gradient_memory_mb: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
     parameter_memory_mb: float = 0.0
 
-    # Tensor shapes
-    input_shapes: List[Tuple] = field(default_factory=list)
-    output_shapes: List[Tuple] = field(default_factory=list)
+    # Tensor shapes - bounded to prevent memory leak
+    input_shapes: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
+    output_shapes: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILER_HISTORY))
 
     # FLOPS
     flops_per_forward: int = 0
@@ -1148,22 +1151,22 @@ class DetailedProfiler:
         self.verbose = verbose
         self.step_summary_interval = step_summary_interval
 
-        # Statistics storage - basic
+        # Statistics storage - basic (bounded to prevent memory leaks)
         self.kernel_stats: Dict[str, KernelStats] = {}
         self.layer_profiles: Dict[str, LayerProfile] = {}
-        self.moe_routing_stats: List[MoERoutingStats] = []
-        self.memory_timeline: List[Dict[str, Any]] = []
+        self.moe_routing_stats: deque = deque(maxlen=MAX_PROFILER_HISTORY)
+        self.memory_timeline: deque = deque(maxlen=MAX_PROFILER_HISTORY)
 
-        # Statistics storage - enhanced
-        self.attention_stats: List[AttentionStats] = []
-        self.communication_stats: List[CommunicationStats] = []
-        self.gradient_stats: List[GradientStats] = []
+        # Statistics storage - enhanced (bounded to prevent memory leaks)
+        self.attention_stats: deque = deque(maxlen=MAX_PROFILER_HISTORY)
+        self.communication_stats: deque = deque(maxlen=MAX_PROFILER_HISTORY)
+        self.gradient_stats: deque = deque(maxlen=MAX_PROFILER_HISTORY)
         self.tensor_stats: Dict[str, TensorStats] = {}
-        self.fragmentation_stats: List[MemoryFragmentationStats] = []
-        self.bottlenecks: List[Bottleneck] = []
+        self.fragmentation_stats: deque = deque(maxlen=MAX_PROFILER_HISTORY)
+        self.bottlenecks: deque = deque(maxlen=MAX_PROFILER_HISTORY)
 
-        # Step-level metrics
-        self.step_metrics: List[Dict[str, Any]] = []
+        # Step-level metrics (bounded to prevent memory leaks)
+        self.step_metrics: deque = deque(maxlen=MAX_PROFILER_HISTORY)
         self.current_step = 0
         self._step_start_time = 0.0
 

@@ -59,9 +59,17 @@ from .context import TrainingComponent, TrainingContext
 _format_detection_cache: Dict[str, Dict[str, Any]] = {}
 _format_cache_lock = threading.Lock()  # Thread-safe cache access
 
+# Module-level flag to signal distributed cleanup is imminent
+# When True, DataLoader workers may be blocked on dist.barrier() calls
+# and need aggressive termination (SIGTERM → SIGKILL) to prevent deadlocks
+_distributed_cleanup_in_progress: bool = False
+
 
 class DataLoaderManager(TrainingComponent):
     """Manages all data loading operations for training."""
+
+    # Class-level flag for distributed cleanup signaling
+    _cleanup_signaled: bool = False
 
     def __init__(self, context: TrainingContext):
         """Initialize data loader manager.
@@ -77,14 +85,37 @@ class DataLoaderManager(TrainingComponent):
         """Initialize component. Called once at startup."""
         self._initialized = True
 
+    @classmethod
+    def signal_distributed_cleanup_imminent(cls) -> None:
+        """Signal that distributed cleanup is about to begin.
+
+        Call this BEFORE destroying the distributed process group to allow
+        DataLoader workers to be terminated gracefully. Workers blocked on
+        dist.barrier() will be force-terminated to prevent deadlocks.
+
+        Usage in train_pipeline.py:
+            DataLoaderManager.signal_distributed_cleanup_imminent()
+            pipeline.cleanup_all()  # Will use aggressive termination
+            cleanup_distributed(rank, world_size)
+        """
+        global _distributed_cleanup_in_progress
+        _distributed_cleanup_in_progress = True
+        cls._cleanup_signaled = True
+        _logger.debug("Distributed cleanup signaled - DataLoader workers will be force-terminated")
+
     def cleanup(self, distributed_cleanup_started: bool = False) -> None:
         """Cleanup resources - properly terminate DataLoader workers.
 
         This fixes the semaphore leak issue by properly shutting down
         DataLoader worker processes before distributed cleanup.
 
-        If distributed cleanup has already started, workers may be blocked
-        on dist.barrier() calls, so we use aggressive termination.
+        If distributed cleanup has already started (or is imminent), workers
+        may be blocked on dist.barrier() calls, so we use aggressive termination.
+
+        The cleanup auto-detects distributed cleanup state from:
+        1. The distributed_cleanup_started parameter (explicit)
+        2. The module-level _distributed_cleanup_in_progress flag (auto-detect)
+        3. The class-level _cleanup_signaled flag (via signal_distributed_cleanup_imminent)
 
         Args:
             distributed_cleanup_started: If True, use aggressive worker termination
@@ -93,21 +124,42 @@ class DataLoaderManager(TrainingComponent):
         import signal
         import os
 
-        def _force_terminate_worker(w, timeout: float = 2.0):
-            """Terminate a worker with SIGTERM, then SIGKILL if needed."""
+        # Auto-detect distributed cleanup state from module-level flag
+        global _distributed_cleanup_in_progress
+        use_aggressive_termination = (
+            distributed_cleanup_started or
+            _distributed_cleanup_in_progress or
+            self.__class__._cleanup_signaled
+        )
+
+        def _force_terminate_worker(w, timeout: float = 2.0, aggressive: bool = False):
+            """Terminate a worker with adaptive backoff.
+
+            Args:
+                w: Worker process
+                timeout: Initial timeout for SIGTERM
+                aggressive: If True, use shorter timeouts and faster escalation
+            """
             if not w.is_alive():
                 return
+
+            # Adaptive timeouts based on cleanup mode
+            sigterm_timeout = 1.0 if aggressive else timeout
+            sigkill_wait = 0.5 if aggressive else 1.0
+
             try:
                 w.terminate()  # Send SIGTERM
-                w.join(timeout=timeout)
+                w.join(timeout=sigterm_timeout)
                 if w.is_alive():
                     # Still alive? Send SIGKILL
                     try:
                         os.kill(w.pid, signal.SIGKILL)
-                        w.join(timeout=1.0)  # Brief wait after SIGKILL
+                        w.join(timeout=sigkill_wait)  # Brief wait after SIGKILL
                         _logger.debug(f"Force killed worker {w.pid}")
                     except ProcessLookupError:
                         pass  # Already dead
+                    except OSError as e:
+                        _logger.debug(f"SIGKILL failed for worker {w.pid}: {e}")
             except Exception as e:
                 _logger.debug(f"Error terminating worker: {e}")
 
@@ -119,13 +171,15 @@ class DataLoaderManager(TrainingComponent):
                     if hasattr(loader, '_iterator') and loader._iterator is not None:
                         iterator = loader._iterator
 
-                        if distributed_cleanup_started:
+                        if use_aggressive_termination:
                             # Aggressive cleanup: workers may be blocked on dist.barrier()
                             # Force terminate them to prevent deadlocks
                             if hasattr(iterator, '_workers') and iterator._workers:
-                                _logger.debug(f"Aggressively terminating {len(iterator._workers)} dataloader workers")
+                                worker_count = len(iterator._workers)
+                                _logger.debug(f"Aggressively terminating {worker_count} dataloader workers")
                                 for w in iterator._workers:
-                                    _force_terminate_worker(w, timeout=1.0)
+                                    _force_terminate_worker(w, timeout=1.0, aggressive=True)
+                                _logger.debug(f"Terminated {worker_count} workers")
                         else:
                             # Normal graceful shutdown
                             # Issue #4 fix: Check method existence before calling (PyTorch version compat)
@@ -137,7 +191,7 @@ class DataLoaderManager(TrainingComponent):
                                     # Fallback to aggressive termination if graceful fails
                                     if hasattr(iterator, '_workers') and iterator._workers:
                                         for w in iterator._workers:
-                                            _force_terminate_worker(w, timeout=2.0)
+                                            _force_terminate_worker(w, timeout=2.0, aggressive=False)
                             else:
                                 # Fallback: delete iterator to trigger __del__ cleanup
                                 try:
@@ -156,6 +210,7 @@ class DataLoaderManager(TrainingComponent):
         tokenizer: Any,
         config_dict: dict,
         batch_size: Optional[int] = None,
+        num_workers: Optional[int] = None,
     ) -> Tuple:
         """Create training and validation dataloaders.
 
@@ -169,10 +224,13 @@ class DataLoaderManager(TrainingComponent):
             tokenizer: Tokenizer for data processing
             config_dict: Raw configuration dictionary
             batch_size: Optional override for batch size
+            num_workers: Optional override for number of data loading workers
 
         Returns:
             Tuple of (train_loader, val_loader)
         """
+        # Store num_workers override for use in loader creation
+        self._num_workers_override = num_workers
         # Determine batch size
         if batch_size is None:
             # Try to get from training_config.training.batch_size
@@ -296,7 +354,12 @@ class DataLoaderManager(TrainingComponent):
             _logger.info(f" Data directory: {data_dir} (stats skipped for fast startup)")
 
         # Get configuration parameters
-        num_workers = self._get_num_workers(training_config)
+        # Use override if provided, otherwise get from config
+        if hasattr(self, '_num_workers_override') and self._num_workers_override is not None:
+            num_workers = self._num_workers_override
+            _logger.info(f" Using num_workers override: {num_workers}")
+        else:
+            num_workers = self._get_num_workers(training_config)
         prefetch_factor = self._get_prefetch_factor(training_config)
         persistent_workers = self._get_persistent_workers(training_config)
         samples_per_file = self._get_samples_per_file(training_config)
@@ -330,7 +393,7 @@ class DataLoaderManager(TrainingComponent):
 
             # Get indexed loader config
             indexed_num_bins = getattr(training_config.data, 'indexed_num_bins', 8)
-            indexed_cache_size = getattr(training_config.data, 'indexed_cache_size', 50)
+            indexed_cache_size = getattr(training_config.data, 'indexed_cache_size', 10)  # Reduced from 50
             indexed_index_workers = getattr(training_config.data, 'indexed_index_workers', None)
             max_files = getattr(training_config.data, 'max_files_to_load', None)
 
@@ -344,6 +407,12 @@ class DataLoaderManager(TrainingComponent):
                     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
             else:
                 pad_token_id = 0
+
+            # Get worker timeout from config (default 300s to detect genuine hangs)
+            # Ensure we have a valid float, not None
+            worker_timeout = getattr(training_config.data, 'worker_timeout', None)
+            if worker_timeout is None:
+                worker_timeout = 300.0  # Default: 5 minutes
 
             train_loader, val_loader = create_indexed_dataloaders(
                 data_dir=data_dir,
@@ -359,6 +428,7 @@ class DataLoaderManager(TrainingComponent):
                 seed=shuffle_seed,
                 max_files=max_files,
                 index_workers=indexed_index_workers,
+                timeout=worker_timeout,
             )
 
             return train_loader, val_loader
@@ -421,6 +491,12 @@ class DataLoaderManager(TrainingComponent):
 
         _logger.info(f"Special tokens: pad={pad_token_id}, bos={bos_token_id}, eos={eos_token_id}, add_special_tokens={add_special_tokens}")
 
+        # Get worker timeout from config (default 300s to detect genuine hangs)
+        # Ensure we have a valid float, not None
+        worker_timeout = getattr(training_config.data, 'worker_timeout', None)
+        if worker_timeout is None:
+            worker_timeout = 300.0  # Default: 5 minutes
+
         train_loader, val_loader = create_ultra_fast_dataloaders(
             batch_size=batch_size,
             max_length=training_config.data.max_length,
@@ -445,6 +521,7 @@ class DataLoaderManager(TrainingComponent):
             shuffle_seed=shuffle_seed,
             enable_length_sorting=enable_length_sorting,
             disable_packing_length_sort=disable_packing_length_sort,
+            timeout=worker_timeout,
         )
 
         # Validate dataloaders (skip if configured or fast_startup - useful for pretokenized data)
@@ -564,22 +641,34 @@ class DataLoaderManager(TrainingComponent):
 
         _logger.info(f" Data directory: {data_dir}")
 
+        # PERF FIX: Quick file count first to decide if detailed logging is worthwhile
+        # For large datasets (>100 files), skip per-file logging to save 2-5s startup time
+        all_jsonl = list(data_path.glob("**/*_processed.jsonl"))
+        all_arrow = list(data_path.glob("**/*.arrow"))
+        all_parquet = list(data_path.glob("**/*.parquet"))
+        total_file_count = len(all_jsonl) + len(all_arrow) + len(all_parquet)
+
+        skip_detailed_logging = total_file_count > 100
+        if skip_detailed_logging:
+            _logger.info(f"    Large dataset detected ({total_file_count} files), skipping per-file stats")
+
         # Count JSONL files (check both root and subdirectories)
-        for jsonl_file in data_path.glob("**/*_processed.jsonl"):
+        for jsonl_file in all_jsonl:
             try:
                 with open(jsonl_file, "r") as f:
                     file_lines = sum(1 for _ in f)
                     total_examples += file_lines
                     file_count += 1
-                    rel_path = jsonl_file.relative_to(data_path)
-                    _logger.info(
-                        f"    {rel_path}: {file_lines:,} examples"
-                    )
+                    if not skip_detailed_logging:
+                        rel_path = jsonl_file.relative_to(data_path)
+                        _logger.info(
+                            f"    {rel_path}: {file_lines:,} examples"
+                        )
             except Exception as e:
                 _logger.warning(f"     Could not read {jsonl_file.name}: {e}")
 
         # Count Arrow files (check both root and subdirectories, supports IPC File and Stream formats)
-        for arrow_file in data_path.glob("**/*.arrow"):
+        for arrow_file in all_arrow:
             try:
                 import pyarrow as pa
                 import pyarrow.ipc as ipc
@@ -596,29 +685,35 @@ class DataLoaderManager(TrainingComponent):
                 file_rows = len(table)
                 total_examples += file_rows
                 file_count += 1
-                rel_path = arrow_file.relative_to(data_path)
-                _logger.info(
-                    f"    {rel_path}: {file_rows:,} examples (pre-tokenized)"
-                )
+                if not skip_detailed_logging:
+                    rel_path = arrow_file.relative_to(data_path)
+                    _logger.info(
+                        f"    {rel_path}: {file_rows:,} examples (pre-tokenized)"
+                    )
             except Exception as e:
                 _logger.warning(f"     Could not read {arrow_file.name}: {e}")
 
         # Count Parquet files (check both root and subdirectories like train/)
-        for parquet_pattern in ["*.parquet", "**/*.parquet"]:
-            for parquet_file in data_path.glob(parquet_pattern):
-                try:
-                    import pyarrow.parquet as pq
+        # Note: We already collected all_parquet above, use set to avoid duplicates
+        seen_parquet = set()
+        for parquet_file in all_parquet:
+            if parquet_file in seen_parquet:
+                continue
+            seen_parquet.add(parquet_file)
+            try:
+                import pyarrow.parquet as pq
 
-                    pq_file = pq.ParquetFile(parquet_file)
-                    file_rows = pq_file.metadata.num_rows
-                    total_examples += file_rows
-                    file_count += 1
+                pq_file = pq.ParquetFile(parquet_file)
+                file_rows = pq_file.metadata.num_rows
+                total_examples += file_rows
+                file_count += 1
+                if not skip_detailed_logging:
                     rel_path = parquet_file.relative_to(data_path)
                     _logger.info(
                         f"    {rel_path}: {file_rows:,} examples (parquet)"
                     )
-                except Exception as e:
-                    _logger.warning(f"     Could not read {parquet_file.name}: {e}")
+            except Exception as e:
+                _logger.warning(f"     Could not read {parquet_file.name}: {e}")
 
         _logger.info(f"\n Total examples found: {total_examples:,}")
         _logger.info(f" Total files: {file_count}")

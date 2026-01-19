@@ -71,7 +71,7 @@ class FP8Config:
     """
     enabled: bool = False
     use_transformer_engine: bool = True  # Use TE if available, else PyTorch native
-    amax_history_len: int = 1024  # History length for scaling factor estimation
+    amax_history_len: int = 205  # Reduced from 1024 for memory efficiency
     amax_compute_algo: str = "max"  # Algorithm for computing amax: "max" or "most_recent"
     margin: int = 0  # Margin for scaling factor
     fp8_format: str = "e4m3"  # FP8 format for forward: "e4m3" (higher precision) or "e5m2" (higher range)

@@ -28,9 +28,12 @@ Usage:
 import logging
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+# Maximum history size for timing lists to prevent memory leaks
+MAX_PROFILING_HISTORY = 200
 
 logger = logging.getLogger(__name__)
 
@@ -39,13 +42,13 @@ logger = logging.getLogger(__name__)
 class DataLoaderStats:
     """Aggregated data loading statistics."""
 
-    # Timing stats (in seconds)
-    file_load_times: List[float] = field(default_factory=list)
-    extraction_times: List[float] = field(default_factory=list)
-    tensor_conversion_times: List[float] = field(default_factory=list)
-    collation_times: List[float] = field(default_factory=list)
-    gpu_transfer_times: List[float] = field(default_factory=list)
-    batch_total_times: List[float] = field(default_factory=list)
+    # Timing stats (in seconds) - bounded to prevent memory leaks
+    file_load_times: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILING_HISTORY))
+    extraction_times: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILING_HISTORY))
+    tensor_conversion_times: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILING_HISTORY))
+    collation_times: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILING_HISTORY))
+    gpu_transfer_times: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILING_HISTORY))
+    batch_total_times: deque = field(default_factory=lambda: deque(maxlen=MAX_PROFILING_HISTORY))
 
     # Throughput stats
     samples_processed: int = 0

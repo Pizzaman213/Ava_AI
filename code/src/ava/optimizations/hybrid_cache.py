@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from collections import OrderedDict
 import logging
 import time
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 class ActivationCacheConfig:
     """Configuration for training activation cache."""
     enabled: bool = True
-    max_size_gb: float = 2.0
+    max_size_gb: float = 0.4  # Reduced from 2.0 for memory efficiency
     eviction_policy: str = 'lru'  # 'lru', 'lfu', 'hybrid'
     cache_layers: Optional[List[int]] = None  # Which layers to cache (None = all)
 
@@ -48,7 +49,7 @@ class ActivationCacheConfig:
 class KVCacheConfig:
     """Configuration for generation KV cache management."""
     enabled: bool = True
-    max_size_gb: float = 4.0
+    max_size_gb: float = 0.8  # Reduced from 4.0 for memory efficiency
     eviction_policy: str = 'hybrid'  # 'sliding_window', 'hybrid'
     sliding_window: Optional[int] = None  # Window size for sliding window
     sink_tokens: int = 4  # StreamingLLM: keep first N tokens as "sinks"
@@ -134,6 +135,11 @@ class ActivationCache:
         self.config = config
         self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
 
+        # Phase 4 Optimization: Thread safety for cache operations
+        # Prevents race conditions when cache is accessed from multiple threads
+        # (e.g., during async data loading or distributed training)
+        self._lock = threading.Lock()
+
         # Batch tracking
         self._batch_ptr: int = 0
         self._forward_pass_count: int = 0
@@ -203,19 +209,21 @@ class ActivationCache:
         key = self._make_key(layer_idx, phase)
         size_bytes = self._get_tensor_size(activation)
 
-        # Evict if needed
-        self._evict_if_needed(size_bytes)
+        # Phase 4: Thread-safe cache modification
+        with self._lock:
+            # Evict if needed
+            self._evict_if_needed(size_bytes)
 
-        # Store detached tensor (no gradients)
-        entry = CacheEntry(
-            key=key,
-            value=activation.detach(),
-            size_bytes=size_bytes,
-        )
-        entry.update_score(self.config.eviction_policy)
+            # Store detached tensor (no gradients)
+            entry = CacheEntry(
+                key=key,
+                value=activation.detach(),
+                size_bytes=size_bytes,
+            )
+            entry.update_score(self.config.eviction_policy)
 
-        self.cache[key] = entry
-        self.current_bytes += size_bytes
+            self.cache[key] = entry
+            self.current_bytes += size_bytes
 
     def get(self, layer_idx: int, phase: str = 'post_attn') -> Optional[torch.Tensor]:
         """
@@ -233,17 +241,19 @@ class ActivationCache:
 
         key = self._make_key(layer_idx, phase)
 
-        if key in self.cache:
-            self.hits += 1
-            entry = self.cache[key]
-            entry.access_count += 1
-            entry.last_access_time = time.time()
-            entry.update_score(self.config.eviction_policy)
-            self.cache.move_to_end(key)
-            return entry.value
-        else:
-            self.misses += 1
-            return None
+        # Phase 4: Thread-safe cache access
+        with self._lock:
+            if key in self.cache:
+                self.hits += 1
+                entry = self.cache[key]
+                entry.access_count += 1
+                entry.last_access_time = time.time()
+                entry.update_score(self.config.eviction_policy)
+                self.cache.move_to_end(key)
+                return entry.value
+            else:
+                self.misses += 1
+                return None
 
     def on_batch_start(self, batch: Dict[str, torch.Tensor]):
         """
@@ -270,8 +280,10 @@ class ActivationCache:
 
     def clear(self):
         """Clear all cached activations."""
-        self.cache.clear()
-        self.current_bytes = 0
+        # Phase 4: Thread-safe cache clear
+        with self._lock:
+            self.cache.clear()
+            self.current_bytes = 0
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
@@ -576,11 +588,21 @@ class HybridCacheManager:
         """
         Set caching mode: 'training', 'generation', or 'auto'.
 
+        Phase 4 Optimization: Clear cache on mode change to prevent stale data.
+        Training and generation have different caching requirements - using
+        training cache in generation mode (or vice versa) can cause issues.
+
         Args:
             mode: Caching mode
         """
         if mode not in ('training', 'generation', 'auto'):
             raise ValueError(f"Invalid mode: {mode}. Must be 'training', 'generation', or 'auto'")
+
+        # Phase 4: Clear cache on mode change to prevent stale data issues
+        if mode != self._mode:
+            self.clear_all()
+            logger.debug(f"HybridCacheManager: cleared cache on mode change {self._mode} -> {mode}")
+
         self._mode = mode
         logger.debug(f"HybridCacheManager: mode set to {mode}")
 

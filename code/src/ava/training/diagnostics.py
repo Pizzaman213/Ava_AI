@@ -357,8 +357,8 @@ class DiagnosticsManager(ManagerInterface):
             if hasattr(module, 'routing_entropy'):
                 try:
                     stats.routing_entropy = float(module.routing_entropy)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Could not get routing entropy: {e}")
 
         # Calculate balance score from loads
         if stats.per_expert_load:

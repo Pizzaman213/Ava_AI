@@ -52,7 +52,7 @@ class CUDAGraphConfig:
     enabled: bool = False
     capture_backward: bool = True
     capture_optimizer_step: bool = True
-    max_cached_graphs: int = 4
+    max_cached_graphs: int = 1  # Reduced from 4 for memory efficiency
     use_memory_pool: bool = True
     warmup_steps: int = 3
     capture_stream: bool = True  # Use dedicated capture stream

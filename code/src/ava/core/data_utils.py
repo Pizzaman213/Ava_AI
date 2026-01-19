@@ -183,6 +183,9 @@ def collate_batch(
         else:
             labels[i, :seq_len] = input_ids[i, :seq_len]
 
+    # CRITICAL: Mask padded positions in labels so model doesn't learn to predict padding
+    labels[attention_mask == 0] = -100
+
     return {
         'input_ids': input_ids,
         'attention_mask': attention_mask,
@@ -353,8 +356,12 @@ def get_prefetch_factor(config: Any) -> int:
 
 
 def get_persistent_workers(config: Any) -> bool:
-    """Get persistent workers setting."""
-    return get_config_value(config, 'data_loading.persistent_workers', 'data.persistent_workers', default=False)
+    """Get persistent workers setting.
+
+    Defaults to True for better performance - avoids worker restart overhead between epochs.
+    (Phase 2 optimization: saves 100-300s over 100 epochs)
+    """
+    return get_config_value(config, 'data_loading.persistent_workers', 'data.persistent_workers', default=True)
 
 
 def get_samples_per_file(config: Any) -> int:

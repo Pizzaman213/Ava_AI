@@ -33,6 +33,10 @@ from datetime import datetime
 from pathlib import Path
 from queue import Queue, Empty
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from collections import deque
+
+# Maximum history size for metrics to prevent memory leaks
+MAX_METRICS_HISTORY = 200
 
 # Import TrainingComponent for MetricsManager inheritance
 if TYPE_CHECKING:
@@ -471,9 +475,9 @@ class MetricsManager:
         self._initialized = False
         self._writer: Optional[Any] = None  # SummaryWriter
         self._use_wandb = False
-        self._metrics: Dict[str, List[tuple]] = {}
+        self._metrics: Dict[str, deque] = {}  # Bounded deques to prevent memory leak
         self._log_dir: Optional[Path] = None
-        self._generation_rows: List[tuple] = []
+        self._generation_rows: deque = deque(maxlen=MAX_METRICS_HISTORY)  # Bounded to prevent memory leak
         # Async metrics logger for non-blocking WandB logging
         self._async_logger: Optional[Any] = None
         self._use_async_logging = False
@@ -1146,14 +1150,14 @@ class MetricsManager:
             self.logger.warning(f"Failed to log generation table: {e}")
 
     def _store_metric(self, key: str, step: int, value: float) -> None:
-        """Store metric in memory for summary."""
+        """Store metric in memory for summary (bounded to prevent memory leak)."""
         if key not in self._metrics:
-            self._metrics[key] = []
+            self._metrics[key] = deque(maxlen=MAX_METRICS_HISTORY)
         self._metrics[key].append((step, value))
 
     def save_summary(self, output_path: Path) -> None:
         """Save metrics summary to JSON file."""
-        summary = {key: values for key, values in self._metrics.items()}
+        summary = {key: list(values) for key, values in self._metrics.items()}  # Convert deques to lists
 
         try:
             with open(output_path, 'w') as f:

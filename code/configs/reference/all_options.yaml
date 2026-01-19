@@ -250,7 +250,7 @@ data:
   # ---------------------------------------------------------------------------
   num_workers: 0                        # DataLoader workers (0 = main process)
   prefetch_factor: 4                    # Batches to prefetch per worker
-  persistent_workers: false             # Keep workers alive between epochs
+  persistent_workers: true              # [RECOMMENDED] Keep workers alive between epochs (100-300s savings)
   multiprocessing_context: spawn        # MP context: 'spawn', 'fork', 'forkserver'
   timeout: 300                          # Worker timeout (seconds)
 
@@ -288,6 +288,15 @@ data:
   lazy_file_discovery: true             # Lazy file discovery (memory-safe)
   cache_size: 10                        # File cache size
   shuffle_files: true                   # Shuffle file order
+
+  # ---------------------------------------------------------------------------
+  # Streaming Pipeline Optimizations
+  # ---------------------------------------------------------------------------
+  use_thread_local_cache: true          # [RECOMMENDED] 10-15% throughput gain (eliminates lock contention)
+  numpy_cache_size: 20                  # Numpy column cache per worker (5-20% throughput gain)
+  validate_format_at_init: true         # Validate data format at init (catches 100-1000x slowdowns)
+  use_cu_seqlens_format: auto           # cu_seqlens for packing: 'auto', 'always', 'never'
+                                        # auto = enabled when use_flash_attention=true
 
   # ---------------------------------------------------------------------------
   # Randomization Control
@@ -416,6 +425,8 @@ compute:
       use_event_timing: true            # Use CUDA events for timing
       use_stream_pool: true             # Reuse streams
       high_priority_transfers: true     # Priority for CPU<->GPU
+      prefetch_count: null              # Prefetch batches (null = auto-size based on GPU memory)
+      adaptive_prefetch: true           # [RECOMMENDED] Auto-size prefetch based on GPU memory
 
     # CUDA Graphs
     graphs:
@@ -430,6 +441,8 @@ compute:
   # ---------------------------------------------------------------------------
   memory:
     headroom_gb: 3.0                    # Reserve memory headroom
+    pinned_buffer_pool_mb: null         # Pinned memory pool size (null = auto-size based on RAM)
+                                        # <16GB RAM: 512MB, 16-32GB: 1024MB, 32-64GB: 2048MB, >64GB: 4096MB
     cleanup_thresholds:
       warning: 0.85                     # Trigger warning cleanup
       critical: 0.90                    # Trigger critical cleanup

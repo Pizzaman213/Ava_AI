@@ -134,7 +134,7 @@ class OptimizerManager(ManagerInterface):
     def cleanup(self) -> None:
         """Cleanup optimizer resources."""
         if self.optimizer is not None:
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
 
     def _log_available_optimizers(self) -> None:
         """Log which optimizers are available."""

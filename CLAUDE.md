@@ -361,6 +361,35 @@ python code/scripts/1_data_download/build_pretokenized_data.py
 python code/scripts/1_data_download/train_custom_tokenizer.py
 ```
 
+### Tokenizer Retraining
+
+If you need to retrain the tokenizer (e.g., to fix case sensitivity or change vocab size):
+
+```bash
+# Train new case-preserving BPE tokenizer (32k vocab)
+python code/scripts/1_data_download/train_custom_tokenizer.py --vocab-size 32000 --output-dir /root/Ava_AI/pretokenized_data/tokenizers/vocab_new
+
+# Backup old tokenizer and replace with new one
+mv /root/Ava_AI/pretokenized_data/tokenizers/vocab /root/Ava_AI/pretokenized_data/tokenizers/vocab_old
+mv /root/Ava_AI/pretokenized_data/tokenizers/vocab_new /root/Ava_AI/pretokenized_data/tokenizers/vocab
+
+# Remove old pre-tokenized data and rebuild with new tokenizer
+rm -rf /root/Ava_AI/pretokenized_data/data/
+python code/scripts/1_data_download/build_pretokenized_data.py
+```
+
+**Important**: After changing the tokenizer, you must:
+1. Rebuild all pre-tokenized data (token IDs change)
+2. Retrain the model from scratch (old checkpoints are incompatible)
+
+**Tokenizer options**:
+- `--vocab-size`: Vocabulary size (default: 16000)
+- `--output-dir`: Output directory for tokenizer files
+- `--add-eos-token`: EOS token string (default: [EOS])
+- `--no-eos-token`: Skip adding EOS token
+
+**Tokenizer location**: `/root/Ava_AI/pretokenized_data/tokenizers/vocab/`
+
 ### Testing
 ```bash
 python code/tests/test_all.py

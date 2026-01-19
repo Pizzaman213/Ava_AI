@@ -87,9 +87,9 @@ from ava.training.episodic_memory import EpisodicMemoryManager
 from ava.training.distributed import DistributedStateManager
 from ava.config.yaml_loader import load_yaml_with_path_resolution
 from ava.config.training_config import DynamicConfig, ModelSelectionConfig, DiagnosticsConfig
-# Issue #10 fix: Guard Triton import in case ava.kernels fails to load
+# Issue #10 fix: Guard Triton import in case kernels module fails to load
 try:
-    from ava.kernels import KernelConfig, set_kernel_config, TRITON_AVAILABLE
+    from ava.cuda.moe_kernels import KernelConfig, set_kernel_config, TRITON_AVAILABLE
 except ImportError as e:
     # Fallback if kernels module fails to load (e.g., Triton not installed)
     logger = logging.getLogger(__name__)
@@ -894,7 +894,9 @@ def main(args: argparse.Namespace) -> None:
     model_config = config.get('model', {})
     training_config = config.get('training', {})
     data_config = config.get('data', {})
-    kernel_opt_config = config.get('kernel_optimization', {})
+    # Support both old 'kernel_optimization' and new 'compute.kernels' paths
+    compute_config = config.get('compute', {})
+    kernel_opt_config = config.get('kernel_optimization', {}) or compute_config.get('kernels', {})
 
     # =========================================================================
     # Phase 2.1: Configure Kernel Optimizations
@@ -1731,11 +1733,16 @@ def main(args: argparse.Namespace) -> None:
         # Convert config dict to DynamicConfig for DataLoaderManager
         config_obj = DynamicConfig(config) if isinstance(config, dict) else config
 
+        # Get num_workers explicitly from config to ensure it's passed correctly
+        data_config = config.get('data', {})
+        num_workers = data_config.get('num_workers', 6)  # Default to 6 if not set
+
         train_loader, val_loader = data_mgr.create_dataloaders(
             training_config=config_obj,
             tokenizer=tokenizer,
             config_dict=config,
-            batch_size=batch_size
+            batch_size=batch_size,
+            num_workers=num_workers
         )
 
         # Issue #11 fix: Synchronize all ranks after dataloader creation
@@ -2197,7 +2204,15 @@ def main(args: argparse.Namespace) -> None:
 
         train_logger.info("Starting cleanup sequence...")
 
-        # Step 1: Cleanup DataLoaders BEFORE distributed cleanup
+        # Step 1: Signal distributed cleanup is imminent
+        # This allows DataLoader workers to be force-terminated if blocked on dist.barrier()
+        try:
+            DataLoaderManager.signal_distributed_cleanup_imminent()
+            train_logger.debug("Signaled distributed cleanup imminent to DataLoaderManager")
+        except Exception as e:
+            train_logger.debug(f"Could not signal distributed cleanup: {e}")
+
+        # Step 2: Cleanup DataLoaders BEFORE distributed cleanup
         # This prevents workers from being blocked on dist.barrier() when group is destroyed
         try:
             train_logger.info("Cleaning up pipeline components (including dataloaders)...")
@@ -2205,7 +2220,7 @@ def main(args: argparse.Namespace) -> None:
         except Exception as e:
             train_logger.error(f"Error during pipeline cleanup: {e}")
 
-        # Step 2: Flush and shutdown checkpoint manager
+        # Step 3: Flush and shutdown checkpoint manager
         # Wait for all pending async checkpoint saves to complete
         try:
             train_logger.info("Shutting down checkpoint manager...")
@@ -2213,7 +2228,7 @@ def main(args: argparse.Namespace) -> None:
         except Exception as e:
             train_logger.error(f"Error during checkpoint shutdown: {e}")
 
-        # Step 3: Cleanup optional global CUDA resources
+        # Step 4: Cleanup optional global CUDA resources
         try:
             from ava.cuda.metrics import shutdown_async_logger
             shutdown_async_logger()
@@ -2226,14 +2241,14 @@ def main(args: argparse.Namespace) -> None:
         except Exception:
             pass
 
-        # Step 4: Sync CUDA before distributed cleanup (prevents NCCL errors)
+        # Step 5: Sync CUDA before distributed cleanup (prevents NCCL errors)
         if torch.cuda.is_available():
             try:
                 torch.cuda.synchronize()
             except Exception:
                 pass
 
-        # Step 5: Distributed cleanup LAST (after all workers and CUDA ops complete)
+        # Step 6: Distributed cleanup LAST (after all workers and CUDA ops complete)
         try:
             train_logger.info("Cleaning up distributed process group...")
             cleanup_distributed(rank, world_size)

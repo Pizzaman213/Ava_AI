@@ -56,6 +56,9 @@ class DistributedStreamingDataset(IterableDataset):
     PHASE 2.1 OPTIMIZATION: Token-balanced distribution ensures each GPU gets
     equal total tokens (not just samples), preventing GPU idle time from length imbalance.
     Expected improvement: 10-20% better multi-GPU utilization.
+
+    OPTIMIZATION: Enhanced with configurable buffer size and balance threshold
+    for more precise token distribution across ranks.
     """
 
     def __init__(
@@ -66,7 +69,9 @@ class DistributedStreamingDataset(IterableDataset):
         load_aware: bool = False,
         memory_monitor: Any = None,
         token_balanced: bool = True,
-        enable_length_sorting: bool = True
+        enable_length_sorting: bool = True,
+        token_buffer_size: int = 2000,  # OPTIMIZATION: Configurable buffer size
+        balance_threshold: float = 0.05,  # OPTIMIZATION: Skip rank if >5% above target
     ):
         self.base_dataset = base_dataset
         self.world_size = world_size
@@ -75,15 +80,26 @@ class DistributedStreamingDataset(IterableDataset):
         self.memory_monitor = memory_monitor
         self.token_balanced = token_balanced
         self.enable_length_sorting = enable_length_sorting
+        self.token_buffer_size = token_buffer_size
+        self.balance_threshold = balance_threshold
 
         # PHASE 2 OPTIMIZATION: Load balancing state
         self._sample_count = 0
         self._skip_next = 0
 
-        # PHASE 2.1: Token balancing state
+        # PHASE 2.1: Token balancing state with enhanced tracking
         self._token_counts = [0] * world_size
         self._batch_buffer: list = []
-        self._batch_buffer_size = DATA_CONSTANTS.TOKEN_BALANCE_BATCH_SIZE
+        self._batch_buffer_size = token_buffer_size  # Use configurable size
+
+        # OPTIMIZATION: Track target tokens per rank for better balancing
+        self._total_tokens_seen = 0
+        self._target_tokens_per_rank = 0
+
+        # OPTIMIZATION: Track recent assignment pattern for weighted scoring
+        # Helps detect and correct systematic imbalances
+        self._recent_assignments: List[int] = []  # Last N rank assignments
+        self._assignment_window = 100  # Window size for pattern detection
 
     def __iter__(self) -> Iterator[Any]:
         """
@@ -91,6 +107,9 @@ class DistributedStreamingDataset(IterableDataset):
 
         PHASE 2.1: Balances by total tokens, not samples, for better GPU utilization.
         PHASE 2: If load_aware=True, adjusts based on memory pressure.
+
+        OPTIMIZATION: Enhanced with target tracking and weighted scoring to prevent
+        systematic imbalances in long training runs.
         """
         base_iter = iter(self.base_dataset)
 
@@ -105,18 +124,28 @@ class DistributedStreamingDataset(IterableDataset):
                         self._batch_buffer.sort(key=lambda x: len(x.get('input_ids', [])), reverse=True)
                     # else: keep original random order for maximum diversity
 
-                    # Distribute to rank with fewest tokens
+                    # OPTIMIZATION: Distribute with enhanced scoring
                     for buffered_sample in self._batch_buffer:
                         sample_tokens = len(buffered_sample.get('input_ids', []))
 
-                        # Find rank with minimum tokens
-                        min_rank = self._token_counts.index(min(self._token_counts))
+                        # Update target tokens per rank
+                        self._total_tokens_seen += sample_tokens
+                        self._target_tokens_per_rank = self._total_tokens_seen // self.world_size
 
-                        # Assign to that rank
-                        self._token_counts[min_rank] += sample_tokens
+                        # OPTIMIZATION: Find best rank using weighted scoring
+                        # Score considers: current tokens, deviation from target, recent assignment pattern
+                        best_rank = self._select_best_rank(sample_tokens)
+
+                        # Assign to selected rank
+                        self._token_counts[best_rank] += sample_tokens
+
+                        # Track assignment pattern
+                        self._recent_assignments.append(best_rank)
+                        if len(self._recent_assignments) > self._assignment_window:
+                            self._recent_assignments.pop(0)
 
                         # Yield if this sample belongs to our rank
-                        if min_rank == self.rank:
+                        if best_rank == self.rank:
                             self._sample_count += 1
                             yield buffered_sample
 
@@ -162,17 +191,93 @@ class DistributedStreamingDataset(IterableDataset):
                 except Exception as e:
                     logger.warning(f"Rank {self.rank}: barrier failed (timeout or process crash), continuing: {e}")
 
-            # Process remaining buffer
+            # Process remaining buffer using enhanced scoring
             for buffered_sample in self._batch_buffer:
                 sample_tokens = len(buffered_sample.get('input_ids', []))
-                min_rank = self._token_counts.index(min(self._token_counts))
-                self._token_counts[min_rank] += sample_tokens
+                best_rank = self._select_best_rank(sample_tokens)
+                self._token_counts[best_rank] += sample_tokens
 
-                if min_rank == self.rank:
+                if best_rank == self.rank:
                     yield buffered_sample
 
             # Clear buffer after flush
             self._batch_buffer.clear()
+
+    def _select_best_rank(self, sample_tokens: int) -> int:
+        """
+        Select the best rank for a sample using weighted scoring.
+
+        OPTIMIZATION: Uses multi-factor scoring to prevent systematic imbalances:
+        1. Current token count (primary factor)
+        2. Deviation from target (correction factor)
+        3. Recent assignment frequency (anti-bias factor)
+
+        Args:
+            sample_tokens: Number of tokens in the sample
+
+        Returns:
+            Best rank index for this sample
+        """
+        if self.world_size == 1:
+            return 0
+
+        best_rank = 0
+        best_score = float('inf')
+
+        # Calculate recent assignment counts for anti-bias weighting
+        recent_counts = [0] * self.world_size
+        for r in self._recent_assignments:
+            recent_counts[r] += 1
+
+        for rank in range(self.world_size):
+            # Base score: current token count (lower is better)
+            score = self._token_counts[rank]
+
+            # OPTIMIZATION: Skip ranks that are significantly overloaded
+            # This prevents any single rank from getting too far ahead
+            if self._target_tokens_per_rank > 0:
+                deviation = (self._token_counts[rank] - self._target_tokens_per_rank) / self._target_tokens_per_rank
+                if deviation > self.balance_threshold:
+                    # Penalize overloaded ranks heavily
+                    score += sample_tokens * 2
+
+            # OPTIMIZATION: Add anti-bias factor from recent assignments
+            # Prevents same ranks from always being selected in ties
+            if self._recent_assignments:
+                recent_bias = recent_counts[rank] / len(self._recent_assignments)
+                # Add small penalty proportional to recent assignment frequency
+                score += sample_tokens * recent_bias * 0.1
+
+            if score < best_score:
+                best_score = score
+                best_rank = rank
+
+        return best_rank
+
+    def get_balance_stats(self) -> Dict[str, Any]:
+        """
+        Get token balancing statistics.
+
+        Returns:
+            Dictionary with token distribution stats across ranks
+        """
+        total_tokens = sum(self._token_counts)
+        avg_tokens = total_tokens / self.world_size if self.world_size > 0 else 0
+
+        imbalances = []
+        for i, count in enumerate(self._token_counts):
+            if avg_tokens > 0:
+                imbalance = abs(count - avg_tokens) / avg_tokens
+                imbalances.append(imbalance)
+
+        return {
+            'token_counts': list(self._token_counts),
+            'total_tokens': total_tokens,
+            'avg_tokens_per_rank': avg_tokens,
+            'max_imbalance': max(imbalances) if imbalances else 0.0,
+            'samples_this_rank': self._sample_count,
+            'balance_threshold': self.balance_threshold,
+        }
 
 
 class AdvancedDistributedSampler(Sampler):

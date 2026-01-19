@@ -669,3 +669,42 @@ def validate_model_for_deepspeed(model: Any, config: Dict[str, Any]) -> None:
             "Ensure use_reentrant=False in torch.utils.checkpoint.checkpoint() calls "
             "to avoid 'parameter already reduced' errors."
         )
+
+    # Check for experimental checkpointing features incompatible with DeepSpeed ZeRO
+    # These create nested checkpoint calls that cause gradient reduction conflicts
+    experimental_cfg = config.get('experimental', {})
+    checkpointing_cfg = experimental_cfg.get('checkpointing', {})
+
+    # Check double checkpointing (both new and legacy config paths)
+    double_checkpoint_cfg = checkpointing_cfg.get('double', {})
+    legacy_double_cfg = config.get('double_checkpointing', {})
+    double_enabled = (
+        double_checkpoint_cfg.get('enabled', False) or
+        legacy_double_cfg.get('enabled', False)
+    )
+    if double_enabled:
+        raise ValueError(
+            "double_checkpointing.enabled=True is INCOMPATIBLE with DeepSpeed ZeRO.\n"
+            "Double checkpointing creates nested torch.utils.checkpoint.checkpoint() calls "
+            "which causes 'The parameter X has already been reduced' errors.\n"
+            "Fix: Set 'experimental.checkpointing.double.enabled: false' in your config file."
+        )
+
+    # Check overlapped checkpointing (both new and legacy config paths)
+    overlapped_checkpoint_cfg = checkpointing_cfg.get('overlapped', {})
+    legacy_overlapped_cfg = config.get('overlapped_checkpointing', {})
+    opt_cfg = config.get('optimizations', {})
+    compute_opt_cfg = config.get('compute', {}).get('optimizations', {})
+    overlapped_enabled = (
+        overlapped_checkpoint_cfg.get('enabled', False) or
+        legacy_overlapped_cfg.get('enabled', False) or
+        opt_cfg.get('use_overlapped_checkpointing', False) or
+        compute_opt_cfg.get('use_overlapped_checkpointing', False)
+    )
+    if overlapped_enabled:
+        raise ValueError(
+            "overlapped_checkpointing.enabled=True is INCOMPATIBLE with DeepSpeed ZeRO.\n"
+            "Overlapped checkpointing creates stream-based recomputation that conflicts "
+            "with DeepSpeed's gradient reduction, causing 'parameter already reduced' errors.\n"
+            "Fix: Set 'experimental.checkpointing.overlapped.enabled: false' in your config file."
+        )

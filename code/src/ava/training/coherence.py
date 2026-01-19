@@ -21,7 +21,7 @@ Optimizations:
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -140,8 +140,23 @@ class CoherenceMeasurer:
         # Compute unique token ratio first (needed for validation)
         unique_ratio = self._compute_unique_ratio(input_ids)
 
-        # Compute actual perplexity
-        perplexity = self._compute_perplexity(input_ids)
+        # Compute repetition score (CPU-based, no GPU sync)
+        repetition_score = self._compute_repetition_score(input_ids)
+
+        # PERF FIX: Batch GPU metrics to minimize GPU-CPU syncs
+        # Get perplexity, flow, and topic as tensors, then batch sync at end
+        perplexity_tensor = self._compute_perplexity(input_ids, return_tensor=True)
+        flow_tensor = self._compute_sentence_flow(input_ids, return_tensor=True)
+        topic_tensor = self._compute_topic_consistency(input_ids, return_tensor=True)
+
+        # PERF FIX: Single batched GPU->CPU sync for all metrics
+        # Stack tensors and extract with one .tolist() call
+        metrics_batch = torch.stack([
+            perplexity_tensor.view(1) if perplexity_tensor.dim() == 0 else perplexity_tensor.view(1),
+            flow_tensor.view(1) if flow_tensor.dim() == 0 else flow_tensor.view(1),
+            topic_tensor.view(1) if topic_tensor.dim() == 0 else topic_tensor.view(1),
+        ]).squeeze()
+        perplexity, flow_score, topic_score = metrics_batch.tolist()
 
         # Detect repetitive/degenerate generations (e.g., all PAD tokens)
         # If unique ratio < 10%, perplexity may be artificially low (~1.0)
@@ -159,11 +174,6 @@ class CoherenceMeasurer:
                     f"This may indicate corrupted data, tokenizer issues, or degenerate generation. "
                     f"Perplexity measurement unreliable (actual perplexity={perplexity:.2f})."
                 )
-
-        # Compute other metrics
-        repetition_score = self._compute_repetition_score(input_ids)
-        flow_score = self._compute_sentence_flow(input_ids)
-        topic_score = self._compute_topic_consistency(input_ids)
 
         # Compute aggregate score
         # Normalize perplexity to 0-1 using log-scale (lower perplexity = higher score)
@@ -413,16 +423,22 @@ class CoherenceMeasurer:
             )
             return None
 
-    def _compute_perplexity(self, input_ids: torch.Tensor) -> float:
+    def _compute_perplexity(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
         """Compute perplexity on input sequences.
 
         CRITICAL FIX: Now creates and uses attention mask to exclude padding tokens.
         Without this, padding tokens corrupt the perplexity calculation.
+
+        Args:
+            input_ids: Input token IDs
+            return_tensor: If True, return GPU tensor instead of calling .item()
+                          (for batched sync optimization)
         """
         if input_ids.shape[1] < 2:
             logger.debug("Sequence too short for perplexity (<2 tokens), using neutral score")
             # Use geometric mean for neutral score instead of max penalty
-            return math.sqrt(self.config.max_perplexity)
+            neutral = math.sqrt(self.config.max_perplexity)
+            return torch.tensor(neutral, device=input_ids.device) if return_tensor else neutral
 
         # Create attention mask (1 for real tokens, 0 for padding)
         # Assume pad_token_id is 0 (common default)
@@ -476,9 +492,10 @@ class CoherenceMeasurer:
         # exp(20) ≈ 485M but max_perplexity is typically 100
         # Clamp to log(max_perplexity) to ensure perplexity <= max_perplexity
         max_loss = math.log(self.config.max_perplexity)
-        perplexity = torch.exp(torch.clamp(loss, max=max_loss)).item()
+        perplexity_tensor = torch.exp(torch.clamp(loss, max=max_loss))
 
-        return perplexity
+        # PERF FIX: Return tensor for batched sync, or scalar for immediate use
+        return perplexity_tensor if return_tensor else perplexity_tensor.item()
 
     def _compute_repetition_score(self, input_ids: torch.Tensor) -> float:
         """
@@ -521,25 +538,32 @@ class CoherenceMeasurer:
 
         return total_rep_ratio / num_valid
 
-    def _compute_sentence_flow(self, input_ids: torch.Tensor) -> float:
+    def _compute_sentence_flow(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
         """
         Compute sentence flow score using hidden state similarity.
 
         Measures how smoothly the text flows by comparing adjacent
         hidden state representations.
 
+        Args:
+            input_ids: Input token IDs
+            return_tensor: If True, return GPU tensor instead of calling .item()
+
         Returns:
             Score 0-1 where higher means better flow
         """
+        device = input_ids.device
         seq_len = input_ids.shape[1]
         if seq_len < 10:
             if seq_len < 2:
                 logger.debug("Sequence very short (<2 tokens), using neutral score")
-                return 0.5  # Neutral score
+                result = 0.5  # Neutral score
+                return torch.tensor(result, device=device) if return_tensor else result
             else:
                 # Partial credit: linear scale from 0.3 to 0.5
                 logger.debug(f"Sequence short ({seq_len} tokens), using scaled score")
-                return 0.3 + (seq_len - 2) * (0.2 / 8)
+                result = 0.3 + (seq_len - 2) * (0.2 / 8)
+                return torch.tensor(result, device=device) if return_tensor else result
 
         try:
             # Get hidden states from model
@@ -574,7 +598,7 @@ class CoherenceMeasurer:
             if hidden_states is None:
                 # Model doesn't output hidden states or dimensions invalid
                 logger.debug("Hidden states unavailable or invalid, using logit-based flow")
-                return self._compute_logit_flow(input_ids)
+                return self._compute_logit_flow(input_ids, return_tensor=return_tensor)
 
             # Compute cosine similarity between adjacent positions
             # Split sequence into chunks and compare
@@ -598,13 +622,16 @@ class CoherenceMeasurer:
 
             if len(similarities) == 0:
                 logger.debug("No chunk comparisons computed for sentence flow")
-                return 0.0  # No comparisons - return low score
+                result = 0.0  # No comparisons - return low score
+                return torch.tensor(result, device=device) if return_tensor else result
 
-            # Stack on GPU, single sync at the end
-            avg_sim = torch.stack(similarities).mean().item()
+            # Stack on GPU, compute on GPU
+            avg_sim_tensor = torch.stack(similarities).mean()
 
             # Map from [-1, 1] to [0, 1]
-            return (avg_sim + 1) / 2
+            result_tensor = (avg_sim_tensor + 1) / 2
+            # PERF FIX: Return tensor for batched sync, or scalar for immediate use
+            return result_tensor if return_tensor else result_tensor.item()
 
         except Exception as e:
             logger.warning(
@@ -613,10 +640,16 @@ class CoherenceMeasurer:
                 f"Input shape: {input_ids.shape}",
                 exc_info=True
             )
-            return self._compute_logit_flow(input_ids)
+            return self._compute_logit_flow(input_ids, return_tensor=return_tensor)
 
-    def _compute_logit_flow(self, input_ids: torch.Tensor) -> float:
-        """Fallback flow computation using logit distributions."""
+    def _compute_logit_flow(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
+        """Fallback flow computation using logit distributions.
+
+        Args:
+            input_ids: Input token IDs
+            return_tensor: If True, return GPU tensor instead of calling .item()
+        """
+        device = input_ids.device
         outputs = self.model(input_ids)
 
         if hasattr(outputs, 'logits'):
@@ -634,7 +667,8 @@ class CoherenceMeasurer:
         # Compute all KL divergences on GPU, single sync at end
         # Compare adjacent token probability distributions
         if probs.shape[1] < 2:
-            return 0.5
+            result = 0.5
+            return torch.tensor(result, device=device) if return_tensor else result
 
         # Compute all adjacent KL divergences at once on GPU
         p1 = probs[:, :-1, :]  # [batch, seq-1, vocab]
@@ -651,28 +685,36 @@ class CoherenceMeasurer:
         # Convert to similarity (inverse, capped) - all on GPU
         similarities = 1.0 / (1.0 + kl_divs)
 
-        # Single sync here
-        return similarities.mean().item()
+        # PERF FIX: Return tensor for batched sync, or scalar for immediate use
+        result_tensor = similarities.mean()
+        return result_tensor if return_tensor else result_tensor.item()
 
-    def _compute_topic_consistency(self, input_ids: torch.Tensor) -> float:
+    def _compute_topic_consistency(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
         """
         Compute topic consistency by comparing start vs end of sequence.
 
         Measures semantic drift - whether the text stays on topic
         throughout the sequence.
 
+        Args:
+            input_ids: Input token IDs
+            return_tensor: If True, return GPU tensor instead of calling .item()
+
         Returns:
             Score 0-1 where higher means better topic consistency
         """
+        device = input_ids.device
         seq_len = input_ids.shape[1]
         if seq_len < 20:
             if seq_len < 10:
                 logger.debug("Sequence very short (<10 tokens), using neutral score")
-                return 0.5  # Neutral score
+                result = 0.5  # Neutral score
+                return torch.tensor(result, device=device) if return_tensor else result
             else:
                 # Partial credit: linear scale from 0.3 to 0.5
                 logger.debug(f"Sequence short ({seq_len} tokens), using scaled score")
-                return 0.3 + (seq_len - 10) * (0.2 / 10)
+                result = 0.3 + (seq_len - 10) * (0.2 / 10)
+                return torch.tensor(result, device=device) if return_tensor else result
 
         try:
             # Get hidden states
@@ -705,7 +747,8 @@ class CoherenceMeasurer:
 
             if hidden_states is None:
                 logger.debug("Cannot compute topic consistency: hidden states unavailable or invalid")
-                return 0.5  # Neutral score (consistent with Issue 2 fix)
+                result = 0.5  # Neutral score (consistent with Issue 2 fix)
+                return torch.tensor(result, device=device) if return_tensor else result
 
             # Compare first quarter vs last quarter
             # Ensure at least 1 token per quarter to avoid empty tensor NaN
@@ -718,7 +761,9 @@ class CoherenceMeasurer:
             sim = F.cosine_similarity(start_repr, end_repr, dim=-1)
 
             # Map from [-1, 1] to [0, 1]
-            return ((sim.mean().item() + 1) / 2)
+            result_tensor = (sim.mean() + 1) / 2
+            # PERF FIX: Return tensor for batched sync, or scalar for immediate use
+            return result_tensor if return_tensor else result_tensor.item()
 
         except Exception as e:
             logger.warning(
@@ -727,7 +772,8 @@ class CoherenceMeasurer:
                 f"Input shape: {input_ids.shape}",
                 exc_info=True
             )
-            return 0.5  # Neutral score (consistent with Issue 2 fix)
+            result = 0.5  # Neutral score (consistent with Issue 2 fix)
+            return torch.tensor(result, device=device) if return_tensor else result
 
     def _compute_unique_ratio(self, input_ids: torch.Tensor) -> float:
         """Compute ratio of unique tokens in sequences.
