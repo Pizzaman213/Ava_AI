@@ -41,7 +41,42 @@ logger = logging.getLogger(__name__)
 # PERF FIX: Changed from extension-based to path-based caching. Files with the
 # same extension can have different formats, causing cache misses and 100-500ms
 # startup overhead for large datasets with mixed formats.
-_format_cache: Dict[str, str] = {}  # file_path -> 'ipc_file', 'ipc_stream_mmap', 'ipc_stream_file'
+# MEM FIX: Use LRU cache to prevent unbounded memory growth with many files.
+_FORMAT_CACHE_MAX_SIZE = 1000
+
+
+class _LRUFormatCache:
+    """LRU cache for format detection with size limit to prevent memory leaks."""
+
+    def __init__(self, max_size: int = _FORMAT_CACHE_MAX_SIZE):
+        self._cache: OrderedDict[str, str] = OrderedDict()
+        self._max_size = max_size
+
+    def get(self, key: str, default=None):
+        """Get value and move to end (most recently used)."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        return default
+
+    def __setitem__(self, key: str, value: str):
+        """Set value with LRU eviction if at capacity."""
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        else:
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)  # Remove oldest
+        self._cache[key] = value
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._cache
+
+    def pop(self, key: str, default=None):
+        """Remove and return value."""
+        return self._cache.pop(key, default)
+
+
+_format_cache = _LRUFormatCache()  # file_path -> 'ipc_file', 'ipc_stream_mmap', 'ipc_stream_file'
 
 # Global registry for cleanup on shutdown
 _cache_registry: weakref.WeakSet = weakref.WeakSet()

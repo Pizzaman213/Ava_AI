@@ -51,6 +51,7 @@ Loss Accumulator:
 """
 
 import copy
+import gc
 import logging
 import threading
 from collections import OrderedDict
@@ -71,6 +72,13 @@ from ..optimizations.prefetch import AsyncBatchPrefetcher
 from ..optimizations.gradients import check_gradients, check_gradients_deferred
 from ..optimizations.oom_recovery import proactive_memory_cleanup
 from contextlib import nullcontext
+
+# Unified memory cache for reduced GPU sync overhead
+try:
+    from ava.cuda.memory_cache import get_memory_cache
+    MEMORY_CACHE_AVAILABLE = True
+except ImportError:
+    MEMORY_CACHE_AVAILABLE = False
 
 # Module-level cached nullcontext to avoid per-step object allocation (nanoGPT optimization)
 _CACHED_NULLCONTEXT = nullcontext()
@@ -327,7 +335,7 @@ class TrainingLoopConfig:
     # CUDA Graphs: Capture training step as a graph for improved throughput.
     # Only works with fixed batch sizes, disabled when dynamic batching is active.
     use_cuda_graphs: bool = False
-    cuda_graph_warmup_steps: int = 10  # Steps before capturing graph
+    cuda_graph_warmup_steps: int = 3  # Steps before capturing graph (reduced from 10)
     # Canonical shape padding: Pad batches to canonical sizes for CUDA graph reuse.
     # Instead of capturing a new graph for each unique (batch_size, seq_len) pair,
     # pad to the nearest canonical shape and reuse graphs. Reduces capture overhead.
@@ -448,8 +456,15 @@ class MetricsBatcher:
             del stacked  # Explicitly free GPU tensor after transfer
         except Exception:
             # Fallback: individual extraction if cat fails (mixed devices)
-            values = [t[0].item() if t.numel() == 1 else t.mean().item()
-                      for _, t in self._pending]
+            # FIX: Handle 0-dim tensors correctly - they can't be indexed with [0]
+            def extract_value(t):
+                if t.dim() == 0:
+                    return t.item()
+                elif t.numel() == 1:
+                    return t.view(-1)[0].item()
+                else:
+                    return t.mean().item()
+            values = [extract_value(t) for _, t in self._pending]
 
         # Explicitly free tensor references before clearing
         del tensors
@@ -1014,10 +1029,14 @@ class TrainingLoopManager(ManagerInterface):
 
     def _sync_batch_iterator(self, dataloader, device):
         """
-        Simple synchronous batch iterator (no async prefetching).
+        DEBUG ONLY: Synchronous batch iterator with CPU-blocking synchronization.
 
-        This is slower than AsyncBatchPrefetcher but avoids CUDA stream
-        race conditions that can cause illegal memory access errors.
+        WARNING: This iterator adds 2-5ms overhead per batch because it calls
+        torch.cuda.synchronize() after every non_blocking transfer. Use only for
+        debugging CUDA stream issues. For production, AsyncBatchPrefetcher should
+        be used which employs GPU-side wait_event() for non-blocking synchronization.
+
+        Enable via config: cuda_streams.force_sync_iterator=true
 
         Args:
             dataloader: PyTorch DataLoader
@@ -1376,15 +1395,35 @@ class TrainingLoopManager(ManagerInterface):
         use_scaler = config.use_amp and config.amp_dtype == torch.float16
         self.scaler = torch.amp.GradScaler('cuda') if use_scaler else None
 
-        # Check if async prefetching is disabled (safer but slower)
-        use_async_prefetch = self.context.config.get('cuda_streams', {}).get('enabled', True)
+        # PERF FIX: Always use AsyncBatchPrefetcher for efficient async CPU->GPU transfers
+        # The old _sync_batch_iterator called torch.cuda.synchronize() after every batch,
+        # defeating the purpose of non_blocking=True transfers (2-5ms overhead per batch).
+        # AsyncBatchPrefetcher uses GPU-side wait_event() which doesn't block CPU.
+        #
+        # Debug fallback: Set cuda_streams.force_sync_iterator=true in config to use
+        # the slow synchronous path (only for debugging CUDA stream issues).
+        force_sync = self.context.config.get('cuda_streams', {}).get('force_sync_iterator', False)
 
-        if use_async_prefetch:
-            # Create async batch prefetcher (faster, uses dedicated CUDA stream)
-            logger.debug("Using async batch prefetching (cuda_streams.enabled=true)")
-            # Get memory threshold from config (use warning threshold for early backpressure)
-            memory_thresholds = self.context.config.get('compute', {}).get('memory', {}).get('cleanup_thresholds', {})
-            prefetch_memory_threshold = memory_thresholds.get('warning', 0.80)
+        if force_sync:
+            # DEBUG ONLY: Synchronous iteration (much slower, blocks CPU on every batch)
+            logger.warning(
+                "Using synchronous batch iteration (cuda_streams.force_sync_iterator=true). "
+                "This adds 2-5ms overhead per batch. Only use for debugging CUDA stream issues."
+            )
+            self.prefetcher = None
+            batch_iterator = self._sync_batch_iterator(train_loader, device)
+            # FIX: For IterableDataset, loader_len = len(dataset) (samples, not batches)
+            batch_size = train_loader.batch_size
+            grad_accum = config.gradient_accumulation_steps
+            initial_total = loader_len // (batch_size * grad_accum) if batch_size and grad_accum else loader_len
+        else:
+            # FAST PATH: Async batch prefetcher with GPU-side synchronization
+            # Get memory threshold from config
+            memory_config = self.context.config.get('compute', {}).get('memory', {})
+            memory_thresholds = memory_config.get('cleanup_thresholds', {})
+            # Priority: explicit prefetch_threshold > emergency > 0.92 default
+            prefetch_memory_threshold = memory_config.get('prefetch_threshold',
+                                                          memory_thresholds.get('emergency', 0.92))
 
             # CONFIG-DRIVEN: Get prefetch count from config with adaptive sizing fallback
             cuda_streams_config = self.context.config.get('compute', {}).get('cuda', {}).get('streams', {})
@@ -1421,16 +1460,6 @@ class TrainingLoopManager(ManagerInterface):
             batch_size = train_loader.batch_size
             grad_accum = config.gradient_accumulation_steps
             initial_total = samples_total // (batch_size * grad_accum) if batch_size and grad_accum else samples_total
-        else:
-            # Simple synchronous iteration (safer, no CUDA stream issues)
-            logger.info("Using synchronous batch iteration (cuda_streams.enabled=false)")
-            self.prefetcher = None
-            batch_iterator = self._sync_batch_iterator(train_loader, device)
-            # FIX: For IterableDataset, loader_len = len(dataset) (samples, not batches)
-            # Convert to training steps: samples / (batch_size * gradient_accumulation)
-            batch_size = train_loader.batch_size
-            grad_accum = config.gradient_accumulation_steps
-            initial_total = loader_len // (batch_size * grad_accum) if batch_size and grad_accum else loader_len
 
         # Progress bar (check config.progress_bar_enabled and config.logging_disabled)
         is_main = self.context.metadata.get('is_main_process', True)
@@ -1715,33 +1744,40 @@ class TrainingLoopManager(ManagerInterface):
                         routing_freq = getattr(config, 'routing_metrics_freq', 0)
                         should_log_routing = routing_freq > 0 and next_global_step % routing_freq == 0
                         if should_log_routing and self._last_aux_info is not None and len(self._last_aux_info) > 0:
-                            # PERF: Extract aggregated summary stats instead of per-layer
-                            # This reduces GPU->CPU tensor transfers from O(layers * metrics) to O(metrics)
-                            entropy_vals = []
-                            balance_vals = []
-                            confidence_vals = []
+                            # PERF: Use running sum/count instead of torch.stack().mean()
+                            # This eliminates intermediate tensor creation (5-20ms overhead for deep models)
+                            entropy_sum, entropy_count = None, 0
+                            balance_sum, balance_count = None, 0
+                            confidence_sum, confidence_count = None, 0
                             for layer_aux in self._last_aux_info:
                                 if 'routing_entropy' in layer_aux and layer_aux['routing_entropy'] is not None:
                                     val = layer_aux['routing_entropy']
                                     if hasattr(val, 'detach'):
-                                        entropy_vals.append(val.detach().mean() if val.numel() > 1 else val.detach())
+                                        v = val.detach().mean() if val.numel() > 1 else val.detach()
+                                        entropy_sum = v if entropy_sum is None else entropy_sum + v
+                                        entropy_count += 1
                                 if 'balance_score' in layer_aux and layer_aux['balance_score'] is not None:
                                     val = layer_aux['balance_score']
                                     if hasattr(val, 'detach'):
-                                        balance_vals.append(val.detach().mean() if val.numel() > 1 else val.detach())
+                                        v = val.detach().mean() if val.numel() > 1 else val.detach()
+                                        balance_sum = v if balance_sum is None else balance_sum + v
+                                        balance_count += 1
                                 if 'router_confidence' in layer_aux and layer_aux['router_confidence'] is not None:
                                     val = layer_aux['router_confidence']
                                     if hasattr(val, 'detach'):
-                                        confidence_vals.append(val.detach().mean() if val.numel() > 1 else val.detach())
+                                        v = val.detach().mean() if val.numel() > 1 else val.detach()
+                                        confidence_sum = v if confidence_sum is None else confidence_sum + v
+                                        confidence_count += 1
                             # Queue aggregated metrics (3 tensors instead of 50+)
-                            if entropy_vals:
-                                self._metrics_batcher.add('routing/avg_entropy', torch.stack(entropy_vals).mean())
+                            # PERF: Running mean = sum / count (no intermediate stack tensor)
+                            if entropy_count > 0:
+                                self._metrics_batcher.add('routing/avg_entropy', entropy_sum / entropy_count)
                                 routing_tensor_keys.append(('avg_entropy',))
-                            if balance_vals:
-                                self._metrics_batcher.add('routing/avg_balance', torch.stack(balance_vals).mean())
+                            if balance_count > 0:
+                                self._metrics_batcher.add('routing/avg_balance', balance_sum / balance_count)
                                 routing_tensor_keys.append(('avg_balance',))
-                            if confidence_vals:
-                                self._metrics_batcher.add('routing/avg_confidence', torch.stack(confidence_vals).mean())
+                            if confidence_count > 0:
+                                self._metrics_batcher.add('routing/avg_confidence', confidence_sum / confidence_count)
                                 routing_tensor_keys.append(('avg_confidence',))
                             # Store for post-processing in _log_step_metrics
                             self._routing_tensor_keys = routing_tensor_keys
@@ -1804,14 +1840,32 @@ class TrainingLoopManager(ManagerInterface):
                         self._last_aux_info = None
 
                     # Generation testing
-                    if generation_config and generation_config.get('enabled', True) and config.generate_every_n_steps > 0:
-                        self._maybe_generate(
-                            model, vocab_size, tokenizer, generation_config, config
-                        )
+                    # OPTIMIZATION: Skip expensive monitoring when logging_disabled=True (5-10% speedup)
+                    did_generation = False
+                    did_coherence = False
+                    if not config.logging_disabled:
+                        if generation_config and generation_config.get('enabled', True) and config.generate_every_n_steps > 0:
+                            if self._global_step % config.generate_every_n_steps == 0:
+                                did_generation = True
+                            self._maybe_generate(
+                                model, vocab_size, tokenizer, generation_config, config
+                            )
 
-                    # Coherence measurement
-                    if coherence_config:
-                        self._maybe_measure_coherence(model, coherence_config)
+                        # Coherence measurement
+                        if coherence_config:
+                            eval_every = coherence_config.get('eval_every_n_steps', 500)
+                            if self._global_step > 0 and self._global_step % eval_every == 0:
+                                did_coherence = True
+                            self._maybe_measure_coherence(model, coherence_config)
+
+                    # MEMORY FIX: Lightweight cleanup after generation/coherence
+                    # PERF: Use gc.collect(0) for young generation only (~1ms vs 50-500ms)
+                    # Full gc.collect() scans ALL objects causing significant freezes
+                    if did_generation or did_coherence:
+                        import gc
+                        gc.collect(0)  # Young generation only - fast cleanup
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
 
                     # Flush all accumulated wandb metrics for this step
                     if is_log_step and self._metrics_manager is not None:
@@ -1822,6 +1876,10 @@ class TrainingLoopManager(ManagerInterface):
 
                     # VRAM optimization
                     self._maybe_clear_cache(model, config)
+
+                    # RAM optimization - prevent OOM with persistent workers
+                    # Reduced interval from 1000 to 500 for more aggressive cleanup
+                    self._maybe_clear_ram_cache(ram_cleanup_interval=500)
 
                     # Update progress bar at log intervals
                     if is_log_step:
@@ -2072,6 +2130,14 @@ class TrainingLoopManager(ManagerInterface):
         # - Dividing by gradient_accumulation_steps normalizes accumulated gradients
         # - AMP scaler.scale() scales for fp16 numerical stability (prevents underflow)
         # These are NOT double-scaling because AMP scaling is reversed in scaler.step()
+
+        # CUDA GRAPHS COMPATIBILITY: Mark step boundary for torch.compile with CUDA graphs
+        # This tells the compiler that a new graph capture step is beginning, preventing
+        # "tensor output of CUDAGraphs that has been overwritten" errors when cached
+        # tensors (like RoPE embeddings) are reused across steps.
+        if hasattr(torch.compiler, 'cudagraph_mark_step_begin'):
+            torch.compiler.cudagraph_mark_step_begin()
+
         with get_range_context("forward"), get_timing_context("forward"):
             # Only use torch.autocast if NOT using DeepSpeed (DeepSpeed manages mixed precision internally)
             if config.use_amp and not is_deepspeed:
@@ -2180,12 +2246,22 @@ class TrainingLoopManager(ManagerInterface):
             if 'aux_info' in outputs:
                 aux_info = outputs['aux_info']
                 # Move all tensor values to CPU scalars/lists to free GPU memory
-                self._last_aux_info = {
-                    k: (v.detach().cpu().item() if isinstance(v, torch.Tensor) and v.numel() == 1
-                        else v.detach().cpu().tolist() if isinstance(v, torch.Tensor)
-                        else v)
-                    for k, v in aux_info.items()
-                } if isinstance(aux_info, dict) else aux_info
+                # Handle both dict and list formats (MoE models often return list of per-layer dicts)
+                def _to_cpu(v):
+                    if isinstance(v, torch.Tensor):
+                        return v.detach().cpu().item() if v.numel() == 1 else v.detach().cpu().tolist()
+                    return v
+
+                if isinstance(aux_info, dict):
+                    self._last_aux_info = {k: _to_cpu(v) for k, v in aux_info.items()}
+                elif isinstance(aux_info, (list, tuple)):
+                    # Handle list of dicts (per-layer aux info from MoE)
+                    self._last_aux_info = [
+                        {k: _to_cpu(v) for k, v in item.items()} if isinstance(item, dict) else _to_cpu(item)
+                        for item in aux_info
+                    ]
+                else:
+                    self._last_aux_info = _to_cpu(aux_info)
 
             # Episodic memory: store batch and update priorities
             if self._episodic_memory_manager is not None:
@@ -2225,7 +2301,8 @@ class TrainingLoopManager(ManagerInterface):
                         model.step()
 
                     # Queue gradient stats for batched extraction (DeepSpeed handles clipping internally)
-                    if self._metrics_manager and should_sync:
+                    # OPTIMIZATION: Skip when logging_disabled for 5-10% speedup
+                    if self._metrics_manager and should_sync and not config.logging_disabled:
                         with get_range_context("optimizer_step/grad_stats"):
                             # P2.0: Use cached base_model instead of per-batch hasattr() check
                             grad_tensors = check_gradients_deferred(base_model)
@@ -2250,18 +2327,20 @@ class TrainingLoopManager(ManagerInterface):
                         )
 
                     # TRAINING HEALTH: Detect gradient issues early
-                    # OPTIMIZATION: Use tensor comparisons on GPU to avoid .item() sync every step
-                    # Queue gradient norm for batched extraction at log intervals
+                    # MEMORY FIX: Store on CPU to prevent GPU memory accumulation between log steps
+                    # These are scalar values only needed for health warnings, CPU storage is fine
                     if hasattr(grad_norm, 'item'):
-                        # GPU tensor comparisons (no sync) - flag issues for later warning
-                        self._deferred_grad_tensors['grad_norm'] = grad_norm.detach()
-                        if grad_norm < 1e-7:
-                            self._deferred_grad_tensors['vanishing'] = torch.tensor(1.0, device=grad_norm.device)
-                        elif grad_norm > 1e4:
-                            self._deferred_grad_tensors['exploding'] = torch.tensor(1.0, device=grad_norm.device)
+                        # Move to CPU immediately - scalar values don't need GPU
+                        grad_norm_cpu = grad_norm.detach().cpu()
+                        self._deferred_grad_tensors['grad_norm'] = grad_norm_cpu
+                        if grad_norm_cpu < 1e-7:
+                            self._deferred_grad_tensors['vanishing'] = torch.tensor(1.0)  # CPU tensor
+                        elif grad_norm_cpu > 1e4:
+                            self._deferred_grad_tensors['exploding'] = torch.tensor(1.0)  # CPU tensor
 
                     # Queue gradient stats for batched extraction at log intervals
-                    if self._metrics_manager and should_sync:
+                    # OPTIMIZATION: Skip when logging_disabled for 5-10% speedup
+                    if self._metrics_manager and should_sync and not config.logging_disabled:
                         with get_range_context("optimizer_step/grad_stats"):
                             # Get GPU tensors without extracting to CPU yet
                             grad_tensors = check_gradients_deferred(model)
@@ -2282,12 +2361,12 @@ class TrainingLoopManager(ManagerInterface):
                         with get_range_context("optimizer_step/scaler_update"):
                             self.scaler.update()
                         # TRAINING HEALTH: Detect when scaler skips optimizer step due to NaN/Inf
-                        # OPTIMIZATION: Queue for batched extraction at log intervals
+                        # MEMORY FIX: Move to CPU to prevent GPU memory accumulation between log steps
                         if should_sync and hasattr(self.scaler, '_found_inf_per_device'):
                             inf_tensors = list(self.scaler._found_inf_per_device.values())
                             if inf_tensors:
-                                # Queue inf check tensor for batched extraction (no sync here)
-                                self._deferred_grad_tensors['found_inf'] = torch.stack(inf_tensors).any().float()
+                                # Queue inf check tensor for batched extraction - move to CPU immediately
+                                self._deferred_grad_tensors['found_inf'] = torch.stack(inf_tensors).any().float().cpu()
                     else:
                         with get_range_context("optimizer_step/optimizer_update"):
                             optimizer.step()
@@ -2641,15 +2720,20 @@ class TrainingLoopManager(ManagerInterface):
             total = samples // (current_bs * grad_accum) if current_bs and grad_accum else samples
 
             # Only check memory if explicitly enabled (moved inside log block to avoid wasted calc)
-            # PERF: Use cached memory info, only update every 1000 steps to minimize GPU sync overhead
-            # memory_reserved() causes implicit cudaStreamSynchronize which stalls the pipeline
+            # PERF: Use unified memory cache for reduced GPU sync overhead
             mem_info = ""
             if config.enable_memory_monitoring and torch.cuda.is_available():
-                if self._global_step - self._memory_cache['step'] >= 1000:
-                    self._memory_cache['reserved'] = torch.cuda.memory_reserved(self.device) / 1e9
-                    # total_memory is cached at init, no need to re-query
-                    self._memory_cache['step'] = self._global_step
-                mem_pct = self._memory_cache['reserved'] / self._memory_cache['total'] * 100
+                # OPTIMIZATION: Use unified MemoryMetricsCache shared across all components
+                if MEMORY_CACHE_AVAILABLE:
+                    # Unified cache has 5-second TTL, no redundant GPU syncs
+                    stats = get_memory_cache().get_stats()
+                    mem_pct = stats.get('utilization_reserved', 0.0) * 100
+                else:
+                    # Fallback: local caching (update every 1000 steps)
+                    if self._global_step - self._memory_cache['step'] >= 1000:
+                        self._memory_cache['reserved'] = torch.cuda.memory_reserved(self.device) / 1e9
+                        self._memory_cache['step'] = self._global_step
+                    mem_pct = self._memory_cache['reserved'] / self._memory_cache['total'] * 100
                 mem_info = f" | VRAM: {mem_pct:.0f}%"
 
             # Verbose step logging (controlled by log_mode)
@@ -2687,9 +2771,10 @@ class TrainingLoopManager(ManagerInterface):
             display_text = generated_text[:200] + ('...' if len(generated_text) > 200 else '')
             self._log_output(f"[Gen Step {step}] {display_text}", category='generation')
 
-            # Log to WandB silently
+            # Log to WandB silently - use current step to maintain monotonicity
+            # (generation runs async so original step may be stale)
             if self._metrics_manager:
-                self._metrics_manager.log_generation(gen_data.get('step', self._global_step), gen_data)
+                self._metrics_manager.log_generation(self._global_step, gen_data)
 
         # Check if we should start a new generation
         if self._global_step <= 0:
@@ -2828,10 +2913,15 @@ class TrainingLoopManager(ManagerInterface):
         if self._global_step % cleanup_freq != 0 or self._global_step == 0:
             return
 
-        # CONSOLIDATED MEMORY CHECK: Single GPU sync per check interval
-        # Uses cached total_memory from init to avoid extra queries
-        mem_reserved = torch.cuda.memory_reserved(self.device)
-        mem_util = mem_reserved / (self._memory_cache['total'] * 1e9)  # Convert back to bytes
+        # CONSOLIDATED MEMORY CHECK: Use unified cache for reduced GPU sync overhead
+        # OPTIMIZATION: MemoryMetricsCache is shared across all components with 5-second TTL
+        if MEMORY_CACHE_AVAILABLE:
+            stats = get_memory_cache().get_stats()
+            mem_util = stats.get('utilization_reserved', 0.0)
+        else:
+            # Fallback: Direct query (causes GPU sync)
+            mem_reserved = torch.cuda.memory_reserved(self.device)
+            mem_util = mem_reserved / (self._memory_cache['total'] * 1e9)  # Convert back to bytes
 
         # Emergency cleanup (>95% utilization)
         if mem_util > 0.95:
@@ -2842,6 +2932,9 @@ class TrainingLoopManager(ManagerInterface):
             elif hasattr(model, 'module') and hasattr(model.module, 'clear_caches'):
                 model.module.clear_caches()
             self._clear_cuda_memory()
+            # Invalidate unified cache since memory state changed significantly
+            if MEMORY_CACHE_AVAILABLE:
+                get_memory_cache().invalidate()
 
         # Standard cleanup (>92% utilization)
         elif mem_util > 0.92:
@@ -2850,22 +2943,53 @@ class TrainingLoopManager(ManagerInterface):
             elif hasattr(model, 'module') and hasattr(model.module, 'clear_caches'):
                 model.module.clear_caches()
 
-            # Clear dataset file cache if available
+            # Clear dataset cache if available
             if self.prefetcher and hasattr(self.prefetcher, 'dataloader'):
                 dataset = getattr(self.prefetcher.dataloader, 'dataset', None)
-                if dataset and hasattr(dataset, 'clear_file_cache'):
-                    dataset.clear_file_cache()
+                if dataset and hasattr(dataset, 'clear_cache'):
+                    dataset.clear_cache()
 
             # CUDA FIX: empty_cache() must run in the thread that owns the CUDA context
             # Background threads cannot safely call CUDA operations as they lack context ownership.
             # Use synchronous call instead - the overhead is acceptable at >92% utilization.
             torch.cuda.empty_cache()
+            # Invalidate unified cache since memory state changed
+            if MEMORY_CACHE_AVAILABLE:
+                get_memory_cache().invalidate()
 
         # Proactive defragmentation (enabled and moderate utilization)
         elif enabled and mem_util > 0.80:
             frag_threshold = proactive_config.get('fragmentation_threshold', 0.30) if isinstance(proactive_config, dict) else 0.30
             if proactive_memory_cleanup(fragmentation_threshold=frag_threshold):
                 self._clear_cuda_memory()
+                # Invalidate unified cache since memory state changed
+                if MEMORY_CACHE_AVAILABLE:
+                    get_memory_cache().invalidate()
+
+    def _maybe_clear_ram_cache(self, ram_cleanup_interval: int = 1000) -> None:
+        """Clear RAM caches periodically to prevent memory leaks with persistent workers.
+
+        This runs gc.collect() and clears dataset numpy caches every N steps
+        to prevent gradual RAM accumulation during long training runs.
+        Without this, persistent DataLoader workers can cause OOM kills after hours.
+
+        Args:
+            ram_cleanup_interval: Steps between RAM cleanup (default 1000)
+        """
+        if self._global_step == 0 or self._global_step % ram_cleanup_interval != 0:
+            return
+
+        # Clear dataset numpy cache if available (IndexedArrowDataset)
+        if self.prefetcher and hasattr(self.prefetcher, 'dataloader'):
+            dataset = getattr(self.prefetcher.dataloader, 'dataset', None)
+            if dataset and hasattr(dataset, 'clear_cache'):
+                dataset.clear_cache()
+
+        # Force Python garbage collection to reclaim memory
+        import gc
+        gc.collect()
+
+        self.logger.debug(f"RAM cache cleanup at step {self._global_step}")
 
     def get_global_step(self) -> int:
         """Get current global step."""

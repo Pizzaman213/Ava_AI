@@ -425,6 +425,11 @@ class ValidationManager(ManagerInterface):
                     )
 
                     with stream_context:
+                        # CUDA GRAPHS COMPATIBILITY: Mark step boundary for torch.compile
+                        # This prevents "tensor output of CUDAGraphs overwritten" errors
+                        if hasattr(torch.compiler, 'cudagraph_mark_step_begin'):
+                            torch.compiler.cudagraph_mark_step_begin()
+
                         # Forward pass with optional AMP
                         if use_amp and device.type == 'cuda':
                             with torch.autocast(device_type='cuda', dtype=amp_dtype):

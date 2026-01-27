@@ -239,7 +239,8 @@ class LazyFileDiscovery:
     - Supports infinite streaming without loading all file paths
 
     Optimization:
-    - Set cache_at_init=True to eagerly cache all files at init (5-15% faster iteration)
+    - cache_at_init=True (default) eagerly caches all files at init (5-15% faster iteration)
+    - PERF: Pre-discovery avoids 100-500ms stalls from per-batch filesystem stat() calls
     """
 
     def __init__(
@@ -250,7 +251,7 @@ class LazyFileDiscovery:
         min_file_size: int = 10 * 1024,  # 10KB minimum
         max_files: Optional[int] = None,
         shuffle_seed: Optional[int] = None,
-        cache_at_init: bool = False,  # Eagerly cache file list at init for faster iteration
+        cache_at_init: bool = True,  # PERF: Pre-discover files to avoid mid-training stalls
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -1336,6 +1337,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
 
             # Check if file exhausted after this batch
             if cursor['offset'] >= total_rows:
+                cursor['table'] = None  # Release table reference to prevent memory leak
                 active_files.pop(idx)
 
                 # PROGRESSIVE LOADING: Load next file from pending queue
@@ -1773,6 +1775,33 @@ class UltraFastPretokenizedDataset(IterableDataset):
         self._use_thread_local_cache = True  # Mark as using thread-local cache
         self.table_cache = get_thread_local_arrow_cache(max_size=cache_size)
         logger.debug(f"Worker initialized with thread-local Arrow cache (max_size={cache_size})")
+
+    def cleanup(self) -> None:
+        """Clean up resources to prevent memory leaks.
+
+        Should be called when the dataset is no longer needed, especially
+        in long-running training loops to release Arrow table references.
+        """
+        if hasattr(self, 'table_cache') and self.table_cache is not None:
+            if hasattr(self.table_cache, 'close'):
+                try:
+                    self.table_cache.close()
+                except Exception:
+                    pass
+            self.table_cache = None
+
+        if hasattr(self, 'lazy_discoverer') and self.lazy_discoverer is not None:
+            self.lazy_discoverer = None
+
+        if hasattr(self, 'data_files'):
+            self.data_files = []
+
+    def __del__(self) -> None:
+        """Destructor - ensure cleanup on garbage collection."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
 
 
 class InfiniteUltraFastDataset(IterableDataset):

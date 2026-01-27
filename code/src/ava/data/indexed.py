@@ -397,9 +397,9 @@ class IndexedArrowDataset(Dataset):
         # LRU eviction: remove oldest entries if cache is full
         while len(self._numpy_cache) >= self._numpy_cache_maxsize:
             # popitem(last=False) removes oldest (first) entry
-            evicted_path, evicted_data = self._numpy_cache.popitem(last=False)
-            # Help GC by clearing references
-            evicted_data.clear()
+            # Note: No need to call .clear() - popitem removes the reference
+            # and Python's GC will free the arrays when no refs remain
+            self._numpy_cache.popitem(last=False)
 
         self._numpy_cache[file_path] = cache
         return cache
@@ -486,6 +486,16 @@ class IndexedArrowDataset(Dataset):
     def get_lengths(self) -> Optional[List[int]]:
         """Get pre-computed lengths for binned sampling."""
         return self._lengths
+
+    def clear_cache(self):
+        """Clear numpy cache to free memory without closing table cache.
+
+        Call this periodically during long training runs to prevent
+        memory accumulation from persistent DataLoader workers.
+        """
+        if self._numpy_cache:
+            self._numpy_cache.clear()
+            logger.debug(f"Cleared numpy cache for IndexedArrowDataset")
 
     def cleanup(self):
         """Clean up resources."""

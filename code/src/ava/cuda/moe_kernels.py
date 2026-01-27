@@ -21,7 +21,7 @@ Requirements:
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple, Optional
+from typing import Dict, Tuple, Optional
 from dataclasses import dataclass
 
 # Check if Triton is available
@@ -47,6 +47,249 @@ class KernelConfig:
 
 # Global config instance
 _kernel_config = KernelConfig()
+
+
+# =============================================================================
+# ADAPTIVE SOFTMAX THRESHOLD SELECTOR
+# =============================================================================
+
+@dataclass
+class SoftmaxTopKCalibrationResult:
+    """Results from softmax+topk calibration benchmarks."""
+    gpu_name: str
+    threshold: int  # Minimum tokens for Triton to be faster
+    pytorch_times_us: Dict[int, float]  # num_tokens -> time in microseconds
+    triton_times_us: Dict[int, float]
+    calibration_timestamp: float
+
+
+class SoftmaxTopKSelector:
+    """
+    Adaptive kernel selector for softmax+topk based on per-GPU calibration.
+
+    Instead of hardcoded MIN_TOKENS_FOR_TRITON=64, this class runs micro-benchmarks
+    at initialization to find the optimal crossover point where Triton becomes
+    faster than PyTorch for the current GPU.
+
+    Pattern: Same as AdaptiveKernelSelector in fused_experts.py
+
+    Usage:
+        selector = get_softmax_topk_selector()
+        use_triton = selector.should_use_triton(num_tokens, num_experts)
+    """
+
+    # Class-level cache of calibration results per GPU model
+    _calibration_cache: Dict[str, SoftmaxTopKCalibrationResult] = {}
+    _cache_lock = None  # Lazily initialized threading lock
+
+    def __init__(
+        self,
+        default_threshold: int = 64,
+        calibrate: bool = True,
+        num_experts: int = 8,
+        top_k: int = 2,
+    ):
+        """
+        Initialize the adaptive selector.
+
+        Args:
+            default_threshold: Fallback threshold if calibration fails
+            calibrate: Whether to run calibration benchmarks
+            num_experts: Number of experts for calibration
+            top_k: Top-k value for calibration
+        """
+        self.default_threshold = default_threshold
+        self.threshold = default_threshold
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self._calibration_result: Optional[SoftmaxTopKCalibrationResult] = None
+
+        # Lazily initialize lock for thread safety
+        if SoftmaxTopKSelector._cache_lock is None:
+            import threading
+            SoftmaxTopKSelector._cache_lock = threading.Lock()
+
+        if calibrate and torch.cuda.is_available():
+            self._calibrate()
+
+    def _get_gpu_name(self) -> str:
+        """Get current GPU model name for caching."""
+        if not torch.cuda.is_available():
+            return "cpu"
+        return torch.cuda.get_device_name(torch.cuda.current_device())
+
+    def _calibrate(self) -> None:
+        """
+        Run micro-benchmarks to find optimal Triton threshold.
+
+        Tests PyTorch vs Triton at various token counts and finds the
+        crossover point where Triton becomes faster.
+        """
+        import time
+
+        gpu_name = self._get_gpu_name()
+
+        # Check cache first
+        with SoftmaxTopKSelector._cache_lock:
+            if gpu_name in SoftmaxTopKSelector._calibration_cache:
+                self._calibration_result = SoftmaxTopKSelector._calibration_cache[gpu_name]
+                self.threshold = self._calibration_result.threshold
+                return
+
+        # Test sizes: powers of 2 from 16 to 4096
+        test_sizes = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+        pytorch_times: Dict[int, float] = {}
+        triton_times: Dict[int, float] = {}
+
+        device = torch.device('cuda')
+        warmup_iters = 3
+        benchmark_iters = 10
+
+        try:
+            for num_tokens in test_sizes:
+                # Create test input
+                logits = torch.randn(
+                    num_tokens, self.num_experts,
+                    device=device, dtype=torch.float16
+                )
+
+                # Warmup and benchmark PyTorch
+                for _ in range(warmup_iters):
+                    _pytorch_softmax_topk(logits, self.top_k)
+                torch.cuda.synchronize()
+
+                start = time.perf_counter()
+                for _ in range(benchmark_iters):
+                    _pytorch_softmax_topk(logits, self.top_k)
+                torch.cuda.synchronize()
+                pytorch_times[num_tokens] = (time.perf_counter() - start) / benchmark_iters * 1e6
+
+                # Benchmark Triton (if available and supported)
+                if TRITON_AVAILABLE and self.num_experts <= 128 and self.top_k <= 8:
+                    # Force Triton path by calling kernel directly
+                    topk_probs = torch.empty(num_tokens, self.top_k, device=device, dtype=logits.dtype)
+                    topk_indices = torch.empty(num_tokens, self.top_k, device=device, dtype=torch.int64)
+
+                    try:
+                        # Warmup
+                        for _ in range(warmup_iters):
+                            grid = (num_tokens,)
+                            _simple_softmax_topk_kernel[grid](
+                                logits,
+                                topk_probs,
+                                topk_indices,
+                                num_tokens,
+                                self.num_experts,
+                                self.top_k,
+                                logits.stride(0),
+                                logits.stride(1),
+                                MAX_K=8,
+                                RENORMALIZE=False,
+                            )
+                        torch.cuda.synchronize()
+
+                        start = time.perf_counter()
+                        for _ in range(benchmark_iters):
+                            grid = (num_tokens,)
+                            _simple_softmax_topk_kernel[grid](
+                                logits,
+                                topk_probs,
+                                topk_indices,
+                                num_tokens,
+                                self.num_experts,
+                                self.top_k,
+                                logits.stride(0),
+                                logits.stride(1),
+                                MAX_K=8,
+                                RENORMALIZE=False,
+                            )
+                        torch.cuda.synchronize()
+                        triton_times[num_tokens] = (time.perf_counter() - start) / benchmark_iters * 1e6
+                    except Exception:
+                        # Triton failed - mark as slower
+                        triton_times[num_tokens] = pytorch_times[num_tokens] * 2
+
+            # Find crossover point
+            threshold = self.default_threshold
+            for num_tokens in sorted(test_sizes):
+                if num_tokens in triton_times and num_tokens in pytorch_times:
+                    if triton_times[num_tokens] < pytorch_times[num_tokens]:
+                        threshold = num_tokens
+                        break
+
+            # Store result
+            result = SoftmaxTopKCalibrationResult(
+                gpu_name=gpu_name,
+                threshold=threshold,
+                pytorch_times_us=pytorch_times,
+                triton_times_us=triton_times,
+                calibration_timestamp=time.time(),
+            )
+
+            with SoftmaxTopKSelector._cache_lock:
+                SoftmaxTopKSelector._calibration_cache[gpu_name] = result
+
+            self._calibration_result = result
+            self.threshold = threshold
+
+            import logging
+            logging.getLogger(__name__).debug(
+                f"SoftmaxTopKSelector calibration complete for {gpu_name}: "
+                f"Triton threshold={threshold} tokens"
+            )
+
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(
+                f"SoftmaxTopKSelector calibration failed: {e}, using default={self.default_threshold}"
+            )
+
+    def should_use_triton(self, num_tokens: int, num_experts: int) -> bool:
+        """
+        Determine if Triton should be used based on calibration.
+
+        Args:
+            num_tokens: Number of tokens in batch
+            num_experts: Number of experts
+
+        Returns:
+            True if Triton kernel should be used, False for PyTorch
+        """
+        if not TRITON_AVAILABLE:
+            return False
+        if num_experts > 128:  # Triton kernel limit
+            return False
+        return num_tokens >= self.threshold
+
+
+# Global selector instance (lazily initialized)
+_softmax_topk_selector: Optional[SoftmaxTopKSelector] = None
+
+
+def get_softmax_topk_selector(
+    calibrate: bool = True,
+    num_experts: int = 8,
+    top_k: int = 2,
+) -> SoftmaxTopKSelector:
+    """
+    Get or create the global SoftmaxTopKSelector instance.
+
+    Args:
+        calibrate: Whether to run calibration if creating new instance
+        num_experts: Number of experts for calibration
+        top_k: Top-k value for calibration
+
+    Returns:
+        SoftmaxTopKSelector instance
+    """
+    global _softmax_topk_selector
+    if _softmax_topk_selector is None:
+        _softmax_topk_selector = SoftmaxTopKSelector(
+            calibrate=calibrate,
+            num_experts=num_experts,
+            top_k=top_k,
+        )
+    return _softmax_topk_selector
 
 
 def set_kernel_config(config: KernelConfig):
@@ -887,14 +1130,13 @@ def fused_softmax_topk(
             log_kernel_path('softmax_topk:pytorch:too_many_experts', num_tokens, f'E={num_experts}')
         return _pytorch_softmax_topk(logits, top_k)
 
-    # Crossover point where Triton outperforms PyTorch
-    # PERF: Lowered threshold from 256 to 64 for +5-10% on small batches
-    # Modern GPUs (Ampere+) have very low kernel launch overhead (~5µs)
-    # Triton's fused softmax+topk benefits from avoiding intermediate allocations
-    MIN_TOKENS_FOR_TRITON = 64
-    if num_tokens < MIN_TOKENS_FOR_TRITON:
+    # ADAPTIVE THRESHOLD OPTIMIZATION: Use per-GPU calibrated threshold instead of hardcoded value
+    # This finds the optimal crossover point where Triton becomes faster than PyTorch
+    # for the current GPU model (2-5% potential improvement for edge cases)
+    selector = get_softmax_topk_selector(calibrate=True, num_experts=num_experts, top_k=top_k)
+    if not selector.should_use_triton(num_tokens, num_experts):
         if _has_logging:
-            log_kernel_path('softmax_topk:pytorch:small_batch', num_tokens, f'min={MIN_TOKENS_FOR_TRITON}')
+            log_kernel_path('softmax_topk:pytorch:below_threshold', num_tokens, f'threshold={selector.threshold}')
         return _pytorch_softmax_topk(logits, top_k)
 
     try:
@@ -993,6 +1235,13 @@ def fused_softmax_topk_renorm(
     device = logits.device
 
     if device.type != 'cuda':
+        return _pytorch_softmax_topk_renorm(logits, top_k)
+
+    # Skip Triton during inference (generation) to avoid autotune issues.
+    # Triton autotune cache can fail when model is unwrapped from torch.compile,
+    # causing "'NoneType' object is not a mapping" errors.
+    # PyTorch path is fast enough for generation (I/O bound anyway).
+    if not torch.is_grad_enabled():
         return _pytorch_softmax_topk_renorm(logits, top_k)
 
     logits = logits.contiguous()

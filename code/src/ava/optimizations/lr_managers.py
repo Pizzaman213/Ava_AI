@@ -128,6 +128,9 @@ class AdaptiveLearningRateManager:
     - Comprehensive tracking and logging
     """
 
+    # Maximum entries to keep in lr_history/loss_history to prevent memory leak
+    MAX_STATS_HISTORY = 1000
+
     def __init__(self, optimizer: torch.optim.Optimizer, config: AdaptiveLRConfig):
         """
         Initialize adaptive learning rate manager.
@@ -165,6 +168,8 @@ class AdaptiveLearningRateManager:
         self.lr_before_spike = None
 
         # Statistics
+        # Use deques with maxlen to prevent unbounded memory growth
+        # This fixes OOM (Killed) after ~20k steps due to RAM exhaustion
         self.lr_stats = {
             'total_reductions': 0,
             'total_increases': 0,
@@ -172,8 +177,8 @@ class AdaptiveLearningRateManager:
             'plateau_reductions': 0,
             'stability_increases': 0,
             'warmup_steps_completed': 0,
-            'lr_history': [],
-            'loss_history': []
+            'lr_history': deque(maxlen=self.MAX_STATS_HISTORY),
+            'loss_history': deque(maxlen=self.MAX_STATS_HISTORY)
         }
 
     def step(self, loss: float, batch_idx: Optional[int] = None) -> Dict[str, Any]:
@@ -531,6 +536,22 @@ class AdaptiveLearningRateManager:
 
     def get_state_dict(self) -> Dict[str, Any]:
         """Get manager state for checkpointing."""
+        # Convert deques to lists for serialization, keeping only last N entries
+        lr_stats_serializable = {
+            'total_reductions': self.lr_stats['total_reductions'],
+            'total_increases': self.lr_stats['total_increases'],
+            'emergency_reductions': self.lr_stats['emergency_reductions'],
+            'plateau_reductions': self.lr_stats['plateau_reductions'],
+            'stability_increases': self.lr_stats['stability_increases'],
+            'warmup_steps_completed': self.lr_stats['warmup_steps_completed'],
+            'lr_history': list(self.lr_stats['lr_history']),
+            'loss_history': list(self.lr_stats['loss_history'])
+        }
+        # Preserve any extra keys that may have been added (e.g., validation_improvements)
+        for key in self.lr_stats:
+            if key not in lr_stats_serializable:
+                lr_stats_serializable[key] = self.lr_stats[key]
+
         return {
             'batch_losses': list(self.batch_losses),
             'best_training_loss': self.best_training_loss,
@@ -544,7 +565,7 @@ class AdaptiveLearningRateManager:
             'last_lr_increase_step': self.last_lr_increase_step,
             'lr_before_spike': self.lr_before_spike,
             'target_lr': self.target_lr,
-            'lr_stats': self.lr_stats
+            'lr_stats': lr_stats_serializable
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -569,7 +590,24 @@ class AdaptiveLearningRateManager:
         self.last_lr_increase_step = state_dict['last_lr_increase_step']
         self.lr_before_spike = state_dict['lr_before_spike']
         self.target_lr = state_dict.get('target_lr', self.optimizer.param_groups[0]['lr'])
-        self.lr_stats = state_dict['lr_stats']
+
+        # Reconstruct lr_stats with deques for lr_history and loss_history
+        # This handles both old (list) and new (already list from serialization) formats
+        loaded_stats = state_dict['lr_stats']
+        self.lr_stats = {
+            'total_reductions': loaded_stats.get('total_reductions', 0),
+            'total_increases': loaded_stats.get('total_increases', 0),
+            'emergency_reductions': loaded_stats.get('emergency_reductions', 0),
+            'plateau_reductions': loaded_stats.get('plateau_reductions', 0),
+            'stability_increases': loaded_stats.get('stability_increases', 0),
+            'warmup_steps_completed': loaded_stats.get('warmup_steps_completed', 0),
+            'lr_history': deque(loaded_stats.get('lr_history', []), maxlen=self.MAX_STATS_HISTORY),
+            'loss_history': deque(loaded_stats.get('loss_history', []), maxlen=self.MAX_STATS_HISTORY)
+        }
+        # Preserve any extra keys (e.g., validation_improvements)
+        for key in loaded_stats:
+            if key not in self.lr_stats:
+                self.lr_stats[key] = loaded_stats[key]
 
 
 # ============================================================================

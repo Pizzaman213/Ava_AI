@@ -32,6 +32,7 @@ Format Detection:
 import json
 import logging
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -55,9 +56,83 @@ from ..core.paths import get_code_dir
 from .context import TrainingComponent, TrainingContext
 
 
+class CachedConfigAccessor:
+    """
+    Memoized config path resolution to avoid repeated string splits.
+
+    OPTIMIZATION: Config attribute lookups via dot-separated paths (e.g., 'data.multi_column')
+    are called frequently during initialization. This class caches resolved values
+    to eliminate repeated string parsing overhead.
+    """
+
+    def __init__(self, config):
+        self._config = config
+        self._cache: Dict[str, Any] = {}
+
+    def get(self, path: str, default=None):
+        """Get config value by dot-separated path with caching."""
+        if path in self._cache:
+            return self._cache[path]
+
+        parts = path.split('.')
+        value = self._config
+        for part in parts:
+            if hasattr(value, part):
+                value = getattr(value, part)
+            elif isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                value = default
+                break
+
+        self._cache[path] = value
+        return value
+
+    def clear_cache(self):
+        """Clear the memoization cache."""
+        self._cache.clear()
+
+
+def _get_config_attr(config, old_path: str, new_path: str, default=None):
+    """Get config attribute, checking new path first, then old for compatibility.
+
+    This avoids triggering deprecation warnings by checking the new path first.
+
+    Args:
+        config: Configuration object
+        old_path: Old/deprecated attribute name (e.g., 'multi_column_data')
+        new_path: New attribute path (e.g., 'data.multi_column')
+        default: Default value if neither path exists
+
+    Returns:
+        Config value from new path, old path, or default
+    """
+    # Try new path first (e.g., 'data.multi_column')
+    parts = new_path.split('.')
+    obj = config
+    for part in parts:
+        if hasattr(obj, part):
+            obj = getattr(obj, part)
+        else:
+            obj = None
+            break
+    if obj is not None:
+        return obj
+    # Fallback to old path (without triggering warning via hasattr)
+    try:
+        obj = object.__getattribute__(config, old_path)
+        if obj is not None:
+            return obj
+    except AttributeError:
+        pass
+    return default
+
+
 # Format detection cache to avoid repeated expensive file scans
-_format_detection_cache: Dict[str, Dict[str, Any]] = {}
+# MEMORY FIX: Use OrderedDict with max size to prevent unbounded growth
+_format_detection_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _format_cache_lock = threading.Lock()  # Thread-safe cache access
+_FORMAT_CACHE_MAX_SIZE = 100  # Evict oldest entries when exceeded
 
 # Module-level flag to signal distributed cleanup is imminent
 # When True, DataLoader workers may be blocked on dist.barrier() calls
@@ -252,10 +327,11 @@ class DataLoaderManager(TrainingComponent):
             )
 
         # Route to appropriate loader type
-        # Check if multi_column_data exists and is enabled
+        # Check if multi_column_data exists and is enabled (check new path first to avoid deprecation warning)
         use_multi_column = False
-        if hasattr(training_config, 'multi_column_data'):
-            use_multi_column = getattr(training_config.multi_column_data, 'use_multi_column', False)
+        multi_column_config = _get_config_attr(training_config, 'multi_column_data', 'data.multi_column')
+        if multi_column_config:
+            use_multi_column = getattr(multi_column_config, 'enabled', False) or getattr(multi_column_config, 'use_multi_column', False)
 
         if use_multi_column:
             train_loader, val_loader = self._create_multi_column_loaders(
@@ -292,8 +368,9 @@ class DataLoaderManager(TrainingComponent):
         """
         _logger.info("Using multi-column data loader")
 
-        # Load dataset config if it's a file path
-        dataset_config = training_config.multi_column_data.dataset_config
+        # Load dataset config if it's a file path (check new path first to avoid deprecation warning)
+        multi_column_config = _get_config_attr(training_config, 'multi_column_data', 'data.multi_column')
+        dataset_config = getattr(multi_column_config, 'dataset_config', None) if multi_column_config else None
         if isinstance(dataset_config, str) and dataset_config.strip():
             import yaml
 
@@ -345,9 +422,11 @@ class DataLoaderManager(TrainingComponent):
         # Find data directory with intelligent fallback
         data_dir = self._find_data_directory(training_config)
 
-        # Log dataset information (SKIP if skip_sequence_count or fast_startup enabled)
+        # Log dataset information (SKIP if lazy_stats, skip_sequence_count, or fast_startup enabled)
+        # OPTIMIZATION: lazy_stats skips detailed file scanning at startup (saves 2-5s for large datasets)
         fast_startup = getattr(training_config.data, 'fast_startup', False)
-        skip_stats = fast_startup or getattr(training_config.data, 'skip_sequence_count', False)
+        lazy_stats = getattr(training_config.data, 'lazy_stats', False)
+        skip_stats = fast_startup or lazy_stats or getattr(training_config.data, 'skip_sequence_count', False)
         if not skip_stats:
             self._log_dataset_stats(data_dir, batch_size, training_config)
         else:
@@ -572,12 +651,10 @@ class DataLoaderManager(TrainingComponent):
             "../../data",
         ]
 
-        if hasattr(training_config, "data_loading"):
-            fallback_paths = getattr(
-                training_config.data_loading,
-                "fallback_data_paths",
-                default_fallback_paths,
-            )
+        # Check new path first to avoid deprecation warning
+        loading_config = _get_config_attr(training_config, 'data_loading', 'data.loading.fallback')
+        if loading_config:
+            fallback_paths = getattr(loading_config, 'paths', None) or getattr(loading_config, 'fallback_data_paths', default_fallback_paths)
         else:
             fallback_paths = default_fallback_paths
 
@@ -922,14 +999,14 @@ class DataLoaderManager(TrainingComponent):
                 _logger.debug(f"Using cached format detection: {cached_result['detected_format']}")
                 return cached_result
 
-        # Get max_samples from config with fallback
+        # Get max_samples from config with fallback (check new path first to avoid deprecation warning)
         if max_samples is None:
-            if training_config and hasattr(training_config, "data_loading"):
-                max_samples = getattr(
-                    training_config.data_loading,
-                    "format_detection_samples",
-                    10,
-                )
+            if training_config:
+                loading_config = _get_config_attr(training_config, 'data_loading', 'data.loading.fallback')
+                if loading_config:
+                    max_samples = getattr(loading_config, 'format_detection_samples', 10)
+                else:
+                    max_samples = 10
             else:
                 max_samples = 10
 
@@ -997,6 +1074,9 @@ class DataLoaderManager(TrainingComponent):
                 "files_checked": total_files_checked,
             }
             with _format_cache_lock:
+                # MEMORY FIX: Evict oldest entries if cache exceeds max size
+                while len(_format_detection_cache) >= _FORMAT_CACHE_MAX_SIZE:
+                    _format_detection_cache.popitem(last=False)  # Remove oldest (FIFO)
                 _format_detection_cache[cache_key] = result
             return result
 
@@ -1011,6 +1091,9 @@ class DataLoaderManager(TrainingComponent):
         }
 
         with _format_cache_lock:
+            # MEMORY FIX: Evict oldest entries if cache exceeds max size
+            while len(_format_detection_cache) >= _FORMAT_CACHE_MAX_SIZE:
+                _format_detection_cache.popitem(last=False)  # Remove oldest (FIFO)
             _format_detection_cache[cache_key] = result
         return result
 

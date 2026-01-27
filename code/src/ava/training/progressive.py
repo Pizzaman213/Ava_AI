@@ -1101,6 +1101,8 @@ class ProgressiveTrainer:
         self.current_epoch = 0
         self.steps_per_epoch = None  # Will be set when training starts
         self.training_metrics = defaultdict(list)
+        # MEMORY FIX: Limit metrics history to prevent unbounded growth (~1MB per 10K steps)
+        self._metrics_max_history = 1000
 
     def setup_curriculum(self, batch_size: int = 32):
         """Setup curriculum learning by computing difficulty scores."""
@@ -1242,6 +1244,10 @@ class ProgressiveTrainer:
         """Update training metrics for adaptation."""
         for key, value in metrics.items():
             self.training_metrics[key].append(value)
+            # MEMORY FIX: Trim history to prevent unbounded growth
+            if len(self.training_metrics[key]) > self._metrics_max_history:
+                # Keep only recent history (efficient deque-like behavior for list)
+                self.training_metrics[key] = self.training_metrics[key][-self._metrics_max_history:]
 
         # Update GPU utilization if available
         if 'gpu_utilization' in metrics:

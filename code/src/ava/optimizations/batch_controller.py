@@ -58,6 +58,13 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import torch
 import torch.nn as nn
 
+# Unified memory cache for reduced GPU sync overhead
+try:
+    from ava.cuda.memory_cache import get_memory_cache
+    MEMORY_CACHE_AVAILABLE = True
+except ImportError:
+    MEMORY_CACHE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Calibration cache file - saves results to avoid repeated calibration overhead
@@ -83,11 +90,13 @@ class BatchSizeState:
 
 class MemoryMonitor:
     """
-    Simple GPU memory monitor with caching.
+    Simple GPU memory monitor with unified caching.
 
-    Provides memory utilization readings without the complexity of the old
-    DynamicBatchScheduler. All batch size decisions are delegated to
-    BatchSizeController.
+    Provides memory utilization readings by delegating to the unified
+    MemoryMetricsCache. This eliminates duplicate GPU syncs across
+    different components (prefetcher, batch_controller, etc.).
+
+    All batch size decisions are delegated to BatchSizeController.
     """
 
     def __init__(self, cache_interval_sec: float = 5.0):
@@ -97,14 +106,16 @@ class MemoryMonitor:
         Args:
             cache_interval_sec: How often to refresh memory stats (seconds).
                 Default increased from 0.5s to 5.0s to reduce GPU sync overhead.
-                PERF: max_memory_allocated() requires GPU sync, so frequent calls
-                add latency during training. 5s is sufficient for monitoring.
+                PERF: Delegates to unified MemoryMetricsCache which is shared
+                across all components, further reducing redundant syncs.
         """
-        self._cache: Dict[str, float] = {}
-        self._cache_time: float = 0.0
         self._cache_interval: float = cache_interval_sec
         self._device: Optional[int] = None
         self._total_memory: int = 0
+
+        # Fallback cache for when unified cache unavailable
+        self._cache: Dict[str, float] = {}
+        self._cache_time: float = 0.0
 
         if torch.cuda.is_available():
             self._device = torch.cuda.current_device()
@@ -115,23 +126,39 @@ class MemoryMonitor:
         return time.monotonic() - self._cache_time > self._cache_interval
 
     def _refresh_cache(self) -> None:
-        """Query GPU memory (causes sync)."""
+        """Query GPU memory (causes sync).
+
+        PERF: Delegates to unified MemoryMetricsCache when available.
+        Falls back to local caching if unified cache unavailable.
+        """
         if not torch.cuda.is_available() or self._total_memory == 0:
             self._cache = {'utilization': 0.0, 'reserved_gb': 0.0, 'allocated_gb': 0.0}
             return
 
-        reserved = torch.cuda.memory_reserved(self._device)
-        allocated = torch.cuda.memory_allocated(self._device)
-        # CRITICAL: Use max_memory_allocated for PEAK memory during operations
-        # This captures the true peak during forward/backward, not just current state
-        peak_allocated = torch.cuda.max_memory_allocated(self._device)
+        # OPTIMIZATION: Use unified memory cache shared across all components
+        if MEMORY_CACHE_AVAILABLE:
+            cache = get_memory_cache()
+            self._cache = cache.get_stats()
+            self._cache_time = time.monotonic()
+            return
+
+        # Fallback: Single memory_stats() call instead of 3 separate API calls
+        try:
+            stats = torch.cuda.memory_stats(self._device)
+            reserved = stats.get('reserved_bytes.all.current', 0)
+            allocated = stats.get('allocated_bytes.all.current', 0)
+            peak_allocated = stats.get('allocated_bytes.all.peak', 0)
+        except Exception:
+            # Fallback to individual calls if memory_stats fails
+            reserved = torch.cuda.memory_reserved(self._device)
+            allocated = torch.cuda.memory_allocated(self._device)
+            peak_allocated = torch.cuda.max_memory_allocated(self._device)
 
         # Use PEAK ALLOCATED as primary metric for calibration accuracy
-        # Current allocated misses activation memory that's freed after backward
         self._cache = {
-            'utilization': peak_allocated / self._total_memory,  # Peak memory usage
-            'utilization_current': allocated / self._total_memory,  # Current (for debugging)
-            'utilization_reserved': reserved / self._total_memory,  # Reserved (for debugging)
+            'utilization': peak_allocated / self._total_memory,
+            'utilization_current': allocated / self._total_memory,
+            'utilization_reserved': reserved / self._total_memory,
             'reserved_gb': reserved / 1e9,
             'allocated_gb': allocated / 1e9,
             'peak_allocated_gb': peak_allocated / 1e9,
@@ -143,6 +170,9 @@ class MemoryMonitor:
         """Reset peak memory tracking before a measurement."""
         if torch.cuda.is_available() and self._device is not None:
             torch.cuda.reset_peak_memory_stats(self._device)
+            # Invalidate unified cache as well
+            if MEMORY_CACHE_AVAILABLE:
+                get_memory_cache().reset_peak_memory()
 
     def get_utilization(self, force_refresh: bool = False) -> float:
         """
@@ -154,6 +184,10 @@ class MemoryMonitor:
         Returns:
             Memory utilization as fraction (0.0 to 1.0)
         """
+        # OPTIMIZATION: Use unified cache when available
+        if MEMORY_CACHE_AVAILABLE:
+            return get_memory_cache().get_utilization(force_refresh=force_refresh)
+
         if force_refresh or self._is_cache_stale():
             self._refresh_cache()
         return self._cache.get('utilization', 0.0)
@@ -168,6 +202,10 @@ class MemoryMonitor:
         Returns:
             Dict with utilization, reserved_gb, allocated_gb, total_gb
         """
+        # OPTIMIZATION: Use unified cache when available
+        if MEMORY_CACHE_AVAILABLE:
+            return get_memory_cache().get_stats(force_refresh=force_refresh)
+
         if force_refresh or self._is_cache_stale():
             self._refresh_cache()
         return self._cache.copy()
@@ -259,12 +297,16 @@ class BatchSizeController:
         The key is based on:
         - Model parameter count (determines memory footprint)
         - Model architecture hash (different architectures with same param count have different memory profiles)
+        - Model precision (FP32, FP16, BF16 have different memory footprints)
         - Max batch size setting
         - Target memory threshold
         - GPU name (different GPUs have different memory)
 
         Phase 4 Optimization: Added architecture hash to prevent cache mismatches between
         different model architectures with the same parameter count.
+
+        Phase 5 Optimization: Added precision detection to prevent cache mismatches when
+        training at different precision levels (FP32 vs BF16 vs FP16).
 
         Returns:
             12-character hash key
@@ -287,7 +329,21 @@ class BatchSizeController:
                     arch_parts.append(f"{attr}={getattr(config, attr)}")
             arch_info = "_".join(arch_parts)
 
-        key_str = f"{param_count}_{arch_info}_{self._max_batch_size}_{self._target_memory:.2f}_{gpu_name}"
+        # Phase 5: Detect model precision from first parameter dtype
+        # Different precisions have vastly different memory footprints (FP32 = 2x BF16)
+        precision = "fp32"
+        try:
+            first_param = next(model.parameters())
+            if first_param.dtype == torch.bfloat16:
+                precision = "bf16"
+            elif first_param.dtype == torch.float16:
+                precision = "fp16"
+            elif first_param.dtype == torch.float32:
+                precision = "fp32"
+        except StopIteration:
+            pass  # No parameters, use default
+
+        key_str = f"{param_count}_{arch_info}_{self._max_batch_size}_{self._target_memory:.2f}_{precision}_{gpu_name}"
         return hashlib.md5(key_str.encode()).hexdigest()[:12]
 
     def _load_cached_calibration(self, cache_key: str) -> Optional[int]:

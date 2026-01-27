@@ -287,7 +287,10 @@ class RoPEPositionalEmbedding(nn.Module):
             # Move to end for LRU (most recently used)
             cos_cached, sin_cached = self._cache.pop(cache_key)
             self._cache[cache_key] = (cos_cached, sin_cached)
-            return cos_cached, sin_cached
+            # CRITICAL: Clone tensors to avoid CUDAGraphs overwriting cached values
+            # torch.compile with CUDA graphs reuses tensor memory, so returning
+            # the same tensor object causes "tensor output overwritten" errors
+            return cos_cached.clone(), sin_cached.clone()
 
         # Compute positions [position_offset, position_offset + seq_len)
         t = torch.arange(position_offset, position_offset + seq_len, device=device)
@@ -306,7 +309,10 @@ class RoPEPositionalEmbedding(nn.Module):
         # Trade-off: Uses more GPU memory but avoids repeated transfers
         self._cache[cache_key] = (cos, sin)
 
-        return cos, sin
+        # CRITICAL: Clone tensors to avoid CUDAGraphs overwriting cached values
+        # torch.compile with CUDA graphs reuses tensor memory, so returning
+        # the same tensor object causes "tensor output overwritten" errors
+        return cos.clone(), sin.clone()
 
     def clear_cache(self) -> None:
         """Clear the RoPE position embedding cache to free memory."""
@@ -349,7 +355,10 @@ class RoPEPositionalEmbedding(nn.Module):
         cos = emb.cos()
         sin = emb.sin()
 
-        return cos, sin
+        # CRITICAL: Clone tensors to avoid CUDAGraphs overwriting values
+        # torch.compile with CUDA graphs reuses tensor memory, so returning
+        # the same tensor object causes "tensor output overwritten" errors
+        return cos.clone(), sin.clone()
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:

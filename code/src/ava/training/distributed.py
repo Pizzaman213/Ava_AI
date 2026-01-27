@@ -196,7 +196,7 @@ def setup_distributed(strict: bool = False) -> Tuple[int, int]:
     return 0, 1
 
 
-def cleanup_distributed(rank: int, world_size: int) -> None:
+def cleanup_distributed(rank: int = 0, world_size: int = 1) -> None:
     """
     Cleanup distributed training resources with proper synchronization.
 
@@ -210,7 +210,11 @@ def cleanup_distributed(rank: int, world_size: int) -> None:
     Note:
         Only performs cleanup if world_size > 1 and distributed is available.
     """
-    if DISTRIBUTED_AVAILABLE and world_size > 1:
+    # PERF: Early return for single-GPU mode - skip all distributed cleanup overhead
+    if world_size == 1:
+        return
+
+    if DISTRIBUTED_AVAILABLE:
         try:
             if dist.is_initialized():
                 # Sync CUDA first to ensure all GPU operations complete
@@ -235,6 +239,41 @@ def cleanup_distributed(rank: int, world_size: int) -> None:
                 logger.debug(f"[Rank {rank}] Distributed cleanup complete")
         except Exception as e:
             logger.warning(f"[Rank {rank}] Error during distributed cleanup: {e}")
+
+
+def synchronized_barrier(
+    world_size: int,
+    timeout: Optional[timedelta] = None,
+    description: str = ""
+) -> None:
+    """
+    Execute a distributed barrier with timeout handling.
+
+    This helper function provides a clean interface for synchronizing
+    all processes with proper timeout handling and error messages.
+
+    Args:
+        world_size: Total number of processes
+        timeout: Barrier timeout (default: DistributedTimeouts.BARRIER_DEFAULT)
+        description: Description for logging on timeout/error
+
+    Note:
+        No-op for single-GPU training (world_size <= 1).
+    """
+    if world_size <= 1:
+        return
+
+    if not DISTRIBUTED_AVAILABLE or not dist.is_initialized():
+        return
+
+    timeout = timeout or DistributedTimeouts.BARRIER_DEFAULT
+
+    try:
+        dist.barrier(timeout=timeout)
+    except Exception as e:
+        desc_str = f" ({description})" if description else ""
+        logger.warning(f"Barrier{desc_str} failed: {e}")
+        raise
 
 
 def is_main_process(rank: int = 0) -> bool:
@@ -758,7 +797,8 @@ class FusedGradientAllReduce:
 
         # Async handles and futures
         self._async_handles: List[Any] = []
-        self._pending_futures: List[Tuple[torch.futures.Future, List[torch.Tensor], List[int]]] = []
+        # Type: (future, original_buffers, sizes, fused_buffer_clone)
+        self._pending_futures: List[Tuple[torch.futures.Future, List[torch.Tensor], List[int], torch.Tensor]] = []
 
         # Communication stream for overlap
         self._comm_stream: Optional[torch.cuda.Stream] = None

@@ -157,6 +157,7 @@ class GenerationManager(ManagerInterface):
         """Get current generation configuration."""
         return self._generation_config.copy()
 
+    @torch.compiler.disable(recursive=True)  # Disable torch.compile during generation to prevent _maybe_guard_rel() warnings
     def generate_sample(
         self,
         model: nn.Module,
@@ -288,8 +289,13 @@ class GenerationManager(ManagerInterface):
                 # No prompt: start with BOS token (not random!)
                 generated_ids = torch.tensor([[bos_token_id]], dtype=torch.long).to(device)
 
-            # Get max position embeddings
-            max_pos = getattr(model, 'max_position_embeddings', 256)
+            # Get max position embeddings from model.config (not model directly)
+            # The attribute is stored on config, not the model object
+            max_pos = None
+            if hasattr(model, 'config') and model.config is not None:
+                max_pos = getattr(model.config, 'max_position_embeddings', None)
+            if max_pos is None:
+                max_pos = getattr(model, 'max_position_embeddings', 256)
             effective_max = min(max_length, max_pos)
 
             # Initialize attention mask (all 1s = attend to all tokens)
@@ -315,8 +321,14 @@ class GenerationManager(ManagerInterface):
                 current_len = generated_ids.shape[1]
                 position_ids = torch.arange(current_len, device=device).unsqueeze(0)
 
+                # CUDA GRAPHS COMPATIBILITY: Mark step boundary for torch.compile
+                # This prevents "tensor output of CUDAGraphs overwritten" errors
+                if hasattr(torch.compiler, 'cudagraph_mark_step_begin'):
+                    torch.compiler.cudagraph_mark_step_begin()
+
                 # Pass attention mask and position_ids to model for proper masking
-                outputs = model(generated_ids, attention_mask=attention_mask, position_ids=position_ids)
+                # Use base_model (unwrapped) to avoid torch.compile recompilation warnings
+                outputs = base_model(generated_ids, attention_mask=attention_mask, position_ids=position_ids)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
 
                 # Get next token logits
@@ -784,12 +796,52 @@ class GenerationManager(ManagerInterface):
                 )
                 input_ids, _ = orig_measurer._generate_samples()
 
+                # Validate generated input_ids - now returns None on failure
+                if input_ids is None:
+                    self.logger.warning(
+                        "Generation failed or produced insufficient tokens. "
+                        "Skipping coherence measurement."
+                    )
+                    # Clean up the measurer
+                    del orig_measurer, measurer
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    import gc
+                    gc.collect()
+                    return None
+
+                if input_ids.dim() != 2:
+                    self.logger.warning(
+                        f"Generated input_ids have unexpected shape: {input_ids.shape}. "
+                        f"Expected 2D [batch, seq]. Skipping coherence measurement."
+                    )
+                    del orig_measurer, measurer
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    import gc
+                    gc.collect()
+                    return None
+
+                if input_ids.numel() == 0:
+                    self.logger.warning(
+                        f"Generated input_ids are empty. Skipping coherence measurement."
+                    )
+                    del orig_measurer, measurer
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    import gc
+                    gc.collect()
+                    return None
+
                 # Measure with fast path
                 metrics = measurer.measure_fast(
                     input_ids,
                     use_fp16=use_fp16,
                     use_bf16=use_bf16,
                 )
+
+                # Clean up measurers after use
+                del orig_measurer, measurer, input_ids
             else:
                 # Use original CoherenceMeasurer
                 measurer = CoherenceMeasurer(
@@ -800,7 +852,22 @@ class GenerationManager(ManagerInterface):
                 )
                 metrics = measurer.measure(generate_samples=True)
 
-            return {
+                # Check if measurement was skipped (neutral metrics returned)
+                if metrics.num_samples == 0:
+                    self.logger.warning(
+                        "Coherence measurement returned no samples. Skipping."
+                    )
+                    del measurer
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    import gc
+                    gc.collect()
+                    return None
+
+                # Clean up measurer after use
+                del measurer
+
+            result = {
                 'coherence_score': metrics.coherence_score,
                 'perplexity': metrics.perplexity,
                 'repetition_score': metrics.repetition_score,
@@ -810,6 +877,15 @@ class GenerationManager(ManagerInterface):
                 'avg_sequence_length': metrics.avg_sequence_length,
                 'unique_token_ratio': metrics.unique_token_ratio,
             }
+
+            # MEMORY CLEANUP: Always clean up after coherence measurement
+            # This prevents gradual memory accumulation over long training runs
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+
+            return result
 
         except ImportError as e:
             # Track first occurrence to avoid spam
@@ -825,9 +901,23 @@ class GenerationManager(ManagerInterface):
             return None
         except Exception as e:
             # Full context for debugging
-            self.logger.warning(
-                f"Coherence measurement failed at step {global_step}: {e}"
-            )
+            error_msg = str(e)
+            # Add extra context for shape-related errors
+            if "shape" in error_msg.lower() or "view" in error_msg.lower() or "reshape" in error_msg.lower():
+                self.logger.warning(
+                    f"Coherence measurement failed at step {global_step} with shape error: {error_msg}\n"
+                    f"  Config: num_samples={config.get('num_samples', 'N/A')}, "
+                    f"max_generation_length={config.get('max_generation_length', config.get('max_length', 'N/A'))}"
+                )
+            else:
+                self.logger.warning(
+                    f"Coherence measurement failed at step {global_step}: {e}"
+                )
+            # MEMORY CLEANUP: Prevent accumulation from failed operations
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
             return None
 
     def is_generation_pending(self) -> bool:

@@ -2,31 +2,6 @@
 
 Advanced LLM training framework with Mixture of Experts (MoE++) architecture, optimized for memory efficiency and scalability.
 
-## Quick Start
-
-```bash
-# Main training (single GPU)
-python code/scripts/5_training/train_pipeline.py --config code/configs/moe/large.yaml
-
-# Multi-GPU training
-torchrun --nproc_per_node=4 code/scripts/5_training/train_pipeline.py --config code/configs/moe/Min_multy.yaml
-
-# Fine-tuning from checkpoint
-python code/scripts/5_training/finetune.py
-
-# RLHF training
-python code/scripts/6_rhlf_Finetuning/train_rlhf.py --config code/configs/rlhf/rlhf_config.yaml
-
-# Build pre-tokenized data
-python code/scripts/1_data_download/build_pretokenized_data.py
-
-# Train custom tokenizer
-python code/scripts/1_data_download/train_custom_tokenizer.py
-
-# Text generation
-python code/scripts/7_generation/generate.py --prompt "Once upon a time"
-```
-
 ## Development Guidelines
 
 **Testing Hardware**: All testing must be performed on the RTX 3060. Do not run tests on the RTX 3090 Ti (reserved for production training).

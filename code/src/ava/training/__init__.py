@@ -26,7 +26,10 @@ from .distributed import (
     setup_distributed,
     cleanup_distributed,
     is_main_process,
+    synchronized_barrier,
     DISTRIBUTED_AVAILABLE,
+    DistributedTimeouts,
+    DistributedStateManager,
 )
 
 # Coherence evaluation (moved from eval/)
@@ -99,7 +102,10 @@ __all__ = [
     'setup_distributed',
     'cleanup_distributed',
     'is_main_process',
+    'synchronized_barrier',
     'DISTRIBUTED_AVAILABLE',
+    'DistributedTimeouts',
+    'DistributedStateManager',
     # Coherence evaluation
     'CoherenceMetrics',
     'CoherenceMeasurer',

@@ -17,6 +17,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Suppress benign DeepSpeed scheduler initialization warning
+# "Attempting to get learning rate from scheduler before it has started"
+# This happens during WarmupLR.__init__ when get_lr() is called with last_batch_iteration=-1
+# It's harmless - just DeepSpeed setting up initial optimizer state
+logging.getLogger('deepspeed.runtime.lr_schedules').setLevel(logging.ERROR)
+
 
 # =============================================================================
 # DeepSpeed Engine Utilities

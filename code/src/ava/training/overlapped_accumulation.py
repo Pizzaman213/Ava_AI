@@ -116,6 +116,12 @@ class OverlappedGradientAccumulator:
         self._forward_done_events: List[Optional[torch.cuda.Event]] = [None, None]
         self._backward_done_event: Optional[torch.cuda.Event] = None
 
+        # OPTIMIZATION: Pre-allocated CUDA event pool to avoid per-cycle event creation
+        # Each event creation/destruction adds ~1-5µs overhead which accumulates over thousands of steps
+        self._event_pool_size = max(16, gradient_accumulation_steps * 2 + 4)
+        self._event_pool: List[torch.cuda.Event] = []
+        self._event_pool_idx = 0
+
         # Statistics
         self._total_forward_time_ms: float = 0.0
         self._total_backward_time_ms: float = 0.0
@@ -131,6 +137,22 @@ class OverlappedGradientAccumulator:
         if self.backward_stream is None and device.type == 'cuda':
             self.backward_stream = torch.cuda.Stream(device=device)
             logger.debug(f"Created backward stream on {device}")
+
+    def _ensure_event_pool(self, device: torch.device, min_events: int):
+        """Lazily create CUDA event pool on first use."""
+        if device.type != 'cuda':
+            return
+        # Expand pool if needed
+        while len(self._event_pool) < min_events:
+            self._event_pool.append(torch.cuda.Event())
+
+    def _get_event(self, device: torch.device) -> torch.cuda.Event:
+        """Get a CUDA event from the pre-allocated pool."""
+        if device.type != 'cuda' or not self._event_pool:
+            return torch.cuda.Event()
+        event = self._event_pool[self._event_pool_idx]
+        self._event_pool_idx = (self._event_pool_idx + 1) % len(self._event_pool)
+        return event
 
     def accumulate(
         self,
@@ -257,9 +279,11 @@ class OverlappedGradientAccumulator:
         # GPU SYNC FIX: Accumulate loss on GPU, single .item() at end
         total_loss_tensor = None
 
-        # Events for coordination
-        forward_events = [torch.cuda.Event() for _ in range(num_batches)]
-        backward_events = [torch.cuda.Event() for _ in range(num_batches)]
+        # OPTIMIZATION: Use pre-allocated event pool instead of creating new events
+        # This eliminates ~1-5µs overhead per event creation
+        self._ensure_event_pool(device, num_batches * 2)
+        forward_events = [self._get_event(device) for _ in range(num_batches)]
+        backward_events = [self._get_event(device) for _ in range(num_batches)]
 
         # Output storage (double-buffered)
         outputs_storage = [None, None]

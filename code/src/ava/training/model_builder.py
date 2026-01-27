@@ -786,6 +786,17 @@ class ModelBuilder(TrainingComponent):
             self.logger.info(f"Applying torch.compile (mode={compile_mode})...")
 
         try:
+            # Configure torch._dynamo BEFORE compilation to avoid recompilation issues
+            # 1. allow_unspec_int_on_nn_module: Treat integer module attributes (like _step_counter)
+            #    as dynamic to prevent recompilation when they change each step
+            # 2. suppress_errors: Continue even if dynamo can't trace a function
+            # 3. recompile_limit: Increase from default 8 to handle varying sequence lengths
+            #    during autoregressive generation (seq_len goes 1→2→3→...→128+)
+            import torch._dynamo
+            torch._dynamo.config.allow_unspec_int_on_nn_module = True
+            torch._dynamo.config.suppress_errors = True
+            torch._dynamo.config.recompile_limit = 256
+
             # Store compile settings on model for layers to use compile-friendly dispatch
             model._use_compile_friendly = True
             model._compile_mode = compile_mode
@@ -800,6 +811,7 @@ class ModelBuilder(TrainingComponent):
 
             if is_main:
                 self.logger.info("  torch.compile applied (speedup visible after warmup)")
+                self.logger.info(f"  Dynamic shapes: {compile_dynamic}, recompile_limit: 256")
                 self.logger.info("  Using compile-friendly expert dispatch")
 
             return model, True

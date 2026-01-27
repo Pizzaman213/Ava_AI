@@ -51,6 +51,13 @@ import torch
 
 from .context import ManagerInterface, TrainingComponent, TrainingContext
 
+# Unified memory cache for reduced GPU sync overhead
+try:
+    from ava.cuda.memory_cache import get_memory_cache
+    MEMORY_CACHE_AVAILABLE = True
+except ImportError:
+    MEMORY_CACHE_AVAILABLE = False
+
 
 @dataclass
 class RetryState:
@@ -195,7 +202,7 @@ class TrainingPipeline:
         # Status caching to avoid redundant get_status() calls (reduces sync overhead)
         self._status_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._status_cache_time: float = 0.0
-        self._status_cache_ttl: float = 1.0  # 1 second TTL
+        self._status_cache_ttl: float = 5.0  # 5 second TTL (reduced overhead)
 
     def set_hook_severity(self, hook_name: str, severity: ErrorSeverity) -> None:
         """
@@ -619,10 +626,31 @@ class TrainingPipeline:
             except Exception as e:
                 logger.debug(f"Buffer pool epoch cleanup: {e}")
 
-        # PERF FIX: Clear CUDA cache between epochs to prevent memory fragmentation
-        # This helps long training runs maintain stable memory usage
+        # PERF FIX: Conditionally clear CUDA cache only when fragmentation is high
+        # empty_cache() takes 50-500ms, so only call when necessary
+        # OPTIMIZATION: Use unified memory cache to avoid additional GPU sync
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            if MEMORY_CACHE_AVAILABLE:
+                # Use unified cache (no additional GPU sync)
+                stats = get_memory_cache().get_stats()
+                allocated_gb = stats.get('allocated_gb', 0)
+                reserved_gb = stats.get('reserved_gb', 0)
+                if reserved_gb > 0:
+                    fragmentation = 1.0 - (allocated_gb / reserved_gb)
+                    if fragmentation > 0.3:  # Only clear if >30% fragmented
+                        torch.cuda.empty_cache()
+                        # Invalidate cache since we cleared CUDA cache
+                        get_memory_cache().invalidate()
+                        logger.debug(f"Cleared CUDA cache (fragmentation: {fragmentation:.1%})")
+            else:
+                # Fallback: direct query
+                allocated = torch.cuda.memory_allocated()
+                reserved = torch.cuda.memory_reserved()
+                if reserved > 0:
+                    fragmentation = 1.0 - (allocated / reserved)
+                    if fragmentation > 0.3:  # Only clear if >30% fragmented
+                        torch.cuda.empty_cache()
+                        logger.debug(f"Cleared CUDA cache (fragmentation: {fragmentation:.1%})")
 
     def on_step_start(self, step: int) -> None:
         """

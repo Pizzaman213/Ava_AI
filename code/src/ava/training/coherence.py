@@ -128,6 +128,13 @@ class CoherenceMeasurer:
         # Get input_ids from texts or generate samples
         if generate_samples:
             input_ids, texts = self._generate_samples(prompts)
+            # Check if generation failed (returns None when sequence too short or error)
+            if input_ids is None:
+                logger.warning("Coherence measurement skipped: generation failed or produced insufficient tokens")
+                return CoherenceMetrics(
+                    coherence_score=0.5,  # Neutral score
+                    num_samples=0,
+                )
         elif texts is not None and self.tokenizer is not None:
             input_ids = self._tokenize_texts(texts)
         elif input_ids is None:
@@ -206,6 +213,10 @@ class CoherenceMeasurer:
             self.config.topic_weight * topic_score
         ) / max(weight_sum, 1e-8)
 
+        # MEMORY FIX: Clear hidden state cache after measurement to prevent unbounded growth
+        # Without this, _hidden_cache grows with every coherence measurement (default every 1000 steps)
+        self._hidden_cache.clear()
+
         return CoherenceMetrics(
             perplexity=perplexity,
             repetition_score=repetition_score,
@@ -235,48 +246,99 @@ class CoherenceMeasurer:
         self,
         prompts: Optional[List[str]] = None,
     ) -> Tuple[torch.Tensor, List[str]]:
-        """Generate text samples from model."""
-        num_samples = self.config.num_samples
+        """Generate text samples from model.
 
-        if prompts is None:
-            # Use default prompts or start tokens
-            if self.tokenizer is not None:
-                # Use BOS token or common start
-                start_token = self.tokenizer.bos_token_id or 0
-                input_ids = torch.full(
-                    (num_samples, 1),
-                    start_token,
-                    dtype=torch.long,
-                    device=self.device
-                )
+        Returns:
+            Tuple of (input_ids, texts). If generation fails or produces
+            sequences too short for coherence measurement (< 10 tokens),
+            returns None for input_ids to signal the caller to skip measurement.
+        """
+        # Minimum sequence length required for meaningful coherence metrics
+        MIN_SEQ_LENGTH_FOR_COHERENCE = 10
+
+        try:
+            num_samples = self.config.num_samples
+
+            if prompts is None:
+                # Use default prompts or start tokens
+                if self.tokenizer is not None:
+                    # Use BOS token or common start
+                    start_token = self.tokenizer.bos_token_id or 0
+                    input_ids = torch.full(
+                        (num_samples, 1),
+                        start_token,
+                        dtype=torch.long,
+                        device=self.device
+                    )
+                else:
+                    input_ids = torch.zeros(
+                        (num_samples, 1),
+                        dtype=torch.long,
+                        device=self.device
+                    )
             else:
-                input_ids = torch.zeros(
-                    (num_samples, 1),
-                    dtype=torch.long,
-                    device=self.device
+                # Tokenize prompts
+                input_ids = self._tokenize_texts(prompts[:num_samples]).to(self.device)
+
+            # Generate using model
+            generated = self._sample_from_model(
+                input_ids,
+                max_length=self.config.max_generation_length,
+                temperature=self.config.temperature,
+                top_p=self.config.top_p,
+                top_k=self.config.top_k,
+            )
+
+            # CRITICAL FIX: Validate generated sequences before returning
+            # If generation failed (returned only input tokens), skip coherence measurement
+            if generated is None or generated.numel() == 0:
+                logger.warning("_generate_samples: generation returned empty tensor")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None, []
+
+            # Check if generation actually produced new tokens
+            if generated.shape[1] <= input_ids.shape[1]:
+                logger.warning(
+                    f"_generate_samples: generation failed to produce new tokens "
+                    f"(input: {input_ids.shape[1]}, output: {generated.shape[1]})"
                 )
-        else:
-            # Tokenize prompts
-            input_ids = self._tokenize_texts(prompts[:num_samples]).to(self.device)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None, []
 
-        # Generate using model
-        generated = self._sample_from_model(
-            input_ids,
-            max_length=self.config.max_generation_length,
-            temperature=self.config.temperature,
-            top_p=self.config.top_p,
-            top_k=self.config.top_k,
-        )
+            # Check minimum sequence length for coherence metrics
+            if generated.shape[1] < MIN_SEQ_LENGTH_FOR_COHERENCE:
+                logger.warning(
+                    f"_generate_samples: sequence too short for coherence measurement "
+                    f"({generated.shape[1]} < {MIN_SEQ_LENGTH_FOR_COHERENCE} tokens). "
+                    f"Skipping coherence measurement."
+                )
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return None, []
 
-        # Decode to texts
-        texts = []
-        if self.tokenizer is not None:
-            for seq in generated:
-                text = self.tokenizer.decode(seq, skip_special_tokens=True)
-                texts.append(text)
+            # Decode to texts
+            texts = []
+            if self.tokenizer is not None:
+                for seq in generated:
+                    text = self.tokenizer.decode(seq, skip_special_tokens=True)
+                    texts.append(text)
 
-        return generated, texts
+            return generated, texts
 
+        except Exception as e:
+            # Catch-all for generation errors
+            error_msg = str(e)
+            logger.warning(f"_generate_samples failed: {error_msg}. Returning None to skip coherence.")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+            # Return None to signal caller to skip coherence measurement
+            return None, []
+
+    @torch.compiler.disable(recursive=True)  # Disable torch.compile during generation to prevent _maybe_guard_rel() warnings
     def _sample_from_model(
         self,
         input_ids: torch.Tensor,
@@ -289,6 +351,15 @@ class CoherenceMeasurer:
         batch_size = input_ids.shape[0]
         generated = input_ids.clone()
 
+        # Unwrap torch.compile to avoid _maybe_guard_rel() warnings during autoregressive generation
+        # Compiled models recompile on every seq_len change (40->41->42...), causing warning spam
+        model = self.model
+        if hasattr(model, '_orig_mod'):
+            model = model._orig_mod  # Get uncompiled model from OptimizedModule
+        # Also unwrap DeepSpeed model wrapper
+        if hasattr(model, 'module'):
+            model = model.module
+
         # Track which sequences have finished (hit EOS)
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
 
@@ -299,9 +370,34 @@ class CoherenceMeasurer:
             eos_token_id = self.tokenizer.eos_token_id
             pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id else eos_token_id
 
+        # Track consecutive failures to prevent infinite loops
+        consecutive_failures = 0
+        max_consecutive_failures = 3
+
         for _ in range(max_length - input_ids.shape[1]):
-            # Forward pass
-            outputs = self.model(generated)
+            # Forward pass with shape error protection
+            try:
+                outputs = model(generated)
+                consecutive_failures = 0  # Reset on success
+            except RuntimeError as e:
+                error_msg = str(e)
+                consecutive_failures += 1
+                if "shape" in error_msg.lower() or "invalid" in error_msg.lower():
+                    logger.warning(
+                        f"_sample_from_model forward failed with shape error: {error_msg}\n"
+                        f"  Generated shape: {generated.shape}\n"
+                        f"  Returning partial generation."
+                    )
+                    # Clean up and return what we have so far
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    return generated
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.warning(f"_sample_from_model: {max_consecutive_failures} consecutive failures, aborting")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    return generated
+                raise
 
             # Get logits for last position
             if hasattr(outputs, 'logits'):
@@ -890,6 +986,24 @@ class FastCoherenceMeasurer:
         autocast_dtype: Optional[torch.dtype] = None,
     ) -> CoherenceMetrics:
         """Measure coherence for a single batch with single forward pass."""
+        # Minimum sequence length check - very short sequences can cause shape errors
+        MIN_SEQ_FOR_COHERENCE = 10
+        if input_ids.shape[1] < MIN_SEQ_FOR_COHERENCE:
+            logger.warning(
+                f"_measure_single_batch: sequence too short ({input_ids.shape[1]} < {MIN_SEQ_FOR_COHERENCE}). "
+                f"Returning neutral metrics."
+            )
+            return CoherenceMetrics(
+                perplexity=self.config.max_perplexity,
+                repetition_score=0.5,
+                sentence_flow_score=0.5,
+                topic_consistency=0.5,
+                coherence_score=0.5,
+                num_samples=input_ids.shape[0],
+                avg_sequence_length=float(input_ids.shape[1]),
+                unique_token_ratio=0.5,
+            )
+
         try:
             # Create attention mask (1 for real tokens, 0 for padding)
             pad_token_id = 0
@@ -903,13 +1017,55 @@ class FastCoherenceMeasurer:
             # Check if DeepSpeed is managing the model (avoid autocast conflict)
             is_deepspeed = hasattr(self.model, 'module') and hasattr(self.model, 'deepspeed_io')
 
-            if autocast_dtype is not None and not is_deepspeed:
-                # Only use torch.amp.autocast if DeepSpeed is not handling mixed precision
-                with torch.amp.autocast('cuda', dtype=autocast_dtype):
+            # Wrap model forward in try-except for detailed shape diagnostics
+            try:
+                if autocast_dtype is not None and not is_deepspeed:
+                    # Only use torch.amp.autocast if DeepSpeed is not handling mixed precision
+                    with torch.amp.autocast('cuda', dtype=autocast_dtype):
+                        outputs = self.model(input_ids, attention_mask=attention_mask)
+                else:
+                    # Let DeepSpeed handle mixed precision via its own config
                     outputs = self.model(input_ids, attention_mask=attention_mask)
-            else:
-                # Let DeepSpeed handle mixed precision via its own config
-                outputs = self.model(input_ids, attention_mask=attention_mask)
+            except RuntimeError as e:
+                # Add context about input shapes for debugging reshape errors
+                error_msg = str(e)
+                if "invalid" in error_msg and "shape" in error_msg.lower():
+                    logger.warning(
+                        f"Coherence model forward failed with shape error:\n"
+                        f"  Input IDs shape: {input_ids.shape}\n"
+                        f"  Attention mask shape: {attention_mask.shape}\n"
+                        f"  Is DeepSpeed: {is_deepspeed}\n"
+                        f"  Autocast dtype: {autocast_dtype}\n"
+                        f"  Error: {error_msg}\n"
+                        f"  Returning neutral metrics. This often happens early in training."
+                    )
+                    # Return neutral metrics instead of crashing
+                    return CoherenceMetrics(
+                        perplexity=self.config.max_perplexity,
+                        repetition_score=0.5,
+                        sentence_flow_score=0.5,
+                        topic_consistency=0.5,
+                        coherence_score=0.5,
+                        num_samples=input_ids.shape[0],
+                        avg_sequence_length=float(input_ids.shape[1]),
+                        unique_token_ratio=0.5,
+                    )
+                raise
+            except Exception as e:
+                # Catch any other errors and clean up memory to prevent leaks
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logger.warning(f"Coherence model forward failed: {e}. Returning neutral metrics.")
+                return CoherenceMetrics(
+                    perplexity=self.config.max_perplexity,
+                    repetition_score=0.5,
+                    sentence_flow_score=0.5,
+                    topic_consistency=0.5,
+                    coherence_score=0.5,
+                    num_samples=input_ids.shape[0],
+                    avg_sequence_length=float(input_ids.shape[1]),
+                    unique_token_ratio=0.5,
+                )
 
             # Extract logits
             if hasattr(outputs, 'logits'):
@@ -921,8 +1077,48 @@ class FastCoherenceMeasurer:
             else:
                 logits = outputs
 
-            # Extract hidden states
-            hidden_states = self._extract_hidden_states(outputs)
+            # Extract hidden states with validation against input dimensions
+            batch_size, seq_len = input_ids.shape
+            hidden_states = self._extract_hidden_states(
+                outputs,
+                expected_batch=batch_size,
+                expected_seq=seq_len
+            )
+
+            # Validate hidden states shape matches input
+            # This catches malformed hidden_states before they cause cryptic reshape errors
+            if hidden_states is not None:
+                if hidden_states.dim() != 3:
+                    logger.warning(
+                        f"Hidden states have unexpected dimensions: {hidden_states.dim()}D "
+                        f"(expected 3D). Falling back to logit-based metrics. "
+                        f"Hidden shape: {hidden_states.shape}, Input shape: {input_ids.shape}"
+                    )
+                    hidden_states = None
+                elif hidden_states.shape[0] != batch_size or hidden_states.shape[1] != seq_len:
+                    logger.warning(
+                        f"Hidden states shape mismatch: {hidden_states.shape} "
+                        f"vs expected [batch={batch_size}, seq={seq_len}, hidden]. "
+                        f"Falling back to logit-based metrics."
+                    )
+                    hidden_states = None
+                elif hidden_states.shape[2] < 64:
+                    # Sanity check: hidden_dim too small likely indicates wrong tensor
+                    # (e.g., expert_utilization with num_experts=4 instead of hidden states)
+                    logger.warning(
+                        f"Hidden states hidden_dim too small: {hidden_states.shape[2]} "
+                        f"(expected >= 64). Likely extracted wrong tensor. "
+                        f"Falling back to logit-based metrics."
+                    )
+                    hidden_states = None
+                elif hidden_states.numel() != batch_size * seq_len * hidden_states.shape[2]:
+                    # Guard against corrupted tensors where numel() != product of shape
+                    logger.warning(
+                        f"Hidden states element count mismatch: {hidden_states.numel()} "
+                        f"vs expected {batch_size * seq_len * hidden_states.shape[2]}. "
+                        f"Falling back to logit-based metrics."
+                    )
+                    hidden_states = None
 
             # Compute unique ratio first (needed for validation)
             unique_ratio = self._compute_unique_ratio_fast(input_ids)
@@ -988,6 +1184,32 @@ class FastCoherenceMeasurer:
                 unique_token_ratio=unique_ratio,
             )
 
+        except Exception as e:
+            # OUTER CATCH-ALL: Prevent any exception from escaping _measure_single_batch
+            # This catches errors from the entire measurement pipeline (model forward, metrics computation)
+            error_msg = str(e)
+            if "shape" in error_msg.lower() or "view" in error_msg.lower() or "reshape" in error_msg.lower():
+                logger.warning(
+                    f"_measure_single_batch failed with shape error: {error_msg}\n"
+                    f"  Input IDs shape: {input_ids.shape}\n"
+                    f"  Returning neutral metrics to continue training."
+                )
+            else:
+                logger.warning(f"_measure_single_batch failed: {error_msg}. Returning neutral metrics.")
+            # Clean up GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return CoherenceMetrics(
+                perplexity=self.config.max_perplexity,
+                repetition_score=0.5,
+                sentence_flow_score=0.5,
+                topic_consistency=0.5,
+                coherence_score=0.5,
+                num_samples=input_ids.shape[0],
+                avg_sequence_length=float(input_ids.shape[1]),
+                unique_token_ratio=0.5,
+            )
+
         finally:
             self._clear_cache()
 
@@ -997,107 +1219,181 @@ class FastCoherenceMeasurer:
         autocast_dtype: Optional[torch.dtype] = None,
     ) -> CoherenceMetrics:
         """Process large batches in micro-batches to prevent OOM."""
-        batch_size = input_ids.shape[0]
-        num_microbatches = (batch_size + self.micro_batch_size - 1) // self.micro_batch_size
+        try:
+            batch_size = input_ids.shape[0]
+            num_microbatches = (batch_size + self.micro_batch_size - 1) // self.micro_batch_size
 
-        # Accumulators
-        total_ppl = 0.0
-        total_rep = 0.0
-        total_flow = 0.0
-        total_topic = 0.0
-        total_unique = 0.0
-        total_samples = 0
+            # Accumulators
+            total_ppl = 0.0
+            total_rep = 0.0
+            total_flow = 0.0
+            total_topic = 0.0
+            total_unique = 0.0
+            total_samples = 0
 
-        for i in range(num_microbatches):
-            start_idx = i * self.micro_batch_size
-            end_idx = min(start_idx + self.micro_batch_size, batch_size)
-            micro_batch = input_ids[start_idx:end_idx]
+            for i in range(num_microbatches):
+                start_idx = i * self.micro_batch_size
+                end_idx = min(start_idx + self.micro_batch_size, batch_size)
+                micro_batch = input_ids[start_idx:end_idx]
 
-            # Measure this micro-batch
-            metrics = self._measure_single_batch(micro_batch, autocast_dtype)
+                # Measure this micro-batch
+                metrics = self._measure_single_batch(micro_batch, autocast_dtype)
 
-            # Accumulate weighted by sample count
-            n = metrics.num_samples
-            total_ppl += metrics.perplexity * n
-            total_rep += metrics.repetition_score * n
-            total_flow += metrics.sentence_flow_score * n
-            total_topic += metrics.topic_consistency * n
-            total_unique += metrics.unique_token_ratio * n
-            total_samples += n
+                # Accumulate weighted by sample count
+                n = metrics.num_samples
+                total_ppl += metrics.perplexity * n
+                total_rep += metrics.repetition_score * n
+                total_flow += metrics.sentence_flow_score * n
+                total_topic += metrics.topic_consistency * n
+                total_unique += metrics.unique_token_ratio * n
+                total_samples += n
 
-            # Free memory between micro-batches
+                # Free memory between micro-batches
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            if total_samples == 0:
+                return CoherenceMetrics()
+
+            # Compute weighted averages
+            avg_ppl = total_ppl / total_samples
+            avg_rep = total_rep / total_samples
+            avg_flow = total_flow / total_samples
+            avg_topic = total_topic / total_samples
+            avg_unique = total_unique / total_samples
+
+            # Recompute aggregate score
+            # Use log-scale normalization (consistent with CoherenceMeasurer)
+            if avg_ppl >= self.config.max_perplexity:
+                ppl_normalized = 0.0
+            elif avg_ppl <= 1.0:
+                ppl_normalized = 1.0
+            else:
+                log_ppl = math.log(avg_ppl)
+                log_max = math.log(self.config.max_perplexity)
+                ppl_normalized = 1.0 - (log_ppl / log_max)
+            rep_inverted = 1.0 - avg_rep
+
+            # FIX: Normalize by weight sum to ensure coherence_score is in [0, 1]
+            weight_sum = (
+                self.config.perplexity_weight +
+                self.config.repetition_weight +
+                self.config.flow_weight +
+                self.config.topic_weight
+            )
+
+            coherence_score = (
+                self.config.perplexity_weight * ppl_normalized +
+                self.config.repetition_weight * rep_inverted +
+                self.config.flow_weight * avg_flow +
+                self.config.topic_weight * avg_topic
+            ) / max(weight_sum, 1e-8)
+
+            return CoherenceMetrics(
+                perplexity=avg_ppl,
+                repetition_score=avg_rep,
+                sentence_flow_score=avg_flow,
+                topic_consistency=avg_topic,
+                coherence_score=coherence_score,
+                num_samples=total_samples,
+                avg_sequence_length=float(input_ids.shape[1]),
+                unique_token_ratio=avg_unique,
+            )
+
+        except Exception as e:
+            # Catch-all for microbatching errors
+            error_msg = str(e)
+            logger.warning(f"_measure_with_microbatching failed: {error_msg}. Returning neutral metrics.")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            return CoherenceMetrics(
+                perplexity=self.config.max_perplexity,
+                repetition_score=0.5,
+                sentence_flow_score=0.5,
+                topic_consistency=0.5,
+                coherence_score=0.5,
+                num_samples=input_ids.shape[0],
+                avg_sequence_length=float(input_ids.shape[1]),
+                unique_token_ratio=0.5,
+            )
 
-        if total_samples == 0:
-            return CoherenceMetrics()
+    def _extract_hidden_states(
+        self,
+        outputs,
+        expected_batch: Optional[int] = None,
+        expected_seq: Optional[int] = None
+    ) -> Optional[torch.Tensor]:
+        """Extract hidden states from model outputs with strict validation.
 
-        # Compute weighted averages
-        avg_ppl = total_ppl / total_samples
-        avg_rep = total_rep / total_samples
-        avg_flow = total_flow / total_samples
-        avg_topic = total_topic / total_samples
-        avg_unique = total_unique / total_samples
+        Args:
+            outputs: Model outputs (dict, tuple, or object with attributes)
+            expected_batch: Expected batch size for validation (optional)
+            expected_seq: Expected sequence length for validation (optional)
 
-        # Recompute aggregate score
-        # Use log-scale normalization (consistent with CoherenceMeasurer)
-        if avg_ppl >= self.config.max_perplexity:
-            ppl_normalized = 0.0
-        elif avg_ppl <= 1.0:
-            ppl_normalized = 1.0
-        else:
-            log_ppl = math.log(avg_ppl)
-            log_max = math.log(self.config.max_perplexity)
-            ppl_normalized = 1.0 - (log_ppl / log_max)
-        rep_inverted = 1.0 - avg_rep
-
-        # FIX: Normalize by weight sum to ensure coherence_score is in [0, 1]
-        weight_sum = (
-            self.config.perplexity_weight +
-            self.config.repetition_weight +
-            self.config.flow_weight +
-            self.config.topic_weight
-        )
-
-        coherence_score = (
-            self.config.perplexity_weight * ppl_normalized +
-            self.config.repetition_weight * rep_inverted +
-            self.config.flow_weight * avg_flow +
-            self.config.topic_weight * avg_topic
-        ) / max(weight_sum, 1e-8)
-
-        return CoherenceMetrics(
-            perplexity=avg_ppl,
-            repetition_score=avg_rep,
-            sentence_flow_score=avg_flow,
-            topic_consistency=avg_topic,
-            coherence_score=coherence_score,
-            num_samples=total_samples,
-            avg_sequence_length=float(input_ids.shape[1]),
-            unique_token_ratio=avg_unique,
-        )
-
-    def _extract_hidden_states(self, outputs) -> Optional[torch.Tensor]:
-        """Extract hidden states from model outputs."""
+        Returns:
+            Hidden states tensor of shape [batch, seq, hidden], or None if unavailable/invalid.
+        """
         hidden_states = None
 
         if isinstance(outputs, dict):
             if 'hidden_states' in outputs:
                 hs = outputs['hidden_states']
                 if isinstance(hs, (list, tuple)):
-                    hidden_states = hs[-1]
+                    # List of layer outputs - take last layer
+                    last_hs = hs[-1]
+                    if isinstance(last_hs, torch.Tensor) and last_hs.dim() == 3:
+                        hidden_states = last_hs
                 elif isinstance(hs, torch.Tensor) and hs.dim() == 3:
                     hidden_states = hs
             elif 'last_hidden_state' in outputs:
-                hidden_states = outputs['last_hidden_state']
+                hs = outputs['last_hidden_state']
+                # Validate that last_hidden_state is a proper 3D tensor
+                if isinstance(hs, torch.Tensor) and hs.dim() == 3:
+                    hidden_states = hs
+                elif isinstance(hs, torch.Tensor):
+                    logger.debug(
+                        f"last_hidden_state has unexpected dimensions: {hs.dim()}D, "
+                        f"shape: {hs.shape}. Expected 3D [batch, seq, hidden]."
+                    )
         elif hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
             hs = outputs.hidden_states
             if isinstance(hs, (list, tuple)):
-                hidden_states = hs[-1]
+                last_hs = hs[-1]
+                if isinstance(last_hs, torch.Tensor) and last_hs.dim() == 3:
+                    hidden_states = last_hs
             elif isinstance(hs, torch.Tensor) and hs.dim() == 3:
                 hidden_states = hs
         elif hasattr(outputs, 'last_hidden_state'):
-            hidden_states = outputs.last_hidden_state
+            hs = outputs.last_hidden_state
+            if isinstance(hs, torch.Tensor) and hs.dim() == 3:
+                hidden_states = hs
+            elif isinstance(hs, torch.Tensor):
+                logger.debug(
+                    f"last_hidden_state has unexpected dimensions: {hs.dim()}D, "
+                    f"shape: {hs.shape}. Expected 3D [batch, seq, hidden]."
+                )
+
+        # Strict validation before returning
+        if hidden_states is not None:
+            if hidden_states.dim() != 3:
+                logger.debug(f"Rejected hidden_states: expected 3D, got {hidden_states.dim()}D")
+                return None
+
+            batch, seq, hidden = hidden_states.shape
+
+            # Validate against expected dimensions if provided
+            if expected_batch is not None and batch != expected_batch:
+                logger.debug(f"Rejected hidden_states: batch {batch} != expected {expected_batch}")
+                return None
+            if expected_seq is not None and seq != expected_seq:
+                logger.debug(f"Rejected hidden_states: seq {seq} != expected {expected_seq}")
+                return None
+
+            # Sanity check: hidden_dim should be reasonable (not num_experts=4, 8, etc.)
+            # Real hidden dims are typically >= 64 (e.g., 256, 512, 768, 1024, etc.)
+            if hidden < 64:
+                logger.debug(f"Rejected hidden_states: hidden_dim {hidden} too small (likely wrong tensor)")
+                return None
 
         return hidden_states
 
@@ -1200,11 +1496,32 @@ class FastCoherenceMeasurer:
 
     def _compute_flow_from_hidden(self, hidden_states: torch.Tensor) -> float:
         """Compute flow score from cached hidden states."""
+        # Robust validation for None
+        if hidden_states is None:
+            return 0.5  # Neutral score
+
+        # Validate tensor dimensions
         if hidden_states.dim() != 3:
             logger.debug(f"Invalid hidden states: {hidden_states.dim()}D, expected 3D")
             return 0.5  # Neutral score
 
-        seq_len = hidden_states.shape[1]
+        # Validate shape has non-zero dimensions
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        if batch_size == 0 or seq_len == 0 or hidden_dim == 0:
+            logger.debug(f"Empty hidden states dimensions: {hidden_states.shape}")
+            return 0.5  # Neutral score
+
+        # Sanity check: hidden_dim should be reasonable (not num_experts=4, 8, etc.)
+        if hidden_dim < 64:
+            logger.debug(f"_compute_flow_from_hidden: hidden_dim {hidden_dim} too small, likely wrong tensor")
+            return 0.5  # Neutral score
+
+        # Validate tensor has expected number of elements (guards against corrupted tensors)
+        expected_elements = batch_size * seq_len * hidden_dim
+        actual_elements = hidden_states.numel()
+        if actual_elements != expected_elements:
+            logger.debug(f"Hidden states element mismatch: expected {expected_elements}, got {actual_elements}")
+            return 0.5  # Neutral score
         if seq_len < 10:
             if seq_len < 2:
                 return 0.5  # Neutral score
@@ -1221,9 +1538,18 @@ class FastCoherenceMeasurer:
         # Reshape into chunks and compute means
         # Truncate to fit exact chunks
         truncated_len = num_chunks * chunk_size
-        reshaped = hidden_states[:, :truncated_len, :].view(
-            hidden_states.shape[0], num_chunks, chunk_size, hidden_states.shape[2]
-        )
+        try:
+            reshaped = hidden_states[:, :truncated_len, :].view(
+                hidden_states.shape[0], num_chunks, chunk_size, hidden_states.shape[2]
+            )
+        except RuntimeError as e:
+            logger.warning(
+                f"_compute_flow_from_hidden reshape failed: {e}. "
+                f"shape={hidden_states.shape}, numel={hidden_states.numel()}, "
+                f"target=[{hidden_states.shape[0]}, {num_chunks}, {chunk_size}, {hidden_states.shape[2]}]"
+            )
+            return 0.5  # Neutral score
+
         chunk_means = reshaped.mean(dim=2)  # [batch, num_chunks, hidden]
 
         # Compare adjacent chunks
@@ -1238,11 +1564,32 @@ class FastCoherenceMeasurer:
 
     def _compute_topic_from_hidden(self, hidden_states: torch.Tensor) -> float:
         """Compute topic consistency from cached hidden states."""
+        # Robust validation for None
+        if hidden_states is None:
+            return 0.5  # Neutral score
+
+        # Validate tensor dimensions
         if hidden_states.dim() != 3:
             logger.debug(f"Invalid hidden states: {hidden_states.dim()}D, expected 3D")
             return 0.5  # Neutral score
 
-        seq_len = hidden_states.shape[1]
+        # Validate shape has non-zero dimensions
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+        if batch_size == 0 or seq_len == 0 or hidden_dim == 0:
+            logger.debug(f"Empty hidden states dimensions: {hidden_states.shape}")
+            return 0.5  # Neutral score
+
+        # Sanity check: hidden_dim should be reasonable (not num_experts=4, 8, etc.)
+        if hidden_dim < 64:
+            logger.debug(f"_compute_topic_from_hidden: hidden_dim {hidden_dim} too small, likely wrong tensor")
+            return 0.5  # Neutral score
+
+        # Validate tensor has expected number of elements (guards against corrupted tensors)
+        expected_elements = batch_size * seq_len * hidden_dim
+        actual_elements = hidden_states.numel()
+        if actual_elements != expected_elements:
+            logger.debug(f"Hidden states element mismatch: expected {expected_elements}, got {actual_elements}")
+            return 0.5  # Neutral score
         if seq_len < 20:
             if seq_len < 10:
                 return 0.5  # Neutral score

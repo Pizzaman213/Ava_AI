@@ -495,6 +495,7 @@ class MetricsManager:
         self._flush_queue: Queue = Queue()
         self._flush_thread: Optional[threading.Thread] = None
         self._flush_thread_running = False
+        self._last_flushed_step: int = -1  # Track last logged step for monotonicity
         # Logger for this instance
         self._logger = logging.getLogger(f"{__name__}.MetricsManager")
         # Logging config for fine-grained control (set via setup)
@@ -741,6 +742,9 @@ class MetricsManager:
         """
         Accumulate metrics for batched wandb logging.
 
+        OPTIMIZATION: Routes to AsyncMetricsLogger when available for non-blocking
+        network I/O. Falls back to batched sync logging otherwise.
+
         Args:
             metrics: Dictionary of metric name -> value pairs
             step: Training step number
@@ -748,6 +752,13 @@ class MetricsManager:
         if not self._use_wandb:
             return
 
+        # FAST PATH: Use AsyncMetricsLogger for non-blocking I/O
+        if self._use_async_logging and self._async_logger is not None:
+            # AsyncMetricsLogger handles batching internally
+            self._async_logger.log(metrics, step=step)
+            return
+
+        # FALLBACK: Local batching with async flush thread
         if self._pending_step is not None and self._pending_step != step:
             self.flush_wandb_metrics()
 
@@ -777,8 +788,13 @@ class MetricsManager:
                 if item is None:  # Shutdown signal
                     break
                 metrics, step = item
+                # Skip stale steps to maintain WandB monotonicity
+                # This prevents "step X less than current step Y" warnings
+                if step <= self._last_flushed_step:
+                    continue
                 try:
                     self._wandb_logger.log(metrics, step=step)
+                    self._last_flushed_step = step
                 except Exception as e:
                     self.logger.warning(f"Async WandB flush failed: {e}")
             except Empty:
@@ -789,6 +805,9 @@ class MetricsManager:
     def flush_wandb_metrics(self, async_flush: bool = True) -> None:
         """Send all accumulated metrics to wandb.
 
+        OPTIMIZATION: Uses AsyncMetricsLogger.flush() when available for
+        non-blocking network I/O. Falls back to custom flush thread otherwise.
+
         Args:
             async_flush: If True (default), queue for background flush.
                         If False, flush synchronously (blocking).
@@ -796,6 +815,16 @@ class MetricsManager:
         if not self._use_wandb:
             return
 
+        # FAST PATH: AsyncMetricsLogger handles flushing
+        if self._use_async_logging and self._async_logger is not None:
+            # AsyncMetricsLogger's flush() waits for pending logs
+            # Use a reasonable timeout for epoch boundaries
+            if not async_flush:
+                self._async_logger.flush(timeout=30.0)
+            # Async logger batches internally, no local queue to flush
+            return
+
+        # FALLBACK: Local batching with async flush thread
         if self._pending_wandb_metrics and self._pending_step is not None:
             metrics_copy = self._pending_wandb_metrics.copy()
             step = self._pending_step
@@ -808,11 +837,13 @@ class MetricsManager:
                 # Queue for async flush (non-blocking)
                 self._flush_queue.put((metrics_copy, step))
             else:
-                # Synchronous flush (blocking)
-                try:
-                    self._wandb_logger.log(metrics_copy, step=step)
-                except Exception as e:
-                    self.logger.warning(f"Failed to flush wandb metrics: {e}")
+                # Synchronous flush (blocking) - also check monotonicity
+                if step > self._last_flushed_step:
+                    try:
+                        self._wandb_logger.log(metrics_copy, step=step)
+                        self._last_flushed_step = step
+                    except Exception as e:
+                        self.logger.warning(f"Failed to flush wandb metrics: {e}")
 
     def log_training_step(
         self,

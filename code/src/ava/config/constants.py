@@ -13,6 +13,12 @@ from typing import List, Optional
 class DataPipelineConstants:
     """Constants for data loading and processing pipeline."""
 
+    # Default data configuration
+    DEFAULT_MAX_LENGTH: int = 512  # Default sequence length
+    DEFAULT_VOCAB_SIZE: int = 50680  # Default vocabulary size
+    DEFAULT_NUM_WORKERS: int = 6  # Default number of data workers
+    DEFAULT_PREFETCH_FACTOR: int = 2  # Default prefetch factor
+
     # Dynamic token batching
     MAX_TOKENS_DEFAULT: int = 8192  # Maximum tokens per batch
     MAX_BATCH_SIZE_DEFAULT: int = 64  # Maximum batch size
@@ -100,6 +106,20 @@ class DataPipelineConstants:
 @dataclass
 class TrainerConstants:
     """Constants for training loop and optimization."""
+
+    # Default training hyperparameters
+    DEFAULT_LEARNING_RATE: float = 5e-5  # Default learning rate
+    DEFAULT_WEIGHT_DECAY: float = 0.01  # Default weight decay
+    DEFAULT_WARMUP_STEPS: int = 1000  # Default warmup steps
+    DEFAULT_MAX_GRAD_NORM: float = 1.0  # Default gradient clipping norm
+
+    # Distributed training timeouts
+    BARRIER_TIMEOUT_MINUTES: int = 30  # Default barrier timeout
+    CALIBRATION_TIMEOUT_SEC: float = 90.0  # Batch size calibration timeout
+
+    # Logging defaults
+    DEFAULT_LOG_INTERVAL: int = 100  # Default logging interval
+    DEFAULT_VAL_INTERVAL: int = 1  # Default validation interval (epochs)
 
     # Model size thresholds
     AUTOCAST_PARAM_THRESHOLD: int = 500_000_000  # 500M parameter threshold
