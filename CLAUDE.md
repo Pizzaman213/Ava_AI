@@ -6,6 +6,8 @@ Advanced LLM training framework with Mixture of Experts (MoE++) architecture, op
 
 **Testing Hardware**: All testing must be performed on the RTX 3060. Do not run tests on the RTX 3090 Ti (reserved for production training).
 
+**Benchmarking**: Always benchmark performance before and after making changes to training code, kernels, or optimizations. Compare tokens/second, memory usage, and throughput to ensure changes provide measurable improvements.
+
 ## Project Structure
 
 ```
