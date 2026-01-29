@@ -1,0 +1,171 @@
+# DeepSpeed ZeRO-2 Configuration
+# Optimizer states + gradients sharding across GPUs
+# Target: 4-16 GPUs, large models
+# Memory savings: ~8x for optimizer + gradients
+
+model:
+  # Large Architecture for ZeRO-2
+  hidden_size: 1024
+  num_layers: 24
+  num_attention_heads: 16
+  intermediate_size: 4096
+  vocab_size: 30522  # Matches tokenizer
+  max_position_embeddings: 2048
+
+  # MoE Configuration
+  num_experts: 32
+  num_experts_per_token: 4
+  expert_capacity_factor: 1.5
+  router_type: "switch"
+
+  # Enhanced Features (more enabled)
+  use_moh: true
+  use_moa: true
+  use_rag: true
+  use_cross_attention: true
+  num_cross_attention_layers: 4
+  use_episodic_memory: true
+  memory_size: 2000
+
+  # DeepSpeed compatibility
+  deepspeed_activation_checkpointing: true
+  deepspeed_partition_activations: true
+  deepspeed_moe_param_groups: true
+
+training:
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  optimizer: adamw  # Standard AdamW (DeepSpeed compatible, was lion)
+  learning_rate: 0.0001  # Standard AdamW learning rate
+  max_gradient_norm: 1.0
+  num_epochs: 5
+  warmup_steps: 2000
+  weight_decay: 0.01
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+
+# DeepSpeed Configuration (ZeRO-2 Focus)
+deepspeed:
+  enabled: true
+  zero_stage: 2                       # Optimizer + gradient sharding
+
+  # Offloading
+  cpu_offload: false                  # Set true to offload optimizer to CPU RAM
+  nvme_offload: false                 # Set true to offload to NVMe (requires nvme_path)
+  nvme_path: "/local_nvme"            # NVMe mount point (if nvme_offload=true)
+
+  # Precision (DeepSpeed manages mixed precision internally)
+  # NOTE: Do NOT use torch.amp.autocast when DeepSpeed is enabled
+  # DeepSpeed handles mixed precision via this setting
+  precision_type: "bf16"              # Options: 'fp16', 'bf16', 'fp32'
+
+  # Batch Configuration
+  gradient_accumulation_steps: 4
+  train_batch_size: 128               # micro_batch_size * grad_accum * world_size (16 * 4 * 2 = 128)
+  micro_batch_size: 16                # Per-GPU batch size
+
+  # Activation Checkpointing
+  activation_checkpointing: true      # Enable activation checkpointing
+  partition_activations: true         # Partition activations across GPUs
+  cpu_checkpointing: false            # Checkpoint activations to CPU
+
+  # Gradient Clipping
+  gradient_clipping: 1.0              # Max gradient norm
+
+  # ZeRO-2 Advanced Settings
+  zero_overlap_comm: true             # Overlap communication with computation
+  zero_contiguous_gradients: true     # Reduce memory fragmentation
+  zero_reduce_scatter: true           # Use reduce_scatter instead of allreduce
+  zero_reduce_bucket_size: 500000000  # 500MB bucket size
+  zero_allgather_bucket_size: 500000000  # 500MB bucket size
+
+  # Monitoring
+  wall_clock_breakdown: false         # Enable detailed timing breakdown
+
+# Enhanced Features (Full Suite)
+enhanced_features:
+  architecture:
+    use_moh: true
+    use_moa: true
+    use_cross_attention: true
+    expert_routing_type: "switch"
+
+  rag:
+    enabled: true
+    knowledge_base_path: "data/knowledge_base"
+    max_retrieved_docs: 5
+
+  losses:
+    focal_loss: true
+    contrastive_loss: true
+    diversity_loss: true
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+
+  gradient:
+    gradient_surgery: true
+    adaptive_gradient_surgery: true
+    gradient_surgery_method: "cagrad"
+
+  memory:
+    use_episodic_memory: true
+    memory_capacity: 2000
+    memory_selection_strategy: "importance"
+    memory_replay_ratio: 0.2
+
+  quantization:
+    quantization_aware: true
+    use_nvfp4: true
+    bit_width: 4
+
+# Data Loading
+data:
+  data_dir: "code/data/processed"
+  max_length: 2048
+  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
+  train_batch_size: 2
+  eval_batch_size: 4
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 10000
+  distributed: true
+  multi_column: true
+
+# Performance & Memory
+performance:
+  ultra_fast_mode: false
+  fast_progress: false
+  minimal_progress: true
+  express_mode: false
+
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 20.0
+  gradient_checkpointing: true
+  memory_threshold_gb: 20.0
+  clear_cache_frequency: 50
+
+# Output & Evaluation
+output:
+  output_dir: "code/outputs"
+  save_total_limit: 2
+
+evaluation:
+  eval_during_training: true
+  eval_metrics: "perplexity,bleu,rouge"
+  comprehensive_eval: true
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-deepspeed-zero2"
+  tags: ["deepspeed", "zero2", "distributed", "large-model", "rag"]
+  notes: "DeepSpeed ZeRO-2 with optimizer+gradient sharding, RAG enabled"
+  group: "deepspeed-zero2"
+
+# Hardware Requirements
+# GPUs: 4-16 GPUs with 20GB+ VRAM each
+# Total VRAM: 80-320GB
+# Network: High-bandwidth interconnect required (NVLink/InfiniBand)
+# Use case: Large models (1B+ parameters) with gradient memory concerns

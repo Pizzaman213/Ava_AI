@@ -927,7 +927,9 @@ def main(args: argparse.Namespace) -> None:
     log_optimization_status(config, rank)
 
     # Override with CLI args
-    num_epochs = args.epochs or training_config.get('num_epochs', 3)
+    # FIX: Check schedule.num_epochs first (v2.0 config), then training.num_epochs (legacy)
+    schedule_config = training_config.get('schedule', {})
+    num_epochs = args.epochs or schedule_config.get('num_epochs') or training_config.get('num_epochs', 3)
     # batch_size can be at training.batch_size OR training.batching.batch_size
     batching_config = training_config.get('batching', {})
 
@@ -1793,6 +1795,7 @@ def main(args: argparse.Namespace) -> None:
 
         if rank == 0:
             train_logger.info(f"Total training steps: {total_steps}")
+            train_logger.info(f"  (num_epochs={num_epochs}, loader_len={loader_len}, grad_accum={context.gradient_accumulation_steps})")
 
         # =====================================================================
         # Phase 8.1: Create Scheduler (now that we know total_steps)

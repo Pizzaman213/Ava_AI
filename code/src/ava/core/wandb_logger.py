@@ -742,8 +742,10 @@ class MetricsManager:
         """
         Accumulate metrics for batched wandb logging.
 
-        OPTIMIZATION: Routes to AsyncMetricsLogger when available for non-blocking
-        network I/O. Falls back to batched sync logging otherwise.
+        CRITICAL: Always accumulates metrics locally first, then sends all metrics
+        for a step together when flush_wandb_metrics() is called. This ensures
+        training metrics and throughput metrics (logged separately) are merged
+        into a single WandB log call.
 
         Args:
             metrics: Dictionary of metric name -> value pairs
@@ -752,13 +754,8 @@ class MetricsManager:
         if not self._use_wandb:
             return
 
-        # FAST PATH: Use AsyncMetricsLogger for non-blocking I/O
-        if self._use_async_logging and self._async_logger is not None:
-            # AsyncMetricsLogger handles batching internally
-            self._async_logger.log(metrics, step=step)
-            return
-
-        # FALLBACK: Local batching with async flush thread
+        # Always accumulate locally first to ensure metrics for the same step
+        # are merged together (training + throughput + gradients etc.)
         if self._pending_step is not None and self._pending_step != step:
             self.flush_wandb_metrics()
 
@@ -805,8 +802,8 @@ class MetricsManager:
     def flush_wandb_metrics(self, async_flush: bool = True) -> None:
         """Send all accumulated metrics to wandb.
 
-        OPTIMIZATION: Uses AsyncMetricsLogger.flush() when available for
-        non-blocking network I/O. Falls back to custom flush thread otherwise.
+        This method sends all locally accumulated metrics (from accumulate_wandb_metrics)
+        either through the async logger (non-blocking) or directly to WandB.
 
         Args:
             async_flush: If True (default), queue for background flush.
@@ -815,22 +812,29 @@ class MetricsManager:
         if not self._use_wandb:
             return
 
-        # FAST PATH: AsyncMetricsLogger handles flushing
+        # Nothing to flush
+        if not self._pending_wandb_metrics or self._pending_step is None:
+            # If async logger is active and we're asked to wait, do so
+            if not async_flush and self._use_async_logging and self._async_logger is not None:
+                self._async_logger.flush(timeout=30.0)
+            return
+
+        # Get accumulated metrics
+        metrics_copy = self._pending_wandb_metrics.copy()
+        step = self._pending_step
+        self._pending_wandb_metrics = {}
+        self._pending_step = None
+
+        # FAST PATH: Use AsyncMetricsLogger for non-blocking I/O
         if self._use_async_logging and self._async_logger is not None:
-            # AsyncMetricsLogger's flush() waits for pending logs
-            # Use a reasonable timeout for epoch boundaries
+            # Send all accumulated metrics in a single call (already merged)
+            self._async_logger.log(metrics_copy, step=step)
             if not async_flush:
                 self._async_logger.flush(timeout=30.0)
-            # Async logger batches internally, no local queue to flush
             return
 
         # FALLBACK: Local batching with async flush thread
-        if self._pending_wandb_metrics and self._pending_step is not None:
-            metrics_copy = self._pending_wandb_metrics.copy()
-            step = self._pending_step
-            self._pending_wandb_metrics = {}
-            self._pending_step = None
-
+        if metrics_copy:
             if async_flush:
                 # Start background thread if not running
                 self._start_flush_thread()
@@ -1100,6 +1104,51 @@ class MetricsManager:
                 self._writer.add_scalar(key, value, step)
 
         if self._should_log_wandb('timing'):
+            self.accumulate_wandb_metrics(metrics, step)
+
+    def log_throughput(
+        self,
+        step: int,
+        tokens_per_sec: float,
+        samples_per_sec: float,
+        step_time_ms: float,
+        batch_size: int,
+        seq_length: int,
+    ) -> None:
+        """
+        Log throughput metrics as scalar graphs.
+
+        Args:
+            step: Current training step
+            tokens_per_sec: Tokens processed per second
+            samples_per_sec: Samples processed per second
+            step_time_ms: Time per step in milliseconds
+            batch_size: Current batch size
+            seq_length: Current sequence length
+        """
+        if not self._should_log('throughput'):
+            return
+
+        metrics = {
+            'throughput/tokens_per_sec': tokens_per_sec,
+            'throughput/samples_per_sec': samples_per_sec,
+            'throughput/step_time_ms': step_time_ms,
+            'throughput/batch_size': batch_size,
+            'throughput/seq_length': seq_length,
+        }
+
+        # Store in memory for summary
+        self._store_metric('tokens_per_sec', step, tokens_per_sec)
+        self._store_metric('samples_per_sec', step, samples_per_sec)
+        self._store_metric('step_time_ms', step, step_time_ms)
+
+        # TensorBoard
+        if self._should_log_tensorboard('throughput'):
+            for key, value in metrics.items():
+                self._writer.add_scalar(key, value, step)
+
+        # WandB
+        if self._should_log_wandb('throughput'):
             self.accumulate_wandb_metrics(metrics, step)
 
     def log_generation(self, log_step: int, generation_data: Dict[str, Any]) -> None:

@@ -314,14 +314,14 @@ def get_config_value(
 
     Args:
         config: Configuration object
-        *paths: Attribute paths to try in order (e.g., 'data_loading.num_workers', 'data.num_workers')
+        *paths: Attribute paths to try in order (e.g., 'data.num_workers', 'training.batch_size')
         default: Default value if not found
 
     Returns:
         Configuration value or default
 
     Example:
-        >>> num_workers = get_config_value(config, 'data_loading.num_workers', 'data.num_workers', default=0)
+        >>> num_workers = get_config_value(config, 'data.num_workers', default=0)
     """
     for path in paths:
         parts = path.split('.')
@@ -347,12 +347,12 @@ def get_config_value(
 # Convenience functions for common config values
 def get_num_workers(config: Any) -> int:
     """Get number of data loading workers."""
-    return get_config_value(config, 'data_loading.num_workers', 'data.num_workers', default=0)
+    return get_config_value(config, 'data.num_workers', default=0)
 
 
 def get_prefetch_factor(config: Any) -> int:
     """Get prefetch factor."""
-    return get_config_value(config, 'data_loading.prefetch_factor', 'data.prefetch_factor', default=2)
+    return get_config_value(config, 'data.prefetch_factor', default=2)
 
 
 def get_persistent_workers(config: Any) -> bool:
@@ -361,22 +361,22 @@ def get_persistent_workers(config: Any) -> bool:
     Defaults to True for better performance - avoids worker restart overhead between epochs.
     (Phase 2 optimization: saves 100-300s over 100 epochs)
     """
-    return get_config_value(config, 'data_loading.persistent_workers', 'data.persistent_workers', default=True)
+    return get_config_value(config, 'data.persistent_workers', default=True)
 
 
 def get_samples_per_file(config: Any) -> int:
     """Get samples per file setting."""
-    return get_config_value(config, 'data_loading.samples_per_file', 'data.samples_per_file', default=64)
+    return get_config_value(config, 'data.samples_per_file', default=64)
 
 
 def get_enable_bucketing(config: Any) -> bool:
     """Get bucketing enabled setting."""
-    return get_config_value(config, 'data_loading.enable_bucketing', 'data.enable_bucketing', default=True)
+    return get_config_value(config, 'data.enable_bucketing', default=True)
 
 
 def get_val_split_ratio(config: Any) -> float:
     """Get validation split ratio."""
-    return get_config_value(config, 'data_loading.val_split_ratio', 'data.val_split_ratio', default=0.1)
+    return get_config_value(config, 'data.val_split_ratio', default=0.1)
 
 
 __all__ = [

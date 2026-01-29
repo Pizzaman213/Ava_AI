@@ -36,13 +36,53 @@ logger = logging.getLogger(__name__)
 # Configuration Dataclasses
 # =============================================================================
 
+def get_optimal_cache_size(target_fraction: float = 0.35, min_gb: float = 0.2, max_gb: float = 4.0) -> float:
+    """
+    Compute optimal activation cache size based on available GPU memory.
+
+    P3 OPTIMIZATION: Auto-sizes cache to 30-35% of free GPU memory instead of
+    fixed 0.4GB. This provides better utilization on high-memory GPUs while
+    staying conservative on smaller GPUs.
+
+    Args:
+        target_fraction: Fraction of free memory to use (default: 0.35 = 35%)
+        min_gb: Minimum cache size in GB (default: 0.2)
+        max_gb: Maximum cache size in GB (default: 4.0)
+
+    Returns:
+        Optimal cache size in GB, clamped to [min_gb, max_gb]
+    """
+    if not torch.cuda.is_available():
+        return min_gb
+
+    try:
+        # Import unified memory cache for efficient query
+        from ..cuda.memory_cache import get_memory_cache
+        stats = get_memory_cache().get_stats(force_refresh=True)
+        free_gb = stats.get('free_gb', 1.0)
+    except ImportError:
+        # Fallback: direct query
+        try:
+            device = torch.cuda.current_device()
+            total = torch.cuda.get_device_properties(device).total_memory
+            reserved = torch.cuda.memory_reserved(device)
+            free_gb = (total - reserved) / 1e9
+        except Exception:
+            return min_gb
+
+    # Compute optimal size: target_fraction of free memory, clamped to bounds
+    optimal = free_gb * target_fraction
+    return min(max(optimal, min_gb), max_gb)
+
+
 @dataclass
 class ActivationCacheConfig:
     """Configuration for training activation cache."""
     enabled: bool = True
-    max_size_gb: float = 0.4  # Reduced from 2.0 for memory efficiency
+    max_size_gb: float = 0.4  # Reduced from 2.0 for memory efficiency (or 'auto')
     eviction_policy: str = 'lru'  # 'lru', 'lfu', 'hybrid'
     cache_layers: Optional[List[int]] = None  # Which layers to cache (None = all)
+    auto_size: bool = False  # If True, auto-compute max_size_gb based on free memory
 
 
 @dataclass
@@ -144,8 +184,14 @@ class ActivationCache:
         self._batch_ptr: int = 0
         self._forward_pass_count: int = 0
 
-        # Memory tracking
-        self.max_bytes = int(config.max_size_gb * 1e9)
+        # P3 OPTIMIZATION: Auto-size cache based on available GPU memory
+        # If auto_size is enabled, compute optimal size instead of using fixed config
+        if getattr(config, 'auto_size', False):
+            auto_size_gb = get_optimal_cache_size()
+            self.max_bytes = int(auto_size_gb * 1e9)
+            logger.info(f"ActivationCache auto-sized to {auto_size_gb:.2f}GB based on free memory")
+        else:
+            self.max_bytes = int(config.max_size_gb * 1e9)
         self.current_bytes = 0
 
         # Statistics
@@ -153,7 +199,7 @@ class ActivationCache:
         self.misses = 0
         self.evictions = 0
 
-        logger.info(f"ActivationCache initialized: {config.max_size_gb:.1f}GB max")
+        logger.info(f"ActivationCache initialized: {self.max_bytes / 1e9:.2f}GB max")
 
     def _make_key(self, layer_idx: int, phase: str) -> str:
         """Generate unique cache key for an activation."""
@@ -688,6 +734,7 @@ def build_hybrid_cache_config(config_dict: Dict[str, Any]) -> HybridCacheConfig:
         max_size_gb=activation_dict.get('max_size_gb', 2.0),
         eviction_policy=activation_dict.get('eviction_policy', 'lru'),
         cache_layers=activation_dict.get('cache_layers'),
+        auto_size=activation_dict.get('auto_size', False),  # P3: Auto-sizing support
     )
 
     kv_config = KVCacheConfig(

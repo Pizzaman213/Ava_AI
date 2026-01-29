@@ -24,6 +24,7 @@ Usage:
 import atexit
 import logging
 import math
+import os
 import threading
 import time
 import weakref
@@ -36,6 +37,10 @@ import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
+
+# Environment variable to disable memory mapping (reduces VSZ/swap usage)
+# Set AVA_DISABLE_MMAP=1 to use regular file I/O instead of memory mapping
+DISABLE_MMAP = os.environ.get('AVA_DISABLE_MMAP', '0') == '1'
 
 # Global format detection cache (maps file path to successful read method)
 # PERF FIX: Changed from extension-based to path-based caching. Files with the
@@ -96,7 +101,7 @@ def _cleanup_all_caches():
 atexit.register(_cleanup_all_caches)
 
 
-def read_arrow_table(file_path: Union[str, Path]) -> pa.Table:
+def read_arrow_table(file_path: Union[str, Path], use_mmap: Optional[bool] = None) -> pa.Table:
     """
     Read Arrow table from file, supporting both IPC File and IPC Stream formats.
 
@@ -108,6 +113,8 @@ def read_arrow_table(file_path: Union[str, Path]) -> pa.Table:
 
     Args:
         file_path: Path to the Arrow file
+        use_mmap: Whether to use memory mapping. If None, uses AVA_DISABLE_MMAP env var.
+                  Set to False to reduce VSZ/swap usage (but slightly slower reads).
 
     Returns:
         PyArrow Table with the data
@@ -117,9 +124,51 @@ def read_arrow_table(file_path: Union[str, Path]) -> pa.Table:
     """
     file_path = str(file_path)
 
+    # Determine whether to use mmap (can be disabled to reduce swap usage)
+    if use_mmap is None:
+        use_mmap = not DISABLE_MMAP
+
     # Check format cache first - uses full path for accurate per-file caching
     cached_format = _format_cache.get(file_path)
 
+    # If mmap disabled, only use file-based reading
+    if not use_mmap:
+        if cached_format == 'ipc_file_nommap':
+            try:
+                with open(file_path, 'rb') as f:
+                    return ipc.open_file(f).read_all()
+            except Exception:
+                _format_cache.pop(file_path, None)
+
+        elif cached_format in ('ipc_stream_file', 'ipc_stream_nommap'):
+            try:
+                with open(file_path, 'rb') as f:
+                    return ipc.open_stream(f).read_all()
+            except Exception:
+                _format_cache.pop(file_path, None)
+
+        # Try IPC File format without mmap
+        try:
+            with open(file_path, 'rb') as f:
+                table = ipc.open_file(f).read_all()
+                _format_cache[file_path] = 'ipc_file_nommap'
+                return table
+        except pa.ArrowInvalid:
+            pass
+
+        # Try IPC Stream format without mmap
+        try:
+            with open(file_path, 'rb') as f:
+                reader = ipc.open_stream(f)
+                table = reader.read_all()
+                _format_cache[file_path] = 'ipc_stream_nommap'
+                return table
+        except Exception as e:
+            raise ValueError(
+                f"Failed to read Arrow file {file_path}: not IPC File or Stream format. Error: {e}"
+            )
+
+    # Memory-mapped reading (original behavior)
     if cached_format == 'ipc_file':
         try:
             with pa.memory_map(file_path, 'r') as source:
@@ -231,24 +280,42 @@ class ArrowTableCache:
     """
 
     @staticmethod
-    def _get_adaptive_cache_size() -> int:
+    def _get_adaptive_cache_size(num_workers: int = 8) -> int:
         """Calculate optimal cache size based on available system RAM.
 
-        PERF: Increased cache sizes for better hit rates (+5-10% throughput).
-        System with 61GB RAM benefits from larger caches.
+        MEMORY FIX: Reduced cache sizes to account for per-worker multiplication.
+        With 8 workers, each worker having 60 cached tables means 480 total!
+        The sizes below are PER-WORKER, so total memory = size × num_workers.
+
+        Args:
+            num_workers: Number of DataLoader workers (cache is per-worker)
         """
         try:
             import psutil
-            mem_gb = psutil.virtual_memory().total / (1024**3)
-            if mem_gb < 32:
-                return 12  # Doubled from 6 for better cache hit rates
-            elif mem_gb < 64:
-                return 30  # Doubled from 15 for 32-64GB systems
-            else:
-                return 60  # Doubled from 30 for 64GB+ systems
+            mem = psutil.virtual_memory()
+            mem_gb = mem.total / (1024**3)
+            available_gb = mem.available / (1024**3)
+
+            # Use available memory, not total, to avoid swap
+            # Reserve 50% for model, optimizer, gradients, etc.
+            usable_for_cache_gb = available_gb * 0.5
+
+            # Each cached Arrow table is ~10-50MB, assume 30MB average
+            # Per-worker budget = usable / num_workers
+            per_worker_gb = usable_for_cache_gb / max(num_workers, 1)
+            max_tables = int(per_worker_gb * 1024 / 30)  # 30MB per table
+
+            # Clamp to reasonable range
+            cache_size = max(5, min(max_tables, 30))
+
+            logger.debug(
+                f"Adaptive cache: {mem_gb:.1f}GB total, {available_gb:.1f}GB available, "
+                f"{num_workers} workers -> {cache_size} tables/worker"
+            )
+            return cache_size
         except ImportError:
             # psutil not available, use conservative default
-            return 20  # Doubled from 10 for better cache performance
+            return 10  # Conservative for unknown memory
 
     def __init__(self, max_size: Optional[int] = None):
         """

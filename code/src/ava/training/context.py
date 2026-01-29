@@ -138,10 +138,14 @@ class TrainingContext:
             config: Configuration dictionary with training settings
         """
         training = config.get('training', {})
+        batching = training.get('batching', {})
 
         # Core training settings
-        self.gradient_accumulation_steps = training.get(
-            'gradient_accumulation_steps',
+        # FIX: Check training.batching.gradient_accumulation_steps first (v2.0 config),
+        # then training.gradient_accumulation_steps (legacy)
+        self.gradient_accumulation_steps = (
+            batching.get('gradient_accumulation_steps') or
+            training.get('gradient_accumulation_steps') or
             self.gradient_accumulation_steps
         )
 

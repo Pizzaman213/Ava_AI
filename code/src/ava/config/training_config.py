@@ -952,23 +952,6 @@ class EpisodicMemoryConfig:
 
 
 @dataclass
-class DataLoadingConfig:
-    """Configuration for data loading parameters."""
-    format_detection_samples: int = 10         # Number of files to sample for format detection
-    fallback_data_paths: list = field(default_factory=lambda: [  # Fallback paths to search for data
-        str(get_data_dir("processed")),
-        str(get_data_dir("combined")),
-        str(get_data_dir()),
-        "./data/processed",
-        "./data/combined",
-        "./data",
-        "../data/processed",
-        "../data",
-        "../../data"
-    ])
-
-
-@dataclass
 class DataConfig:
     """Configuration for data handling."""
     data_dir: str = field(default_factory=lambda: str(get_data_dir("processed")))  # Data directory
@@ -1687,7 +1670,6 @@ class EnhancedTrainingConfig:
 
     # Data configurations
     data: DataConfig = field(default_factory=DataConfig)
-    data_loading: DataLoadingConfig = field(default_factory=DataLoadingConfig)
     multi_column_data: MultiColumnDataConfig = field(default_factory=MultiColumnDataConfig)
 
     # Training configurations

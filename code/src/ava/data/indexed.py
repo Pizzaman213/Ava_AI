@@ -79,12 +79,14 @@ class IndexedArrowDataset(Dataset):
         pad_token_id: int = 0,
         compute_lengths: bool = True,
         index_workers: Optional[int] = None,
-        numpy_cache_size: int = 20,  # Increased for 5-20% throughput improvement (LRU eviction prevents OOM)
+        numpy_cache_size: int = 10,  # MEMORY FIX: Reduced from 20 to limit per-worker memory
+        num_dataloader_workers: int = 4,  # For adaptive cache sizing
     ):
         self.data_files = list(data_files)
         self.max_length = max_length
         self.pad_token_id = pad_token_id
         self.compute_lengths = compute_lengths
+        self._num_dataloader_workers = num_dataloader_workers
 
         # Will be initialized per-worker
         self._table_cache: Optional[ArrowTableLRUCache] = None
@@ -94,13 +96,15 @@ class IndexedArrowDataset(Dataset):
         # PERF: Pre-converts Arrow columns to numpy once per file, avoiding
         # slow .as_py() calls on every __getitem__ (100-1000x speedup)
         # MEMORY FIX: Limited to numpy_cache_size files to prevent unbounded growth
-        # which could consume 160GB+ RAM with many files × workers
+        # With 8 workers × 20 files × 50MB/file = 8GB just for numpy cache!
         self._numpy_cache: OrderedDict[str, Dict[str, np.ndarray]] = OrderedDict()
         self._numpy_cache_maxsize = numpy_cache_size
 
-        # Determine number of indexing workers
+        # Determine number of indexing workers - MEMORY FIX: reduced default
+        # High parallelism during indexing can cause memory spikes
         if index_workers is None:
-            index_workers = min(os.cpu_count() or 4, 16)  # Cap at 16
+            # Use fewer workers to reduce memory pressure during startup
+            index_workers = min(os.cpu_count() or 4, 8)  # Reduced from 16 to 8
 
         # Build global index with parallel workers
         self._index, self._lengths = self._build_index_parallel(index_workers)
@@ -711,6 +715,7 @@ def create_indexed_dataloaders(
     max_files: Optional[int] = None,
     index_workers: Optional[int] = None,
     timeout: float = 300.0,  # Worker timeout in seconds (0 disables, masks genuine hangs)
+    numpy_cache_size: int = 10,  # Per-worker numpy cache size (MEMORY: reduce if hitting swap)
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create train and validation dataloaders with indexed random access.
@@ -759,6 +764,8 @@ def create_indexed_dataloaders(
         pad_token_id=pad_token_id,
         compute_lengths=True,
         index_workers=index_workers,
+        numpy_cache_size=numpy_cache_size,
+        num_dataloader_workers=num_workers,  # For adaptive cache sizing
     )
 
     # Sample-level train/val split

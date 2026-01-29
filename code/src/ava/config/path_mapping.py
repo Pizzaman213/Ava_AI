@@ -421,10 +421,6 @@ CONFIG_PATH_MAPPINGS: Dict[str, str] = {
     'multi_column_data.column_roles': 'data.multi_column.column_roles',
     'multi_column_data.combine_strategy': 'data.multi_column.combine_strategy',
     'multi_column_data.column_template': 'data.multi_column.column_template',
-
-    'data_loading': 'data.loading.fallback',
-    'data_loading.format_detection_samples': 'data.loading.fallback.format_detection_samples',
-    'data_loading.fallback_data_paths': 'data.loading.fallback.paths',
 }
 
 

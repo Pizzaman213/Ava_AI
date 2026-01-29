@@ -54,6 +54,7 @@ import copy
 import gc
 import logging
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -541,6 +542,11 @@ class TrainingLoopManager(ManagerInterface):
         # FIX: Track per-step losses for accurate epoch-level averaging
         # These are synced at accumulation boundaries (not log intervals)
         self._step_losses: List[float] = []
+
+        # Step timing for throughput metrics (rolling window)
+        self._step_times: List[float] = []
+        self._step_times_window: int = 100  # Rolling window size
+        self._step_start_time: float = 0.0
 
         # Store last aux_info for loss component logging
         self._last_aux_info: Optional[List[Dict[str, Any]]] = None
@@ -1570,6 +1576,9 @@ class TrainingLoopManager(ManagerInterface):
                     next_global_step = self._global_step + 1 if is_accum_step else self._global_step
                     is_log_step = is_accum_step and (next_global_step % config.log_interval == 0)
 
+                    # Record step start time for throughput metrics
+                    step_start_time = time.perf_counter()
+
                     # Wrap step in profiler context for NVTX annotations
                     with get_step_context(self._global_step):
                         # CUDA Graphs: Multi-shape cache - capture after warmup, replay from cache
@@ -1835,6 +1844,36 @@ class TrainingLoopManager(ManagerInterface):
                             batch_idx, gpu_batch, last_synced_loss, optimizer, config, epoch, pbar, model
                         )
 
+                        # Log throughput metrics (tokens/sec, samples/sec)
+                        step_end_time = time.perf_counter()
+                        step_time_ms = (step_end_time - step_start_time) * 1000.0
+
+                        # Track step times in rolling window for smoothing
+                        self._step_times.append(step_time_ms)
+                        if len(self._step_times) > self._step_times_window:
+                            self._step_times.pop(0)
+
+                        # Calculate throughput metrics
+                        current_bs = gpu_batch['input_ids'].shape[0]
+                        seq_length = gpu_batch['input_ids'].shape[1]
+                        tokens_per_step = current_bs * seq_length * config.gradient_accumulation_steps
+
+                        # Use smoothed step time for more stable metrics
+                        avg_step_time_ms = sum(self._step_times) / len(self._step_times)
+                        samples_per_sec = (current_bs * config.gradient_accumulation_steps * 1000.0) / avg_step_time_ms
+                        tokens_per_sec = (tokens_per_step * 1000.0) / avg_step_time_ms
+
+                        # Log throughput to WandB (creates graphs)
+                        if self._metrics_manager is not None:
+                            self._metrics_manager.log_throughput(
+                                step=self._global_step,
+                                tokens_per_sec=tokens_per_sec,
+                                samples_per_sec=samples_per_sec,
+                                step_time_ms=avg_step_time_ms,
+                                batch_size=current_bs,
+                                seq_length=seq_length,
+                            )
+
                         # VRAM OPTIMIZATION: Clear aux_info after logging to free MoE routing tensor references
                         # For MoE models with 32 experts and 16 layers, this can save 50-200MB
                         self._last_aux_info = None
@@ -1995,8 +2034,25 @@ class TrainingLoopManager(ManagerInterface):
                 except Exception as e:
                     self._consecutive_failures += 1
 
-                    # FIX: Clear stale computation graph before retry to prevent
-                    # DeepSpeed "parameter already reduced" errors on retry
+                    # FIX: DeepSpeed ZeRO-2 gradient reduction hooks corrupt internal state
+                    # when errors occur during backward. The params_already_reduced tracking
+                    # and gradient partition buffers become inconsistent. Recovery is NOT
+                    # possible - attempting to continue causes cascade failures.
+                    # SOLUTION: Fail immediately for DeepSpeed instead of retrying.
+                    if _is_deepspeed:
+                        import traceback
+                        tb_str = ''.join(traceback.format_tb(e.__traceback__))
+                        self.logger.error(
+                            f"DeepSpeed backward error in batch {batch_idx}: {e}\n"
+                            f"Traceback:\n{tb_str}\n"
+                            f"NOTE: DeepSpeed ZeRO-2 does not support error recovery during "
+                            f"backward pass. Gradient reduction state is corrupted."
+                        )
+                        raise RuntimeError(
+                            f"DeepSpeed backward error (recovery not supported): {e}"
+                        ) from e
+
+                    # Non-DeepSpeed: attempt cleanup and retry
                     try:
                         if hasattr(model, 'zero_grad'):
                             model.zero_grad(set_to_none=True)
@@ -2019,6 +2075,43 @@ class TrainingLoopManager(ManagerInterface):
                             f"Last error: {e}"
                         )
                     continue
+
+            # FIX BUG #1: Process any remaining micro-batches at epoch end
+            # When using overlapped accumulation, micro-batches are collected and only processed
+            # when len(_micro_batches) >= gradient_accumulation_steps. At epoch end, any remaining
+            # batches (< accumulation steps) would be silently lost without this fix.
+            if _use_overlapped and _micro_batches and len(_micro_batches) > 0:
+                try:
+                    # Process partial batch - the accumulator already handles partial batches correctly
+                    # since we fixed the loss scaling in overlapped_accumulation.py
+                    total_loss_partial, num_processed = self._overlapped_accumulator.accumulate(
+                        model=model,
+                        batch_iterator=iter(_micro_batches),
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        scaler=self.scaler,
+                    )
+                    # Accumulate loss for logging (same as in main loop)
+                    loss_value = total_loss_partial.to(self.device) if isinstance(total_loss_partial, torch.Tensor) else total_loss_partial
+                    if self._loss_accumulator is None:
+                        self._loss_accumulator = torch.tensor(
+                            loss_value, device=self.device, dtype=torch.float32
+                        )
+                    else:
+                        if isinstance(loss_value, torch.Tensor):
+                            self._loss_accumulator.add_(loss_value)
+                        else:
+                            self._loss_accumulator.add_(loss_value)
+                    self._loss_count += num_processed
+                    self._global_step += 1
+                    self.logger.debug(
+                        f"Processed {num_processed} remaining micro-batches at epoch end "
+                        f"(partial gradient accumulation)"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Failed to process remaining micro-batches at epoch end: {e}")
+                finally:
+                    _micro_batches.clear()
 
         finally:
             # Final sync to get any remaining accumulated loss
@@ -2203,6 +2296,12 @@ class TrainingLoopManager(ManagerInterface):
                 # DeepSpeed path - engine handles backward + scaling automatically
                 with get_range_context("backward/deepspeed_backward"):
                     model.backward(loss)
+
+                # CRITICAL: Ensure all MoE expert parameters have gradients
+                # Unselected experts have None gradients, which breaks DeepSpeed ZeRO
+                # gradient reduction with TypeError: 'NoneType' object is not iterable
+                with get_range_context("backward/ensure_moe_gradients"):
+                    self._ensure_moe_gradients(model)
             elif config.use_amp and use_scaler:
                 with get_range_context("backward/scale_loss"):
                     # AMP scaler scales loss for fp16 stability (reversed in scaler.step)
@@ -2543,6 +2642,39 @@ class TrainingLoopManager(ManagerInterface):
         # Will be initialized on first use if None (lazy allocation)
         self._loss_count = 0
         self._step_losses.clear()  # FIX: Also clear step losses list
+
+    def _ensure_moe_gradients(self, model: nn.Module) -> None:
+        """Ensure all MoE expert parameters have zero gradients (not None).
+
+        DeepSpeed ZeRO requires all parameters to have valid gradient tensors.
+        MoE models have experts that may not be selected by the router during
+        a forward pass (sparse activation), leaving their gradients as None.
+        This causes TypeError in DeepSpeed's gradient reduction:
+            'NoneType' object is not iterable
+            in independent_gradient_partition_epilogue
+
+        This method creates zero gradients for any parameters with None gradients,
+        ensuring DeepSpeed can safely iterate over all gradient tensors.
+
+        Args:
+            model: The model (may be wrapped in DeepSpeed engine)
+        """
+        # Get the underlying model (unwrap DeepSpeed engine)
+        base_model = model.module if hasattr(model, 'module') else model
+
+        zero_grad_count = 0
+        for name, param in base_model.named_parameters():
+            if param.requires_grad and param.grad is None:
+                # Create zero gradient for unused parameters
+                param.grad = torch.zeros_like(param.data)
+                zero_grad_count += 1
+
+        # Log only if we created zero gradients (indicates sparse MoE activation)
+        if zero_grad_count > 0 and self.logger is not None:
+            # Use debug level to avoid log spam - this is expected for MoE
+            self.logger.debug(
+                f"Created zero gradients for {zero_grad_count} unused MoE parameters"
+            )
 
     def _clear_cuda_memory(self, tensors_to_clear: Optional[List[Any]] = None) -> None:
         """

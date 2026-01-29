@@ -7,18 +7,20 @@
 # Configuration Schema v2.0 - 8-Section Structure:
 #   model, training, data, compute, distributed, logging, checkpoints, experimental
 # =============================================================================
+
+# =============================================================================
 # MODEL - Architecture, MoE, tokens, regularization
 # =============================================================================
 model:
-  vocab_size: 32000  # Must match tokenizer vocab_size
+  vocab_size: 30522
   pad_token_id: 0
-  eos_token_id: 1    # Standard EOS token ID
-  bos_token_id: 2    # Standard BOS token ID
+  eos_token_id: 102
+  bos_token_id: 101
   hidden_size: 768
   num_layers: 12
   num_attention_heads: 12
   intermediate_size: 3072
-  max_position_embeddings: 128   # seq_len=128
+  max_position_embeddings: 512
   num_experts: 4
   num_experts_per_token: 2
   router_type: mixtral
@@ -30,33 +32,29 @@ model:
   # GPU Optimizations
   use_grouped_gemm: true
   use_triton_kernels: true
+  use_torch_compile: true
   use_flash_attention: true
-  gradient_checkpointing: true   # ENABLED - saves memory via recomputation
+  gradient_checkpointing: true  # Required for 24GB VRAM
   use_optimized_moe: true
 
-  # MoE loss coefficients (10x increase for better routing/coherence)
-  router_z_loss_coef: 0.001           # 10x increase (was 0.0001)
-  load_balance_loss_coef: 0.01        # 10x increase (was 0.001)
-  diversity_loss_coef: 0.001          # ENABLED (was 0.0)
+  # MoE loss coefficients (speed optimized)
+  router_z_loss_coef: 0.0001
+  load_balance_loss_coef: 0.001
+  diversity_loss_coef: 0.0
   expert_dropout_loss_coef: 0.0
   router_jitter_noise: 0.01
   aux_loss_frequency: 500
 
-  # Coherence regularization (DISABLED - incompatible with DeepSpeed ZeRO)
-  # These features create complex computation graphs with overlapping tensor slices
-  # that confuse DeepSpeed's gradient bucket ordering, causing "parameter already reduced" errors
-  entropy_regularization: 0.0         # DISABLED for DeepSpeed compatibility
-  output_diversity_weight: 0.0        # DISABLED for DeepSpeed compatibility
+  # Coherence regularization
+  entropy_regularization: 0.0
+  output_diversity_weight: 0.0
   eos_logit_bias: 0.1
 
-  # Regularization (dropout=0.0 REQUIRED for CUDA Graphs)
-  attention_dropout: 0.0              # Set to 0.0 for CUDA graphs compatibility
-  dropout: 0.0                        # Set to 0.0 for CUDA graphs compatibility
+  # Regularization (dropout=0 for CUDA Graphs)
+  attention_dropout: 0.0
+  dropout: 0.0
   label_smoothing: 0.1
-  # tie_word_embeddings: false - REQUIRED for DeepSpeed ZeRO
-  # Weight tying causes "parameter already reduced" errors with ZeRO-1/2/3
-  # because the shared parameter gets gradient reduction attempted twice
-  tie_word_embeddings: false
+  tie_word_embeddings: true
   layer_norm_eps: 1.0e-5
   initializer_range: 0.02
 
@@ -72,21 +70,20 @@ training:
   pipeline_overlap_factor: 2
 
   batching:
-    batch_size: 128  # BS=128 with DeepSpeed ZeRO-2 + gradient checkpointing
-    gradient_accumulation_steps: 2  # Effective batch size 256
+    batch_size: 16  # Reduced for memory
+    gradient_accumulation_steps: 8  # Increased to maintain effective batch size
 
   optimizer:
-    type: adamw  # ZeRO-2 already provides ~75% optimizer memory savings
-    learning_rate: 1.0e-4
+    type: adamw
+    learning_rate: 2.0e-5  # Lower LR for fine-tuning
     betas: [0.9, 0.95]
-    weight_decay: 0.1
+    weight_decay: 0.01  # Lower weight decay for fine-tuning
     use_fused: true
     max_grad_norm: 1.0
 
   schedule:
     num_epochs: 1
     max_steps: null
-    steps_per_epoch: 10000  # Explicit value for DeepSpeed scheduler
     warmup_steps: 1000
     scheduler_type: cosine
     num_cycles: 1
@@ -95,27 +92,26 @@ training:
   logging:
     save_steps: 1000
     eval_steps: 1000
-    logging_steps: 100  # Reduced from 1 - prevents GPU-CPU sync every batch
+    logging_steps: 100
     use_tensorboard: false
     use_wandb: true
 
   validation:
     enabled: false
-    batch_size: 32
+    batch_size: 24
     max_batches: 10
     compute_train_ratio: true
 
   generation:
     enabled: true
-    generate_every_n_steps: 1000  # Reduced from 100 to prevent memory buildup over long runs
+    generate_every_n_steps: 100
     num_per_step: 1
-    num_return_sequences: 2       # Generate multiple for comparison
     during_eval: true
     test_quality: true
-    max_length: 128               # Must match model.max_position_embeddings
-    temperature: 0.7              # INCREASED (was 0.5) - more creative generation
+    max_length: 128
+    temperature: 0.5
     top_p: 0.9
-    top_k: 40                     # INCREASED (was 25) - more diversity
+    top_k: 25
     repetition_penalty: 1.5
     no_repeat_ngram_size: 3
     skip_special_tokens: true
@@ -126,15 +122,15 @@ training:
       - "A long time ago"
 
   coherence:
-    enabled: false                    # Disabled for training speed optimization
-    eval_every_n_steps: 1000          # Match generation frequency
-    num_samples: 4                    # INCREASED (was 2) - more samples for better signal
-    max_generation_length: 128        # Must match model.max_position_embeddings
-    temperature: 0.7                  # Match generation temperature
+    enabled: false
+    eval_every_n_steps: 5000
+    num_samples: 2
+    max_generation_length: 100
+    temperature: 0.5
     top_p: 0.9
-    top_k: 40                         # Match generation top_k
+    top_k: 25
     log_to_wandb: true
-    log_to_console: true              # ENABLED - see coherence metrics in console
+    log_to_console: false
     use_fast: true
     use_bf16: true
     micro_batch_size: 16
@@ -142,25 +138,18 @@ training:
 # =============================================================================
 # DATA - Loading, streaming, packing, splits
 # =============================================================================
-# MEMORY OPTIMIZATION: If training fills swap (check with 'free -h'):
-#   1. Set AVA_DISABLE_MMAP=1 to disable memory-mapped files (reduces VSZ)
-#   2. Reduce num_workers (each worker duplicates caches)
-#   3. Set persistent_workers: false (workers release memory between epochs)
-#   4. Reduce indexed_cache_size and indexed_numpy_cache_size
-# =============================================================================
 data:
-  # SPEED FIX: Disable streaming - was causing ~10s/step due to lazy file discovery
-  streaming: false
+  streaming: true
   buffer_size: 30000
-  fast_startup: false  # Not needed without streaming
+  fast_startup: true
   progressive_buffer: false
   min_buffer_size: 10000
   warm_start_files: 5
   skip_sequence_count: true
   enable_length_sorting: false
 
-  data_dir: /root/Ava_AI/pretokenized_data/data # Use smaller dataset for testing
-  max_length: 128  # seq_len=128
+  data_dir: pretokenized_data/data/OpenOrca
+  max_length: 512
   train_split: train
   eval_split: validation
   auto_create_validation_split: true
@@ -169,13 +158,10 @@ data:
   padding_side: right
   truncation: false
 
-  # Data loading (optimized for throughput with memory constraints)
-  # MEMORY FIX: Each worker has its own cache. Total memory = num_workers × cache_per_worker
-  # With 8 workers × 60 tables × 30MB/table = 14GB just for Arrow cache!
-  # Reduce num_workers if hitting swap (VSZ > RAM causes paging)
-  num_workers: 4            # MEMORY FIX: Reduced from 8 - halves per-worker memory duplication
-  prefetch_factor: 2        # MEMORY FIX: Reduced from 4 - less data prefetched in RAM
-  persistent_workers: false # MEMORY FIX: Disabled - workers release memory between epochs
+  # Data loading (optimized for throughput)
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
   dataloader_drop_last: true
   dataloader_pin_memory: true
   dataloader_samples_per_file: 200
@@ -183,8 +169,8 @@ data:
   timeout: 300
   examples_per_random_select: 50
 
-  # Sequence packing disabled - causing severe slowdown in data loading
-  use_sequence_packing: false
+  # Sequence packing
+  use_sequence_packing: true
   packing_strategy: greedy
   packing_target_ratio: 0.90
 
@@ -194,14 +180,12 @@ data:
   lazy_file_discovery: false
   multiprocessing_context: spawn
   cache_size: 20
-  skip_validation: true  # Skip slow validation
+  skip_validation: false
   shuffle_files: true
-  # Use indexed loader for better random access
-  use_indexed_loader: true
+  use_indexed_loader: false
   indexed_num_bins: 8
-  indexed_cache_size: 5       # MEMORY FIX: Arrow table cache per worker (5 × 4 workers = 20 total)
-  indexed_numpy_cache_size: 5 # MEMORY FIX: Numpy cache per worker (reduce if hitting swap)
-  indexed_index_workers: 4    # MEMORY FIX: Reduced from 16 - fewer parallel indexing threads
+  indexed_cache_size: 50
+  indexed_index_workers: 16
 
 # =============================================================================
 # COMPUTE - Device, precision, CUDA, kernels, memory, performance
@@ -210,9 +194,9 @@ compute:
   memory:
     headroom_gb: 3.0
     cleanup_thresholds:
-      warning: 0.80   # Start cleanup at 80% memory usage
-      critical: 0.85  # More aggressive cleanup at 85%
-      emergency: 0.90 # Emergency cleanup at 90%
+      warning: 0.80
+      critical: 0.88
+      emergency: 0.92
     expert_prefetch:
       enabled: true
       lookahead: 1
@@ -220,12 +204,12 @@ compute:
 
   performance:
     enable_cudnn_benchmark: true
-    enable_tf32: true  # 2-3x speedup on Ampere GPUs (RTX 3090)
+    enable_tf32: true
     torchinductor_max_autotune: 1
-    enable_torch_compile: false  # Disabled - conflicts with RoPE embeddings and CUDA graphs
-    torch_compile_mode: reduce-overhead  # reduce-overhead mode for lower latency
+    enable_torch_compile: true
+    torch_compile_mode: reduce-overhead
     torch_compile_fullgraph: false
-    torch_compile_dynamic: true
+    torch_compile_dynamic: false
 
   kernels:
     router_kernel_mode: auto
@@ -247,12 +231,12 @@ compute:
       high_priority_transfers: true
 
     graphs:
-      enabled: false  # Disabled - causing memory issues with seq_len=128
-      warmup_steps: 1000
+      enabled: true
+      warmup_steps: 10
       capture_mode: automatic
 
   optimizations:
-    use_overlapped_checkpointing: false  # Requires gradient_checkpointing
+    use_overlapped_checkpointing: true
 
   calibration:
     batch_size:
@@ -273,16 +257,15 @@ compute:
 distributed:
   deepspeed:
     enabled: true
-    zero_stage: 1   # ZeRO-1: optimizer sharding only (more stable than ZeRO-2)
-    cpu_offload: false  # CRITICAL: CPU offload causes 5-10x slowdown
+    zero_stage: 2
+    cpu_offload: true
     nvme_offload: false
     nvme_path: "/local_nvme"
     precision_type: "bf16"
-    # gradient_accumulation_steps inherited from training.batching (4)
-    # micro_batch_size = per-GPU batch size (matches training.batching.batch_size)
-    # micro_batch_size: 16  # Match training.batching.batch_size
-    # train_batch_size calculated automatically: micro_batch_size * grad_accum * world_size
-    activation_checkpointing: false  # Disabled - relying on ZeRO-2 + CPU offload
+    gradient_accumulation_steps: 4
+    train_batch_size: 64
+    micro_batch_size: 64
+    activation_checkpointing: true
     partition_activations: false
     gradient_clipping: 1.0
     zero_overlap_comm: true
@@ -295,7 +278,7 @@ distributed:
 # LOGGING - Console, WandB, TensorBoard, diagnostics, frequencies
 # =============================================================================
 logging:
-  disabled: false  # Enable logging (required for WandB)
+  disabled: false
   silent_mode: false
 
   console:
@@ -309,8 +292,8 @@ logging:
   progress_bar_enabled: true
   step_logging_enabled: true
   epoch_logging_enabled: true
-  log_mode: tqdm     # tqdm mode (visual progress without sync overhead)
-  tqdm_update_interval: 1  # Update progress bar every step (cheap, no GPU sync)
+  log_mode: tqdm
+  tqdm_update_interval: 50
 
   metrics:
     training: true
@@ -324,7 +307,7 @@ logging:
     generations: true
 
   wandb:
-    enabled: true  # Enabled for training monitoring
+    enabled: true
     project: ava-training
     entity: null
     tags:
@@ -336,7 +319,7 @@ logging:
       RTX 3090 Ti optimized configuration.
       Hardware: RTX 3090 Ti (24GB), 61GB RAM
       Key: BF16, Flash Attention, Gradient Checkpointing
-    log_freq: 2000  # Increased from 1000 to reduce sync overhead
+    log_freq: 100
     log_training: true
     log_gradients: true
     log_moe: true
@@ -346,9 +329,9 @@ logging:
     log_memory: true
     log_timing: true
     log_generations: true
-    log_per_layer_grads: false   # DISABLED - was causing 8s+ overhead per log step
-    log_routing_diagnostics: false  # DISABLED - was causing massive sync overhead
-    log_model_topology: false    # Only needed once, disable for speed
+    log_per_layer_grads: true
+    log_routing_diagnostics: true
+    log_model_topology: true
 
   tensorboard:
     enabled: false
@@ -358,12 +341,12 @@ logging:
     log_validation: true
 
   frequencies:
-    log_interval: 50         # Increased from 10 - less frequent GPU-CPU sync
-    verbose_log_interval: 100  # Reduced from 1 - detailed logs less frequently
-    metrics: 5000            # Less frequent metrics
-    memory_check: 20000      # Less frequent memory checks
-    health_summary: 5000     # Less frequent health summaries
-    moe_metrics: 20000       # Less frequent MoE metrics
+    log_interval: 500
+    verbose_log_interval: 0
+    metrics: 1000
+    memory_check: 10000
+    health_summary: 1000
+    moe_metrics: 10000
 
   features:
     timing_breakdown: true
@@ -432,16 +415,16 @@ checkpoints:
 # =============================================================================
 experimental:
   caching:
-    enabled: false    # Disabled for max throughput at seq_len=32
+    enabled: false
     mode: training
 
     activation_cache:
-      enabled: false  # Disabled at seq_len=32
+      enabled: false
       max_size_gb: 2.0
       eviction_policy: lru
 
     kv_cache:
-      enabled: false  # Keep disabled during training (memory trade-off)
+      enabled: false
       max_size_gb: 4.0
       eviction_policy: hybrid
       sliding_window: null
@@ -450,12 +433,12 @@ experimental:
 
   checkpointing:
     overlapped:
-      enabled: false  # Requires gradient_checkpointing
+      enabled: true
       stream_overlap: true
       target_layers: layers
 
     double:
-      enabled: false  # Disabled to reduce overhead
+      enabled: true
       coarse_checkpoint_interval: 8
       fine_checkpoint_interval: 2
       use_cuda_streams: true

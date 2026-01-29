@@ -1,0 +1,148 @@
+# DeepSpeed ZeRO-1 Configuration
+# Optimizer state sharding across GPUs
+# Target: 2-8 GPUs, medium-large models
+# Memory savings: ~4x for optimizer states
+
+model:
+  # Medium-Large Architecture for ZeRO-1
+  hidden_size: 768
+  num_layers: 20
+  num_attention_heads: 12
+  intermediate_size: 3072
+  vocab_size: 30522  # Matches tokenizer
+  max_position_embeddings: 2048
+
+  # MoE Configuration
+  num_experts: 16
+  num_experts_per_token: 2
+  expert_capacity_factor: 1.25
+  router_type: "switch"
+
+  # Enhanced Features (moderate)
+  use_moh: true
+  use_moa: false
+  use_rag: false
+  use_cross_attention: true
+  num_cross_attention_layers: 2
+  use_episodic_memory: true
+  memory_size: 1000
+
+  # DeepSpeed compatibility
+  deepspeed_activation_checkpointing: true
+  deepspeed_partition_activations: false
+  deepspeed_moe_param_groups: true
+
+training:
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  optimizer: adamw  # Standard AdamW (DeepSpeed compatible, was lion)
+  learning_rate: 0.0001  # Standard AdamW learning rate
+  max_gradient_norm: 1.0
+  num_epochs: 10
+  warmup_steps: 1000
+  weight_decay: 0.01
+  mixed_precision: "bf16"
+  gradient_checkpointing: true
+
+# DeepSpeed Configuration (ZeRO-1 Focus)
+deepspeed:
+  enabled: true
+  zero_stage: 1                       # Optimizer state sharding only
+
+  # Offloading (not available in ZeRO-1)
+  cpu_offload: false                  # Not available in ZeRO-1
+  nvme_offload: false                 # Not available in ZeRO-1
+
+  # Precision (DeepSpeed manages mixed precision internally)
+  # NOTE: Do NOT use torch.amp.autocast when DeepSpeed is enabled
+  # DeepSpeed handles mixed precision via this setting
+  precision_type: "bf16"              # Options: 'fp16', 'bf16', 'fp32'
+
+  # Batch Configuration
+  gradient_accumulation_steps: 4
+  train_batch_size: 128               # micro_batch_size * grad_accum * world_size (16 * 4 * 2 = 128)
+  micro_batch_size: 16                # Per-GPU batch size
+
+  # Activation Checkpointing
+  activation_checkpointing: true      # Enable activation checkpointing
+  partition_activations: false        # Usually false for ZeRO-1
+
+  # Gradient Clipping
+  gradient_clipping: 1.0              # Max gradient norm
+
+  # ZeRO-1 Advanced Settings
+  zero_overlap_comm: true             # Overlap communication with computation
+  zero_contiguous_gradients: true     # Reduce memory fragmentation
+  zero_reduce_scatter: true           # Use reduce_scatter
+  zero_reduce_bucket_size: 500000000  # 500MB
+  zero_allgather_bucket_size: 500000000  # 500MB
+
+# Enhanced Features
+enhanced_features:
+  architecture:
+    use_moh: true
+    use_moa: false
+    use_cross_attention: true
+    expert_routing_type: "switch"
+
+  losses:
+    focal_loss: true
+    diversity_loss: true
+    auxiliary_loss: true
+    adaptive_loss_scaling: true
+
+  gradient:
+    gradient_surgery: true
+    adaptive_gradient_surgery: false
+    gradient_surgery_method: "pcgrad"
+
+  memory:
+    use_episodic_memory: true
+    memory_capacity: 1000
+    memory_selection_strategy: "importance"
+
+  quantization:
+    quantization_aware: true
+    use_nvfp4: false
+    bit_width: 8
+
+# Data Loading
+data:
+  data_dir: "code/data/processed"
+  max_length: 2048
+  tokenizer_name: pretokenized_data/tokenizers/vocab  # Matches pretokenized data
+  train_batch_size: 4
+  eval_batch_size: 8
+
+  # Data loading configuration
+  streaming: true
+  buffer_size: 5000
+  distributed: true
+
+# Performance & Memory
+performance:
+  ultra_fast_mode: false
+  fast_progress: false
+  minimal_progress: true
+  express_mode: true
+
+memory:
+  enable_memory_pool: true
+  pool_size_gb: 16.0
+  gradient_checkpointing: true
+  memory_threshold_gb: 16.0
+  clear_cache_frequency: 100
+
+# Monitoring
+wandb:
+  enabled: true
+  project: "ava-moe-deepspeed-zero1"
+  tags: ["deepspeed", "zero1", "distributed", "multi-gpu"]
+  notes: "DeepSpeed ZeRO-1 configuration with optimizer state sharding"
+  group: "deepspeed-zero1"
+
+# Hardware Requirements
+# GPUs: 2-8 GPUs with 16GB+ VRAM each
+# Total VRAM: 32-128GB
+# Network: High-bandwidth interconnect (NVLink, InfiniBand)
+# Use case: Medium-large models with optimizer memory concerns

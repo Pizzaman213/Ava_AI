@@ -239,33 +239,42 @@ class AsyncMetricsLogger:
         # Sort batch by step to ensure monotonic ordering
         batch = sorted(batch, key=lambda e: e.step)
 
+        # CRITICAL FIX: Merge metrics for the same step before logging
+        # This prevents throughput metrics from being dropped when logged
+        # in the same step as training metrics
+        merged: Dict[int, Dict[str, Any]] = {}
+        for entry in batch:
+            if entry.step not in merged:
+                merged[entry.step] = {}
+            merged[entry.step].update(entry.metrics)
+
         try:
             logged_count = 0
 
             if self.custom_log_fn is not None:
                 # Custom logging function
-                for entry in batch:
-                    if entry.step > self._last_logged_step:
-                        self.custom_log_fn(entry.metrics, entry.step)
-                        self._last_logged_step = entry.step
+                for step in sorted(merged.keys()):
+                    if step > self._last_logged_step:
+                        self.custom_log_fn(merged[step], step)
+                        self._last_logged_step = step
                         logged_count += 1
 
             elif self._wandb is not None:
-                # WandB: log each entry, skip stale steps to avoid monotonic warning
-                for entry in batch:
-                    if entry.step > self._last_logged_step:
-                        self._wandb.log(entry.metrics, step=entry.step)
-                        self._last_logged_step = entry.step
+                # WandB: log merged metrics per step, skip stale steps
+                for step in sorted(merged.keys()):
+                    if step > self._last_logged_step:
+                        self._wandb.log(merged[step], step=step)
+                        self._last_logged_step = step
                         logged_count += 1
 
             elif self._tb_writer is not None:
                 # TensorBoard: log each metric
-                for entry in batch:
-                    if entry.step > self._last_logged_step:
-                        for key, value in entry.metrics.items():
+                for step in sorted(merged.keys()):
+                    if step > self._last_logged_step:
+                        for key, value in merged[step].items():
                             if isinstance(value, (int, float)):
-                                self._tb_writer.add_scalar(key, value, entry.step)
-                        self._last_logged_step = entry.step
+                                self._tb_writer.add_scalar(key, value, step)
+                        self._last_logged_step = step
                         logged_count += 1
 
             self._total_logged += logged_count

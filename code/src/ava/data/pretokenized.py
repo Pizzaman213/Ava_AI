@@ -1771,7 +1771,7 @@ class UltraFastPretokenizedDataset(IterableDataset):
         # OPTIMIZATION: Use thread-local cache in workers for 10-15% throughput improvement
         # Thread-local cache eliminates lock contention between workers, as each worker
         # gets its own independent LRU cache via thread-local storage.
-        cache_size = getattr(self, 'cache_size', 10)  # Reduced fallback from 50
+        cache_size = getattr(self, 'cache_size', None) or 10  # Reduced fallback from 50
         self._use_thread_local_cache = True  # Mark as using thread-local cache
         self.table_cache = get_thread_local_arrow_cache(max_size=cache_size)
         logger.debug(f"Worker initialized with thread-local Arrow cache (max_size={cache_size})")

@@ -234,7 +234,9 @@ class OverlappedGradientAccumulator:
                     outputs = forward_fn(batch)
                 else:
                     outputs = model(**batch)
-                loss = outputs['loss'] / self.gradient_accumulation_steps
+                # FIX BUG #2: Use actual batch count for partial batches at epoch end
+                # Previously always divided by gradient_accumulation_steps even for partial batches
+                loss = outputs['loss'] / num_batches
 
             # Backward pass
             if self.is_deepspeed:
@@ -311,7 +313,9 @@ class OverlappedGradientAccumulator:
                         outputs = forward_fn(batch)
                     else:
                         outputs = model(**batch)
-                    loss = outputs['loss'] / self.gradient_accumulation_steps
+                    # FIX BUG #2: Use actual batch count for partial batches at epoch end
+                    # Previously always divided by gradient_accumulation_steps even for partial batches
+                    loss = outputs['loss'] / num_batches
 
                 # Store in buffer
                 outputs_storage[buffer_idx] = {'loss': outputs['loss'].detach()}

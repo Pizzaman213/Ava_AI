@@ -736,7 +736,13 @@ class CoherenceMeasurer:
                 f"Input shape: {input_ids.shape}",
                 exc_info=True
             )
-            return self._compute_logit_flow(input_ids, return_tensor=return_tensor)
+            # Try logit-based fallback before returning neutral score
+            try:
+                return self._compute_logit_flow(input_ids, return_tensor=return_tensor)
+            except Exception as fallback_e:
+                logger.warning(f"Logit-based flow fallback also failed: {fallback_e}")
+                result = 0.5  # Neutral score as last resort
+                return torch.tensor(result, device=device) if return_tensor else result
 
     def _compute_logit_flow(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
         """Fallback flow computation using logit distributions.
@@ -783,6 +789,67 @@ class CoherenceMeasurer:
 
         # PERF FIX: Return tensor for batched sync, or scalar for immediate use
         result_tensor = similarities.mean()
+        return result_tensor if return_tensor else result_tensor.item()
+
+    def _compute_logit_topic(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
+        """Fallback topic consistency computation using logit distributions.
+
+        Compares the probability distributions at the start vs end of the sequence
+        to measure semantic drift/topic consistency. This is the fallback when
+        hidden states are not available from the model.
+
+        Args:
+            input_ids: Input token IDs
+            return_tensor: If True, return GPU tensor instead of calling .item()
+
+        Returns:
+            Score 0-1 where higher means better topic consistency
+        """
+        device = input_ids.device
+        seq_len = input_ids.shape[1]
+
+        if seq_len < 20:
+            if seq_len < 10:
+                result = 0.5  # Neutral score for very short sequences
+                return torch.tensor(result, device=device) if return_tensor else result
+            else:
+                # Partial credit: linear scale from 0.3 to 0.5
+                result = 0.3 + (seq_len - 10) * (0.2 / 10)
+                return torch.tensor(result, device=device) if return_tensor else result
+
+        outputs = self.model(input_ids)
+
+        if hasattr(outputs, 'logits'):
+            logits = outputs.logits
+        elif isinstance(outputs, dict) and 'logits' in outputs:
+            logits = outputs['logits']
+        elif isinstance(outputs, tuple):
+            logits = outputs[0]
+        else:
+            logits = outputs
+
+        # Compute probability distributions
+        probs = F.softmax(logits, dim=-1)
+
+        # Compare first quarter vs last quarter (like hidden states version)
+        quarter = max(seq_len // 4, 1)
+
+        # Average probabilities over the quarter segments
+        start_probs = probs[:, :quarter, :].mean(dim=1)  # [batch, vocab]
+        end_probs = probs[:, -quarter:, :].mean(dim=1)   # [batch, vocab]
+
+        # Use JS divergence for bounded, symmetric comparison
+        m = (start_probs + end_probs) / 2
+        eps = 1e-10
+
+        kl1 = (start_probs * (torch.log(start_probs + eps) - torch.log(m + eps))).sum(dim=-1)
+        kl2 = (end_probs * (torch.log(end_probs + eps) - torch.log(m + eps))).sum(dim=-1)
+        js_div = 0.5 * (kl1 + kl2)
+
+        # Convert to similarity score in [0, 1]
+        # Lower JS divergence = higher topic consistency
+        similarity = 1.0 / (1.0 + js_div)
+        result_tensor = similarity.mean()
         return result_tensor if return_tensor else result_tensor.item()
 
     def _compute_topic_consistency(self, input_ids: torch.Tensor, return_tensor: bool = False) -> Union[float, torch.Tensor]:
@@ -842,9 +909,9 @@ class CoherenceMeasurer:
             hidden_states = self._validate_hidden_states(hidden_states, input_ids)
 
             if hidden_states is None:
-                logger.debug("Cannot compute topic consistency: hidden states unavailable or invalid")
-                result = 0.5  # Neutral score (consistent with Issue 2 fix)
-                return torch.tensor(result, device=device) if return_tensor else result
+                # Fallback to logit-based topic consistency (consistent with _compute_sentence_flow)
+                logger.debug("Hidden states unavailable, using logit-based topic consistency")
+                return self._compute_logit_topic(input_ids, return_tensor=return_tensor)
 
             # Compare first quarter vs last quarter
             # Ensure at least 1 token per quarter to avoid empty tensor NaN
@@ -864,12 +931,17 @@ class CoherenceMeasurer:
         except Exception as e:
             logger.warning(
                 f"Topic consistency computation failed: {e}. "
-                f"Returning neutral score 0.5 (not 0.0). "
+                f"Falling back to logit-based computation. "
                 f"Input shape: {input_ids.shape}",
                 exc_info=True
             )
-            result = 0.5  # Neutral score (consistent with Issue 2 fix)
-            return torch.tensor(result, device=device) if return_tensor else result
+            # Try logit-based fallback before returning neutral score
+            try:
+                return self._compute_logit_topic(input_ids, return_tensor=return_tensor)
+            except Exception as fallback_e:
+                logger.warning(f"Logit-based topic fallback also failed: {fallback_e}")
+                result = 0.5  # Neutral score as last resort
+                return torch.tensor(result, device=device) if return_tensor else result
 
     def _compute_unique_ratio(self, input_ids: torch.Tensor) -> float:
         """Compute ratio of unique tokens in sequences.
@@ -1142,9 +1214,9 @@ class FastCoherenceMeasurer:
                 flow_score = self._compute_flow_from_hidden(hidden_states)
                 topic_score = self._compute_topic_from_hidden(hidden_states)
             else:
-                # Fallback to logit-based metrics
+                # Fallback to logit-based metrics when hidden states unavailable
                 flow_score = self._compute_flow_from_logits(logits)
-                topic_score = 0.0
+                topic_score = self._compute_topic_from_logits(logits)
 
             # Compute aggregate score
             # Use log-scale normalization (consistent with CoherenceMeasurer)
@@ -1625,6 +1697,43 @@ class FastCoherenceMeasurer:
         js_div = 0.5 * (kl1 + kl2)
 
         # Convert to similarity
+        similarity = 1.0 / (1.0 + js_div)
+        return similarity.mean().item()
+
+    def _compute_topic_from_logits(self, logits: torch.Tensor) -> float:
+        """Fallback topic consistency computation from logits.
+
+        Compares the probability distributions at the start vs end of the sequence
+        to measure semantic drift/topic consistency.
+        """
+        seq_len = logits.shape[1]
+        if seq_len < 20:
+            if seq_len < 10:
+                return 0.5  # Neutral score for very short sequences
+            else:
+                # Partial credit: linear scale from 0.3 to 0.5
+                return 0.3 + (seq_len - 10) * (0.2 / 10)
+
+        # Compute probability distributions
+        probs = F.softmax(logits, dim=-1)
+
+        # Compare first quarter vs last quarter (like hidden states version)
+        quarter = max(seq_len // 4, 1)
+
+        # Average probabilities over the quarter segments
+        start_probs = probs[:, :quarter, :].mean(dim=1)  # [batch, vocab]
+        end_probs = probs[:, -quarter:, :].mean(dim=1)   # [batch, vocab]
+
+        # Use JS divergence for bounded, symmetric comparison
+        m = (start_probs + end_probs) / 2
+        eps = 1e-10
+
+        kl1 = (start_probs * (torch.log(start_probs + eps) - torch.log(m + eps))).sum(dim=-1)
+        kl2 = (end_probs * (torch.log(end_probs + eps) - torch.log(m + eps))).sum(dim=-1)
+        js_div = 0.5 * (kl1 + kl2)
+
+        # Convert to similarity score in [0, 1]
+        # Lower JS divergence = higher topic consistency
         similarity = 1.0 / (1.0 + js_div)
         return similarity.mean().item()
 

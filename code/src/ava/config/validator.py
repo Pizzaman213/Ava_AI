@@ -457,7 +457,10 @@ class ConfigValidator:
         # gradient checkpoints conflicting with torch.compile's CUDA graphs.
         use_torch_compile = self.get('compute.performance.enable_torch_compile')
         gradient_checkpointing = self.get('model.gradient_checkpointing')
-        deepspeed_enabled = self.get('deepspeed.enabled')
+        # Check both v2.0 path (distributed.deepspeed.enabled) and legacy path (deepspeed.enabled)
+        distributed_deepspeed = self.get('distributed.deepspeed.enabled', False)
+        legacy_deepspeed = self.get('deepspeed.enabled', False)
+        deepspeed_enabled = distributed_deepspeed or legacy_deepspeed
 
         if use_torch_compile and gradient_checkpointing and deepspeed_enabled:
             warnings.append(

@@ -1,0 +1,308 @@
+# =============================================================================
+# FAST MODE Configuration - Maximum Throughput (NanoGPT-style)
+# =============================================================================
+# Purpose: Benchmark training speed without overhead
+#
+# Key optimizations:
+# - NO sequence packing (eliminates 512MB 2D mask allocation)
+# - NO runtime tokenization (pre-tokenized only)
+# - NO generation/coherence testing during training
+# - NO validation overhead
+# - CUDA Graphs enabled (15-25% speedup)
+# - Minimal logging (reduced GPU->CPU syncs)
+#
+# Configuration Schema v2.0 - 8-Section Structure:
+#   model, training, data, compute, distributed, logging, checkpoints, experimental
+# =============================================================================
+
+# =============================================================================
+# MODEL - Architecture, MoE, tokens, regularization
+# =============================================================================
+model:
+  vocab_size: 30522
+  pad_token_id: 0
+  eos_token_id: 102
+  bos_token_id: 101
+  hidden_size: 768
+  num_layers: 12
+  num_attention_heads: 12
+  intermediate_size: 3072
+  max_position_embeddings: 512
+  num_experts: 4
+  num_experts_per_token: 2
+  router_type: mixtral
+  capacity_factor: 1.25
+  quantize_kv_cache: true
+  expert_dropout: 0.0  # DISABLED for CUDA Graphs compatibility
+  activation: swiglu
+
+  # GPU Optimizations
+  use_grouped_gemm: true
+  use_triton_kernels: true
+  use_torch_compile: true
+  torch_compile_mode: max-autotune
+  use_flash_attention: true
+  gradient_checkpointing: true
+  use_optimized_moe: true
+
+  # MoE loss (minimal for speed)
+  router_z_loss_coef: 0.0001
+  load_balance_loss_coef: 0.001
+  diversity_loss_coef: 0.0
+  expert_dropout_loss_coef: 0.0
+  router_jitter_noise: 0.0
+  aux_loss_frequency: 100
+
+  # Regularization (DISABLED for CUDA Graphs)
+  attention_dropout: 0.0
+  dropout: 0.0
+  label_smoothing: 0.0
+  tie_word_embeddings: true
+  entropy_regularization: 0.0
+  output_diversity_weight: 0.0
+  eos_logit_bias: 0.0
+  layer_norm_eps: 1.0e-5
+  initializer_range: 0.02
+
+# =============================================================================
+# TRAINING - Optimizer, schedule, batching, validation
+# =============================================================================
+training:
+  precision:
+    mixed_precision: bf16
+
+  batching:
+    batch_size: 64
+    gradient_accumulation_steps: 2
+
+  optimizer:
+    type: adamw
+    learning_rate: 1.0e-4
+    betas: [0.9, 0.95]
+    weight_decay: 0.1
+    use_fused: true
+    max_grad_norm: 1.0
+
+  schedule:
+    num_epochs: 3
+    max_steps: null
+    warmup_steps: 1000
+    scheduler_type: cosine
+    min_lr: 1.0e-5
+
+  logging:
+    save_steps: 2000
+    eval_steps: 5000
+    logging_steps: 100
+
+  # DISABLED for speed
+  validation:
+    enabled: false
+
+  generation:
+    enabled: false
+
+  coherence:
+    enabled: false
+
+  # CUDA Graphs settings
+  cuda_graphs:
+    use_cuda_graphs: true
+    warmup_steps: 20
+    log_interval: 100
+    enable_memory_monitoring: false
+
+# =============================================================================
+# DATA - Loading, streaming, packing, splits
+# =============================================================================
+data:
+  streaming: true
+  buffer_size: 50000
+
+  # Fast startup
+  progressive_buffer: true
+  min_buffer_size: 256
+  warm_start_files: 5
+  skip_sequence_count: true
+
+  enable_length_sorting: false
+
+  data_dir: pretokenized_data/data
+  max_length: 512
+  train_split: train
+  eval_split: validation
+  auto_create_validation_split: false
+  tokenizer_name: pretokenized_data/tokenizers/vocab
+
+  # Data loading - optimized
+  num_workers: 4
+  prefetch_factor: 4
+  persistent_workers: true
+  dataloader_drop_last: true
+  dataloader_pin_memory: true
+  timeout: 300
+
+  # SEQUENCE PACKING - DISABLED FOR MAX THROUGHPUT
+  use_sequence_packing: false
+
+  # Data discovery
+  use_all_data: true
+  max_files_to_load: null
+  lazy_file_discovery: false
+  multiprocessing_context: spawn
+  cache_size: 10
+  skip_validation: true
+  shuffle_files: true
+  use_indexed_loader: false
+
+# =============================================================================
+# COMPUTE - Device, precision, CUDA, kernels, memory, performance
+# =============================================================================
+compute:
+  performance:
+    enable_cudnn_benchmark: true
+    enable_tf32: true
+    torchinductor_max_autotune: 0
+    enable_torch_compile: false
+    torch_compile_mode: reduce-overhead
+    torch_compile_fullgraph: false
+    torch_compile_dynamic: false
+
+  kernels:
+    router_kernel_mode: auto
+    use_fused_softmax_topk: true
+    router_block_size: 4
+    use_sparse_expert_dispatch: false
+    use_fused_activations: true
+    use_selective_expert_loading: false
+    use_vectorized_capacity: true
+    use_fused_moe_kernel: false
+    enable_kernel_profiling: false
+
+  cuda:
+    streams:
+      enabled: true
+      num_streams: 4
+      use_event_timing: true
+      use_stream_pool: true
+      high_priority_transfers: true
+
+    graphs:
+      enabled: true
+      warmup_steps: 20
+
+  optimizations:
+    use_overlapped_checkpointing: true
+
+  calibration:
+    batch_size:
+      enabled: false
+
+# =============================================================================
+# DISTRIBUTED - Multi-GPU, DeepSpeed, load balancing
+# =============================================================================
+distributed:
+  deepspeed:
+    enabled: false
+
+# =============================================================================
+# LOGGING - Console, WandB, TensorBoard, diagnostics, frequencies
+# =============================================================================
+logging:
+  disabled: false
+  silent_mode: false
+
+  console:
+    enabled: true
+
+  file:
+    enabled: true
+
+  progress_bar_enabled: true
+  step_logging_enabled: false
+  epoch_logging_enabled: true
+
+  metrics:
+    training: true
+    gradients: false
+    moe: false
+    validation: true
+    coherence: false
+    quality: false
+    memory: false
+    timing: false
+    generations: false
+
+  wandb:
+    enabled: true
+    project: ava-fast-benchmark
+    entity: null
+    tags:
+      - fast-mode
+      - no-packing
+      - cuda-graphs
+      - minimal-logging
+    notes: |
+      Fast benchmark configuration - NanoGPT-style speed.
+      NO sequence packing, CUDA Graphs enabled.
+      Minimal logging for maximum throughput.
+    log_freq: 100
+    log_training: true
+    log_gradients: false
+    log_moe: false
+    log_validation: true
+    log_coherence: false
+    log_quality: false
+    log_memory: false
+    log_timing: false
+    log_generations: false
+    log_per_layer_grads: false
+    log_routing_diagnostics: false
+
+  tensorboard:
+    enabled: false
+
+  diagnostics:
+    enabled: false
+
+# =============================================================================
+# CHECKPOINTS - Save/load, model selection, output settings
+# =============================================================================
+checkpoints:
+  output_dir: code/outputs/fast_benchmark
+  save_every: 2000
+  fresh_start: true
+
+  selection:
+    enabled: false
+
+# =============================================================================
+# EXPERIMENTAL - Progressive, FP8, caching, advanced features
+# =============================================================================
+experimental:
+  caching:
+    enabled: true
+    mode: training
+
+    activation_cache:
+      enabled: true
+      max_size_gb: 2.0
+      eviction_policy: lru
+
+    kv_cache:
+      enabled: false
+
+  checkpointing:
+    overlapped:
+      enabled: true
+      stream_overlap: true
+      target_layers: layers
+
+    double:
+      enabled: true
+      coarse_checkpoint_interval: 8
+      fine_checkpoint_interval: 2
+      use_cuda_streams: true
+
+  fp8:
+    enabled: false

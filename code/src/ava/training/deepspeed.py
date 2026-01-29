@@ -714,3 +714,126 @@ def validate_model_for_deepspeed(model: Any, config: Dict[str, Any]) -> None:
             "with DeepSpeed's gradient reduction, causing 'parameter already reduced' errors.\n"
             "Fix: Set 'experimental.checkpointing.overlapped.enabled: false' in your config file."
         )
+
+
+# =============================================================================
+# DeepSpeed ZeRO Bug Workaround
+# =============================================================================
+
+_DEEPSPEED_PATCHED = False
+
+def patch_deepspeed_zero_gradient_bug():
+    """
+    Patch DeepSpeed ZeRO Stage 1/2 gradient accumulation bug.
+
+    Bug: In DeepSpeedZeroOptimizer.independent_gradient_partition_epilogue(),
+    `averaged_gradients[i]` persists across optimizer steps but `all_grad_tensors[i]`
+    is cleared to None at accumulation boundaries. On the next backward pass, the
+    condition `averaged_gradients[i] is None` is False (since it persists), so
+    it tries to iterate over `all_grad_tensors[i]` which is None.
+
+    Fix: Also check if `all_grad_tensors.get(i)` is None before trying to iterate.
+
+    This is called automatically when DeepSpeed is initialized. The patch is
+    idempotent - calling it multiple times has no effect.
+    """
+    global _DEEPSPEED_PATCHED
+    if _DEEPSPEED_PATCHED:
+        return
+
+    try:
+        from deepspeed.runtime.zero.stage_1_and_2 import DeepSpeedZeroOptimizer
+        from deepspeed.accelerator import get_accelerator
+    except ImportError:
+        logger.debug("DeepSpeed not available, skipping gradient bug patch")
+        return
+
+    # Store original method
+    original_method = DeepSpeedZeroOptimizer.independent_gradient_partition_epilogue
+
+    def patched_independent_gradient_partition_epilogue(self):
+        """
+        Patched version of independent_gradient_partition_epilogue that handles
+        the case where all_grad_tensors[i] is None but averaged_gradients[i] is not.
+
+        FIX: The original bug was in the condition at line 855-856. When:
+        - averaged_gradients[i] is NOT None (persists from previous step)
+        - all_grad_tensors[i] IS None (cleared at accumulation boundary)
+        The code would try to iterate over all_grad_tensors[i] which is None.
+
+        This patched version adds a check for all_grad_tensors[i] being None.
+        """
+        # CRITICAL: First reduce gradients (this was missing in previous patch!)
+        self.report_ipg_memory_usage("In ipg_epilogue before reduce_ipg_grads", 0)
+        self.reduce_ipg_grads()
+        self.report_ipg_memory_usage("In ipg_epilogue after reduce_ipg_grads", 0)
+
+        # Reset params_already_reduced for next backward pass
+        for i in range(len(self.params_already_reduced)):
+            self.params_already_reduced[i] = False
+
+        if self.overlap_comm:
+            if not get_accelerator().resolves_data_dependency():
+                get_accelerator().synchronize()
+            # It is safe to clear previously reduced grads of other partitions
+            self._clear_previous_reduced_grads()
+
+        if self.cpu_offload is False:
+            for i, _ in enumerate(self.bit16_groups):
+                # FIX: Also check if all_grad_tensors[i] is None (not just missing)
+                # Original bug: averaged_gradients[i] persists but all_grad_tensors[i]
+                # is cleared to None at accumulation boundaries
+                if (not i in self.averaged_gradients or
+                    self.averaged_gradients[i] is None or
+                    self.all_grad_tensors.get(i) is None):  # FIX: Added this check
+                    self.all_grad_tensors[i] = self.get_all_grad_tensors(
+                        self.params_in_partition[i],
+                        dtype=self.gradient_accumulation_dtype
+                    )
+                else:
+                    avg_new = self.get_all_grad_tensors(
+                        self.params_in_partition[i],
+                        dtype=self.gradient_accumulation_dtype
+                    )
+                    # FIX: Handle case where get_all_grad_tensors returns None
+                    # This can happen with MoE models when experts aren't selected
+                    # by the router (sparse activation leaves param.grad = None)
+                    if avg_new is None:
+                        # Re-initialize all_grad_tensors for this partition
+                        self.all_grad_tensors[i] = self.get_all_grad_tensors(
+                            self.params_in_partition[i],
+                            dtype=self.gradient_accumulation_dtype
+                        )
+                    else:
+                        for accumulated_grad, new_avg_grad in zip(self.all_grad_tensors[i], avg_new):
+                            accumulated_grad.add_(new_avg_grad)
+
+                if self.is_gradient_accumulation_boundary:
+                    self.averaged_gradients[i] = self.get_flat_partition(
+                        self.params_in_partition[i],
+                        self.first_offset[i],
+                        self.partition_size[i],
+                        dtype=self.gradient_accumulation_dtype,
+                        device=get_accelerator().current_device_name(),
+                        param_group_idx=i,
+                        return_tensor_list=True
+                    )
+                    self.all_grad_tensors[i] = None
+
+        self._release_ipg_buffers()
+
+        # No need to keep the gradients anymore.
+        # All gradients required by the step are in self.averaged_gradients
+        self.zero_grad(set_to_none=True)
+
+        # Import see_memory_usage if available (debug function)
+        try:
+            from deepspeed.runtime.zero.utils import see_memory_usage
+            see_memory_usage("End ipg_epilogue")
+        except ImportError:
+            pass
+
+    # Apply patch
+    DeepSpeedZeroOptimizer.independent_gradient_partition_epilogue = patched_independent_gradient_partition_epilogue
+    _DEEPSPEED_PATCHED = True
+    logger.info("Applied DeepSpeed ZeRO gradient accumulation bug patch")
