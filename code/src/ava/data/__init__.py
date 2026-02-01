@@ -5,26 +5,16 @@ This package provides:
 - Pretokenized Arrow/Parquet dataloaders (ultra-fast)
 - Indexed Arrow dataloaders (map-style with true random shuffling)
 - Distributed data loading support
-- Factory functions for creating dataloaders
 - Centralized Arrow I/O utilities
 
 Usage:
-    from ava.data import create_dataloaders
+    from ava.data import IndexedArrowDataset, create_indexed_dataloaders
 
-    # Create dataloaders with pretokenized data (default, fastest)
-    train_loader, val_loader = create_dataloaders(
-        mode='pretokenized',
+    # Create indexed dataloaders for true random shuffling
+    train_loader, val_loader = create_indexed_dataloaders(
+        data_dir='/path/to/data',
         batch_size=32,
         max_length=2048,
-        data_dir='/path/to/data',
-    )
-
-    # Or use indexed mode for true random shuffling
-    train_loader, val_loader = create_dataloaders(
-        mode='indexed',
-        batch_size=32,
-        max_length=2048,
-        data_dir='/path/to/data',
     )
 """
 
@@ -49,7 +39,6 @@ from .arrow_io import (
     ThreadLocalFileCache,
 )
 from .distributed import DistributedStreamingDataset, AdvancedDistributedSampler
-from .factory import create_dataloaders
 # Collators (unified)
 from .collators import (
     BaseCollator,
@@ -78,8 +67,7 @@ __all__ = [
     'ArrowTableLRUCache',  # Backward compatibility
     'ThreadSafeFileCache',  # Backward compatibility
     'ThreadLocalFileCache',  # Backward compatibility
-    # Factory
-    'create_dataloaders',  # Unified factory
+    # Indexed dataloaders
     'create_indexed_dataloaders',
     # Collators (unified)
     'BaseCollator',

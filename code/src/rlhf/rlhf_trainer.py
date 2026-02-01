@@ -20,7 +20,7 @@ from .ppo_trainer import PPOTrainer, PPOConfig
 from .reward_model import RewardModel, ModelToModelReward
 
 # Import centralized WandB logger
-from ava.core.wandb_logger import WandBLogger, WANDB_AVAILABLE, get_wandb_logger
+from ava.logging.wandb.wandb import WandBLogger, WANDB_AVAILABLE, get_wandb_logger
 
 logger = logging.getLogger(__name__)
 

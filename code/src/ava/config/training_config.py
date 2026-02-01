@@ -3,6 +3,16 @@ Training Configuration Manager
 
 This module handles all training configuration management including
 enhanced feature flags, parameter validation, and configuration inheritance.
+
+Configuration Schema v2.0 - 8-Section Structure:
+    1. model       - Architecture, MoE, tokens, regularization
+    2. training    - Optimizer, schedule, batching, validation, generation
+    3. data        - Loading, streaming, packing, splits
+    4. compute     - Device, precision, CUDA, kernels, memory
+    5. distributed - Multi-GPU, DeepSpeed, load balancing
+    6. logging     - Console, WandB, TensorBoard, diagnostics
+    7. checkpoints - Save/load, model selection
+    8. experimental- FP8, MTP, caching, advanced features
 """
 
 from __future__ import annotations
@@ -42,25 +52,13 @@ def get_mixed_precision(config: Dict[str, Any]) -> str:
     return training.get('mixed_precision', 'bf16')
 
 
-# Import path utilities for relative path resolution
-try:
-    from ava.core.paths import get_project_root, get_data_dir, get_outputs_dir
-except ImportError:
-    # Fallback for when utils.paths is not available
-    def get_project_root() -> Path:
-        from pathlib import Path
-        current = Path(__file__).resolve()
-        for parent in current.parents:
-            if (parent / ".git").exists() or (parent / ".project").exists():
-                return parent
-        return current.parents[4] if len(current.parts) > 4 else Path.cwd()
+# Always import from centralized paths module
+from ava.core.paths import get_project_root, get_data_dir, get_outputs_dir
 
-    def get_data_dir(data_type: str = "processed") -> Path:
-        return get_project_root() / "code" / "data" / data_type
 
-    def get_outputs_dir() -> Path:
-        return get_project_root() / "code" / "outputs"
-
+# =============================================================================
+# DYNAMIC CONFIG CLASS
+# =============================================================================
 
 class DynamicConfig:
     """
@@ -434,26 +432,186 @@ class DynamicConfig:
         return f"DynamicConfig({self.to_dict()})"
 
 
+# =============================================================================
+# SECTION 1: MODEL
+# Architecture, MoE, tokens, regularization
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# MoE Sub-Configurations (model.moe.*)
+# -----------------------------------------------------------------------------
+
 @dataclass
-class HardwareConfig:
-    """Configuration for hardware settings."""
-    device: str = 'cuda'                      # Device: 'cuda', 'cpu', or 'mps'
-    mixed_precision: str = 'fp32'             # Mixed precision: 'fp32', 'fp16', 'bf16'
-    compile: bool = False                     # Enable torch.compile
-    num_gpus: int = 1                         # Number of GPUs to use for training
+class MoEArchitectureConfig:
+    """Configuration for MoE architecture settings.
 
-    # GPU Load Balancing Settings
-    use_gpu_load_balancing: bool = False      # Enable GPU load balancing for multi-GPU MoE
-    balancing_strategy: str = 'adaptive'      # Load balancing strategy: 'round_robin', 'memory_aware', 'compute_aware', 'adaptive'
-    rebalance_interval: int = 1000            # Steps between load rebalancing checks
-    enable_expert_migration: bool = True      # Allow expert migration between GPUs
-    migration_threshold: float = 0.2          # Load imbalance threshold for migration (0.2 = 20%)
-    log_gpu_metrics: bool = True              # Log per-GPU metrics (memory, compute, etc.)
+    YAML Path: model.moe.architecture.*
+    """
+    num_experts: int = 4                      # Number of experts
+    num_experts_per_token: int = 2            # Top-k experts per token
+    router_type: str = 'mixtral'              # 'mixtral', 'deepseek', 'switch'
+    capacity_factor: float = 1.25             # Expert capacity factor (1.0-2.0)
+    expert_dropout: float = 0.0               # Expert dropout rate
 
+    def __post_init__(self):
+        if self.num_experts <= 0:
+            raise ValueError(f"num_experts must be > 0, got {self.num_experts}")
+        if self.num_experts_per_token <= 0:
+            raise ValueError(f"num_experts_per_token must be > 0, got {self.num_experts_per_token}")
+        if self.num_experts_per_token > self.num_experts:
+            raise ValueError(
+                f"num_experts_per_token ({self.num_experts_per_token}) cannot exceed "
+                f"num_experts ({self.num_experts})"
+            )
+        if self.capacity_factor <= 0:
+            raise ValueError(f"capacity_factor must be > 0, got {self.capacity_factor}")
+
+
+@dataclass
+class MoELossesConfig:
+    """Configuration for MoE auxiliary losses.
+
+    YAML Path: model.moe.losses.*
+    """
+    router_z_loss_coef: float = 0.001         # Router z-loss coefficient
+    load_balance_loss_coef: float = 0.01      # Load balance loss coefficient
+    diversity_loss_coef: float = 0.001        # Diversity loss coefficient
+    expert_dropout_loss_coef: float = 0.0     # Expert dropout loss coefficient
+    router_jitter_noise: float = 0.01         # Router jitter noise for exploration
+    aux_loss_frequency: int = 500             # Compute aux losses every N steps
+    diversity_loss_frequency: int = 100       # Compute diversity loss every N steps
+
+    def __post_init__(self):
+        if self.router_z_loss_coef < 0:
+            raise ValueError(f"router_z_loss_coef cannot be negative, got {self.router_z_loss_coef}")
+        if self.load_balance_loss_coef < 0:
+            raise ValueError(f"load_balance_loss_coef cannot be negative, got {self.load_balance_loss_coef}")
+        if self.diversity_loss_coef < 0:
+            raise ValueError(f"diversity_loss_coef cannot be negative, got {self.diversity_loss_coef}")
+
+
+@dataclass
+class MoEOptimizationConfig:
+    """Configuration for MoE optimization flags.
+
+    YAML Path: model.moe.optimization.*
+    """
+    use_optimized_moe: bool = True            # Use optimized MoE implementation
+    use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
+    use_compile_friendly_dispatch: bool = True  # Use compile-friendly expert dispatch
+    use_fused_moe_kernel: bool = False        # Mega kernel for MoE (advanced)
+    use_sparse_expert_dispatch: bool = False  # Sparse dispatch for efficiency
+    use_selective_expert_loading: bool = False  # Load experts on demand
+    use_vectorized_capacity: bool = True      # Vectorized capacity limiting
+    use_fused_softmax_topk: bool = True       # Fused softmax + top-k kernel
+    router_kernel_mode: str = 'auto'          # 'auto', 'triton', 'pytorch'
+    router_block_size: int = 4                # Tokens per thread block
+
+
+@dataclass
+class MoEPrefetchConfig:
+    """Configuration for MoE expert prefetching.
+
+    YAML Path: model.moe.prefetch.*
+    """
+    enabled: bool = True                      # Enable expert prefetching
+    lookahead: int = 2                        # Number of experts to prefetch ahead
+    use_multiple_streams: bool = True         # Use multiple CUDA streams
+
+
+@dataclass
+class MoECacheConfig:
+    """Configuration for MoE expert caching.
+
+    YAML Path: model.moe.cache.*
+    """
+    auto_limit: bool = True                   # Auto-limit cache size
+    use_lru_eviction: bool = True             # Use LRU eviction policy
+    clear_after_optimizer_step: bool = True   # Clear cache after optimizer step
+
+
+@dataclass
+class MoERouterCompileConfig:
+    """Configuration for MoE router compilation.
+
+    YAML Path: model.moe.router_compile.*
+    """
+    cache_hash_on_gpu: bool = True            # Cache hash computation on GPU
+    compile_routers: bool = True              # Compile routers with torch.compile
+    compile_mode: str = 'default'             # 'default', 'reduce-overhead', 'max-autotune'
+    compile_dynamic: bool = True              # Allow dynamic shapes
+
+
+@dataclass
+class MoEMetricsConfig:
+    """Configuration for MoE metrics tracking.
+
+    YAML Path: model.moe.metrics.*
+    """
+    routing_metrics_freq: int = 100           # Routing metrics logging frequency
+    moe_metrics_freq: int = 5000              # MoE metrics logging frequency
+    log_moe: bool = True                      # Enable MoE logging
+    log_routing_diagnostics: bool = False     # Log detailed routing diagnostics
+    track_expert_utilization: bool = True     # Track expert utilization
+    track_routing_decisions: bool = False     # Track routing decisions
+    track_load_balance: bool = True           # Track load balance
+
+
+@dataclass
+class StableMoEAdaptiveConfig:
+    """Configuration for Stable-MoE adaptive routing.
+
+    YAML Path: model.moe.stable_moe.*
+    """
+    enabled: bool = False                     # Enable stable MoE
+    target_utilization: float = 0.0           # Target expert utilization
+    capacity_min: float = 1.0                 # Minimum capacity factor
+    capacity_max: float = 2.0                 # Maximum capacity factor
+    utilization_tolerance: float = 0.1        # Tolerance for utilization
+    adaptation_rate: float = 0.01             # Adaptation rate
+    temperature_init: float = 1.0             # Initial temperature
+    temperature_min: float = 0.1              # Minimum temperature
+    temperature_decay: float = 0.9999         # Temperature decay rate
+    log_utilization_histogram: bool = True    # Log utilization histogram
+    log_capacity_factors: bool = True         # Log capacity factors
+    log_temperature: bool = True              # Log temperature
+
+
+@dataclass
+class MoEConfig:
+    """Composite configuration for all MoE settings.
+
+    YAML Path: model.moe.*
+
+    This consolidates all MoE-related configuration into a single nested structure.
+    """
+    architecture: MoEArchitectureConfig = field(default_factory=MoEArchitectureConfig)
+    losses: MoELossesConfig = field(default_factory=MoELossesConfig)
+    optimization: MoEOptimizationConfig = field(default_factory=MoEOptimizationConfig)
+    prefetch: MoEPrefetchConfig = field(default_factory=MoEPrefetchConfig)
+    cache: MoECacheConfig = field(default_factory=MoECacheConfig)
+    router_compile: MoERouterCompileConfig = field(default_factory=MoERouterCompileConfig)
+    metrics: MoEMetricsConfig = field(default_factory=MoEMetricsConfig)
+    stable_moe: StableMoEAdaptiveConfig = field(default_factory=StableMoEAdaptiveConfig)
+
+
+# -----------------------------------------------------------------------------
+# Main Model Configuration
+# -----------------------------------------------------------------------------
 
 @dataclass
 class ModelConfig:
-    """Configuration for model architecture and optimizations."""
+    """Configuration for model architecture and optimizations.
+
+    YAML Path: model.*
+
+    This dataclass maps to the 'model' section in YAML configs and includes:
+    - Core architecture (vocab, hidden size, layers, attention heads)
+    - MoE settings (experts, routing, capacity)
+    - Performance optimizations (flash attention, GEMM, Triton)
+    - Auxiliary losses (router z-loss, load balance, diversity)
+    - Regularization (dropout, layer norm)
+    """
     # Architecture
     vocab_size: int = 50680
     hidden_size: int = 1024
@@ -473,7 +631,6 @@ class ModelConfig:
     # Performance optimizations
     use_grouped_gemm: bool = True             # Use grouped GEMM kernels for experts
     use_triton_kernels: bool = True           # Use Triton fused kernels
-    # torch.compile settings moved to compute.performance.enable_torch_compile
     torch_compile_mode: str = 'reduce-overhead'  # 'default', 'reduce-overhead', 'max-autotune'
     torch_compile_dynamic: bool = False       # Allow dynamic shapes (slower but flexible)
     torch_compile_fullgraph: bool = False     # Require full graph (faster but stricter)
@@ -484,13 +641,18 @@ class ModelConfig:
     use_optimized_moe: bool = True            # Use optimized MoE implementation
     quantize_kv_cache: bool = False           # Enable KV cache quantization for memory savings
 
+    # Phase 1 Optimizations (low-risk, high-impact)
+    use_fused_qkv: bool = True                # Fused Q/K/V projection (5-10% attention speedup)
+    use_fused_norm: bool = True               # Fused LayerNorm + residual (8-15% per layer)
+    diversity_loss_frequency: int = 100       # Compute diversity loss every N steps (was 10)
+
     # Auxiliary losses
     router_z_loss_coef: float = 0.0001        # Router z-loss coefficient
     load_balance_loss_coef: float = 0.01      # Load balance loss coefficient
     diversity_loss_coef: float = 0.0001       # Diversity loss coefficient
     expert_dropout_loss_coef: float = 0.0     # Expert dropout loss coefficient
     router_jitter_noise: float = 0.01         # Router jitter noise for exploration
-    aux_loss_frequency: int = 500             # Compute aux losses every N steps (500=fast, 10=detailed monitoring, 1=every step is slow)
+    aux_loss_frequency: int = 500             # Compute aux losses every N steps
 
     # Regularization
     attention_dropout: float = 0.0
@@ -498,17 +660,26 @@ class ModelConfig:
     layer_norm_eps: float = 1e-5
     initializer_range: float = 0.01
 
+    # Special tokens
+    pad_token_id: int = 0
+    eos_token_id: int = 1
+    bos_token_id: int = 2
+
     # Positional encoding
     use_alibi: bool = False                   # Use ALiBi positional encoding instead of absolute
     rope_theta: float = 10000.0               # RoPE base theta for rotary positional embeddings
     rope_scaling: Optional[Dict[str, float]] = None  # RoPE scaling configuration
 
-    def __post_init__(self):
-        """Validate configuration values to catch invalid configs early.
+    # Consolidated MoE Configuration (model.moe.*)
+    # This is the new canonical location for all MoE settings
+    # The flat fields above are kept for backward compatibility
+    moe: Optional[MoEConfig] = None
 
-        FIX: Added comprehensive validations to catch errors at config load time
-        rather than deep in training with cryptic errors.
-        """
+    def __post_init__(self):
+        """Validate configuration values to catch invalid configs early."""
+        # Initialize MoE config if not provided
+        if self.moe is None:
+            self.moe = MoEConfig()
         # Basic positive value checks
         if self.hidden_size <= 0:
             raise ValueError(f"hidden_size must be > 0, got {self.hidden_size}")
@@ -555,621 +726,108 @@ class ModelConfig:
                 f"got '{self.torch_compile_mode}'"
             )
 
-        # Warn about incompatible compile configurations
-        if self.use_torch_compile:
-            import warnings
-            if self.enable_cudagraphs_safe_routing:
-                warnings.warn(
-                    "torch.compile + enable_cudagraphs_safe_routing may conflict. "
-                    "torch.compile already uses CUDA graphs internally with 'reduce-overhead' mode.",
-                    UserWarning
-                )
-            if self.torch_compile_dynamic and self.torch_compile_fullgraph:
-                warnings.warn(
-                    "torch_compile_dynamic=True with torch_compile_fullgraph=True may cause "
-                    "frequent recompilation. Consider setting fullgraph=False for dynamic shapes.",
-                    UserWarning
-                )
+
+# =============================================================================
+# SECTION 2: TRAINING
+# Optimizer, schedule, batching, validation, generation, coherence
+# =============================================================================
+
+@dataclass
+class PrecisionConfig:
+    """Configuration for training precision.
+
+    YAML Path: training.precision.*
+    """
+    mixed_precision: str = 'bf16'             # 'fp32', 'fp16', 'bf16'
+
+
+@dataclass
+class BatchingConfig:
+    """Configuration for batching parameters.
+
+    YAML Path: training.batching.*
+    """
+    batch_size: int = 32                      # Per-GPU batch size
+    gradient_accumulation_steps: int = 1      # Gradient accumulation steps
+
+
+@dataclass
+class OptimizerConfig:
+    """Configuration for optimizer settings.
+
+    YAML Path: training.optimizer.*
+    """
+    type: str = 'adamw'                       # 'adamw', 'adam', 'sgd', 'lion'
+    learning_rate: float = 0.0001             # Learning rate
+    betas: List[float] = field(default_factory=lambda: [0.9, 0.95])
+    weight_decay: float = 0.01                # Weight decay
+    max_grad_norm: float = 1.0                # Maximum gradient norm for clipping
+    use_fused: bool = True                    # Use fused optimizer (5-10% speedup)
+
+
+@dataclass
+class ScheduleConfig:
+    """Configuration for learning rate schedule.
+
+    YAML Path: training.schedule.*
+    """
+    num_epochs: int = 3                       # Number of training epochs
+    max_steps: Optional[int] = None           # Maximum training steps (overrides epochs)
+    steps_per_epoch: Optional[int] = None     # Steps per epoch for scheduler
+    warmup_steps: int = 2000                  # Number of warmup steps
+    scheduler_type: str = 'cosine'            # 'cosine', 'linear', 'constant'
+    num_cycles: int = 1                       # Number of cosine cycles
+    min_lr: float = 0.0                       # Minimum learning rate
+
+
+@dataclass
+class ValidationConfig:
+    """Configuration for validation during training.
+
+    YAML Path: training.validation.*
+    """
+    enabled: bool = True                      # Enable validation
+    batch_size: int = 16                      # Validation batch size
+    max_batches: int = 20                     # Maximum validation batches
+    compute_train_ratio: bool = True          # Compute train/val loss ratio
 
 
 @dataclass
 class GenerationConfig:
-    """Configuration for text generation."""
+    """Configuration for text generation during training.
+
+    YAML Path: training.generation.*
+    """
+    enabled: bool = True                      # Enable generation
+    generate_every_n_steps: int = 1000        # Generation frequency
+    num_per_step: int = 1                     # Samples per generation step
+    num_return_sequences: int = 1             # Sequences per prompt
+    during_eval: bool = True                  # Generate during evaluation
+    test_quality: bool = True                 # Test generation quality
     max_length: int = 512                     # Maximum generation length
     min_length: int = 10                      # Minimum generation length
-    temperature: float = 0.8                  # Sampling temperature (lower = more coherent)
+    temperature: float = 0.8                  # Sampling temperature
     top_p: float = 0.9                        # Nucleus sampling threshold
-    top_k: Optional[int] = 50                 # Top-k sampling (None = disabled)
-    repetition_penalty: float = 1.2           # Repetition penalty (>1.0 discourages)
+    top_k: Optional[int] = 50                 # Top-k sampling
+    repetition_penalty: float = 1.2           # Repetition penalty
     no_repeat_ngram_size: int = 3             # Block n-gram repetitions
-    do_sample: bool = True                    # Enable sampling (vs greedy)
-    num_beams: int = 1                        # Beam search width (1 = no beam search)
+    do_sample: bool = True                    # Enable sampling
+    num_beams: int = 1                        # Beam search width
     early_stopping: bool = False              # Stop when all beams finish
-
-
-@dataclass
-class ArchitectureConfig:
-    """Configuration for architecture enhancements.
-
-    IMPORTANT: Defaults should be False/minimal to allow YAML config to control features.
-    Only enable features when explicitly requested in YAML config.
-    """
-    use_moh: bool = False                     # Mixture of Heads (disabled by default)
-    use_moa: bool = False                     # Mixture of Activations (disabled by default)
-    use_cross_attention: bool = False         # Multi-modal cross-attention (disabled by default)
-    use_alibi: bool = False                   # ALiBi positional encoding (disabled by default)
-    expert_routing_type: str = 'switch'       # Expert routing type
-
-
-@dataclass
-class RAGConfig:
-    """Configuration for RAG (Retrieval Augmented Generation) system.
-
-    RAG enhances the model by retrieving relevant documents from a
-    knowledge base and incorporating them into the generation process.
-
-    Supported retrievers:
-        - faiss: Fast similarity search using Facebook's FAISS library
-        - chromadb: Persistent vector store with optional embedding functions
-        - memory: Simple in-memory retriever for testing
-
-    Supported fusion strategies:
-        - attention: Cross-attention over retrieved documents
-        - concat: Concatenate and project
-        - gated: Learnable gate for context mixing
-        - adaptive: Combines multiple strategies with learned routing
-    """
-    use_rag: bool = False                     # Enable RAG (disabled by default - YAML controls)
-    knowledge_base_path: Optional[str] = None  # KB path (alias for index_path)
-    max_retrieved_docs: int = 5               # Max retrieved documents (alias for top_k)
-    rag_fusion_type: str = 'attention'        # Fusion strategy: attention, concat, gated, adaptive
-
-    # Retriever settings
-    retriever_type: str = 'faiss'             # Retriever backend: faiss, chromadb, memory
-    index_path: Optional[str] = None          # Path to pre-built vector index
-    embedding_dim: int = 768                  # Dimension of document embeddings
-    embedding_model: str = 'sentence-transformers/all-MiniLM-L6-v2'  # Model for encoding
-    normalize_embeddings: bool = True         # L2-normalize for cosine similarity
-
-    # ChromaDB-specific settings
-    chromadb_persist_dir: Optional[str] = None  # Persistent storage directory
-    chromadb_collection: str = 'ava_rag'        # Collection name
-
-    # Fusion settings
-    fusion_dropout: float = 0.1               # Dropout in fusion layers
-    fusion_num_heads: int = 8                 # Attention heads for cross-attention fusion
-    fusion_layer: str = 'all'                 # Where to apply fusion: 'all', 'last', or layer index
-
-    # Retrieval settings
-    retrieval_mode: str = 'once'              # 'once' (at start) or 'per_layer'
-    query_strategy: str = 'first_token'       # How to create query: 'first_token', 'mean', 'cls'
-
-
-@dataclass
-class AdaptiveMTPConfig:
-    """Configuration for Adaptive Multi-Token Prediction."""
-    # Enable/disable adaptive MTP
-    use_adaptive_mtp: bool = False            # Enable adaptive MTP system
-
-    # Core MTP settings
-    num_prediction_heads: int = 3             # Number of future tokens to predict (2-4)
-    confidence_threshold_train: float = 0.6   # Confidence threshold during training
-    confidence_threshold_inference: float = 0.7  # Threshold during inference (higher)
-
-    # Confidence gate settings
-    gate_hidden_dims: str = "512,256"         # Hidden dims for gate MLP (comma-separated)
-    gate_dropout: float = 0.1                 # Dropout in confidence gate
-    gate_activation: str = 'gelu'             # Activation function
-    use_attention_pooling: bool = False       # Use attention pooling in gate
-
-    # Prediction head settings
-    head_type: str = 'linear'                 # 'linear' or 'mlp'
-    head_intermediate_size: Optional[int] = None  # Intermediate size for MLP heads
-    head_dropout: float = 0.1                 # Dropout in prediction heads
-    share_projections: bool = False           # Share weights across heads
-
-    # Training settings
-    mtp_warmup_epochs: int = 2                # Train only primary head for first N epochs
-    confidence_reg_strength: float = 0.01     # Regularization for confident predictions
-
-    # Loss weighting
-    use_confidence_weighting: bool = False    # Weight losses by confidence (YAML controls)
-    primary_loss_weight: float = 1.0          # Primary token always gets full weight
-    additional_loss_base_weight: float = 0.1  # Base weight for additional tokens
-
-    # Efficiency settings
-    enable_dynamic_prediction: bool = False   # Skip MTP when low confidence (YAML controls)
-    min_confidence_for_computation: float = 0.3  # Don't compute heads below this
-
-
-@dataclass
-class LossConfig:
-    """Configuration for advanced loss functions."""
-    use_focal_loss: bool = False              # Focal loss (disabled by default - YAML controls)
-    use_contrastive_loss: bool = False        # Contrastive loss (disabled by default)
-    use_diversity_loss: bool = False          # Diversity loss (disabled by default)
-    adaptive_loss_scaling: bool = False       # Adaptive loss scaling (disabled by default)
-
-    # Multi-token prediction settings (DeepSeek-style)
-    use_multi_token_prediction: bool = False  # Enable MTP loss (disabled by default - YAML controls)
-    num_future_tokens: int = 3                # Number of future tokens to predict
-    mtp_weight: float = 0.1                   # Weight for MTP loss
-
-    # Temperature scaling settings
-    initial_temperature: float = 1.0          # Initial temperature for scaling
-    adaptive_temperature: bool = False        # Adapt temperature based on training (disabled by default)
-    label_smoothing: float = 0.0              # Label smoothing factor (0 = disabled by default)
-
-    # MoE balancing settings
-    use_moe_balancing: bool = False           # Enable auxiliary-free MoE balancing (YAML controls)
-    gradient_balance_weight: float = 0.0      # Weight for gradient-based balancing
-    use_auxiliary_loss: bool = False          # Use traditional auxiliary loss (YAML controls)
-
-    # N-gram repetition blocking (disabled by default for speed, YAML controls)
-    use_ngram_penalty: bool = False           # Enable n-gram repetition detection (YAML controls)
-    ngram_size: int = 3                       # Size of n-grams to detect
-    ngram_penalty_weight: float = 0.0         # Weight for n-gram repetition penalty
-    use_immediate_repetition_detector: bool = False  # Detect consecutive token repetition (YAML controls)
-    immediate_repetition_weight: float = 0.0  # Weight for immediate repetition penalty
-
-
-@dataclass
-class GradientConfig:
-    """Configuration for gradient surgery."""
-    gradient_surgery: bool = False            # Enable gradient surgery (disabled by default)
-    adaptive_gradient_surgery: bool = False   # Adaptive method selection (disabled by default)
-    gradient_surgery_method: str = 'pcgrad'   # Surgery method
-
-
-@dataclass
-class RetryConfig:
-    """Configuration for retry logic in pipeline error handling."""
-    max_retries: int = 3                      # Maximum retry attempts per component
-    initial_backoff: float = 1.0              # Initial backoff delay in seconds
-    backoff_multiplier: float = 2.0           # Multiplier for exponential backoff
-    max_backoff: float = 60.0                 # Maximum backoff delay in seconds
-    jitter: bool = True                       # Add random jitter to backoff
-    jitter_factor: float = 0.1                # Jitter as fraction of backoff (0.0-1.0)
-    retry_on_oom: bool = True                 # Retry on CUDA OOM errors
-    reduce_batch_on_oom: bool = True          # Reduce batch size on OOM retry
-
-
-@dataclass
-class EvaluationConfig:
-    """Configuration for evaluation during training."""
-    eval_during_training: bool = False        # Enable evaluation (disabled by default - YAML controls)
-    eval_metrics: Optional[str] = None        # Comma-separated metrics
-    eval_frequency: int = 500                 # Evaluation frequency (steps)
-
-
-@dataclass
-class QuantizationConfig:
-    """Configuration for quantization."""
-    quantization_aware: bool = False          # QAT training
-    bit_width: int = 8                        # Quantization bits
-    use_nvfp4: bool = False                   # NVFP4 training
-    nvfp4_block_size: int = 16               # NVFP4 block size
-    stochastic_rounding: bool = False         # Stochastic rounding
-    use_hadamard_transform: bool = False      # Hadamard transforms
-    use_torchao_nvfp4: bool = False          # TorchAO NVFP4
-
-
-@dataclass
-class HybridCachingConfig:
-    """Configuration for hybrid KV + activation caching."""
-    enabled: bool = False
-    max_cache_size_gb: float = 1.0
-    kv_cache_ratio: float = 0.7               # Ratio for KV vs activation cache
-    eviction_policy: str = 'hybrid'           # 'lru', 'lfu', 'hybrid'
-    prefetch_enabled: bool = True
-    prefetch_lookahead: int = 2
-    min_score_threshold: float = 0.1
-
-
-@dataclass
-class CudaStreamsConfig:
-    """Configuration for CUDA stream optimizations."""
-    enabled: bool = False
-    num_streams: int = 4                      # Stream pool size
-    use_event_timing: bool = True             # Use CUDA events for timing
-    use_stream_pool: bool = True              # Reuse streams
-    high_priority_transfers: bool = True      # Priority for CPU<->GPU transfers
-
-
-@dataclass
-class OverlappedCheckpointingConfig:
-    """Configuration for overlapped gradient checkpointing."""
-    enabled: bool = False
-    stream_overlap: bool = True               # Use CUDA streams for overlapping
-    target_layers: str = 'layers'             # Which layers to apply to
-
-
-@dataclass
-class DoubleCheckpointingConfig:
-    """Configuration for double (nested) gradient checkpointing."""
-    enabled: bool = False
-    coarse_checkpoint_interval: int = 8       # Outer checkpoint interval
-    fine_checkpoint_interval: int = 2         # Inner checkpoint interval
-    use_cuda_streams: bool = True
-
-
-@dataclass
-class FP8Config:
-    """Configuration for FP8 training (Hopper/Ada GPUs only).
-
-    FP8 provides 2-3x speedup on supported hardware (H100, L40, RTX 4090+).
-
-    Backward pass optimization (new):
-    - backward_enabled: Enable FP8 for gradient computation
-    - backward_format: Use e5m2 for gradients (higher dynamic range)
-    - exclude_layers: Skip FP8 for sensitive layers
-    """
-    enabled: bool = False
-    use_transformer_engine: bool = False
-    format: str = 'e4m3'                      # 'e4m3' or 'e5m2' for forward
-    margin: int = 0                           # Scale margin
-
-    # Backward pass FP8 optimization
-    backward_enabled: bool = False            # Enable FP8 for backward pass
-    backward_format: str = 'e5m2'             # 'e5m2' recommended for gradients (higher range)
-    exclude_layers: List[str] = field(default_factory=lambda: ['embedding', 'lm_head'])
-    gradient_scaling_strategy: str = 'per_tensor'  # 'per_tensor' or 'per_channel'
-    amax_history_len: int = 1024              # History for dynamic scaling
-    amax_compute_algo: str = 'max'            # 'max' or 'most_recent'
-
-
-@dataclass
-class SYMIConfig:
-    """Configuration for SYMI optimizer decoupling (arXiv 2504.19925).
-
-    SYMI (State-Yield Method for MoE Inference/training) decouples optimizer
-    states (momentum, variance) from expert parameters for ~30% training speedup.
-
-    Key insight: Static partitioning of optimizer state across workers while
-    allowing dynamic expert parameter placement reduces memory and sync overhead.
-
-    Best for multi-GPU training. Limited benefit on single GPU.
-    """
-    enabled: bool = False                      # Enable SYMI decoupling
-    num_partitions: int = 0                    # State partitions (0 = auto = num_gpus)
-    sync_frequency: int = 100                  # Steps between full state sync
-    use_async_sync: bool = True                # Async state transfer during backward
-    gradient_averaging: str = 'partition'      # 'partition' or 'global' averaging
-    state_precision: str = 'fp32'              # Optimizer state dtype
-    enable_checkpointing: bool = True          # Checkpoint partitioned states
-
-
-@dataclass
-class Sparse24Config:
-    """Configuration for 2:4 activation sparsity (arXiv 2503.16672).
-
-    2:4 structured sparsity leverages NVIDIA Tensor Cores on Ampere+ GPUs.
-    Every 4 contiguous elements have exactly 2 zeros, enabling hardware-
-    accelerated sparse matmul with 2x throughput and near-lossless accuracy.
-
-    Provides 1.2-1.3x speedup on Ampere+ GPUs (SM >= 8.0: A100, RTX 3090, etc.)
-    Falls back to dense computation on older hardware.
-    """
-    enabled: bool = False                      # Enable 2:4 sparsity
-    warmup_steps: int = 1000                   # Steps before enabling sparsity
-    apply_to_gate: bool = True                 # Apply to gate projection
-    apply_to_up: bool = True                   # Apply to up projection
-    apply_to_down: bool = False                # Apply to down projection (usually dense)
-    use_ste_scaling: bool = True               # Gradient scaling in STE
-    ste_scale_factor: float = 1.0              # STE gradient multiplier
-    sparsity_granularity: str = 'activation'   # 'activation' or 'weight' sparsity
-    use_triton_kernel: bool = True             # Use Triton kernel (fallback: cuSPARSELt)
-    log_sparsity_stats: bool = False           # Log sparsity statistics
-
-
-@dataclass
-class StableMoEConfig:
-    """Configuration for Stable-MoE routing (arXiv 2512.06784).
-
-    Uses Lyapunov-based load balancing with adaptive capacity factors and
-    temperature annealing for 40% throughput improvement over fixed capacity.
-
-    Key innovation: Control-theoretic approach maintains expert utilization
-    within target bounds with stability guarantees, replacing fixed aux losses.
-    """
-    enabled: bool = False                      # Enable Stable-MoE routing
-    target_utilization: float = 0.0            # Target per-expert util (0 = auto = 1/E)
-    utilization_tolerance: float = 0.1         # Allowed deviation from target
-    adaptation_rate: float = 0.01              # Lyapunov controller gain
-
-    # Temperature annealing for exploration/exploitation
-    temperature_init: float = 1.0              # Initial routing temperature
-    temperature_min: float = 0.1               # Minimum temperature
-    temperature_decay: float = 0.9999          # Per-step temperature decay
-
-    # Adaptive capacity bounds
-    capacity_min: float = 1.0                  # Minimum capacity factor
-    capacity_max: float = 2.0                  # Maximum capacity factor
-
-    # Metrics
-    log_utilization_histogram: bool = True     # Log per-expert utilization
-    log_capacity_factors: bool = True          # Log adaptive capacities
-    log_temperature: bool = True               # Log temperature schedule
-
-
-@dataclass
-class MoEMetricsConfig:
-    """Configuration for MoE-specific metrics tracking."""
-    track_expert_utilization: bool = True
-    log_frequency: int = 50
-    track_routing_decisions: bool = False
-    track_load_balance: bool = True
-
-
-@dataclass
-class LRFinderConfig:
-    """Configuration for Learning Rate Finder."""
-    run_lr_finder: bool = False              # Run LR Finder before training
-    start_lr: float = 1e-8                   # Starting LR for search
-    end_lr: float = 1.0                      # Ending LR for search
-    num_iterations: int = 100                # Number of iterations to test
-    suggestion_method: str = 'steepest'      # Method for suggesting LR
-    use_suggested_lr: bool = False           # Automatically use suggested LR
-    plot_path: Optional[str] = None          # Path to save plot
-    smooth_beta: float = 0.98                # Loss smoothing factor
-    stop_div_threshold: float = 4.0          # Stop if loss diverges
-
-
-@dataclass
-class EpisodicMemoryConfig:
-    """Configuration for episodic memory.
-
-    Implements prioritized experience replay for continual learning.
-    Samples with higher loss are replayed more frequently, with
-    importance sampling weights to correct for the sampling bias.
-
-    Priority Calculation:
-        P(i) = priority_i^alpha / sum(priority_j^alpha)
-        where alpha = priority_exponent
-
-    Importance Sampling Weights:
-        w_i = (N * P(i))^(-beta) / max(w)
-        where beta = importance_weight_exponent
-    """
-    use_episodic_memory: bool = False         # Enable episodic memory (disabled by default)
-    memory_capacity: int = 1000               # Memory capacity (buffer size)
-    memory_selection_strategy: str = 'importance'  # Selection strategy: 'importance' or 'uniform'
-    memory_importance_threshold: float = 0.5  # Importance threshold for filtering
-    memory_retrieval_method: str = 'cosine'   # Retrieval method for similarity
-    memory_replay_ratio: float = 0.2          # Ratio of replay samples per batch (0.2 = 20%)
-    memory_replay_strategy: str = 'importance'  # Replay strategy: 'importance' or 'uniform'
-    memory_adaptation_rate: float = 0.01      # Adaptation rate for priority updates
-    memory_performance_window: int = 100      # Window for performance tracking
-    task_id: int = 0                          # Task ID for multi-task learning
-    silent_mode: bool = False                 # Suppress memory warnings in console
-    enable_auto_grad_accumulation: bool = False  # Enable auto gradient accumulation adjustment
-
-    # Prioritized replay parameters (Schaul et al., 2015)
-    priority_exponent: float = 0.6            # Alpha: controls prioritization (0=uniform, 1=full priority)
-    importance_weight_exponent: float = 0.4   # Beta: controls IS weight correction (0=none, 1=full)
-    buffer_warmup_steps: int = 100            # Steps before replay starts (let buffer fill)
-    store_aux_info: bool = False              # Store MoE routing info per sample (memory intensive)
-
-
-@dataclass
-class DataConfig:
-    """Configuration for data handling."""
-    data_dir: str = field(default_factory=lambda: str(get_data_dir("processed")))  # Data directory
-    max_length: int = 512                     # Max sequence length
-    tokenizer_name: Optional[str] = None      # Tokenizer name or path
-    max_samples: Optional[int] = None         # Max samples (testing)
-    streaming: bool = False                   # Streaming loader (YAML controls)
-    buffer_size: int = 50000                  # Streaming buffer size (optimized for LLM pretraining)
-    num_workers: int = 0                      # Default 0 (safe). Set to 8+ in config for better throughput
-    prefetch_factor: int = 4                  # Batches to prefetch per worker (4 is optimal)
-    persistent_workers: bool = True           # Keep workers alive between epochs (avoids spawn overhead)
-    padding_side: str = 'right'               # Tokenizer padding side
-    truncation: bool = True                   # Enable truncation
-    max_train_examples: Optional[int] = None  # Max training examples
-    max_eval_examples: Optional[int] = None   # Max evaluation examples
-    dataloader_drop_last: bool = False        # Drop last incomplete batch
-    dataloader_pin_memory: bool = True        # Pin memory for faster GPU transfer (recommended)
-    default_tokenizer_name: str = 'Qwen/Qwen2.5-0.5B'  # Default tokenizer if none specified
-
-    # Sequence packing for improved throughput
-    use_sequence_packing: bool = False        # Enable sequence packing
-    packing_strategy: str = 'greedy'          # Packing strategy: 'greedy' or 'adaptive'
-    max_tokens_per_batch: Optional[int] = None  # Max tokens per batch
-
-    # Dataset splits and validation
-    train_split: str = 'train'                # Training split name
-    eval_split: str = 'validation'            # Evaluation split name
-    auto_create_validation_split: bool = True # Auto-create validation split
-    validation_split_ratio: float = 0.1       # Validation split ratio
-    val_split_ratio: float = 0.1              # Alias for validation_split_ratio
-    val_max_samples: Optional[int] = None     # Max validation samples
-
-    # Additional dataloader settings
-    dataloader_persistent_workers: bool = False  # Persistent workers
-    dataloader_samples_per_file: int = 64     # Samples per file rotation
-    samples_per_file: int = 64                # Alias for dataloader_samples_per_file
-    use_streaming_tokenization: bool = False  # Use streaming tokenization
-    enable_bucketing: bool = True             # Enable sequence bucketing
-    dataset_name: Optional[str] = None        # Dataset name
-
-    # Randomization control (NEW)
-    shuffle_seed: Optional[int] = None        # Global shuffle seed (None = non-deterministic)
-    enable_length_sorting: bool = True        # Enable length sorting in distributed mode
-    disable_packing_length_sort: bool = False # Disable length sorting in packing
-    examples_per_random_select: int = 100     # Examples per file selection (higher = better I/O locality, 50-200 recommended)
-
-    # Indexed loader (map-style with true random shuffling)
-    use_indexed_loader: bool = False          # Enable IndexedArrowDataset (true random access)
-    indexed_num_bins: int = 8                 # Number of length bins for sampling
-    indexed_cache_size: int = 50              # Arrow table LRU cache size per worker
-    indexed_index_workers: Optional[int] = None  # Parallel workers for indexing (None = auto)
-
-    # Fast startup options (reduce overhead) - PERF: defaults optimized for speed
-    fast_startup: bool = False                # Skip all validation and stats for fastest startup
-    skip_sequence_count: bool = True          # Skip dataset stats logging at startup (saves 10-30s)
-    skip_dataloader_validation: bool = True   # Skip 5-batch validation at startup (saves 1-2s)
-
-
-@dataclass
-class MultiColumnDataConfig:
-    """Configuration for multi-column data."""
-    use_multi_column: bool = False            # Enable multi-column
-    dataset_config: Optional[str] = None      # Dataset config file
-    hf_dataset: Optional[str] = None          # HuggingFace dataset
-    hf_dataset_config: Optional[str] = None   # HF dataset config
-    column_names: Optional[str] = None        # Column names
-    column_types: Optional[str] = None        # Column types
-    column_roles: Optional[str] = None        # Column roles
-    combine_strategy: str = 'concatenate'     # Combination strategy
-    column_template: Optional[str] = None     # Column template
-
-
-@dataclass
-class ProgressiveTrainingConfig:
-    """Configuration for progressive training features."""
-    enable_progressive_training: bool = False    # Enable progressive training
-
-    # Sequence length scaling (5.1 fixes)
-    enable_sequence_scaling: bool = False
-    initial_seq_length: int = 128
-    final_seq_length: int = 2048
-    length_schedule: str = "linear"
-    length_growth_epochs: int = 10
-    enable_length_bucketing: bool = False     # YAML controls
-
-    # Difficulty scoring (5.2 fixes)
-    enable_curriculum: bool = False
-    curriculum_metric: str = "loss"
-    enable_score_caching: bool = False        # YAML controls
-    cache_dir: str = field(default_factory=lambda: str(Path.home() / ".cache" / "ava_difficulty"))
-    cache_version: str = "v1.0"
-
-
-
-@dataclass
-class CalibrationConfig:
-    """Configuration for enhanced calibration system for dynamic batching.
-
-    The calibration system profiles GPU memory and throughput at training start
-    to enable more accurate batch size predictions and better GPU utilization.
-    """
-    # Enable/disable calibration
-    enabled: bool = True
-
-    # Calibration phases
-    run_memory_profiling: bool = True           # Profile memory at different batch/seq configs
-    run_backward_profiling: bool = True         # Measure actual backward/forward memory ratio
-    run_throughput_profiling: bool = True       # Profile throughput to find optimal batch size
-
-    # Thorough profiling grid (7x7 = 49 combinations)
-    batch_sizes_to_profile: List[int] = field(default_factory=lambda: [4, 8, 16, 32, 64, 128, 256])
-    seq_lengths_to_profile: List[int] = field(default_factory=lambda: [32, 64, 128, 256, 512, 1024, 2048])
-    num_samples_per_config: int = 3             # Measurements per configuration
-
-    # Persistence - both global cache AND run-local
-    cache_enabled: bool = True
-    cache_dir: str = "~/.cache/ava_calibration"  # Global cache for fast reuse
-    save_to_run_dir: bool = True                # Also save to outputs/runs/<run>/calibration/
-    cache_ttl_hours: int = 168                  # 1 week TTL
-
-    # Safety
-    max_calibration_time_seconds: int = 300     # 5 min max for thorough profiling
-
-
-@dataclass
-class TrainingConfig:
-    """Configuration for training parameters."""
-    batch_size: Optional[int] = None          # Batch size
-    epochs: Optional[int] = None              # Number of epochs
-    learning_rate: Optional[float] = None     # Learning rate
-    gradient_accumulation: int = 1            # Gradient accumulation (legacy)
-    gradient_accumulation_steps: int = 1      # Gradient accumulation steps (preferred)
-    max_gradient_norm: float = 1.0            # Maximum gradient norm for clipping
-
-    # Learning rate schedule
-    warmup_steps: int = 2000                  # Number of warmup steps
-    max_steps: Optional[int] = None           # Maximum training steps
-
-    # Adaptive LR configuration
-    adaptive_lr: dict = field(default_factory=dict)  # Adaptive learning rate settings
-
-    # Progressive training
-    progressive: ProgressiveTrainingConfig = field(default_factory=ProgressiveTrainingConfig)
-
-    def __post_init__(self):
-        """Validate training configuration values.
-
-        FIX: Added comprehensive validations to catch config errors early.
-        """
-        # Batch size validation (if specified)
-        if self.batch_size is not None and self.batch_size <= 0:
-            raise ValueError(f"batch_size must be > 0, got {self.batch_size}")
-
-        # Gradient accumulation must be positive
-        if self.gradient_accumulation_steps <= 0:
-            raise ValueError(f"gradient_accumulation_steps must be > 0, got {self.gradient_accumulation_steps}")
-        if self.gradient_accumulation <= 0:
-            raise ValueError(f"gradient_accumulation must be > 0, got {self.gradient_accumulation}")
-
-        # Learning rate validation (if specified)
-        if self.learning_rate is not None and self.learning_rate <= 0:
-            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
-
-        # Warmup steps must be non-negative
-        if self.warmup_steps < 0:
-            raise ValueError(f"warmup_steps cannot be negative, got {self.warmup_steps}")
-
-        # Max steps validation (if specified)
-        if self.max_steps is not None and self.max_steps <= 0:
-            raise ValueError(f"max_steps must be > 0 if specified, got {self.max_steps}")
-
-        # Epochs validation (if specified)
-        if self.epochs is not None and self.epochs <= 0:
-            raise ValueError(f"epochs must be > 0 if specified, got {self.epochs}")
-
-        # Max gradient norm must be positive
-        if self.max_gradient_norm <= 0:
-            raise ValueError(f"max_gradient_norm must be > 0, got {self.max_gradient_norm}")
-
-
-@dataclass
-class OutputConfig:
-    """Configuration for output handling."""
-    output_dir: str = field(default_factory=lambda: str(get_outputs_dir()))  # Output directory
-    save_every: int = 100                     # Save frequency
-    resume: Optional[str] = None              # Resume checkpoint
-    fresh_start: bool = False                 # Force fresh start, ignore checkpoints
-
-
-@dataclass
-class RunManagementConfig:
-    """Configuration for run management."""
-    run_name: Optional[str] = None            # Custom run name
-    run_tags: Optional[str] = None            # Run tags
-    run_description: Optional[str] = None     # Run description
-    disable_run_manager: bool = False         # Disable run manager
-
-
-@dataclass
-class WandBConfig:
-    """Configuration for Weights & Biases."""
-    use_wandb: bool = False                   # Enable WandB (YAML controls)
-    disable_wandb: bool = False               # Disable WandB
-    wandb_offline: bool = False               # Force WandB offline mode
-    wandb_project: str = 'Ava'                # WandB project
-    wandb_name: Optional[str] = None          # WandB run name
-    wandb_tags: List[str] = field(default_factory=lambda: ['moe', 'training'])
-    wandb_log_freq: int = 10                  # Log frequency
-    wandb_cache_size: int = 2000             # Cache size
-    wandb_cache_flush_interval: int = 50     # Cache flush interval
+    skip_special_tokens: bool = True          # Skip special tokens in output
+    prompt: str = "Once upon a time"          # Default generation prompt
+    alternative_prompts: List[str] = field(default_factory=list)
 
 
 @dataclass
 class CoherenceConfig:
-    """Configuration for coherence measurement during training evaluation."""
-    enabled: bool = True                      # Enable coherence measurement (detect issues early)
+    """Configuration for coherence measurement during training.
+
+    YAML Path: training.coherence.*
+    """
+    enabled: bool = True                      # Enable coherence measurement
     eval_every_n_steps: int = 500             # Measure coherence every N steps
-    num_samples: int = 10                     # Number of samples to generate for evaluation
+    num_samples: int = 10                     # Number of samples for evaluation
     max_generation_length: int = 256          # Max tokens to generate
 
     # Metric weights for aggregate score
@@ -1181,7 +839,7 @@ class CoherenceConfig:
     # Thresholds
     max_perplexity: float = 100.0             # Cap perplexity for scoring
     ngram_sizes: List[int] = field(default_factory=lambda: [2, 3, 4])
-    min_sentence_length: int = 5              # Min tokens to consider a sentence
+    min_sentence_length: int = 5              # Min tokens for a sentence
 
     # Generation parameters
     temperature: float = 0.8
@@ -1189,8 +847,11 @@ class CoherenceConfig:
     top_k: int = 50
 
     # Logging
-    log_to_wandb: bool = True                 # Log coherence metrics to WandB
-    log_to_console: bool = True               # Log coherence metrics to console
+    log_to_wandb: bool = True
+    log_to_console: bool = True
+    use_fast: bool = True
+    use_bf16: bool = True
+    micro_batch_size: int = 16
 
     def __post_init__(self):
         """Validate configuration values."""
@@ -1200,9 +861,7 @@ class CoherenceConfig:
             self.flow_weight +
             self.topic_weight
         )
-        if not (0.99 <= weights_sum <= 1.01):  # Allow small floating point tolerance
-            import logging
-            logger = logging.getLogger(__name__)
+        if not (0.99 <= weights_sum <= 1.01):
             logger.warning(
                 f"CoherenceConfig weights sum to {weights_sum:.4f}, not 1.0. "
                 f"Coherence scores may be outside [0,1] range."
@@ -1210,43 +869,597 @@ class CoherenceConfig:
 
 
 @dataclass
-class ModelSelectionConfig:
-    """Configuration for multi-metric model selection.
+class TrainingLoggingConfig:
+    """Configuration for training-specific logging settings.
 
-    Combines val_loss, coherence_score, and perplexity into a weighted
-    quality score for determining the best model checkpoint.
+    YAML Path: training.logging.*
     """
-    # Enable/disable multi-metric selection
+    save_steps: int = 500                     # Save checkpoint every N steps
+    eval_steps: int = 500                     # Evaluate every N steps
+    logging_steps: int = 10                   # Log metrics every N steps
+    use_tensorboard: bool = False             # Enable TensorBoard
+    use_wandb: bool = True                    # Enable WandB
+
+
+@dataclass
+class ProgressiveTrainingConfig:
+    """Configuration for progressive training features.
+
+    YAML Path: training.progressive.*
+    """
+    enable_progressive_training: bool = False    # Enable progressive training
+
+    # Sequence length scaling
+    enable_sequence_scaling: bool = False
+    initial_seq_length: int = 128
+    final_seq_length: int = 2048
+    length_schedule: str = "linear"
+    length_growth_epochs: int = 10
+    enable_length_bucketing: bool = False
+
+    # Difficulty scoring
+    enable_curriculum: bool = False
+    curriculum_metric: str = "loss"
+    enable_score_caching: bool = False
+    cache_dir: str = field(default_factory=lambda: str(Path.home() / ".cache" / "ava_difficulty"))
+    cache_version: str = "v1.0"
+
+
+@dataclass
+class AdaptiveLRConfig:
+    """Configuration for adaptive learning rate settings.
+
+    YAML Path: training.adaptive_lr.*
+    """
+    enabled: bool = False
+    min_lr: float = 1e-6
+    max_lr: float = 1e-3
+    patience: int = 5
+    factor: float = 0.5
+
+
+@dataclass
+class TrainingSectionConfig:
+    """Composite configuration for the training section.
+
+    YAML Path: training.*
+
+    Contains all training-related sub-configs organized to match YAML structure.
+    """
+    precision: PrecisionConfig = field(default_factory=PrecisionConfig)
+    batching: BatchingConfig = field(default_factory=BatchingConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
+    coherence: CoherenceConfig = field(default_factory=CoherenceConfig)
+    logging: TrainingLoggingConfig = field(default_factory=TrainingLoggingConfig)
+    progressive: ProgressiveTrainingConfig = field(default_factory=ProgressiveTrainingConfig)
+    adaptive_lr: AdaptiveLRConfig = field(default_factory=AdaptiveLRConfig)
+
+    # Legacy flat fields for backward compatibility
+    batch_size: Optional[int] = None
+    epochs: Optional[int] = None
+    learning_rate: Optional[float] = None
+    gradient_accumulation: int = 1
+    gradient_accumulation_steps: int = 1
+    max_gradient_norm: float = 1.0
+    warmup_steps: int = 2000
+    max_steps: Optional[int] = None
+
+    def __post_init__(self):
+        """Validate training configuration values."""
+        # Batch size validation (if specified)
+        if self.batch_size is not None and self.batch_size <= 0:
+            raise ValueError(f"batch_size must be > 0, got {self.batch_size}")
+
+        # Gradient accumulation must be positive
+        if self.gradient_accumulation_steps <= 0:
+            raise ValueError(f"gradient_accumulation_steps must be > 0, got {self.gradient_accumulation_steps}")
+
+        # Warmup steps must be non-negative
+        if self.warmup_steps < 0:
+            raise ValueError(f"warmup_steps cannot be negative, got {self.warmup_steps}")
+
+
+# Legacy alias for backward compatibility
+TrainingConfig = TrainingSectionConfig
+
+
+# =============================================================================
+# SECTION 3: DATA
+# Loading, streaming, packing, splits
+# =============================================================================
+
+@dataclass
+class DataConfig:
+    """Configuration for data handling.
+
+    YAML Path: data.*
+    """
+    data_dir: str = field(default_factory=lambda: str(get_data_dir("processed")))
+    max_length: int = 512                     # Max sequence length
+    tokenizer_name: Optional[str] = None      # Tokenizer name or path
+    max_samples: Optional[int] = None         # Max samples (testing)
+    streaming: bool = False                   # Streaming loader
+    buffer_size: int = 50000                  # Streaming buffer size
+    num_workers: int = 0                      # Data loading workers
+    prefetch_factor: int = 4                  # Batches to prefetch per worker
+    persistent_workers: bool = True           # Keep workers alive between epochs
+    padding_side: str = 'right'               # Tokenizer padding side
+    truncation: bool = True                   # Enable truncation
+    max_train_examples: Optional[int] = None  # Max training examples
+    max_eval_examples: Optional[int] = None   # Max evaluation examples
+    dataloader_drop_last: bool = False        # Drop last incomplete batch
+    dataloader_pin_memory: bool = True        # Pin memory for faster GPU transfer
+    default_tokenizer_name: str = 'Qwen/Qwen2.5-0.5B'  # Default tokenizer
+
+    # Sequence packing
+    use_sequence_packing: bool = False        # Enable sequence packing
+    packing_strategy: str = 'greedy'          # 'greedy' or 'adaptive'
+    max_tokens_per_batch: Optional[int] = None
+    packing_target_ratio: float = 0.95
+
+    # Dataset splits
+    train_split: str = 'train'
+    eval_split: str = 'validation'
+    auto_create_validation_split: bool = True
+    validation_split_ratio: float = 0.1
+    val_split_ratio: float = 0.1
+    val_max_samples: Optional[int] = None
+
+    # Additional settings
+    dataloader_persistent_workers: bool = False
+    dataloader_samples_per_file: int = 64
+    samples_per_file: int = 64
+    use_streaming_tokenization: bool = False
+    enable_bucketing: bool = True
+    dataset_name: Optional[str] = None
+
+    # Randomization control
+    shuffle_seed: Optional[int] = None
+    enable_length_sorting: bool = True
+    disable_packing_length_sort: bool = False
+    examples_per_random_select: int = 100
+
+    # Indexed loader
+    use_indexed_loader: bool = False
+    indexed_num_bins: int = 8
+    indexed_cache_size: int = 50
+    indexed_index_workers: Optional[int] = None
+
+    # DataLoader worker settings
+    worker_timeout: float = 300.0             # Training worker timeout in seconds
+    val_num_workers: Optional[int] = None     # Validation workers (None = min(2, num_workers))
+    val_timeout: float = 0.0                  # Validation timeout (0 = disabled, prevents spurious timeouts)
+    val_persistent_workers: bool = False      # Validation persistent workers (False reduces resource contention)
+
+    # Fast startup options
+    fast_startup: bool = False
+    skip_sequence_count: bool = True
+    skip_dataloader_validation: bool = True
+
+
+@dataclass
+class MultiColumnDataConfig:
+    """Configuration for multi-column data.
+
+    YAML Path: data.multi_column.* (or legacy multi_column_data.*)
+    """
+    use_multi_column: bool = False
+    dataset_config: Optional[str] = None
+    hf_dataset: Optional[str] = None
+    hf_dataset_config: Optional[str] = None
+    column_names: Optional[str] = None
+    column_types: Optional[str] = None
+    column_roles: Optional[str] = None
+    combine_strategy: str = 'concatenate'
+    column_template: Optional[str] = None
+
+
+# =============================================================================
+# SECTION 4: COMPUTE
+# Device, precision, CUDA, kernels, memory
+# =============================================================================
+
+@dataclass
+class DeviceConfig:
+    """Configuration for device settings.
+
+    YAML Path: compute.device.*
+    """
+    type: str = 'cuda'                        # 'cuda', 'cpu', or 'mps'
+    compile: bool = False                     # Enable torch.compile
+    num_gpus: int = 1                         # Number of GPUs
+
+
+@dataclass
+class MemoryConfig:
+    """Configuration for memory management.
+
+    YAML Path: compute.memory.*
+    """
+    headroom_gb: float = 3.0                  # Reserved memory headroom
+    cleanup_thresholds: Dict[str, float] = field(default_factory=lambda: {
+        'warning': 0.85,
+        'critical': 0.90,
+        'emergency': 0.95
+    })
+    proactive_cleanup_enabled: bool = True
+    fragmentation_threshold: float = 0.30
+    cleanup_frequency: int = 2000
+    cleanup_after_validation: bool = True
+    cleanup_after_generation: bool = True
+
+
+@dataclass
+class PerformanceConfig:
+    """Configuration for performance modes and hardware optimizations.
+
+    YAML Path: compute.performance.*
+    """
+    ultra_fast_mode: bool = False
+    fast_progress: bool = False
+    minimal_progress: bool = False
+    no_sync: bool = False
+    express_mode: bool = False
+
+    # TF32 and hardware optimizations
+    enable_tf32: bool = True                  # Enable TF32 on Ampere+ GPUs
+    float32_matmul_precision: str = 'high'    # 'highest', 'high', 'medium'
+    enable_cudnn_benchmark: bool = True       # Auto-tune cuDNN kernels
+    cudagraph_skip_dynamic_shapes: bool = True
+    cudagraph_dynamic_shape_warn_limit: Optional[int] = None
+    torchinductor_max_autotune: int = 0       # TorchInductor autotune level
+
+
+@dataclass
+class KernelsConfig:
+    """Configuration for low-level kernel optimizations.
+
+    YAML Path: compute.kernels.*
+    """
+    router_kernel_mode: str = 'auto'          # 'auto', 'triton', 'pytorch'
+    use_fused_softmax_topk: bool = True       # Fused softmax + top-k kernel
+    router_block_size: int = 4                # Tokens per thread block
+
+    # Expert computation optimizations
+    use_sparse_expert_dispatch: bool = False
+    use_fused_activations: bool = True        # Fused SwiGLU/GeGLU kernels
+    use_selective_expert_loading: bool = False
+
+    # Capacity limiting
+    use_vectorized_capacity: bool = True
+
+    # Advanced optimizations
+    use_fused_moe_kernel: bool = False        # Mega kernel
+    enable_kernel_profiling: bool = False
+
+
+@dataclass
+class CudaStreamsConfig:
+    """Configuration for CUDA stream optimizations.
+
+    YAML Path: compute.cuda.streams.*
+    """
+    enabled: bool = False
+    num_streams: int = 4
+    use_event_timing: bool = True
+    use_stream_pool: bool = True
+    high_priority_transfers: bool = True
+
+
+@dataclass
+class CudaGraphsConfig:
+    """Configuration for CUDA graph capture.
+
+    YAML Path: compute.cuda.graphs.*
+    """
+    enabled: bool = False
+    capture_backward: bool = True
+    capture_optimizer_step: bool = True
+    max_cached_graphs: int = 4
+    use_memory_pool: bool = True
+    warmup_steps: int = 3
+
+
+@dataclass
+class CudaConfig:
+    """Composite configuration for CUDA settings.
+
+    YAML Path: compute.cuda.*
+    """
+    streams: CudaStreamsConfig = field(default_factory=CudaStreamsConfig)
+    graphs: CudaGraphsConfig = field(default_factory=CudaGraphsConfig)
+
+
+@dataclass
+class CalibrationConfig:
+    """Configuration for enhanced calibration system.
+
+    YAML Path: compute.calibration.*
+    """
     enabled: bool = True
+    run_memory_profiling: bool = True
+    run_backward_profiling: bool = True
+    run_throughput_profiling: bool = True
+    batch_sizes_to_profile: List[int] = field(default_factory=lambda: [4, 8, 16, 32, 64, 128, 256])
+    seq_lengths_to_profile: List[int] = field(default_factory=lambda: [32, 64, 128, 256, 512, 1024, 2048])
+    num_samples_per_config: int = 3
+    cache_enabled: bool = True
+    cache_dir: str = "~/.cache/ava_calibration"
+    save_to_run_dir: bool = True
+    cache_ttl_hours: int = 168
+    max_calibration_time_seconds: int = 300
 
-    # Metric weights (should sum to 1.0 for normalized scoring)
-    val_loss_weight: float = 0.5              # Weight for validation loss (lower is better)
-    coherence_score_weight: float = 0.3       # Weight for coherence (higher is better)
-    perplexity_weight: float = 0.2            # Weight for perplexity (lower is better)
 
-    # Normalization settings
-    perplexity_cap: float = 100.0             # Cap perplexity for normalization
-    val_loss_cap: float = 10.0                # Cap val_loss for normalization
+@dataclass
+class ComputeSectionConfig:
+    """Composite configuration for the compute section.
 
-    # Selection behavior
-    higher_is_better: bool = True             # Quality score interpretation
-    require_all_metrics: bool = False         # Require all metrics present
-    fallback_to_val_loss: bool = True         # Use val_loss alone if others missing
+    YAML Path: compute.*
+    """
+    device: DeviceConfig = field(default_factory=DeviceConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
+    kernels: KernelsConfig = field(default_factory=KernelsConfig)
+    cuda: CudaConfig = field(default_factory=CudaConfig)
+    calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
+
+
+# Legacy aliases for backward compatibility
+HardwareConfig = DeviceConfig
+KernelOptimizationConfig = KernelsConfig
+CUDAGraphConfig = CudaGraphsConfig
+
+
+# =============================================================================
+# SECTION 5: DISTRIBUTED
+# Multi-GPU, DeepSpeed, load balancing
+# =============================================================================
+
+@dataclass
+class GPULoadBalancingConfig:
+    """Configuration for GPU load balancing.
+
+    YAML Path: distributed.load_balancing.*
+    """
+    enabled: bool = False
+    strategy: str = 'adaptive'                # 'round_robin', 'memory_aware', 'compute_aware', 'adaptive'
+    rebalance_interval: int = 1000
+    enable_expert_migration: bool = True
+    migration_threshold: float = 0.2
+    log_gpu_metrics: bool = True
+
+
+@dataclass
+class DeepSpeedConfig:
+    """Configuration for DeepSpeed distributed training.
+
+    YAML Path: distributed.deepspeed.*
+    """
+    use_deepspeed: bool = False
+    config_file: Optional[str] = None
+    zero_stage: int = 2                       # ZeRO stage (0, 1, 2, 3)
+    cpu_offload: bool = False
+    nvme_offload: bool = False
+    gradient_accumulation_steps: int = 1
+    train_batch_size: Optional[int] = None
+    micro_batch_size: Optional[int] = None
+    enable_mixed_precision: bool = False
+    precision_type: str = 'fp16'              # 'fp16', 'bf16', 'fp32'
+
+    # ZeRO-specific settings
+    zero_allow_untested_optimizer: bool = False
+    zero_force_ds_cpu_optimizer: bool = False
+    zero_reduce_scatter: bool = False
+    zero_overlap_comm: bool = False
+    zero_contiguous_gradients: bool = False
+    zero_reduce_bucket_size: int = 500000000
+    zero_allgather_bucket_size: int = 500000000
+    zero_stage3_prefetch_bucket_size: int = 500000000
+    zero_stage3_param_persistence_threshold: int = 1000000
+
+    # Communication settings
+    communication_data_type: str = 'fp32'
+    allreduce_partitions: bool = False
+    allgather_partitions: bool = False
+    overlap_comm: bool = False
+    wall_clock_breakdown: bool = False
+
+    # Advanced features
+    activation_checkpointing: bool = False
+    partition_activations: bool = False
+    cpu_checkpointing: bool = False
+    contiguous_memory_optimization: bool = False
+    synchronize_dp_processes: bool = False
+
+    # Pipeline parallelism
+    pipeline_parallel_size: int = 1
+    gradient_clipping: Optional[float] = None
+
+    # Monitoring
+    monitor_config: Dict[str, Any] = field(default_factory=dict)
+    tensorboard: Dict[str, Any] = field(default_factory=dict)
+    wandb_config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class GradientSyncConfig:
+    """Configuration for distributed gradient synchronization.
+
+    YAML Path: distributed.gradient_sync.*
+    """
+    mode: str = 'standard'                    # 'standard', 'overlapped', 'fused'
+    fused_bucket_mb: float = 100.0
+    fusion_factor: int = 4
+    async_allreduce: bool = True
+    bucket_size_mb: float = 25.0
+    use_coalesced_ops: bool = True
+
+
+@dataclass
+class LayerwiseOptimizerConfig:
+    """Configuration for layer-wise optimizer updates.
+
+    YAML Path: distributed.layerwise_optimizer.*
+    """
+    enabled: bool = False
+    bucket_size_mb: float = 25.0
+    release_gradients_early: bool = True
+    align_with_ddp_buckets: bool = True
+
+
+@dataclass
+class DistributedSectionConfig:
+    """Composite configuration for the distributed section.
+
+    YAML Path: distributed.*
+    """
+    load_balancing: GPULoadBalancingConfig = field(default_factory=GPULoadBalancingConfig)
+    deepspeed: DeepSpeedConfig = field(default_factory=DeepSpeedConfig)
+    gradient_sync: GradientSyncConfig = field(default_factory=GradientSyncConfig)
+    layerwise_optimizer: LayerwiseOptimizerConfig = field(default_factory=LayerwiseOptimizerConfig)
+
+    # Barrier optimization
+    minimize_distributed_barriers: bool = True
+    sync_loss_across_ranks: bool = False
+
+
+# =============================================================================
+# SECTION 6: LOGGING
+# Console, WandB, TensorBoard, diagnostics
+# =============================================================================
+
+@dataclass
+class ConsoleLoggingConfig:
+    """Configuration for console logging.
+
+    YAML Path: logging.console.*
+    """
+    enabled: bool = True
+    level: str = 'info'                       # 'debug', 'info', 'warning', 'error'
+    progress_bar_enabled: bool = True
+    tqdm_update_interval: int = 10
+    step_logging_enabled: bool = True
+    epoch_logging_enabled: bool = True
+
+
+@dataclass
+class FileLoggingConfig:
+    """Configuration for file logging.
+
+    YAML Path: logging.file.*
+    """
+    enabled: bool = True
+    level: str = 'debug'
+    format: str = 'default'                   # 'default', 'json', 'structured'
+
+
+@dataclass
+class MetricsLoggingConfig:
+    """Configuration for metrics logging categories.
+
+    YAML Path: logging.metrics.*
+    """
+    log_training_metrics: bool = True
+    log_gradient_metrics: bool = True
+    log_moe_metrics: bool = True
+    log_expert_metrics: bool = True  # Per-expert utilization, load, capacity
+    log_validation_metrics: bool = True
+    log_coherence_metrics: bool = True
+    log_quality_metrics: bool = True
+    log_memory_metrics: bool = True
+    log_timing_metrics: bool = True
+    log_generation_samples: bool = True
+
+
+@dataclass
+class WandBLoggingConfig:
+    """Configuration for Weights & Biases logging.
+
+    YAML Path: logging.wandb.*
+    """
+    enabled: bool = True
+    project: str = 'Ava'
+    name: Optional[str] = None
+    tags: List[str] = field(default_factory=lambda: ['moe', 'training'])
+    log_freq: int = 10
+    offline: bool = False
+    cache_size: int = 2000
+    cache_flush_interval: int = 50
+
+    # Fine-grained logging controls
+    log_training: bool = True
+    log_gradients: bool = True
+    log_moe: bool = True
+    log_experts: bool = True  # Per-expert metrics (utilization, load, capacity)
+    log_validation: bool = True
+    log_coherence: bool = True
+    log_quality: bool = True
+    log_memory: bool = True
+    log_timing: bool = True
+    log_generations: bool = True
+    log_per_layer_grads: bool = False
+    log_routing_diagnostics: bool = False
+    log_model_topology: bool = False
+
+
+@dataclass
+class TensorBoardLoggingConfig:
+    """Configuration for TensorBoard logging.
+
+    YAML Path: logging.tensorboard.*
+    """
+    enabled: bool = False
+    log_training: bool = True
+    log_gradients: bool = True
+    log_moe: bool = True
+    log_experts: bool = True  # Per-expert metrics (utilization, load, capacity)
+    log_validation: bool = True
+
+
+@dataclass
+class FrequenciesConfig:
+    """Configuration for logging frequencies.
+
+    YAML Path: logging.frequencies.*
+    """
+    log_interval: int = 100
+    verbose_log_interval: int = 500
+    metrics_log_freq: int = 500
+    memory_check_freq: int = 2000
+    health_summary_freq: int = 500
+    moe_metrics_freq: int = 5000
+    routing_metrics_freq: int = 0
+
+
+@dataclass
+class FeaturesLoggingConfig:
+    """Configuration for logging feature flags.
+
+    YAML Path: logging.features.*
+    """
+    enable_timing_breakdown: bool = True
+    enable_memory_profiling: bool = True
+    enable_health_summaries: bool = True
+    log_tensor_shapes: bool = True
+    log_checkpoint_validation: bool = True
+    save_sample_generations: bool = True
+    use_structured_logging: bool = True
 
 
 @dataclass
 class DiagnosticsConfig:
     """Configuration for detailed diagnostic logging.
 
-    Enables per-layer gradients, expert routing stats, memory breakdown,
-    and timing profiling for in-depth training analysis.
+    YAML Path: logging.diagnostics.*
     """
-    # Master enable
     enabled: bool = False
 
     # Per-layer gradient statistics
     enable_per_layer_gradients: bool = False
-    per_layer_log_freq: int = 500             # Steps between per-layer logs
+    per_layer_log_freq: int = 500
     layer_name_patterns: List[str] = field(default_factory=lambda: ['layers', 'experts'])
 
     # Expert routing diagnostics
@@ -1264,9 +1477,9 @@ class DiagnosticsConfig:
     track_optimizer_state_memory: bool = True
     track_parameter_memory: bool = True
 
-    # Timing profiling (each timing log requires cuda.synchronize - use sparingly)
+    # Timing profiling
     enable_timing_profiling: bool = False
-    timing_log_freq: int = 500  # Increased from 100 to reduce sync overhead
+    timing_log_freq: int = 500
     profile_forward: bool = True
     profile_backward: bool = True
     profile_optimizer_step: bool = True
@@ -1274,380 +1487,560 @@ class DiagnosticsConfig:
 
 
 @dataclass
-class DeepSpeedConfig:
-    """Configuration for DeepSpeed distributed training."""
-    use_deepspeed: bool = False               # Enable DeepSpeed
-    config_file: Optional[str] = None         # DeepSpeed JSON config file path
-    zero_stage: int = 2                       # ZeRO optimization stage (0, 1, 2, 3)
-    cpu_offload: bool = False                 # Enable CPU offloading
-    nvme_offload: bool = False                # Enable NVMe offloading
-    gradient_accumulation_steps: int = 1      # Gradient accumulation
-    train_batch_size: Optional[int] = None    # Global batch size
-    micro_batch_size: Optional[int] = None    # Micro batch size
-    enable_mixed_precision: bool = False      # Enable FP16/BF16 (YAML controls)
-    precision_type: str = 'fp16'              # Precision type: fp16, bf16, fp32
+class DevLogConfig:
+    """Configuration for development logging.
 
-    # ZeRO-specific settings
-    zero_allow_untested_optimizer: bool = False  # YAML controls
-    zero_force_ds_cpu_optimizer: bool = False
-    zero_reduce_scatter: bool = False         # YAML controls
-    zero_overlap_comm: bool = False           # YAML controls
-    zero_contiguous_gradients: bool = False   # YAML controls
-    zero_reduce_bucket_size: int = 500000000       # 500MB
-    zero_allgather_bucket_size: int = 500000000    # 500MB
-    zero_stage3_prefetch_bucket_size: int = 500000000  # 500MB
-    zero_stage3_param_persistence_threshold: int = 1000000
-
-    # Communication settings
-    communication_data_type: str = 'fp32'     # Communication data type
-    allreduce_partitions: bool = False        # YAML controls
-    allgather_partitions: bool = False        # YAML controls
-    overlap_comm: bool = False                # YAML controls
-    wall_clock_breakdown: bool = False        # Enable timing breakdown
-
-    # Advanced features
-    activation_checkpointing: bool = False    # Enable activation checkpointing
-    partition_activations: bool = False       # Partition activations
-    cpu_checkpointing: bool = False          # CPU activation checkpointing
-    contiguous_memory_optimization: bool = False
-    synchronize_dp_processes: bool = False    # YAML controls
-
-    # Pipeline parallelism
-    pipeline_parallel_size: int = 1          # Pipeline parallel size
-    gradient_clipping: Optional[float] = None # Gradient clipping value
-
-    # Monitoring and debugging
-    monitor_config: Dict[str, Any] = field(default_factory=dict)
-    tensorboard: Dict[str, Any] = field(default_factory=dict)
-    wandb_config: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class GradientSyncConfig:
-    """Configuration for distributed gradient synchronization.
-
-    Provides three modes for gradient all-reduce:
-    - 'standard': Default DDP bucket-based all-reduce
-    - 'overlapped': Overlap gradient sync with backward computation
-    - 'fused': Combine multiple buckets into fewer all-reduce operations
-
-    Fused mode provides 5-15% speedup in multi-GPU training by reducing
-    communication overhead and network round trips.
+    YAML Path: logging.dev.*
     """
-    mode: str = 'standard'                    # 'standard', 'overlapped', 'fused'
-
-    # Fused all-reduce settings (when mode='fused')
-    fused_bucket_mb: float = 100.0            # Maximum fused bucket size in MB
-    fusion_factor: int = 4                    # Number of DDP buckets to fuse
-    async_allreduce: bool = True              # Use async all-reduce
-
-    # Overlapped sync settings (when mode='overlapped')
-    bucket_size_mb: float = 25.0              # Bucket size for overlapped sync
-
-    # Common settings
-    use_coalesced_ops: bool = True            # Use coalesced tensor operations
+    enabled: bool = False
+    show_file_timings: bool = True
+    show_batch_timings: bool = True
+    show_step_breakdown: bool = True
+    report_interval: int = 100
 
 
 @dataclass
-class LayerwiseOptimizerConfig:
-    """Configuration for layer-wise optimizer updates.
+class LoggingSectionConfig:
+    """Composite configuration for the logging section.
 
-    Enables overlapping optimizer updates with backward computation by
-    beginning updates as soon as gradients for each layer become available.
-
-    Benefits:
-    - 10-20% speedup by overlapping optimizer with backward
-    - 10-30% memory savings with early gradient release
+    YAML Path: logging.*
     """
-    enabled: bool = False                     # Enable layer-wise updates
-    bucket_size_mb: float = 25.0              # Update bucket size in MB
-    release_gradients_early: bool = True      # Free gradients after update
-    align_with_ddp_buckets: bool = True       # Align with DDP gradient buckets
+    console: ConsoleLoggingConfig = field(default_factory=ConsoleLoggingConfig)
+    file: FileLoggingConfig = field(default_factory=FileLoggingConfig)
+    metrics: MetricsLoggingConfig = field(default_factory=MetricsLoggingConfig)
+    wandb: WandBLoggingConfig = field(default_factory=WandBLoggingConfig)
+    tensorboard: TensorBoardLoggingConfig = field(default_factory=TensorBoardLoggingConfig)
+    frequencies: FrequenciesConfig = field(default_factory=FrequenciesConfig)
+    features: FeaturesLoggingConfig = field(default_factory=FeaturesLoggingConfig)
+    diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
+    dev: DevLogConfig = field(default_factory=DevLogConfig)
 
+    # Master disable flags
+    disabled: bool = False
+    silent_mode: bool = False
+    log_mode: str = 'tqdm'                    # 'tqdm' or 'verbose'
+    verbosity: str = 'info'
+
+
+# Legacy alias - keep LoggingConfig as an alias
+LoggingConfig = LoggingSectionConfig
+
+
+# =============================================================================
+# SECTION 7: CHECKPOINTS
+# Save/load, model selection
+# =============================================================================
 
 @dataclass
-class CUDAGraphConfig:
-    """Configuration for CUDA graph capture of training steps.
+class SelectionConfig:
+    """Configuration for multi-metric model selection.
 
-    CUDA graphs eliminate kernel launch overhead by capturing the entire
-    forward+backward+optimizer sequence as a single graph.
-
-    Benefits:
-    - 15-25% speedup for small batch sizes
-    - Reduced CPU overhead
-
-    Limitations:
-    - Incompatible with dynamic shapes
-    - Incompatible with layer-wise optimizer
-    - Incompatible with fused all-reduce
+    YAML Path: checkpoints.selection.*
     """
-    enabled: bool = False                     # Enable CUDA graphs
-    capture_backward: bool = True             # Include backward in graph
-    capture_optimizer_step: bool = True       # Include optimizer in graph
-    max_cached_graphs: int = 4                # Max graphs for different shapes
-    use_memory_pool: bool = True              # Pre-allocate memory pool
-    warmup_steps: int = 3                     # Warmup steps before capture
+    enabled: bool = True
+    val_loss_weight: float = 0.5
+    coherence_score_weight: float = 0.3
+    perplexity_weight: float = 0.2
+    perplexity_cap: float = 100.0
+    val_loss_cap: float = 10.0
+    higher_is_better: bool = True
+    require_all_metrics: bool = False
+    fallback_to_val_loss: bool = True
 
 
 @dataclass
-class PerformanceConfig:
-    """Configuration for performance modes and hardware optimizations."""
-    ultra_fast_mode: bool = False             # Ultra fast mode
-    fast_progress: bool = False               # Fast progress mode
-    minimal_progress: bool = False            # Minimal progress mode
-    no_sync: bool = False                     # No CUDA sync mode
-    express_mode: bool = False                # Express mode
+class CheckpointsSectionConfig:
+    """Composite configuration for the checkpoints section.
 
-    # TF32 and hardware optimizations (NEW)
-    enable_tf32: bool = True                  # Enable TF32 on Ampere+ GPUs for faster matmul
-    float32_matmul_precision: str = 'high'    # Options: 'highest', 'high', 'medium'
-    enable_cudnn_benchmark: bool = True       # Auto-tune cuDNN kernels
-    cudagraph_skip_dynamic_shapes: bool = True   # Skip dynamic shapes in CUDAGraph
-    cudagraph_dynamic_shape_warn_limit: Optional[int] = None  # Warning limit for dynamic shapes
-    torchinductor_max_autotune: int = 0       # TorchInductor autotune level (0-4)
+    YAML Path: checkpoints.*
+    """
+    output_dir: str = field(default_factory=lambda: str(get_outputs_dir()))
+    save_every: int = 500                     # Save frequency in steps
+    resume: Optional[str] = None              # Resume checkpoint path
+    fresh_start: bool = False                 # Force fresh start
+    async_saving: bool = True                 # Save checkpoints in background
+    selection: SelectionConfig = field(default_factory=SelectionConfig)
+
+
+# Legacy aliases
+ModelSelectionConfig = SelectionConfig
+OutputConfig = CheckpointsSectionConfig
+
+
+# =============================================================================
+# SECTION 8: EXPERIMENTAL
+# FP8, MTP, caching, advanced features
+# =============================================================================
+
+@dataclass
+class FP8Config:
+    """Configuration for FP8 training (Hopper/Ada GPUs only).
+
+    YAML Path: experimental.fp8.*
+    """
+    enabled: bool = False
+    use_transformer_engine: bool = False
+    format: str = 'e4m3'                      # 'e4m3' or 'e5m2'
+    margin: int = 0
+    backward_enabled: bool = False
+    backward_format: str = 'e5m2'
+    exclude_layers: List[str] = field(default_factory=lambda: ['embedding', 'lm_head'])
+    gradient_scaling_strategy: str = 'per_tensor'
+    amax_history_len: int = 1024
+    amax_compute_algo: str = 'max'
+
+
+@dataclass
+class MTPConfig:
+    """Configuration for Adaptive Multi-Token Prediction.
+
+    YAML Path: experimental.mtp.*
+    """
+    enabled: bool = False
+    num_prediction_heads: int = 3
+    confidence_threshold_train: float = 0.6
+    confidence_threshold_inference: float = 0.7
+    gate_hidden_dims: str = "512,256"
+    gate_dropout: float = 0.1
+    gate_activation: str = 'gelu'
+    use_attention_pooling: bool = False
+    head_type: str = 'linear'
+    head_intermediate_size: Optional[int] = None
+    head_dropout: float = 0.1
+    share_projections: bool = False
+    mtp_warmup_epochs: int = 2
+    confidence_reg_strength: float = 0.01
+    use_confidence_weighting: bool = False
+    primary_loss_weight: float = 1.0
+    additional_loss_base_weight: float = 0.1
+    enable_dynamic_prediction: bool = False
+    min_confidence_for_computation: float = 0.3
+
+
+@dataclass
+class HybridCachingConfig:
+    """Configuration for hybrid KV + activation caching.
+
+    YAML Path: experimental.caching.*
+    """
+    enabled: bool = False
+    max_cache_size_gb: float = 1.0
+    kv_cache_ratio: float = 0.7
+    eviction_policy: str = 'hybrid'           # 'lru', 'lfu', 'hybrid'
+    prefetch_enabled: bool = True
+    prefetch_lookahead: int = 2
+    min_score_threshold: float = 0.1
+
+
+@dataclass
+class OverlappedCheckpointingConfig:
+    """Configuration for overlapped gradient checkpointing.
+
+    YAML Path: experimental.checkpointing.overlapped.*
+    """
+    enabled: bool = False
+    stream_overlap: bool = True
+    target_layers: str = 'layers'
+
+
+@dataclass
+class DoubleCheckpointingConfig:
+    """Configuration for double (nested) gradient checkpointing.
+
+    YAML Path: experimental.checkpointing.double.*
+    """
+    enabled: bool = False
+    coarse_checkpoint_interval: int = 8
+    fine_checkpoint_interval: int = 2
+    use_cuda_streams: bool = True
+
+
+@dataclass
+class CheckpointingOptConfig:
+    """Configuration for checkpointing optimizations.
+
+    YAML Path: experimental.checkpointing.*
+    """
+    overlapped: OverlappedCheckpointingConfig = field(default_factory=OverlappedCheckpointingConfig)
+    double: DoubleCheckpointingConfig = field(default_factory=DoubleCheckpointingConfig)
+
+
+@dataclass
+class SYMIConfig:
+    """Configuration for SYMI optimizer decoupling.
+
+    YAML Path: experimental.symi.*
+    """
+    enabled: bool = False
+    num_partitions: int = 0
+    sync_frequency: int = 100
+    use_async_sync: bool = True
+    gradient_averaging: str = 'partition'
+    state_precision: str = 'fp32'
+    enable_checkpointing: bool = True
+
+
+@dataclass
+class Sparse24Config:
+    """Configuration for 2:4 activation sparsity.
+
+    YAML Path: experimental.sparse24.*
+    """
+    enabled: bool = False
+    warmup_steps: int = 1000
+    apply_to_gate: bool = True
+    apply_to_up: bool = True
+    apply_to_down: bool = False
+    use_ste_scaling: bool = True
+    ste_scale_factor: float = 1.0
+    sparsity_granularity: str = 'activation'
+    use_triton_kernel: bool = True
+    log_sparsity_stats: bool = False
+
+
+@dataclass
+class StableMoEConfig:
+    """Configuration for Stable-MoE routing.
+
+    YAML Path: experimental.stable_moe.*
+    """
+    enabled: bool = False
+    target_utilization: float = 0.0
+    utilization_tolerance: float = 0.1
+    adaptation_rate: float = 0.01
+    temperature_init: float = 1.0
+    temperature_min: float = 0.1
+    temperature_decay: float = 0.9999
+    capacity_min: float = 1.0
+    capacity_max: float = 2.0
+    log_utilization_histogram: bool = True
+    log_capacity_factors: bool = True
+    log_temperature: bool = True
+
+
+@dataclass
+class EpisodicMemoryConfig:
+    """Configuration for episodic memory.
+
+    YAML Path: experimental.episodic_memory.*
+    """
+    use_episodic_memory: bool = False
+    memory_capacity: int = 1000
+    memory_selection_strategy: str = 'importance'
+    memory_importance_threshold: float = 0.5
+    memory_retrieval_method: str = 'cosine'
+    memory_replay_ratio: float = 0.2
+    memory_replay_strategy: str = 'importance'
+    memory_adaptation_rate: float = 0.01
+    memory_performance_window: int = 100
+    task_id: int = 0
+    silent_mode: bool = False
+    enable_auto_grad_accumulation: bool = False
+    priority_exponent: float = 0.6
+    importance_weight_exponent: float = 0.4
+    buffer_warmup_steps: int = 100
+    store_aux_info: bool = False
+
+
+@dataclass
+class RAGConfig:
+    """Configuration for RAG (Retrieval Augmented Generation).
+
+    YAML Path: experimental.rag.*
+    """
+    use_rag: bool = False
+    knowledge_base_path: Optional[str] = None
+    max_retrieved_docs: int = 5
+    rag_fusion_type: str = 'attention'
+    retriever_type: str = 'faiss'
+    index_path: Optional[str] = None
+    embedding_dim: int = 768
+    embedding_model: str = 'sentence-transformers/all-MiniLM-L6-v2'
+    normalize_embeddings: bool = True
+    chromadb_persist_dir: Optional[str] = None
+    chromadb_collection: str = 'ava_rag'
+    fusion_dropout: float = 0.1
+    fusion_num_heads: int = 8
+    fusion_layer: str = 'all'
+    retrieval_mode: str = 'once'
+    query_strategy: str = 'first_token'
+
+
+@dataclass
+class LossConfig:
+    """Configuration for advanced loss functions.
+
+    YAML Path: experimental.losses.*
+    """
+    use_focal_loss: bool = False
+    use_contrastive_loss: bool = False
+    use_diversity_loss: bool = False
+    adaptive_loss_scaling: bool = False
+    use_multi_token_prediction: bool = False
+    num_future_tokens: int = 3
+    mtp_weight: float = 0.1
+    initial_temperature: float = 1.0
+    adaptive_temperature: bool = False
+    label_smoothing: float = 0.0
+    use_moe_balancing: bool = False
+    gradient_balance_weight: float = 0.0
+    use_auxiliary_loss: bool = False
+    use_ngram_penalty: bool = False
+    ngram_size: int = 3
+    ngram_penalty_weight: float = 0.0
+    use_immediate_repetition_detector: bool = False
+    immediate_repetition_weight: float = 0.0
+
+
+@dataclass
+class ArchitectureEnhancementsConfig:
+    """Configuration for architecture enhancements.
+
+    YAML Path: experimental.architecture.*
+    """
+    use_moh: bool = False                     # Mixture of Heads
+    use_moa: bool = False                     # Mixture of Activations
+    use_cross_attention: bool = False         # Multi-modal cross-attention
+    use_alibi: bool = False                   # ALiBi positional encoding
+    expert_routing_type: str = 'switch'
+
+
+@dataclass
+class QuantizationConfig:
+    """Configuration for quantization.
+
+    YAML Path: experimental.quantization.*
+    """
+    quantization_aware: bool = False
+    bit_width: int = 8
+    use_nvfp4: bool = False
+    nvfp4_block_size: int = 16
+    stochastic_rounding: bool = False
+    use_hadamard_transform: bool = False
+    use_torchao_nvfp4: bool = False
+
+
+@dataclass
+class ExperimentalSectionConfig:
+    """Composite configuration for the experimental section.
+
+    YAML Path: experimental.*
+    """
+    fp8: FP8Config = field(default_factory=FP8Config)
+    mtp: MTPConfig = field(default_factory=MTPConfig)
+    caching: HybridCachingConfig = field(default_factory=HybridCachingConfig)
+    checkpointing: CheckpointingOptConfig = field(default_factory=CheckpointingOptConfig)
+    symi: SYMIConfig = field(default_factory=SYMIConfig)
+    sparse24: Sparse24Config = field(default_factory=Sparse24Config)
+    stable_moe: StableMoEConfig = field(default_factory=StableMoEConfig)
+    episodic_memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
+    rag: RAGConfig = field(default_factory=RAGConfig)
+    losses: LossConfig = field(default_factory=LossConfig)
+    architecture: ArchitectureEnhancementsConfig = field(default_factory=ArchitectureEnhancementsConfig)
+    quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
+
+
+# =============================================================================
+# LEGACY DATACLASSES (Backward Compatibility)
+# These are kept for code that still references the old structure
+# =============================================================================
+
+# Legacy HardwareConfig with full fields
+@dataclass
+class LegacyHardwareConfig:
+    """Legacy configuration for hardware settings (backward compatibility)."""
+    device: str = 'cuda'
+    mixed_precision: str = 'fp32'
+    compile: bool = False
+    num_gpus: int = 1
+    use_gpu_load_balancing: bool = False
+    balancing_strategy: str = 'adaptive'
+    rebalance_interval: int = 1000
+    enable_expert_migration: bool = True
+    migration_threshold: float = 0.2
+    log_gpu_metrics: bool = True
+
+
+@dataclass
+class GradientConfig:
+    """Configuration for gradient surgery."""
+    gradient_surgery: bool = False
+    adaptive_gradient_surgery: bool = False
+    gradient_surgery_method: str = 'pcgrad'
+
+
+@dataclass
+class RetryConfig:
+    """Configuration for retry logic in pipeline error handling."""
+    max_retries: int = 3
+    initial_backoff: float = 1.0
+    backoff_multiplier: float = 2.0
+    max_backoff: float = 60.0
+    jitter: bool = True
+    jitter_factor: float = 0.1
+    retry_on_oom: bool = True
+    reduce_batch_on_oom: bool = True
+
+
+@dataclass
+class EvaluationConfig:
+    """Configuration for evaluation during training."""
+    eval_during_training: bool = False
+    eval_metrics: Optional[str] = None
+    eval_frequency: int = 500
+
+
+@dataclass
+class MoEMetricsConfig:
+    """Configuration for MoE-specific metrics tracking."""
+    track_expert_utilization: bool = True
+    log_frequency: int = 50
+    track_routing_decisions: bool = False
+    track_load_balance: bool = True
+
+
+@dataclass
+class LRFinderConfig:
+    """Configuration for Learning Rate Finder."""
+    run_lr_finder: bool = False
+    start_lr: float = 1e-8
+    end_lr: float = 1.0
+    num_iterations: int = 100
+    suggestion_method: str = 'steepest'
+    use_suggested_lr: bool = False
+    plot_path: Optional[str] = None
+    smooth_beta: float = 0.98
+    stop_div_threshold: float = 4.0
+
+
+@dataclass
+class RunManagementConfig:
+    """Configuration for run management."""
+    run_name: Optional[str] = None
+    run_tags: Optional[str] = None
+    run_description: Optional[str] = None
+    disable_run_manager: bool = False
+
+
+@dataclass
+class WandBConfig:
+    """Legacy configuration for Weights & Biases."""
+    use_wandb: bool = False
+    disable_wandb: bool = False
+    wandb_offline: bool = False
+    wandb_project: str = 'Ava'
+    wandb_name: Optional[str] = None
+    wandb_tags: List[str] = field(default_factory=lambda: ['moe', 'training'])
+    wandb_log_freq: int = 10
+    wandb_cache_size: int = 2000
+    wandb_cache_flush_interval: int = 50
 
 
 @dataclass
 class OptimizationsConfig:
-    """Configuration for all training optimizations (Phase 1, 2, 3)."""
-
-    # Phase 1: Quick Wins
-    torchinductor_autotune: int = 1            # 0=off, 1=basic, 2=aggressive
-
-    # Memory Management
-    memory_headroom_gb: float = 3.0            # Reserve headroom for safety
+    """Configuration for all training optimizations."""
+    torchinductor_autotune: int = 1
+    memory_headroom_gb: float = 3.0
     memory_cleanup_thresholds: Dict[str, float] = field(default_factory=lambda: {
-        'warning': 0.85,   # Trigger warning cleanup
-        'critical': 0.90,  # Trigger critical cleanup
-        'emergency': 0.95  # Trigger emergency cleanup
+        'warning': 0.85,
+        'critical': 0.90,
+        'emergency': 0.95
     })
-
-    # Phase 2: Expert Offloading Optimizations
     expert_prefetch: Dict[str, Any] = field(default_factory=lambda: {
-        'enabled': True,                # Multi-stage async prefetch
-        'lookahead': 2,                 # Prefetch lookahead
-        'use_multiple_streams': True    # Use multiple CUDA streams
+        'enabled': True,
+        'lookahead': 2,
+        'use_multiple_streams': True
     })
-
     expert_cache: Dict[str, Any] = field(default_factory=lambda: {
-        'auto_limit': True,             # Auto-limit cache size
-        'use_lru_eviction': True,       # LRU eviction policy
-        'clear_after_optimizer_step': True  # Clear after optimizer step
+        'auto_limit': True,
+        'use_lru_eviction': True,
+        'clear_after_optimizer_step': True
     })
-
-    # Phase 2: Checkpoint Optimizations
     checkpoint: Dict[str, Any] = field(default_factory=lambda: {
-        'async_saving': True            # Save checkpoints in background thread
+        'async_saving': True
     })
-
-    # Phase 2: GPU Memory Cleanup
     memory_cleanup: Dict[str, Any] = field(default_factory=lambda: {
-        'fast_mode': True,              # Reduced cleanup rounds
-        'remove_sleep': True            # Remove sleep between cleanup
+        'fast_mode': True,
+        'remove_sleep': True
     })
-
-    # Proactive Memory Fragmentation Cleanup
     proactive_memory_cleanup: Dict[str, Any] = field(default_factory=lambda: {
-        'enabled': True,                 # Enable proactive fragmentation cleanup
-        'fragmentation_threshold': 0.30, # Trigger cleanup when fragmentation exceeds this (0.0-1.0)
-        'cleanup_frequency': 2000,       # Check fragmentation every N steps
-        'cleanup_after_validation': True, # Also cleanup after validation runs
-        'cleanup_after_generation': True  # Also cleanup after generation runs
+        'enabled': True,
+        'fragmentation_threshold': 0.30,
+        'cleanup_frequency': 2000,
+        'cleanup_after_validation': True,
+        'cleanup_after_generation': True
     })
-
-    # Phase 2: Data Loading
     dataloader: Dict[str, Any] = field(default_factory=lambda: {
-        'adaptive_file_reading': True,  # Adjust samples per file
+        'adaptive_file_reading': True,
         'adaptive_multipliers': {
-            'large_files': 4,           # Multiplier for files >10MB
-            'medium_files': 2,          # Multiplier for files >1MB
-            'small_files': 1            # Multiplier for files <1MB
+            'large_files': 4,
+            'medium_files': 2,
+            'small_files': 1
         }
     })
-
-    # Phase 2: Gradient Checkpointing
     gradient_checkpointing: Dict[str, Any] = field(default_factory=lambda: {
-        'selective': False,             # Checkpoint everything for max memory savings
-        'checkpoint_attention': True    # Checkpoint attention layers
+        'selective': False,
+        'checkpoint_attention': True
     })
-
-    # Router Optimizations
     router: Dict[str, Any] = field(default_factory=lambda: {
-        'cache_hash_on_gpu': True,      # Compute routing cache hash on GPU
-        'compile_routers': True,        # torch.compile routers
-        'compile_mode': 'default',      # 'default' or 'reduce-overhead'
-        'compile_dynamic': True         # Handle variable sequence lengths
+        'cache_hash_on_gpu': True,
+        'compile_routers': True,
+        'compile_mode': 'default',
+        'compile_dynamic': True
     })
 
 
-@dataclass
-class LoggingConfig:
-    """Configuration for logging and observability.
-
-    For fastest training, disable all logging:
-        logging:
-          disabled: true
-
-    Or selectively disable specific logging types:
-        logging:
-          console_enabled: false
-          file_enabled: false
-          progress_bar_enabled: false
-          wandb:
-            enabled: false
-          tensorboard:
-            enabled: false
-    """
-    # =========================================================================
-    # Master disable flags (for faster training)
-    # =========================================================================
-    disabled: bool = False                    # Master disable ALL logging (fastest mode)
-    silent_mode: bool = False                 # Only critical errors (minimal output)
-
-    # =========================================================================
-    # Console/File logging controls
-    # =========================================================================
-    console_enabled: bool = True              # Enable console output
-    file_enabled: bool = True                 # Enable file logging
-    progress_bar_enabled: bool = True         # Enable tqdm progress bar
-    tqdm_update_interval: int = 10            # Update progress bar every N batches (reduces I/O overhead)
-    step_logging_enabled: bool = True         # Enable per-step console output
-    epoch_logging_enabled: bool = True        # Enable epoch summary logging
-
-    # =========================================================================
-    # Metric category controls (affects both console and external logging)
-    # =========================================================================
-    log_training_metrics: bool = True         # train/loss, train/lr, train/batch_size
-    log_gradient_metrics: bool = True         # gradients/norm, gradients/avg, etc.
-    log_moe_metrics: bool = True              # moe/expert_load, moe/routing_entropy
-    log_validation_metrics: bool = True       # validation/loss, validation/epoch
-    log_coherence_metrics: bool = True        # coherence/* metrics
-    log_quality_metrics: bool = True          # model_selection/* quality scores
-    log_memory_metrics: bool = True           # memory/* breakdown stats
-    log_timing_metrics: bool = True           # timing/* profiling stats
-    log_generation_samples: bool = True       # Text generation samples
-
-    # =========================================================================
-    # WandB logging controls (fine-grained)
-    # =========================================================================
-    wandb_enabled: bool = True                # Master WandB enable (overrides wandb.enabled)
-    wandb_log_training: bool = True           # Log train/* metrics to WandB
-    wandb_log_gradients: bool = True          # Log gradients/* to WandB
-    wandb_log_moe: bool = True                # Log moe/* metrics to WandB
-    wandb_log_validation: bool = True         # Log validation/* to WandB
-    wandb_log_coherence: bool = True          # Log coherence/* to WandB
-    wandb_log_quality: bool = True            # Log model_selection/* to WandB
-    wandb_log_memory: bool = True             # Log memory/* breakdown to WandB
-    wandb_log_timing: bool = True             # Log timing/* profile to WandB
-    wandb_log_generations: bool = True        # Log generation table to WandB
-    wandb_log_per_layer_grads: bool = False   # Log per-layer gradients (expensive)
-    wandb_log_routing_diagnostics: bool = False  # Log routing/* (expensive)
-    wandb_log_model_topology: bool = False    # Log model graph (one-time)
-
-    # =========================================================================
-    # TensorBoard logging controls
-    # =========================================================================
-    tensorboard_enabled: bool = True          # Master TensorBoard enable
-    tensorboard_log_training: bool = True     # Log train/* to TensorBoard
-    tensorboard_log_gradients: bool = True    # Log gradients/* to TensorBoard
-    tensorboard_log_moe: bool = True          # Log moe/* to TensorBoard
-    tensorboard_log_validation: bool = True   # Log validation/* to TensorBoard
-
-    # =========================================================================
-    # Verbosity settings
-    # =========================================================================
-    verbosity: str = 'info'                   # Log level: 'debug', 'info', 'warning', 'error'
-    console_level: str = 'info'               # Console log level (can be different from file)
-    file_level: str = 'debug'                 # File log level (more detailed)
-
-    # =========================================================================
-    # Monitoring frequencies (in steps) - higher values = less overhead
-    # =========================================================================
-    log_interval: int = 100                   # Main logging interval (GPU->CPU sync for loss)
-    verbose_log_interval: int = 500           # Show detailed INFO logs every N steps (0 = never)
-    log_mode: str = 'tqdm'                    # 'tqdm' (progress bar only) or 'verbose' (tqdm + INFO logs)
-    metrics_log_freq: int = 500               # Reduced frequency to minimize sync overhead
-    memory_check_freq: int = 2000             # Reduced frequency to minimize sync overhead
-    health_summary_freq: int = 500            # How often to log training health summary
-    moe_metrics_freq: int = 5000              # Reduced frequency to minimize sync overhead
-    routing_metrics_freq: int = 0             # Per-layer routing metrics (0=disabled, 1000+ recommended if enabled)
-
-    # =========================================================================
-    # Feature flags
-    # =========================================================================
-    enable_timing_breakdown: bool = True      # Log step-level timing (data, forward, backward, optimizer)
-    enable_memory_profiling: bool = True      # Enable detailed memory profiling
-    enable_health_summaries: bool = True      # Enable periodic health summary logs
-    log_tensor_shapes: bool = True            # Log tensor shapes on errors (OOM, NaN)
-    log_checkpoint_validation: bool = True    # Validate checkpoints after save
-    save_sample_generations: bool = True      # Save validation generation samples to file
-
-    # Structured logging
-    use_structured_logging: bool = True       # Use structured logs with contextual fields
-    log_format: str = 'default'               # Log format: 'default', 'json', 'structured'
-
-    # Legacy fields (kept for backward compatibility)
-    log_gradients_to_wandb: bool = False      # Deprecated: use wandb_log_per_layer_grads
-    log_model_topology: bool = False          # Deprecated: use wandb_log_model_topology
-
-
-@dataclass
-class DevLogConfig:
-    """Configuration for development logging to identify performance bottlenecks."""
-    enabled: bool = False                     # Enable dev logging
-    show_file_timings: bool = True            # Show timing for each file read
-    show_batch_timings: bool = True           # Show timing for each batch operation
-    show_step_breakdown: bool = True          # Show breakdown of step components
-    report_interval: int = 100                # Log timing every N steps
-
-
-@dataclass
-class KernelOptimizationConfig:
-    """Configuration for low-level kernel optimizations.
-
-    Controls Triton kernel usage, dispatch strategies, and GPU optimizations.
-    These settings can provide significant throughput improvement when properly tuned.
-    """
-    # Router/Gating kernel optimizations
-    router_kernel_mode: str = 'auto'          # 'auto', 'triton', 'pytorch'
-    use_fused_softmax_topk: bool = True       # Fused softmax + top-k kernel
-    router_block_size: int = 4                # Tokens per thread block (1-8)
-
-    # Expert computation optimizations
-    use_sparse_expert_dispatch: bool = False  # Sparse vs dense dispatch (sparse=memory efficient)
-    use_fused_activations: bool = True        # Fused SwiGLU/GeGLU kernels
-    use_selective_expert_loading: bool = False # On-demand expert loading for large E
-
-    # Capacity limiting
-    use_vectorized_capacity: bool = True      # Vectorized vs loop-based capacity limiting
-
-    # Advanced optimizations (experimental)
-    use_fused_moe_kernel: bool = False        # Mega kernel (routing + expert in one)
-    enable_kernel_profiling: bool = False     # Profile kernel execution times
-
-
-@dataclass
-class BasicModelConfig:
-    """Configuration for model architecture parameters (basic version for legacy compatibility)."""
-    vocab_size: int = 32000                   # Vocabulary size
-    hidden_size: int = 4096                   # Hidden dimension
-    num_experts: Optional[int] = None         # Number of experts for MoE
-    num_layers: int = 32                      # Number of layers
-    num_attention_heads: int = 32             # Number of attention heads
-    intermediate_size: int = 11008            # FFN intermediate size
-    dropout: float = 0.1                      # Dropout rate
-
+# =============================================================================
+# ROOT CONFIGURATION
+# =============================================================================
 
 @dataclass
 class EnhancedTrainingConfig:
-    """Main configuration class combining all sub-configs."""
-    config_file: str                          # Required config file
+    """Main configuration class combining all sub-configs.
 
-    # Hardware configuration
-    hardware: HardwareConfig = field(default_factory=HardwareConfig)
+    Organized into 8 sections matching the YAML schema:
+    1. model       - Architecture, MoE, tokens, regularization
+    2. training    - Optimizer, schedule, batching, validation, generation
+    3. data        - Loading, streaming, packing, splits
+    4. compute     - Device, precision, CUDA, kernels, memory
+    5. distributed - Multi-GPU, DeepSpeed, load balancing
+    6. logging     - Console, WandB, TensorBoard, diagnostics
+    7. checkpoints - Save/load, model selection
+    8. experimental- FP8, MTP, caching, advanced features
+    """
+    config_file: str                          # Required config file path
 
-    # Feature configurations
-    architecture: ArchitectureConfig = field(default_factory=ArchitectureConfig)
+    # Section 1: MODEL
+    model: ModelConfig = field(default_factory=ModelConfig)
+
+    # Section 2: TRAINING
+    training: TrainingSectionConfig = field(default_factory=TrainingSectionConfig)
+
+    # Section 3: DATA
+    data: DataConfig = field(default_factory=DataConfig)
+    multi_column_data: MultiColumnDataConfig = field(default_factory=MultiColumnDataConfig)
+
+    # Section 4: COMPUTE
+    compute: ComputeSectionConfig = field(default_factory=ComputeSectionConfig)
+
+    # Section 5: DISTRIBUTED
+    distributed: DistributedSectionConfig = field(default_factory=DistributedSectionConfig)
+
+    # Section 6: LOGGING
+    logging: LoggingSectionConfig = field(default_factory=LoggingSectionConfig)
+
+    # Section 7: CHECKPOINTS
+    checkpoints: CheckpointsSectionConfig = field(default_factory=CheckpointsSectionConfig)
+
+    # Section 8: EXPERIMENTAL
+    experimental: ExperimentalSectionConfig = field(default_factory=ExperimentalSectionConfig)
+
+    # =========================================================================
+    # LEGACY FIELDS (Backward Compatibility)
+    # These fields are kept for code that still references the old structure
+    # =========================================================================
+    hardware: LegacyHardwareConfig = field(default_factory=LegacyHardwareConfig)
+    architecture: ArchitectureEnhancementsConfig = field(default_factory=ArchitectureEnhancementsConfig)
     rag: RAGConfig = field(default_factory=RAGConfig)
     losses: LossConfig = field(default_factory=LossConfig)
     gradient: GradientConfig = field(default_factory=GradientConfig)
@@ -1655,36 +2048,29 @@ class EnhancedTrainingConfig:
     quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
     lr_finder: LRFinderConfig = field(default_factory=LRFinderConfig)
     memory: EpisodicMemoryConfig = field(default_factory=EpisodicMemoryConfig)
-    model: BasicModelConfig = field(default_factory=BasicModelConfig)
-    adaptive_mtp: AdaptiveMTPConfig = field(default_factory=AdaptiveMTPConfig)
-    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    adaptive_mtp: MTPConfig = field(default_factory=MTPConfig)
     dev_log: DevLogConfig = field(default_factory=DevLogConfig)
     optimizations: OptimizationsConfig = field(default_factory=OptimizationsConfig)
-
-    # Model selection and diagnostics
-    model_selection: ModelSelectionConfig = field(default_factory=ModelSelectionConfig)
+    model_selection: SelectionConfig = field(default_factory=SelectionConfig)
     diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
-
-    # Enhanced features (supports both losses and enhanced_features.losses paths)
-    enhanced_features: Optional[Dict[str, Any]] = None  # type: ignore[assignment]
-
-    # Data configurations
-    data: DataConfig = field(default_factory=DataConfig)
-    multi_column_data: MultiColumnDataConfig = field(default_factory=MultiColumnDataConfig)
-
-    # Training configurations
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    output: OutputConfig = field(default_factory=OutputConfig)
+    output: CheckpointsSectionConfig = field(default_factory=CheckpointsSectionConfig)
     run_management: RunManagementConfig = field(default_factory=RunManagementConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
-    deepspeed: DeepSpeedConfig = field(default_factory=DeepSpeedConfig)  # type: ignore[call-overload]
-    kernel_optimization: KernelOptimizationConfig = field(default_factory=KernelOptimizationConfig)
+    deepspeed: DeepSpeedConfig = field(default_factory=DeepSpeedConfig)
+    kernel_optimization: KernelsConfig = field(default_factory=KernelsConfig)
+
+    # Enhanced features
+    enhanced_features: Optional[Dict[str, Any]] = None
 
     # Special flags
-    enable_all_features: bool = False         # Enable all features
-    multi_task: bool = False                  # Multi-task learning
+    enable_all_features: bool = False
+    multi_task: bool = False
 
+
+# =============================================================================
+# TRAINING CONFIG MANAGER
+# =============================================================================
 
 class TrainingConfigManager:
     """Manager for training configuration with validation and feature compatibility."""
@@ -1765,20 +2151,20 @@ Examples:
         # Learning Rate Finder
         lr_finder_group = parser.add_argument_group('Learning Rate Finder')
         lr_finder_group.add_argument('--run-lr-finder', action='store_true',
-                                    help='Run LR Finder before training to find optimal learning rate')
+                                    help='Run LR Finder before training')
         lr_finder_group.add_argument('--lr-finder-start', type=float, default=1e-8,
-                                    help='Starting LR for LR finder (default: 1e-8)')
+                                    help='Starting LR for LR finder')
         lr_finder_group.add_argument('--lr-finder-end', type=float, default=1.0,
-                                    help='Ending LR for LR finder (default: 1.0)')
+                                    help='Ending LR for LR finder')
         lr_finder_group.add_argument('--lr-finder-iterations', type=int, default=100,
-                                    help='Number of iterations for LR finder (default: 100)')
+                                    help='Number of iterations for LR finder')
         lr_finder_group.add_argument('--lr-finder-method', type=str, default='steepest',
                                     choices=['steepest', 'minimum', 'valley'],
-                                    help='Method for suggesting LR from results (default: steepest)')
+                                    help='Method for suggesting LR')
         lr_finder_group.add_argument('--lr-finder-use-suggested', action='store_true',
-                                    help='Automatically use the suggested LR from LR finder')
+                                    help='Automatically use the suggested LR')
         lr_finder_group.add_argument('--lr-finder-plot-path', type=str, default=None,
-                                    help='Path to save LR finder plot (default: auto-generated in run dir)')
+                                    help='Path to save LR finder plot')
 
         # === DATA ARGUMENTS ===
         data_group = parser.add_argument_group('Data Configuration')
@@ -1788,50 +2174,51 @@ Examples:
         data_group.add_argument('--max-length', type=int, default=512,
                                help='Maximum sequence length')
         data_group.add_argument('--max-samples', type=int, default=None,
-                               help='Maximum number of training samples to load (for testing)')
+                               help='Maximum number of training samples')
         data_group.add_argument('--streaming', action='store_true', default=True,
-                               help='Use streaming data loader for large datasets (default: True)')
+                               help='Use streaming data loader')
         data_group.add_argument('--no-streaming', dest='streaming', action='store_false',
-                               help='Disable streaming and load all data into memory')
+                               help='Disable streaming')
         data_group.add_argument('--buffer-size', type=int, default=50000,
-                               help='Buffer size for streaming data loader (default: 50000, optimized for LLM pretraining)')
+                               help='Buffer size for streaming')
         data_group.add_argument('--num-workers', type=int, default=8,
-                               help='Number of parallel data loading workers (default: 8)')
+                               help='Number of parallel data loading workers')
         data_group.add_argument('--prefetch-factor', type=int, default=4,
-                               help='Number of batches to prefetch per worker (default: 4)')
-        data_group.add_argument('--no-persistent-workers', dest='persistent_workers', action='store_false', default=True,
-                               help='Disable persistent workers (workers restart each epoch)')
+                               help='Number of batches to prefetch per worker')
+        data_group.add_argument('--no-persistent-workers', dest='persistent_workers',
+                               action='store_false', default=True,
+                               help='Disable persistent workers')
 
         # === MULTI-COLUMN DATA ARGUMENTS ===
         multi_col_group = parser.add_argument_group('Multi-Column Data')
         multi_col_group.add_argument('--use-multi-column', action='store_true',
                                     help='Enable multi-column data loading')
         multi_col_group.add_argument('--dataset-config', type=str, default=None,
-                                    help='Path to dataset configuration file for multi-column loading')
+                                    help='Path to dataset configuration file')
         multi_col_group.add_argument('--hf-dataset', type=str, default=None,
-                                    help='HuggingFace dataset name (e.g., HuggingFaceM4/FineVision)')
+                                    help='HuggingFace dataset name')
         multi_col_group.add_argument('--hf-dataset-config', type=str, default=None,
-                                    help='HuggingFace dataset configuration/subset')
+                                    help='HuggingFace dataset configuration')
         multi_col_group.add_argument('--column-names', type=str, default=None,
-                                    help='Comma-separated list of column names to use')
+                                    help='Comma-separated list of column names')
         multi_col_group.add_argument('--column-types', type=str, default=None,
-                                    help='Comma-separated list of column types (text,numeric,image,etc)')
+                                    help='Comma-separated list of column types')
         multi_col_group.add_argument('--column-roles', type=str, default=None,
-                                    help='Comma-separated list of column roles (input,target,auxiliary)')
+                                    help='Comma-separated list of column roles')
         multi_col_group.add_argument('--combine-strategy', type=str, default='concatenate',
                                     choices=['concatenate', 'separate', 'template'],
-                                    help='Strategy for combining multiple input columns')
+                                    help='Strategy for combining columns')
         multi_col_group.add_argument('--column-template', type=str, default=None,
-                                    help='Template string for combining columns (e.g., "Question: {question}\\nAnswer: {answer}")')
+                                    help='Template string for combining columns')
 
         # === TRAINING ARGUMENTS ===
         training_group = parser.add_argument_group('Training Parameters')
         training_group.add_argument('--batch-size', type=int, default=None,
-                                   help='Batch size (overrides config)')
+                                   help='Batch size')
         training_group.add_argument('--epochs', type=int, default=None,
-                                   help='Number of epochs (overrides config)')
+                                   help='Number of epochs')
         training_group.add_argument('--learning-rate', type=float, default=None,
-                                   help='Learning rate (overrides config)')
+                                   help='Learning rate')
         training_group.add_argument('--gradient-accumulation', type=int, default=1,
                                    help='Gradient accumulation steps')
 
@@ -1844,23 +2231,23 @@ Examples:
         output_group.add_argument('--resume', type=str, default=None,
                                  help='Resume from checkpoint')
         output_group.add_argument('--fresh-start', action='store_true',
-                                 help='Force fresh start, ignore any existing checkpoints')
+                                 help='Force fresh start')
 
         # === RUN MANAGEMENT ARGUMENTS ===
         run_group = parser.add_argument_group('Run Management')
         run_group.add_argument('--run-name', type=str, default=None,
                               help='Custom name for this training run')
         run_group.add_argument('--run-tags', type=str, default=None,
-                              help='Comma-separated tags for this run (e.g., experiment,baseline,ablation)')
+                              help='Comma-separated tags for this run')
         run_group.add_argument('--run-description', type=str, default=None,
                               help='Description of this experiment')
         run_group.add_argument('--disable-run-manager', action='store_true',
-                              help='Disable the run manager and use legacy output structure')
+                              help='Disable the run manager')
 
         # Weights & Biases arguments
         wandb_group = parser.add_argument_group('Weights & Biases')
         wandb_group.add_argument('--use-wandb', action='store_true', default=True,
-                                help='Enable Weights & Biases logging (enabled by default)')
+                                help='Enable Weights & Biases logging')
         wandb_group.add_argument('--disable-wandb', action='store_true',
                                 help='Disable Weights & Biases logging')
         wandb_group.add_argument('--wandb-offline', action='store_true',
@@ -1872,9 +2259,9 @@ Examples:
         wandb_group.add_argument('--wandb-tags', type=str, default=None,
                                 help='Comma-separated Weights & Biases tags')
         wandb_group.add_argument('--wandb-log-freq', type=int, default=10,
-                                help='Weights & Biases logging frequency (steps)')
+                                help='Weights & Biases logging frequency')
         wandb_group.add_argument('--wandb-cache-size', type=int, default=2000,
-                                help='Weights & Biases cache size for offline resilience')
+                                help='Weights & Biases cache size')
         wandb_group.add_argument('--wandb-cache-flush-interval', type=int, default=50,
                                 help='Weights & Biases cache flush interval')
 
@@ -1885,22 +2272,22 @@ Examples:
         ds_group.add_argument('--deepspeed-config', type=str, default=None,
                              help='Path to DeepSpeed JSON configuration file')
         ds_group.add_argument('--zero-stage', type=int, default=2, choices=[0, 1, 2, 3],
-                             help='ZeRO optimization stage (0=disabled, 1=optimizer, 2=optimizer+gradients, 3=all)')
+                             help='ZeRO optimization stage')
         ds_group.add_argument('--cpu-offload', action='store_true',
-                             help='Enable CPU offloading for optimizer states')
+                             help='Enable CPU offloading')
         ds_group.add_argument('--nvme-offload', action='store_true',
-                             help='Enable NVMe offloading for large models')
+                             help='Enable NVMe offloading')
         ds_group.add_argument('--ds-gradient-accumulation', type=int, default=1,
                              help='DeepSpeed gradient accumulation steps')
         ds_group.add_argument('--train-batch-size', type=int, default=None,
-                             help='Global training batch size (for DeepSpeed)')
+                             help='Global training batch size')
         ds_group.add_argument('--micro-batch-size', type=int, default=None,
-                             help='Micro batch size per GPU (for DeepSpeed)')
+                             help='Micro batch size per GPU')
         ds_group.add_argument('--ds-precision', type=str, default='fp16',
                              choices=['fp16', 'bf16', 'fp32'],
                              help='Mixed precision type for DeepSpeed')
         ds_group.add_argument('--activation-checkpointing', action='store_true',
-                             help='Enable activation checkpointing to save memory')
+                             help='Enable activation checkpointing')
         ds_group.add_argument('--partition-activations', action='store_true',
                              help='Partition activations across GPUs')
         ds_group.add_argument('--cpu-checkpointing', action='store_true',
@@ -1908,20 +2295,20 @@ Examples:
         ds_group.add_argument('--pipeline-parallel-size', type=int, default=1,
                              help='Pipeline parallelism size')
         ds_group.add_argument('--wall-clock-breakdown', action='store_true',
-                             help='Enable DeepSpeed wall clock breakdown for profiling')
+                             help='Enable DeepSpeed wall clock breakdown')
 
         # Performance mode arguments
         perf_group = parser.add_argument_group('Performance Modes')
         perf_group.add_argument('--ultra-fast-mode', action='store_true',
-                               help='Ultra-fast mode: disable all logging for maximum training speed')
+                               help='Ultra-fast mode: disable all logging')
         perf_group.add_argument('--fast-progress', action='store_true',
-                               help='Fast-progress mode: enhanced progress bar with real-time loss')
+                               help='Fast-progress mode: enhanced progress bar')
         perf_group.add_argument('--minimal-progress', action='store_true',
-                               help='Minimal-progress mode: ultra-compact progress display')
+                               help='Minimal-progress mode: compact display')
         perf_group.add_argument('--no-sync', action='store_true',
-                               help='No-sync mode: disable CUDA synchronization for maximum speed')
+                               help='No-sync mode: disable CUDA synchronization')
         perf_group.add_argument('--express-mode', action='store_true',
-                               help='Express mode: optimized async logging with reduced frequency')
+                               help='Express mode: optimized async logging')
 
         return parser
 
@@ -1932,19 +2319,20 @@ Examples:
         if args.enable_all_features:
             self._enable_all_features(args)
 
-        # Load YAML to extract hardware config and dev_log config
+        # Load YAML to extract config sections
         yaml_config = self.load_yaml_config(args.config)
         yaml_dict = yaml_config.to_dict()
 
-        hardware_dict = yaml_dict.get('hardware', {})
-        hardware_config = HardwareConfig(
-            device=hardware_dict.get('device', 'cuda'),
+        # Extract hardware/device config
+        hardware_dict = yaml_dict.get('hardware', yaml_dict.get('compute', {}).get('device', {}))
+        hardware_config = LegacyHardwareConfig(
+            device=hardware_dict.get('device', hardware_dict.get('type', 'cuda')),
             mixed_precision=hardware_dict.get('mixed_precision', 'fp32'),
             compile=hardware_dict.get('compile', False)
         )
 
         # Load dev_log config from YAML
-        dev_log_dict = yaml_dict.get('dev_log', {})
+        dev_log_dict = yaml_dict.get('dev_log', yaml_dict.get('logging', {}).get('dev', {}))
         dev_log_config = DevLogConfig(
             enabled=dev_log_dict.get('enabled', False),
             show_file_timings=dev_log_dict.get('show_file_timings', True),
@@ -1957,13 +2345,13 @@ Examples:
         config = EnhancedTrainingConfig(
             config_file=args.config,
             enable_all_features=args.enable_all_features,
-            multi_task=False,  # Multi-task learning arguments removed
+            multi_task=False,
 
             # Hardware configuration
             hardware=hardware_config,
 
-            # Use default configs for removed features
-            architecture=ArchitectureConfig(),
+            # Use default configs for other sections
+            architecture=ArchitectureEnhancementsConfig(),
             rag=RAGConfig(),
             gradient=GradientConfig(),
             evaluation=EvaluationConfig(),
@@ -2003,14 +2391,14 @@ Examples:
                 column_template=args.column_template
             ),
 
-            training=TrainingConfig(
+            training=TrainingSectionConfig(
                 batch_size=args.batch_size,
                 epochs=args.epochs,
                 learning_rate=args.learning_rate,
                 gradient_accumulation=args.gradient_accumulation
             ),
 
-            output=OutputConfig(
+            output=CheckpointsSectionConfig(
                 output_dir=args.output_dir,
                 save_every=args.save_every,
                 resume=args.resume,
@@ -2072,21 +2460,11 @@ Examples:
         """
         Create a unified configuration by loading YAML and merging command-line arguments.
 
-        This is the new recommended way to load configuration that:
-        - Loads all YAML fields dynamically (no predefined structure needed)
-        - Merges command-line argument overrides on top
-        - Returns a DynamicConfig object with dot notation access
-
         Args:
             args: Parsed command-line arguments
 
         Returns:
             DynamicConfig object with merged YAML + CLI configuration
-
-        Example:
-            config = manager.create_unified_config(args)
-            batch_size = config.training.batch_size
-            learning_rate = config.training.learning_rate
         """
         # Load YAML configuration dynamically
         yaml_config = self.load_yaml_config(args.config)
@@ -2102,10 +2480,9 @@ Examples:
                 yaml_config.training.learning_rate = args.learning_rate
             if args.epochs is not None:
                 yaml_config.training.epochs = args.epochs
-            if args.gradient_accumulation != 1:  # 1 is the default
+            if args.gradient_accumulation != 1:
                 yaml_config.training.gradient_accumulation_steps = args.gradient_accumulation
         else:
-            # Create training section if it doesn't exist
             training_dict = {}
             if args.batch_size is not None:
                 training_dict['batch_size'] = args.batch_size
@@ -2121,14 +2498,13 @@ Examples:
         # Data overrides
         default_data_dir = str(get_data_dir("processed"))
         if hasattr(yaml_config, 'data'):
-            if args.data_dir != default_data_dir:  # Not default
+            if args.data_dir != default_data_dir:
                 yaml_config.data.data_dir = args.data_dir
-            if args.max_length != 512:  # Not default
+            if args.max_length != 512:
                 yaml_config.data.max_length = args.max_length
             if args.max_samples is not None:
                 yaml_config.data.max_samples = args.max_samples
         else:
-            # Create data section if it doesn't exist
             data_dict = {}
             if args.data_dir != default_data_dir:
                 data_dict['data_dir'] = args.data_dir
@@ -2142,7 +2518,7 @@ Examples:
         # Output overrides
         default_output_dir = str(get_outputs_dir())
         if hasattr(yaml_config, 'output'):
-            if args.output_dir != default_output_dir:  # Not default
+            if args.output_dir != default_output_dir:
                 yaml_config.output.output_dir = args.output_dir
             if args.resume is not None:
                 yaml_config.output.resume = args.resume
@@ -2161,13 +2537,11 @@ Examples:
 
     def _enable_all_features(self, args: argparse.Namespace) -> None:
         """Enable all enhanced features when --enable-all-features is set."""
-        # Note: Most enhanced features have been removed. This function is kept for compatibility.
         # Currently no features to enable beyond what's in YAML configs.
         pass
 
     def _build_feature_dependencies(self) -> Dict[str, List[str]]:
         """Build feature dependency mapping."""
-        # Most features have been removed. Keeping empty dict for compatibility.
         return {}
 
     def validate_dynamic_config(self, config: DynamicConfig) -> List[str]:
@@ -2182,7 +2556,6 @@ Examples:
         """
         messages = []
 
-        # Helper function to safely get nested attributes
         def safe_get(obj, path, default=None):
             """Safely get nested attribute using dot notation"""
             parts = path.split('.')
@@ -2194,14 +2567,14 @@ Examples:
             return obj
 
         # Check DeepSpeed settings
-        if safe_get(config, 'deepspeed.use_deepspeed', False):
-            config_file = safe_get(config, 'deepspeed.config_file')
+        if safe_get(config, 'deepspeed.use_deepspeed', False) or safe_get(config, 'distributed.deepspeed.use_deepspeed', False):
+            config_file = safe_get(config, 'deepspeed.config_file') or safe_get(config, 'distributed.deepspeed.config_file')
             if config_file and isinstance(config_file, (str, Path)) and not Path(config_file).exists():
                 messages.append(f"DeepSpeed config file not found: {config_file}")
 
-            zero_stage = safe_get(config, 'deepspeed.zero_stage', 0)
-            cpu_offload = safe_get(config, 'deepspeed.cpu_offload', False)
-            nvme_offload = safe_get(config, 'deepspeed.nvme_offload', False)
+            zero_stage = safe_get(config, 'deepspeed.zero_stage', 0) or safe_get(config, 'distributed.deepspeed.zero_stage', 0)
+            cpu_offload = safe_get(config, 'deepspeed.cpu_offload', False) or safe_get(config, 'distributed.deepspeed.cpu_offload', False)
+            nvme_offload = safe_get(config, 'deepspeed.nvme_offload', False) or safe_get(config, 'distributed.deepspeed.nvme_offload', False)
 
             if zero_stage == 3 and not cpu_offload:
                 messages.append("Warning: ZeRO stage 3 without CPU offload may cause OOM")
@@ -2216,10 +2589,10 @@ Examples:
 
         # Check performance mode conflicts
         perf_modes = [
-            safe_get(config, 'performance.ultra_fast_mode', False),
-            safe_get(config, 'performance.fast_progress', False),
-            safe_get(config, 'performance.minimal_progress', False),
-            safe_get(config, 'performance.express_mode', False)
+            safe_get(config, 'performance.ultra_fast_mode', False) or safe_get(config, 'compute.performance.ultra_fast_mode', False),
+            safe_get(config, 'performance.fast_progress', False) or safe_get(config, 'compute.performance.fast_progress', False),
+            safe_get(config, 'performance.minimal_progress', False) or safe_get(config, 'compute.performance.minimal_progress', False),
+            safe_get(config, 'performance.express_mode', False) or safe_get(config, 'compute.performance.express_mode', False)
         ]
         if sum(1 for mode in perf_modes if mode) > 1:
             messages.append("Warning: Multiple performance modes enabled, may conflict")
@@ -2323,3 +2696,14 @@ Examples:
             return "No Sync"
         else:
             return "Standard"
+
+
+# =============================================================================
+# MODULE EXPORTS
+# =============================================================================
+
+# Keep AdaptiveMTPConfig as an alias for MTPConfig (backward compatibility)
+AdaptiveMTPConfig = MTPConfig
+
+# Keep ArchitectureConfig as an alias (backward compatibility)
+ArchitectureConfig = ArchitectureEnhancementsConfig

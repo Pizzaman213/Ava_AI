@@ -36,6 +36,17 @@ try:
 except ImportError:
     fused_expert_forward = None
 
+try:
+    from .fused_norm import (
+        fused_add_layer_norm,
+        fused_add_layer_norm_simple,
+        FusedAddLayerNorm,
+    )
+except ImportError:
+    fused_add_layer_norm = None
+    fused_add_layer_norm_simple = None
+    FusedAddLayerNorm = None
+
 __all__ = [
     # Stream management
     'StreamPool',
@@ -48,5 +59,9 @@ __all__ = [
     'fused_swiglu',
     'fused_geglu',
     'fused_expert_forward',
+    # Fused norm
+    'fused_add_layer_norm',
+    'fused_add_layer_norm_simple',
+    'FusedAddLayerNorm',
     'TRITON_AVAILABLE',
 ]

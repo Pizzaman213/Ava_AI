@@ -119,7 +119,8 @@ class UnifiedMoERouter(nn.Module):
 
         # OPTIMIZATION: Use Python int for step counter to avoid torch.compile graph breaks
         self._step_counter = 0
-        self.metric_sampling_freq = 100  # Compute metrics every 100 steps
+        # Always compute metrics - logging frequency is controlled by training config (routing_metrics_freq)
+        self.metric_sampling_freq = 1
 
         # SPEED OPTIMIZATION: Pre-allocate reusable buffers to avoid per-forward allocation
         # These are registered as non-persistent buffers (not saved with model)
@@ -357,9 +358,10 @@ class UnifiedMoERouter(nn.Module):
 
     def _compute_routing_metrics(
         self,
-        router_probs: torch.Tensor,
+        router_probs: Optional[torch.Tensor],
         expert_indices: torch.Tensor,
         tokens_per_expert: Optional[torch.Tensor] = None,
+        top_k_weights: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Compute routing quality metrics (sampled every N steps to reduce overhead).
@@ -420,6 +422,20 @@ class UnifiedMoERouter(nn.Module):
             router_confidence = router_probs.max(dim=-1)[0].mean().detach()
             metrics['routing_entropy'] = router_entropy
             metrics['router_confidence'] = router_confidence
+        elif top_k_weights is not None:
+            # APPROX: Compute from top-k weights when full router_probs not available
+            # This is a reasonable approximation since top-k experts capture >95% of probability mass
+            #
+            # Router confidence: max weight among selected experts (good approximation)
+            router_confidence = top_k_weights.max(dim=-1)[0].mean().detach()
+            metrics['router_confidence'] = router_confidence
+            #
+            # Routing entropy over selected experts (not full distribution)
+            # Lower values = router is more confident in top choice
+            # Higher values = router is uncertain among selected experts
+            safe_weights = top_k_weights.clamp(min=1e-10)
+            top_k_entropy = -(safe_weights * safe_weights.log()).sum(dim=-1).mean().detach()
+            metrics['routing_entropy'] = top_k_entropy
 
         return metrics
 
@@ -667,8 +683,10 @@ class MixtralRouter(UnifiedMoERouter):
             # First step before any aux loss computed
             router_probs = None
 
-        # Compute metrics (pass pre-computed tokens_per_expert)
-        metrics = self._compute_routing_metrics(router_probs, top_k_indices, tokens_per_expert)
+        # Compute metrics (pass pre-computed tokens_per_expert and top_k_weights for approx metrics)
+        metrics = self._compute_routing_metrics(
+            router_probs, top_k_indices, tokens_per_expert, top_k_weights
+        )
 
         # Update expert counts (for long-term tracking) - reuse computed tokens_per_expert
         if training and tokens_per_expert is not None:
@@ -847,8 +865,10 @@ class DeepSeekRouter(UnifiedMoERouter):
                 load_balance_loss = self._compute_load_balance_loss(router_probs, top_k_indices)
                 aux_loss = aux_loss + self.load_balance_loss_coef * load_balance_loss
 
-        # Compute metrics
-        metrics = self._compute_routing_metrics(router_probs, top_k_indices)
+        # Compute metrics (pass top_k_weights for approx metrics when router_probs is None)
+        metrics = self._compute_routing_metrics(
+            router_probs, top_k_indices, top_k_weights=top_k_weights
+        )
         metrics['shared_expert_weight'] = torch.tensor(self.shared_expert_weight)
 
         return top_k_indices, top_k_weights, aux_loss, metrics
@@ -1204,7 +1224,9 @@ class AuxFreeRouter(UnifiedMoERouter):
 
         # Compute metrics
         router_probs = F.softmax(router_logits, dim=-1)
-        metrics = self._compute_routing_metrics(router_probs, top_k_indices)
+        metrics = self._compute_routing_metrics(
+            router_probs, top_k_indices, top_k_weights=top_k_weights
+        )
 
         # Add balancing stats
         balancing_stats = self.load_balancer.get_stats()
@@ -1524,7 +1546,9 @@ class StableMoERouter(UnifiedMoERouter):
 
         # Compute metrics
         router_probs = F.softmax(router_logits, dim=-1)
-        metrics = self._compute_routing_metrics(router_probs, top_k_indices)
+        metrics = self._compute_routing_metrics(
+            router_probs, top_k_indices, top_k_weights=top_k_weights
+        )
 
         # Add Stable-MoE specific metrics
         # PERFORMANCE: Keep as tensors to avoid multiple GPU->CPU syncs per forward pass

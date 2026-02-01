@@ -24,7 +24,8 @@ from .paths import (
     create_output_dirs,
 )
 
-from .logging import (
+# Logging moved to ava.logging module - re-export from new location for compatibility
+from ava.logging.console.colored import (
     Colors,
     supports_color,
     ColoredFormatter,
@@ -60,6 +61,7 @@ from .data_utils import (
     BaseCollator,
     move_to_device,
     get_config_value,
+    get_data_config,
     get_num_workers,
     get_prefetch_factor,
     get_persistent_workers,
@@ -118,6 +120,7 @@ __all__ = [
     'BaseCollator',
     'move_to_device',
     'get_config_value',
+    'get_data_config',
     'get_num_workers',
     'get_prefetch_factor',
     'get_persistent_workers',

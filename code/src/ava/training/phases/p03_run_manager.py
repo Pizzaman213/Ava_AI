@@ -49,7 +49,7 @@ class RunManagerPhase(TrainingPhase):
         """
         from ava.training import RunManager
         from ava.core.checkpoint import CheckpointManager
-        from ava.core.logging import configure_root_logger, ColoredFormatter
+        from ava.logging.console.colored import configure_root_logger, ColoredFormatter
 
         # Configure root logger
         configure_root_logger(level=logging.WARNING)
@@ -124,7 +124,7 @@ class RunManagerPhase(TrainingPhase):
 
     def _setup_logging(self, log_dir: Path, rank: int) -> logging.Logger:
         """Setup logging for training."""
-        from ava.core.logging import ColoredFormatter
+        from ava.logging.console.colored import ColoredFormatter
 
         train_logger = logging.getLogger('train_pipeline')
         train_logger.setLevel(logging.INFO if rank == 0 else logging.WARNING)

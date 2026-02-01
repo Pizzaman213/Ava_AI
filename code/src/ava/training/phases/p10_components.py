@@ -115,7 +115,7 @@ class ComponentsPhase(TrainingPhase):
 
     def _setup_diagnostics(self, ctx: PhaseContext) -> None:
         """Setup diagnostics manager if enabled."""
-        from ava.training.diagnostics import DiagnosticsManager
+        from ava.logging.diagnostics.training import DiagnosticsManager
         from ava.config.training_config import DiagnosticsConfig
 
         diagnostics_config = ctx.config.get('diagnostics', {})
@@ -205,6 +205,8 @@ class ComponentsPhase(TrainingPhase):
             checkpoint_manager=ctx.checkpoint_manager,
             diagnostics_manager=ctx.diagnostics_mgr,
             episodic_memory_manager=ctx.episodic_memory_mgr,
+            validation_manager=ctx.validation_mgr,
+            val_loader=ctx.val_loader,
         )
 
         # Setup gradient sync for multi-GPU
@@ -259,6 +261,14 @@ class ComponentsPhase(TrainingPhase):
         if profile_dir is None or profile_dir == './profiles':
             profile_dir = str(ctx.run_manager.run_dir / 'profiles') if ctx.run_manager else './profiles'
 
+        # Overlapped accumulation config
+        batching_config = training_config.get('batching', {})
+        use_overlapped_accum = batching_config.get('use_overlapped_accumulation', True)
+
+        # MoE routing metrics config
+        logging_cfg = training_config.get('logging', {})
+        routing_metrics_freq = logging_cfg.get('routing_metrics_freq', 0)
+
         return TrainingLoopConfig(
             gradient_accumulation_steps=ctx.context.gradient_accumulation_steps,
             max_grad_norm=training_config.get('max_grad_norm', 1.0),
@@ -266,7 +276,9 @@ class ComponentsPhase(TrainingPhase):
             amp_dtype=ctx.context.amp_dtype,
             log_interval=ctx.metadata.get('log_interval', 1),  # Default to every step
             generate_every_n_steps=generation_config.get('generate_every_n_steps', 500),
-            save_steps=training_config.get('logging', {}).get('save_steps', 500),
+            save_steps=logging_cfg.get('save_steps', 500),
+            eval_steps=logging_cfg.get('eval_steps', 1000),
+            max_val_batches=training_config.get('validation', {}).get('max_batches', 50),
             max_steps=ctx.metadata.get('max_steps'),
             # Profiling
             enable_profiling=getattr(args, 'enable_profiling', False),
@@ -279,6 +291,10 @@ class ComponentsPhase(TrainingPhase):
             # CUDA Graphs
             use_cuda_graphs=use_cuda_graphs,
             cuda_graph_warmup_steps=cuda_graph_warmup_steps,
+            # Overlapped accumulation
+            use_overlapped_accumulation=use_overlapped_accum,
+            # MoE routing metrics
+            routing_metrics_freq=routing_metrics_freq,
         )
 
     def validate(self, ctx: PhaseContext) -> List[str]:

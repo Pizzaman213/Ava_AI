@@ -40,8 +40,12 @@ Note:
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
+
+# Silence HuggingFace tokenizers parallelism warning when using DataLoader workers
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Add src to path for imports
 _script_dir = Path(__file__).resolve().parent
@@ -51,7 +55,7 @@ if str(_src_dir) not in sys.path:
 
 # Import phase infrastructure
 from ava.training.phases import PhaseExecutor, PhaseContext
-from ava.core.logging import ColoredFormatter
+from ava.logging.console.colored import ColoredFormatter
 
 
 def setup_main_logger(rank: int = 0) -> logging.Logger:

@@ -4,7 +4,7 @@ Script Utilities - Common functionality for training scripts.
 This module eliminates code duplication across training scripts by providing:
 - auto_install_requirements(): Auto-install Python dependencies
 - setup_training_logging(): Configure logging for training scripts
-- get_project_root(): Find project root directory
+- get_project_root(): Find project root directory (re-exported from paths.py)
 
 Usage:
     from ava.core.script_utils import auto_install_requirements, setup_training_logging
@@ -16,43 +16,18 @@ Usage:
     logger = setup_training_logging(log_dir, rank=0)
 """
 
+import functools
 import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set, Tuple, Type, Callable
 
+# Import get_project_root from centralized paths module
+from .paths import get_project_root
 
-def get_project_root(start_path: Optional[Path] = None) -> Path:
-    """
-    Find the project root directory.
-
-    Looks for common project markers (requirements.txt, .git, setup.py).
-
-    Args:
-        start_path: Starting path for search (defaults to current file's directory)
-
-    Returns:
-        Path to project root directory
-    """
-    if start_path is None:
-        start_path = Path(__file__).resolve()
-
-    # Walk up directory tree looking for project markers
-    current = start_path
-    for _ in range(10):  # Limit search depth
-        if (current / "requirements.txt").exists():
-            return current
-        if (current / ".git").exists():
-            return current
-        if (current / "setup.py").exists():
-            return current
-        if current.parent == current:
-            break
-        current = current.parent
-
-    # Fallback: assume we're in src/ava/core
-    return Path(__file__).resolve().parents[5]
+# Track configured loggers to avoid redundant setup
+_configured_loggers: Set[str] = set()
 
 
 def auto_install_requirements(
@@ -105,6 +80,21 @@ def auto_install_requirements(
         return False
 
 
+@functools.lru_cache(maxsize=1)
+def _get_colored_formatter() -> Tuple[Optional[Type], Callable[[], bool]]:
+    """
+    Lazy-load ColoredFormatter and supports_color with caching.
+
+    Returns:
+        Tuple of (ColoredFormatter class or None, supports_color function)
+    """
+    try:
+        from ava.logging.console.colored import ColoredFormatter, supports_color
+        return ColoredFormatter, supports_color
+    except ImportError:
+        return None, lambda: False
+
+
 def setup_training_logging(
     log_dir: Optional[Path] = None,
     rank: int = 0,
@@ -112,12 +102,14 @@ def setup_training_logging(
     level: int = logging.INFO,
     log_to_file: bool = True,
     use_colors: bool = True,
+    force_reconfigure: bool = False,
 ) -> logging.Logger:
     """
     Setup logging for training scripts.
 
     Creates a logger with console and optionally file handlers.
     Supports colored output if available.
+    Caches configuration to avoid redundant setup on repeated calls.
 
     Args:
         log_dir: Directory for log files (creates if needed)
@@ -126,6 +118,7 @@ def setup_training_logging(
         level: Logging level (default: INFO)
         log_to_file: Whether to log to file
         use_colors: Whether to use colored console output (if available)
+        force_reconfigure: If True, reconfigure even if already configured
 
     Returns:
         Configured logger instance
@@ -136,8 +129,14 @@ def setup_training_logging(
     """
     logger = logging.getLogger(logger_name)
 
+    # Check if already configured (skip redundant setup)
+    cache_key = f"{logger_name}_{rank}_{log_dir}"
+    if cache_key in _configured_loggers and not force_reconfigure:
+        return logger
+
     # Clear existing handlers to avoid duplicates
-    logger.handlers.clear()
+    if logger.handlers:
+        logger.handlers.clear()
     logger.setLevel(level)
 
     # Prevent propagation to root logger to avoid duplicate messages
@@ -151,12 +150,9 @@ def setup_training_logging(
         # Try to use colored formatting if available and requested
         formatter = None
         if use_colors:
-            try:
-                from .logging import ColoredFormatter, supports_color
-                if supports_color():
-                    formatter = ColoredFormatter(show_level=False)
-            except ImportError:
-                pass
+            ColoredFormatter, supports_color = _get_colored_formatter()
+            if ColoredFormatter and supports_color():
+                formatter = ColoredFormatter(show_level=False)
 
         if formatter is None:
             formatter = logging.Formatter(
@@ -183,7 +179,15 @@ def setup_training_logging(
         ))
         logger.addHandler(file_handler)
 
+    # Mark as configured
+    _configured_loggers.add(cache_key)
+
     return logger
+
+
+def clear_logger_cache() -> None:
+    """Clear the configured loggers cache. Useful for testing."""
+    _configured_loggers.clear()
 
 
 def suppress_noisy_loggers(loggers: Optional[list] = None) -> None:
@@ -226,4 +230,5 @@ __all__ = [
     'setup_training_logging',
     'suppress_noisy_loggers',
     'configure_stdout_buffering',
+    'clear_logger_cache',
 ]

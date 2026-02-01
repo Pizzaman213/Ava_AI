@@ -62,7 +62,7 @@ except (ImportError, ModuleNotFoundError) as e:
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 # Configure unified logging for Ava (colored output, tqdm-compatible)
-from ava.core.logging import setup_ava_logging
+from ava.logging.console.colored import setup_ava_logging
 setup_ava_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

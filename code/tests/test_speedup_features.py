@@ -13,34 +13,12 @@ import torch.nn as nn
 from typing import Optional
 
 
-# =========================================================================
-# TEST FIXTURES
-# =========================================================================
-
-@pytest.fixture
-def device():
-    """Get test device."""
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
-@pytest.fixture
-def hidden_size():
-    return 256
-
-
-@pytest.fixture
-def intermediate_size():
-    return 1024
-
-
-@pytest.fixture
-def num_experts():
-    return 8
-
-
-@pytest.fixture
-def batch_size():
-    return 32
+# Fixtures are now defined in conftest.py:
+# - device: CUDA if available, else CPU
+# - hidden_size: 256
+# - intermediate_size: 1024
+# - num_experts: 8
+# - batch_size: 32
 
 
 # =========================================================================

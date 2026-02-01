@@ -421,6 +421,93 @@ CONFIG_PATH_MAPPINGS: Dict[str, str] = {
     'multi_column_data.column_roles': 'data.multi_column.column_roles',
     'multi_column_data.combine_strategy': 'data.multi_column.combine_strategy',
     'multi_column_data.column_template': 'data.multi_column.column_template',
+
+    # =========================================================================
+    # MoE Configuration Consolidation -> model.moe.*
+    # =========================================================================
+    # Flat model.* MoE fields -> model.moe.architecture.*
+    'model.num_experts': 'model.moe.architecture.num_experts',
+    'model.num_experts_per_token': 'model.moe.architecture.num_experts_per_token',
+    'model.router_type': 'model.moe.architecture.router_type',
+    'model.capacity_factor': 'model.moe.architecture.capacity_factor',
+    'model.expert_dropout': 'model.moe.architecture.expert_dropout',
+
+    # Flat model.* loss fields -> model.moe.losses.*
+    'model.router_z_loss_coef': 'model.moe.losses.router_z_loss_coef',
+    'model.load_balance_loss_coef': 'model.moe.losses.load_balance_loss_coef',
+    'model.diversity_loss_coef': 'model.moe.losses.diversity_loss_coef',
+    'model.expert_dropout_loss_coef': 'model.moe.losses.expert_dropout_loss_coef',
+    'model.router_jitter_noise': 'model.moe.losses.router_jitter_noise',
+    'model.aux_loss_frequency': 'model.moe.losses.aux_loss_frequency',
+    'model.diversity_loss_frequency': 'model.moe.losses.diversity_loss_frequency',
+
+    # Flat model.* optimization fields -> model.moe.optimization.*
+    'model.use_optimized_moe': 'model.moe.optimization.use_optimized_moe',
+    'model.use_grouped_gemm': 'model.moe.optimization.use_grouped_gemm',
+    'model.use_compile_friendly_dispatch': 'model.moe.optimization.use_compile_friendly_dispatch',
+
+    # compute.kernels.* MoE fields -> model.moe.optimization.*
+    'compute.kernels.use_fused_moe_kernel': 'model.moe.optimization.use_fused_moe_kernel',
+    'compute.kernels.use_sparse_expert_dispatch': 'model.moe.optimization.use_sparse_expert_dispatch',
+    'compute.kernels.use_selective_expert_loading': 'model.moe.optimization.use_selective_expert_loading',
+    'compute.kernels.use_vectorized_capacity': 'model.moe.optimization.use_vectorized_capacity',
+    'compute.kernels.use_fused_softmax_topk': 'model.moe.optimization.use_fused_softmax_topk',
+    'compute.kernels.router_kernel_mode': 'model.moe.optimization.router_kernel_mode',
+    'compute.kernels.router_block_size': 'model.moe.optimization.router_block_size',
+
+    # compute.memory.expert_prefetch.* -> model.moe.prefetch.*
+    'compute.memory.expert_prefetch': 'model.moe.prefetch',
+    'compute.memory.expert_prefetch.enabled': 'model.moe.prefetch.enabled',
+    'compute.memory.expert_prefetch.lookahead': 'model.moe.prefetch.lookahead',
+    'compute.memory.expert_prefetch.use_multiple_streams': 'model.moe.prefetch.use_multiple_streams',
+
+    # optimizations.expert_prefetch.* -> model.moe.prefetch.*
+    'optimizations.expert_prefetch.enabled': 'model.moe.prefetch.enabled',
+    'optimizations.expert_prefetch.lookahead': 'model.moe.prefetch.lookahead',
+    'optimizations.expert_prefetch.use_multiple_streams': 'model.moe.prefetch.use_multiple_streams',
+
+    # optimizations.expert_cache.* -> model.moe.cache.*
+    'optimizations.expert_cache': 'model.moe.cache',
+    'optimizations.expert_cache.auto_limit': 'model.moe.cache.auto_limit',
+    'optimizations.expert_cache.use_lru_eviction': 'model.moe.cache.use_lru_eviction',
+    'optimizations.expert_cache.clear_after_optimizer_step': 'model.moe.cache.clear_after_optimizer_step',
+
+    # optimizations.router.* -> model.moe.router_compile.*
+    'optimizations.router.cache_hash_on_gpu': 'model.moe.router_compile.cache_hash_on_gpu',
+    'optimizations.router.compile_routers': 'model.moe.router_compile.compile_routers',
+    'optimizations.router.compile_mode': 'model.moe.router_compile.compile_mode',
+    'optimizations.router.compile_dynamic': 'model.moe.router_compile.compile_dynamic',
+
+    # training.logging.routing_metrics_freq -> model.moe.metrics.routing_metrics_freq
+    'training.logging.routing_metrics_freq': 'model.moe.metrics.routing_metrics_freq',
+
+    # logging.frequencies.moe_metrics_freq -> model.moe.metrics.moe_metrics_freq
+    'logging.frequencies.moe_metrics_freq': 'model.moe.metrics.moe_metrics_freq',
+
+    # logging.wandb.log_moe -> model.moe.metrics.log_moe
+    'logging.wandb.log_moe': 'model.moe.metrics.log_moe',
+    'logging.wandb.log_routing_diagnostics': 'model.moe.metrics.log_routing_diagnostics',
+
+    # moe_metrics.* -> model.moe.metrics.*
+    'moe_metrics.track_expert_utilization': 'model.moe.metrics.track_expert_utilization',
+    'moe_metrics.track_routing_decisions': 'model.moe.metrics.track_routing_decisions',
+    'moe_metrics.track_load_balance': 'model.moe.metrics.track_load_balance',
+    'moe_metrics.log_frequency': 'model.moe.metrics.moe_metrics_freq',
+
+    # experimental.stable_moe.* -> model.moe.stable_moe.*
+    'experimental.stable_moe': 'model.moe.stable_moe',
+    'experimental.stable_moe.enabled': 'model.moe.stable_moe.enabled',
+    'experimental.stable_moe.target_utilization': 'model.moe.stable_moe.target_utilization',
+    'experimental.stable_moe.capacity_min': 'model.moe.stable_moe.capacity_min',
+    'experimental.stable_moe.capacity_max': 'model.moe.stable_moe.capacity_max',
+    'experimental.stable_moe.utilization_tolerance': 'model.moe.stable_moe.utilization_tolerance',
+    'experimental.stable_moe.adaptation_rate': 'model.moe.stable_moe.adaptation_rate',
+    'experimental.stable_moe.temperature_init': 'model.moe.stable_moe.temperature_init',
+    'experimental.stable_moe.temperature_min': 'model.moe.stable_moe.temperature_min',
+    'experimental.stable_moe.temperature_decay': 'model.moe.stable_moe.temperature_decay',
+    'experimental.stable_moe.log_utilization_histogram': 'model.moe.stable_moe.log_utilization_histogram',
+    'experimental.stable_moe.log_capacity_factors': 'model.moe.stable_moe.log_capacity_factors',
+    'experimental.stable_moe.log_temperature': 'model.moe.stable_moe.log_temperature',
 }
 
 

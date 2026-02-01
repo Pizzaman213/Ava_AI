@@ -42,23 +42,36 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Precompiled regex patterns for checkpoint key remapping (avoids recompilation on every call)
+_PROJECTION_ATTENTION_PATTERN = re.compile(r'\.(q_proj|k_proj|v_proj|o_proj)\.attention\.')
+
 
 def _unwrap_model(model: nn.Module) -> nn.Module:
     """
-    Unwrap DDP and torch.compile wrappers to get the base model for saving.
+    Unwrap DDP, DeepSpeed, and torch.compile wrappers to get the base model for saving.
 
     When saving checkpoints, we need the underlying model without wrappers so that:
     1. DDP's 'module.' prefix is not included in state dict keys
-    2. torch.compile's '_orig_mod.' prefix is not included in state dict keys
+    2. DeepSpeed's 'module.' prefix is not included in state dict keys
+    3. torch.compile's '_orig_mod.' prefix is not included in state dict keys
 
     This ensures checkpoints are compatible with non-distributed, non-compiled models.
 
     Args:
-        model: Model that may be wrapped with DDP and/or torch.compile
+        model: Model that may be wrapped with DDP, DeepSpeed, and/or torch.compile
 
     Returns:
         The unwrapped base model
     """
+    # Unwrap DeepSpeed (DeepSpeedEngine wraps model in .module)
+    # Check this BEFORE DDP since DeepSpeed may wrap a DDP model
+    try:
+        from deepspeed.runtime.engine import DeepSpeedEngine
+        if isinstance(model, DeepSpeedEngine):
+            model = model.module
+    except ImportError:
+        pass
+
     # Unwrap DDP (DistributedDataParallel wraps model in .module)
     if isinstance(model, nn.parallel.DistributedDataParallel):
         model = model.module
@@ -108,9 +121,8 @@ def remap_state_dict_keys(
         # Fix: layers.X.attention.{q,k,v,o}_proj.attention.Y -> layers.X.attention.{q,k,v,o}_proj.Y
         # This handles corrupted keys like: layers.0.attention.q_proj.attention.weight
         elif '.attention.' in old_key and old_key.count('.attention.') > 1:
-            # Remove spurious '.attention.' after projection names
-            new_key = re.sub(
-                r'\.(q_proj|k_proj|v_proj|o_proj)\.attention\.',
+            # Remove spurious '.attention.' after projection names (using precompiled regex)
+            new_key = _PROJECTION_ATTENTION_PATTERN.sub(
                 r'.\1.',
                 old_key
             )
@@ -270,10 +282,11 @@ class CheckpointManager:
         self._buffer_write_locks = [threading.Lock(), threading.Lock()]
 
         # Cache best loss/quality to avoid loading checkpoint from disk on every save
+        # Lazy-loaded on first access to avoid disk I/O at init
         self._cached_best_loss: Optional[float] = None
         self._cached_best_quality: Optional[float] = None
         self._best_cache_lock = threading.Lock()
-        self._init_best_cache()
+        self._best_cache_loaded = False  # Defer loading until first access
 
     def save(
         self,
@@ -748,8 +761,21 @@ class CheckpointManager:
         if self._checkpoint_stream is not None:
             self._checkpoint_stream.synchronize()
 
-    def _init_best_cache(self) -> None:
-        """Initialize the best loss/quality cache from existing checkpoint on disk."""
+    def _ensure_best_cache_loaded(self) -> None:
+        """Ensure best cache is loaded (lazy initialization on first access)."""
+        if self._best_cache_loaded:
+            return
+
+        with self._best_cache_lock:
+            # Double-check after acquiring lock
+            if self._best_cache_loaded:
+                return
+
+            self._load_best_cache_from_disk()
+            self._best_cache_loaded = True
+
+    def _load_best_cache_from_disk(self) -> None:
+        """Load best loss/quality cache from existing checkpoint on disk."""
         best_path = self.save_dir / 'best_model.pt'
         if not best_path.exists():
             self._cached_best_loss = float('inf')
@@ -787,19 +813,19 @@ class CheckpointManager:
                 self._cached_best_quality = quality
 
     def _get_best_loss(self, best_path: Path) -> float:
-        """Get best loss from cache (fast, no disk I/O)."""
+        """Get best loss from cache (lazy-loaded on first access)."""
+        self._ensure_best_cache_loaded()
         with self._best_cache_lock:
             if self._cached_best_loss is not None:
                 return self._cached_best_loss
-        # Fallback: load from disk if cache not initialized
         return float('inf')
 
     def _get_best_quality_score(self, best_path: Path) -> float:
-        """Get best quality score from cache (fast, no disk I/O)."""
+        """Get best quality score from cache (lazy-loaded on first access)."""
+        self._ensure_best_cache_loaded()
         with self._best_cache_lock:
             if self._cached_best_quality is not None:
                 return self._cached_best_quality
-        # Fallback: return default if cache not initialized
         return 0.0
 
     def get_save_errors(self) -> list:

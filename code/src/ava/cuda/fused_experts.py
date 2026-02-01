@@ -442,11 +442,19 @@ if TRITON_AVAILABLE:
 
     # Configs for fused expert forward - balanced for mixed GPU architectures
     # Block sizes are multiples of 16 for Tensor Core alignment
+    # GROUP_SIZE controls L2 cache swizzling pattern:
+    #   - Smaller GROUP_SIZE (4): Better for smaller L2 caches (<4MB)
+    #   - Larger GROUP_SIZE (8-16): Better for larger L2 caches (>4MB)
     _expert_forward_configs = [
-        triton.Config({'BLOCK_SIZE_H': 32, 'BLOCK_SIZE_I': 32}, num_warps=4, num_stages=2),
-        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 32}, num_warps=4, num_stages=3),
-        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 64}, num_warps=4, num_stages=3),
-        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 64}, num_warps=8, num_stages=2),
+        # Standard configs with GROUP_SIZE=8 (good for most GPUs)
+        triton.Config({'BLOCK_SIZE_H': 32, 'BLOCK_SIZE_I': 32, 'GROUP_SIZE': 8}, num_warps=4, num_stages=2),
+        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 32, 'GROUP_SIZE': 8}, num_warps=4, num_stages=3),
+        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 64, 'GROUP_SIZE': 8}, num_warps=4, num_stages=3),
+        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 64, 'GROUP_SIZE': 8}, num_warps=8, num_stages=2),
+        # Smaller GROUP_SIZE for smaller L2 caches (RTX 3060, 3070)
+        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 64, 'GROUP_SIZE': 4}, num_warps=4, num_stages=3),
+        # Larger GROUP_SIZE for larger L2 caches (RTX 3090, 4090, A100)
+        triton.Config({'BLOCK_SIZE_H': 64, 'BLOCK_SIZE_I': 64, 'GROUP_SIZE': 16}, num_warps=8, num_stages=2),
     ]
 
     # Configs for expert matmul kernel - Tensor Core optimized
@@ -503,6 +511,8 @@ if TRITON_AVAILABLE:
         # Block sizes
         BLOCK_SIZE_H: tl.constexpr,
         BLOCK_SIZE_I: tl.constexpr,
+        # L2 cache swizzling group size (autotuned based on GPU L2 cache size)
+        GROUP_SIZE: tl.constexpr = 8,
     ):
         """
         Fused expert forward pass - processes one (token, expert_slot) pair.
@@ -518,11 +528,14 @@ if TRITON_AVAILABLE:
         This eliminates D2D copies from index_select by loading weights directly.
 
         L2 Cache Optimization: Uses tile swizzling to group adjacent program IDs
-        for better L2 cache hit rate when accessing memory.
+        for better L2 cache hit rate when accessing memory. GROUP_SIZE is autotuned:
+        - GROUP_SIZE=4: Better for smaller L2 caches (<4MB)
+        - GROUP_SIZE=8: Default, good for most GPUs
+        - GROUP_SIZE=16: Better for larger L2 caches (>8MB)
         """
         # L2 SWIZZLING: Group adjacent program IDs for better cache locality
         # This groups tokens that are likely to access similar memory regions
-        GROUP_SIZE = 8  # Number of programs in a group
+        # GROUP_SIZE is now a constexpr parameter for autotune optimization
         pid = tl.program_id(0)
         num_programs = num_tokens * k
 
@@ -679,6 +692,8 @@ if TRITON_AVAILABLE:
         # Block sizes
         BLOCK_SIZE_H: tl.constexpr,
         BLOCK_SIZE_I: tl.constexpr,
+        # L2 cache swizzling group size (autotuned based on GPU L2 cache size)
+        GROUP_SIZE: tl.constexpr = 8,
     ):
         """
         Optimized fused expert forward with TRANSPOSED weight layout.
@@ -691,9 +706,10 @@ if TRITON_AVAILABLE:
         by ~40-50% compared to the original strided layout.
 
         Uses tl.dot for Tensor Core acceleration where possible.
+
+        L2 Cache Optimization: GROUP_SIZE is autotuned based on GPU L2 cache size.
         """
-        # L2 SWIZZLING
-        GROUP_SIZE = 8
+        # L2 SWIZZLING (GROUP_SIZE is now a constexpr parameter for autotune)
         pid = tl.program_id(0)
         num_programs = num_tokens * k
 

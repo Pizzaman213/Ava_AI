@@ -54,24 +54,17 @@ def get_path_keys() -> set:
     return DEFAULT_PATH_KEYS | _additional_path_keys
 
 
-class ConfigurationError(Exception):
-    """Raised when configuration loading or parsing fails."""
-    pass
-
+# Import from centralized errors module
 try:
-    from ava.core.paths import get_project_root, resolve_path
+    from ava.core.errors import ConfigurationError
 except ImportError:
-    def get_project_root() -> Path:
-        current = Path(__file__).resolve()
-        for parent in current.parents:
-            if (parent / ".git").exists() or (parent / ".project").exists():
-                return parent
-        return current.parents[4] if len(current.parts) > 4 else Path.cwd()
+    # Fallback for when errors module is not available
+    class ConfigurationError(Exception):
+        """Raised when configuration loading or parsing fails."""
+        pass
 
-    def resolve_path(relative_path: str, base: Optional[Path] = None) -> Path:
-        if base is None:
-            base = get_project_root()
-        return (base / relative_path).resolve()
+# Always import from centralized paths module
+from ava.core.paths import get_project_root, resolve_path
 
 
 def resolve_paths_in_config(config: Dict[str, Any], project_root: Optional[Path] = None) -> Dict[str, Any]:

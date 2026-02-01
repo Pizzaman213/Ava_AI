@@ -357,6 +357,7 @@ class ValidationManager(ManagerInterface):
         use_amp: bool = True,
         amp_dtype: torch.dtype = torch.bfloat16,
         use_dedicated_stream: bool = True,
+        max_batches: Optional[int] = None,
     ) -> float:
         """
         Run validation loop and compute average loss.
@@ -370,6 +371,7 @@ class ValidationManager(ManagerInterface):
             use_amp: Whether to use automatic mixed precision
             amp_dtype: Data type for AMP (default: bfloat16)
             use_dedicated_stream: Whether to use a dedicated CUDA stream (default: True)
+            max_batches: Maximum number of batches to validate (None = all batches)
 
         Returns:
             Average validation loss
@@ -401,9 +403,18 @@ class ValidationManager(ManagerInterface):
         total_loss_tensor: Optional[torch.Tensor] = None
 
         with torch.no_grad():
+            # Calculate actual total for progress bar
+            # When max_batches is specified, show correct total instead of full dataloader size
+            val_loader_len = len(val_loader) if hasattr(val_loader, '__len__') else None
+            if max_batches is not None and val_loader_len is not None:
+                total = min(val_loader_len, max_batches)
+            else:
+                total = val_loader_len if val_loader_len is not None else max_batches
+
             progress_bar = tqdm(
                 val_loader,
                 desc="Validation",
+                total=total,
                 leave=False,
                 disable=not self.context.metadata.get('is_main_process', True)
             )
@@ -482,6 +493,10 @@ class ValidationManager(ManagerInterface):
                     # Show batch count in progress bar, loss displayed at end
                     if num_batches % 10 == 0:
                         progress_bar.set_postfix({'batches': num_batches})
+
+                    # Stop after max_batches if specified
+                    if max_batches is not None and num_batches >= max_batches:
+                        break
 
                 except Exception as e:
                     failed_batches += 1

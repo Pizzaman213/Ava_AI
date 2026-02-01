@@ -126,7 +126,7 @@ project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 # Configure unified logging for Ava (colored output, tqdm-compatible)
-from ava.core.logging import setup_ava_logging
+from ava.logging.console.colored import setup_ava_logging
 setup_ava_logging(level=logging.INFO)
 
 # Suppress only specific noisy loggers

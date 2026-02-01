@@ -717,10 +717,78 @@ def validate_model_for_deepspeed(model: Any, config: Dict[str, Any]) -> None:
 
 
 # =============================================================================
-# DeepSpeed ZeRO Bug Workaround
+# DeepSpeed Bug Workarounds
 # =============================================================================
 
-_DEEPSPEED_PATCHED = False
+_DEEPSPEED_ENGINE_PATCHED = False
+_DEEPSPEED_ZERO_PATCHED = False
+
+
+def patch_deepspeed_engine_getattr_bug():
+    """
+    Patch DeepSpeed Engine __getattr__ infinite recursion bug.
+
+    Bug: In DeepSpeedEngine.__getattr__ (deepspeed/runtime/engine.py:635),
+    the code does `if name in dir(self)` which calls PyTorch's __dir__,
+    which accesses `_parameters`, which triggers __getattr__ again,
+    creating infinite recursion.
+
+    Fix: Replace the buggy __getattr__ with one that uses
+    object.__getattribute__ instead of `dir(self)`.
+
+    This patch MUST be called before deepspeed.initialize().
+    """
+    global _DEEPSPEED_ENGINE_PATCHED
+    if _DEEPSPEED_ENGINE_PATCHED:
+        return
+
+    try:
+        from deepspeed.runtime.engine import DeepSpeedEngine
+    except ImportError:
+        logger.debug("DeepSpeed not available, skipping engine __getattr__ patch")
+        return
+
+    # Store original __getattr__ for reference
+    original_getattr = DeepSpeedEngine.__getattr__
+
+    def patched_getattr(self, name):
+        """
+        Patched __getattr__ that avoids infinite recursion.
+
+        The original bug: `if name in dir(self)` causes recursion because
+        dir(self) accesses _parameters which triggers __getattr__.
+
+        Fix: Use object.__getattribute__ to safely check for module attribute.
+        """
+        # Avoid recursion: these internal attributes should not trigger module lookup
+        if name.startswith('_'):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        # Check if it's in the instance's __dict__ (DeepSpeed engine's own attributes
+        # like 'optimizer', 'lr_scheduler', etc.)
+        try:
+            instance_dict = object.__getattribute__(self, '__dict__')
+            if name in instance_dict:
+                return instance_dict[name]
+        except AttributeError:
+            pass
+
+        # Try to get the wrapped module
+        try:
+            module = object.__getattribute__(self, 'module')
+        except AttributeError:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        # Check if the wrapped module has this attribute
+        if hasattr(module, name):
+            return getattr(module, name)
+
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    DeepSpeedEngine.__getattr__ = patched_getattr
+    _DEEPSPEED_ENGINE_PATCHED = True
+    logger.info("Applied DeepSpeed Engine __getattr__ infinite recursion bug patch")
+
 
 def patch_deepspeed_zero_gradient_bug():
     """
@@ -737,8 +805,8 @@ def patch_deepspeed_zero_gradient_bug():
     This is called automatically when DeepSpeed is initialized. The patch is
     idempotent - calling it multiple times has no effect.
     """
-    global _DEEPSPEED_PATCHED
-    if _DEEPSPEED_PATCHED:
+    global _DEEPSPEED_ZERO_PATCHED
+    if _DEEPSPEED_ZERO_PATCHED:
         return
 
     try:
@@ -835,5 +903,17 @@ def patch_deepspeed_zero_gradient_bug():
 
     # Apply patch
     DeepSpeedZeroOptimizer.independent_gradient_partition_epilogue = patched_independent_gradient_partition_epilogue
-    _DEEPSPEED_PATCHED = True
+    _DEEPSPEED_ZERO_PATCHED = True
     logger.info("Applied DeepSpeed ZeRO gradient accumulation bug patch")
+
+
+def patch_all_deepspeed_bugs():
+    """
+    Apply all DeepSpeed bug patches. Call before deepspeed.initialize().
+
+    This applies:
+    1. Engine __getattr__ infinite recursion fix (DeepSpeed 0.18.x)
+    2. ZeRO gradient accumulation bug fix
+    """
+    patch_deepspeed_engine_getattr_bug()
+    patch_deepspeed_zero_gradient_bug()

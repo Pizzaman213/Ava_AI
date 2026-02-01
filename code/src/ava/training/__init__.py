@@ -19,7 +19,7 @@ from .optimizer import OptimizerManager
 from .model_builder import ModelBuilder
 from .validation import ValidationManager
 from .generation import GenerationManager
-from ava.core.wandb_logger import MetricsManager
+from ava.logging.wandb.wandb import MetricsManager
 from .run_manager import RunManager
 from .pipeline import TrainingPipeline
 from .distributed import (
@@ -48,13 +48,6 @@ from .progressive import (
 # Backward compatibility alias
 ProgressiveTrainingConfig = ProgressiveStrategyConfig
 
-# Quality evaluation (unified)
-from .quality_evaluator import (
-    QualityMetrics,
-    QualityEvaluator,
-    create_quality_evaluator,
-)
-
 # Overlapped gradient accumulation (10-20% speedup)
 from .overlapped_accumulation import (
     OverlappedGradientAccumulator,
@@ -77,8 +70,16 @@ from .episodic_memory import (
     create_episodic_memory_manager,
 )
 
-# Protocol for episodic memory integration
-from .loop import EpisodicMemoryProtocol
+# Protocol interfaces
+from .protocols import (
+    MetricsLoggerProtocol,
+    GenerationProviderProtocol,
+    CheckpointSaverProtocol,
+    EpisodicMemoryProtocol,
+)
+
+# Loss accumulation utilities
+from .loss_accumulator import KahanAccumulator
 
 __all__ = [
     # Context and base classes
@@ -115,10 +116,6 @@ __all__ = [
     'ProgressiveStrategyConfig',
     'ProgressiveTrainingConfig',  # Backward compatibility alias
     'ProgressiveTrainingManager',
-    # Quality evaluation (unified)
-    'QualityMetrics',
-    'QualityEvaluator',
-    'create_quality_evaluator',
     # Overlapped gradient accumulation
     'OverlappedGradientAccumulator',
     'AccumulationConfig',
@@ -133,4 +130,10 @@ __all__ = [
     'EpisodicMemoryManager',
     'EpisodicMemoryProtocol',
     'create_episodic_memory_manager',
+    # Protocol interfaces
+    'MetricsLoggerProtocol',
+    'GenerationProviderProtocol',
+    'CheckpointSaverProtocol',
+    # Loss accumulation
+    'KahanAccumulator',
 ]

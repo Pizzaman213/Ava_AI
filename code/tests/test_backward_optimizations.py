@@ -19,36 +19,10 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 
-# =============================================================================
-# Test Fixtures
-# =============================================================================
-
-@pytest.fixture
-def simple_model():
-    """Create a simple model for testing."""
-    return nn.Sequential(
-        nn.Linear(64, 128),
-        nn.ReLU(),
-        nn.Linear(128, 64),
-        nn.ReLU(),
-        nn.Linear(64, 10),
-    )
-
-
-@pytest.fixture
-def simple_input():
-    """Create simple input tensors."""
-    batch_size = 4
-    seq_len = 64
-    input_ids = torch.randint(0, 1000, (batch_size, seq_len))
-    labels = torch.randint(0, 10, (batch_size,))
-    return input_ids.float(), labels
-
-
-@pytest.fixture
-def device():
-    """Get available device."""
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Fixtures are now defined in conftest.py:
+# - simple_model: Simple feedforward model
+# - simple_input: Input tensors (batch_size=4, seq_len=64)
+# - device: CUDA if available, else CPU
 
 
 # =============================================================================
@@ -339,96 +313,6 @@ class TestLayerwiseOptimizer:
             base_optimizer, model, enabled=False
         )
         assert result is base_optimizer
-
-
-# =============================================================================
-# CUDA Graph Manager Tests
-# =============================================================================
-
-class TestCUDAGraphManager:
-    """Tests for CUDA graph manager."""
-
-    def test_cuda_graph_config_defaults(self):
-        """Test CUDAGraphConfig has correct defaults."""
-        from ava.cuda.graph_manager import CUDAGraphConfig
-
-        config = CUDAGraphConfig()
-        assert config.enabled == False
-        assert config.capture_backward == True
-        assert config.capture_optimizer_step == True
-        assert config.max_cached_graphs == 4
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-    def test_cuda_graph_manager_creation(self, simple_model):
-        """Test CUDAGraphManager can be created."""
-        from ava.cuda.graph_manager import CUDAGraphManager, CUDAGraphConfig
-
-        model = simple_model.cuda()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-        config = CUDAGraphConfig(enabled=True)
-
-        manager = CUDAGraphManager(
-            model=model,
-            optimizer=optimizer,
-            config=config,
-        )
-
-        assert manager._enabled == True
-        assert len(manager._graph_cache) == 0
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-    def test_cuda_graph_warmup(self, simple_model):
-        """Test warmup step."""
-        from ava.cuda.graph_manager import CUDAGraphManager, CUDAGraphConfig
-
-        model = simple_model.cuda()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-        config = CUDAGraphConfig(enabled=True, warmup_steps=2)
-
-        manager = CUDAGraphManager(
-            model=model,
-            optimizer=optimizer,
-            config=config,
-        )
-
-        # Warmup
-        x = torch.randn(4, 64, device='cuda')
-        labels = torch.randint(0, 10, (4,), device='cuda')
-
-        loss = manager.warmup_step(x, labels)
-        assert manager._warmup_count == 1
-        assert isinstance(loss, torch.Tensor)
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
-    def test_cuda_graph_stats(self, simple_model):
-        """Test graph manager statistics."""
-        from ava.cuda.graph_manager import CUDAGraphManager, CUDAGraphConfig
-
-        model = simple_model.cuda()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-        config = CUDAGraphConfig(enabled=True)
-
-        manager = CUDAGraphManager(
-            model=model,
-            optimizer=optimizer,
-            config=config,
-        )
-
-        stats = manager.get_stats()
-        assert 'enabled' in stats
-        assert 'total_captures' in stats
-        assert 'cache_hits' in stats
-
-    def test_create_cuda_graph_manager_factory(self, simple_model, device):
-        """Test factory function."""
-        from ava.cuda.graph_manager import create_cuda_graph_manager
-
-        model = simple_model.to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-
-        # Disabled
-        result = create_cuda_graph_manager(model, optimizer, enabled=False)
-        assert result is None
 
 
 # =============================================================================

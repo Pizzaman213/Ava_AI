@@ -58,7 +58,7 @@ if str(_src_dir) not in sys.path:
 
 # Now we can import Ava modules
 from ava.core.paths import get_tokenizer_path
-from ava.core.logging import (
+from ava.logging.console.colored import (
     Colors, Icons, ColoredFormatter,
     print_header, print_subheader, print_success, print_warning, print_error,
     print_info, print_config, configure_root_logger, print_phase,
@@ -82,7 +82,7 @@ from ava.training import (
     setup_distributed,
     cleanup_distributed,
 )
-from ava.training.diagnostics import DiagnosticsManager
+from ava.logging.diagnostics.training import DiagnosticsManager
 from ava.training.episodic_memory import EpisodicMemoryManager
 from ava.training.distributed import DistributedStateManager
 from ava.config.yaml_loader import load_yaml_with_path_resolution
@@ -1985,6 +1985,13 @@ def main(args: argparse.Namespace) -> None:
             logger.info(f"CUDA Graphs ENABLED - will capture after {cuda_graph_warmup_steps} warmup steps")
             logger.info("  Note: Requires fixed batch sizes. Disable if you see shape mismatch errors.")
 
+        # MoE routing metrics frequency from config
+        # Check model.moe.metrics path first (new location), then logging path (legacy)
+        # NOTE: Use 'config' (full config) not 'training_config' (training section only)
+        moe_metrics_config = config.get('model', {}).get('moe', {}).get('metrics', {})
+        routing_metrics_freq = moe_metrics_config.get('routing_metrics_freq',
+            config.get('logging', {}).get('routing_metrics_freq', 0))
+
         loop_config = TrainingLoopConfig(
             gradient_accumulation_steps=context.gradient_accumulation_steps,
             max_grad_norm=training_config.get('max_grad_norm', 1.0),
@@ -2005,6 +2012,8 @@ def main(args: argparse.Namespace) -> None:
             # CUDA Graphs - 15-25% speedup with fixed batch sizes
             use_cuda_graphs=use_cuda_graphs,
             cuda_graph_warmup_steps=cuda_graph_warmup_steps,
+            # MoE routing metrics - log every N steps (0 = disabled)
+            routing_metrics_freq=routing_metrics_freq,
         )
 
         # Setup profiler if enabled
@@ -2233,7 +2242,7 @@ def main(args: argparse.Namespace) -> None:
 
         # Step 4: Cleanup optional global CUDA resources
         try:
-            from ava.cuda.metrics import shutdown_async_logger
+            from ava.logging.metrics.async_logger import shutdown_async_logger
             shutdown_async_logger()
         except Exception:
             pass

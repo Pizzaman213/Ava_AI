@@ -300,7 +300,20 @@ class ModelBuilder(TrainingComponent):
         batching_config = training_config.get('batching', {})
         label_smoothing = batching_config.get('label_smoothing', 0.0)
 
-        # Build MoE config from YAML config (using aliases for backwards compatibility)
+        # Extract MoE settings from model.moe.* (new structure) with fallback to flat fields (legacy)
+        moe_cfg = model_config.get('moe', {})
+        moe_arch = moe_cfg.get('architecture', {}) if moe_cfg else {}
+        moe_losses = moe_cfg.get('losses', {}) if moe_cfg else {}
+        moe_opt = moe_cfg.get('optimization', {}) if moe_cfg else {}
+
+        # Helper to get MoE value with fallback to legacy flat path
+        def get_moe_value(nested_dict, key, flat_key=None, default=None):
+            """Get value from nested dict, falling back to flat model_config key."""
+            if nested_dict and key in nested_dict:
+                return nested_dict[key]
+            return model_config.get(flat_key or key, default)
+
+        # Build MoE config from YAML config (supporting both new and legacy structures)
         moe_config = EnhancedMoEConfig(
             vocab_size=model_config.get('vocab_size', 50680),
             hidden_size=model_config.get('hidden_size', 512),
@@ -308,30 +321,31 @@ class ModelBuilder(TrainingComponent):
             num_attention_heads=model_config.get('num_attention_heads', 8),
             intermediate_size=model_config.get('intermediate_size',
                                                 model_config.get('hidden_size', 512) * 4),
-            num_experts=model_config.get('num_experts', 2),
-            num_experts_per_token=model_config.get('num_experts_per_token', 1),
+            # MoE architecture (model.moe.architecture.* or model.*)
+            num_experts=get_moe_value(moe_arch, 'num_experts', default=2),
+            num_experts_per_token=get_moe_value(moe_arch, 'num_experts_per_token', default=1),
             max_position_embeddings=model_config.get('max_position_embeddings', 2048),
-            router_type=model_config.get('router_type', 'switch'),
-            expert_capacity_factor=self._get_config_value(
-                model_config, 'expert_capacity_factor', 1.25
-            ),
+            router_type=get_moe_value(moe_arch, 'router_type', default='switch'),
+            expert_capacity_factor=get_moe_value(moe_arch, 'capacity_factor', flat_key='capacity_factor',
+                                                  default=self._get_config_value(model_config, 'expert_capacity_factor', 1.25)),
             attention_dropout=model_config.get('attention_dropout', 0.1),
             dropout=model_config.get('dropout', 0.1),
             use_flash_attention=model_config.get('use_flash_attention', False),
-            router_aux_loss_coef=self._get_config_value(
-                model_config, 'router_aux_loss_coef', 0.01
-            ),
-            router_jitter_noise=model_config.get('router_jitter_noise', 0.01),
+            # MoE losses (model.moe.losses.* or model.*)
+            router_aux_loss_coef=get_moe_value(moe_losses, 'router_z_loss_coef', flat_key='router_z_loss_coef',
+                                                default=self._get_config_value(model_config, 'router_aux_loss_coef', 0.01)),
+            router_jitter_noise=get_moe_value(moe_losses, 'router_jitter_noise', default=0.01),
             # FIX: Activation function for expert layers (swiglu recommended for performance)
             activation=model_config.get('activation', 'swiglu'),
             # Performance optimization flags (CRITICAL - these were missing!)
             gradient_checkpointing=model_config.get('gradient_checkpointing', False),
             # P2-7: Selective checkpointing - only checkpoint every N layers (3-5% speedup)
             checkpoint_layer_interval=model_config.get('checkpoint_layer_interval', 1),
-            use_grouped_gemm=model_config.get('use_grouped_gemm', False),
+            # MoE optimizations (model.moe.optimization.* or model.*)
+            use_grouped_gemm=get_moe_value(moe_opt, 'use_grouped_gemm', default=False),
             use_triton_kernels=model_config.get('use_triton_kernels', False),
             use_torch_compile=config.get('compute', {}).get('performance', {}).get('enable_torch_compile', False),
-            use_optimized_moe=model_config.get('use_optimized_moe', False),
+            use_optimized_moe=get_moe_value(moe_opt, 'use_optimized_moe', default=False),
             # Coherence regularization settings (fixes coherence issues)
             entropy_regularization=model_config.get('entropy_regularization', 0.0),
             output_diversity_weight=model_config.get('output_diversity_weight', 0.0),
@@ -1265,7 +1279,7 @@ class ModelBuilder(TrainingComponent):
 
         from .deepspeed import (
             build_deepspeed_config, validate_deepspeed_config, validate_model_for_deepspeed,
-            patch_deepspeed_zero_gradient_bug
+            patch_all_deepspeed_bugs
         )
 
         # Support both v2.0 path (distributed.deepspeed) and legacy path (deepspeed)
@@ -1290,8 +1304,8 @@ class ModelBuilder(TrainingComponent):
             self.logger.error(f"Failed to build DeepSpeed config: {e}")
             raise
 
-        # DeepSpeed ZeRO gradient accumulation bug patch
-        patch_deepspeed_zero_gradient_bug()
+        # Apply all DeepSpeed bug patches (engine __getattr__ + ZeRO gradient bugs)
+        patch_all_deepspeed_bugs()
 
         # Initialize DeepSpeed
         # DeepSpeed will create optimizer and scheduler internally

@@ -61,9 +61,15 @@ def _get_path_mappings() -> Dict[str, str]:
     return mappings
 
 
-class ConfigValidationError(Exception):
-    """Raised when configuration validation fails."""
-    pass
+# Import from centralized errors module (ConfigurationError is the base class)
+# ConfigValidationError is kept as an alias for backward compatibility
+try:
+    from ava.core.errors import ConfigurationError as ConfigValidationError
+except ImportError:
+    # Fallback for when errors module is not available
+    class ConfigValidationError(Exception):
+        """Raised when configuration validation fails."""
+        pass
 
 
 class ConfigValidator:

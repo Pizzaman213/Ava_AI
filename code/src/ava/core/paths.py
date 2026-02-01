@@ -22,10 +22,12 @@ Usage:
 
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 
+@lru_cache(maxsize=1)
 def get_project_root() -> Path:
     """
     Detect and return the project root directory.
@@ -79,11 +81,13 @@ def get_project_root() -> Path:
     )
 
 
+@lru_cache(maxsize=1)
 def get_code_dir() -> Path:
     """Get the code directory (project_root/code)."""
     return get_project_root() / "code"
 
 
+@lru_cache(maxsize=8)
 def get_data_dir(data_type: str = "pretokenized") -> Path:
     """
     Get the data directory.
@@ -117,6 +121,7 @@ def get_data_dir(data_type: str = "pretokenized") -> Path:
         return data_base / data_type
 
 
+@lru_cache(maxsize=8)
 def get_models_dir(model_type: str = "tokenizer") -> Path:
     """
     Get the models directory.
@@ -144,6 +149,7 @@ def get_models_dir(model_type: str = "tokenizer") -> Path:
         return models_base / model_type
 
 
+@lru_cache(maxsize=4)
 def get_tokenizer_path(tokenizer_name: str = "enhanced-50680") -> Path:
     """
     Get the full path to a tokenizer.
@@ -178,6 +184,7 @@ def get_tokenizer_path(tokenizer_name: str = "enhanced-50680") -> Path:
     return primary_path
 
 
+@lru_cache(maxsize=1)
 def get_outputs_dir() -> Path:
     """
     Get the outputs directory.
@@ -192,6 +199,7 @@ def get_outputs_dir() -> Path:
     return get_code_dir() / "outputs"
 
 
+@lru_cache(maxsize=1)
 def get_configs_dir() -> Path:
     """
     Get the configs directory.
@@ -272,6 +280,21 @@ def create_output_dirs() -> None:
     (outputs_dir / "finetune_runs").mkdir(parents=True, exist_ok=True)
 
 
+def clear_path_caches() -> None:
+    """
+    Clear all path function caches.
+
+    Useful for testing or when environment variables change.
+    """
+    get_project_root.cache_clear()
+    get_code_dir.cache_clear()
+    get_data_dir.cache_clear()
+    get_models_dir.cache_clear()
+    get_tokenizer_path.cache_clear()
+    get_outputs_dir.cache_clear()
+    get_configs_dir.cache_clear()
+
+
 __all__ = [
     "get_project_root",
     "get_code_dir",
@@ -284,4 +307,5 @@ __all__ = [
     "add_src_to_path",
     "create_data_dirs",
     "create_output_dirs",
+    "clear_path_caches",
 ]

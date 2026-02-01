@@ -23,7 +23,7 @@ import torch  # type: ignore[import]
 
 # Import colored logging formatter
 try:
-    from ava.core.logging import ColoredFormatter
+    from ava.logging.console.colored import ColoredFormatter
 except ImportError:
     ColoredFormatter = None
 

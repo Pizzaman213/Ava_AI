@@ -53,7 +53,7 @@ from typing import Any, Dict, List, Optional
 import torch
 import torch.nn as nn
 
-from ava.core.checkpoint import load_state_dict_with_remapping
+from ava.core.checkpoint import load_state_dict_with_remapping, _unwrap_model
 from .context import ManagerInterface, TrainingContext
 
 logger = logging.getLogger(__name__)
@@ -61,25 +61,6 @@ logger = logging.getLogger(__name__)
 # Maximum history entries to prevent memory leak
 # Reduced from 100 to 20 to limit memory usage during long training runs
 MAX_HISTORY_SIZE = 20
-
-
-def _unwrap_model(model: nn.Module) -> nn.Module:
-    """
-    Unwrap DDP and torch.compile wrappers to get the base model.
-
-    Args:
-        model: Model that may be wrapped with DDP and/or torch.compile
-
-    Returns:
-        The unwrapped base model
-    """
-    # Unwrap DDP (DistributedDataParallel wraps model in .module)
-    if hasattr(model, 'module'):
-        model = model.module
-    # Unwrap torch.compile (OptimizedModule stores original model at ._orig_mod)
-    if hasattr(model, '_orig_mod'):
-        model = model._orig_mod
-    return model
 
 
 class GenerationManager(ManagerInterface):

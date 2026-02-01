@@ -279,6 +279,60 @@ class DataLoadingError(AvaTrainingError):
         super().__init__(message, context)
 
 
+class AggregateError(AvaTrainingError):
+    """
+    Aggregate error for batch operations with multiple failures.
+
+    Raised when multiple errors occur during batch processing and need
+    to be reported together.
+
+    Example:
+        >>> errors = [(ValueError("bad value"), "file1.txt"), (IOError("read fail"), "file2.txt")]
+        >>> raise AggregateError(
+        ...     "Multiple files failed to load",
+        ...     errors=errors,
+        ...     operation="data_loading"
+        ... )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        errors: Optional[list] = None,
+        operation: Optional[str] = None,
+        **kwargs
+    ):
+        """
+        Initialize aggregate error.
+
+        Args:
+            message: Error description
+            errors: List of (exception, context) tuples
+            operation: The batch operation that failed
+            **kwargs: Additional context
+        """
+        context = kwargs
+        if operation is not None:
+            context["operation"] = operation
+        if errors:
+            context["error_count"] = len(errors)
+        self.errors = errors or []
+        super().__init__(message, context)
+
+    def _format_message(self) -> str:
+        """Format the error message with aggregated errors."""
+        base = super()._format_message()
+        if not self.errors:
+            return base
+
+        lines = [base]
+        for i, (err, ctx) in enumerate(self.errors[:5]):
+            lines.append(f"  {i+1}. {ctx}: {err}")
+        if len(self.errors) > 5:
+            lines.append(f"  ... and {len(self.errors) - 5} more errors")
+        return "\n".join(lines)
+
+
 def handle_distributed_error(error: Exception, context: str) -> None:
     """
     Centralized handler for distributed errors.

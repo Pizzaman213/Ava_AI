@@ -22,31 +22,21 @@ model:
   num_attention_heads: 8
   intermediate_size: 1024
   max_position_embeddings: 256
-  num_experts: 4
-  num_experts_per_token: 2
-  router_type: mixtral
-  capacity_factor: 1.25
-  quantize_kv_cache: true
-  expert_dropout: 0.05
   activation: swiglu
 
   # CRITICAL: Tied embeddings incompatible with DeepSpeed ZeRO-2/3
   tie_word_embeddings: false
 
   # GPU Optimizations
-  use_grouped_gemm: true
+  quantize_kv_cache: true
   use_triton_kernels: true
   use_torch_compile: false
   use_flash_attention: true
   gradient_checkpointing: true
-  use_optimized_moe: true
 
-  # MoE loss coefficients
-  router_z_loss_coef: 0.001
-  load_balance_loss_coef: 0.01
-  diversity_loss_coef: 0.01
-  expert_dropout_loss_coef: 0.0
-  router_jitter_noise: 0.00
+  # Phase 1 Optimizations (2025 update)
+  use_fused_qkv: true                       # Fused Q/K/V projection (5-10% attention speedup)
+  use_fused_norm: false                     # Disabled for Pre-LN architecture
 
   # Coherence regularization - DISABLED
   entropy_regularization: 0.0
@@ -59,6 +49,66 @@ model:
   layer_norm_eps: 1.0e-5
   initializer_range: 0.02
 
+  # ==========================================================================
+  # MoE Configuration (consolidated under model.moe.*)
+  # ==========================================================================
+  moe:
+    architecture:
+      num_experts: 4
+      num_experts_per_token: 2
+      router_type: mixtral
+      capacity_factor: 1.25
+      expert_dropout: 0.05
+
+    losses:
+      router_z_loss_coef: 0.001
+      load_balance_loss_coef: 0.01
+      diversity_loss_coef: 0.01
+      expert_dropout_loss_coef: 0.0
+      router_jitter_noise: 0.00
+      aux_loss_frequency: 500
+      diversity_loss_frequency: 100
+
+    optimization:
+      use_optimized_moe: true
+      use_grouped_gemm: true
+      use_compile_friendly_dispatch: true
+      use_fused_moe_kernel: true
+      use_sparse_expert_dispatch: true
+      use_selective_expert_loading: true
+      use_vectorized_capacity: true
+      use_fused_softmax_topk: true
+      router_kernel_mode: auto
+      router_block_size: 4
+
+    prefetch:
+      enabled: false
+      lookahead: 2
+      use_multiple_streams: true
+
+    cache:
+      auto_limit: true
+      use_lru_eviction: true
+      clear_after_optimizer_step: true
+
+    router_compile:
+      cache_hash_on_gpu: true
+      compile_routers: true
+      compile_mode: default
+      compile_dynamic: true
+
+    metrics:
+      routing_metrics_freq: 10
+      moe_metrics_freq: 1
+      log_moe: true
+      log_routing_diagnostics: false
+      track_expert_utilization: true
+      track_routing_decisions: false
+      track_load_balance: true
+
+    stable_moe:
+      enabled: false
+
 # =============================================================================
 # TRAINING - Optimizer, schedule, batching, validation
 # =============================================================================
@@ -70,6 +120,7 @@ training:
     batch_size: 32
     gradient_accumulation_steps: 4
     label_smoothing: 0.0
+    use_overlapped_accumulation: true  # ENABLED: 10-20% speedup with accum_steps > 1
 
   optimizer:
     type: adamw
@@ -94,6 +145,7 @@ training:
     eval_steps: 500
     logging_steps: 1
     use_tensorboard: false
+    # NOTE: routing_metrics_freq moved to model.moe.metrics.routing_metrics_freq
     use_wandb: true
 
   validation:
@@ -204,14 +256,9 @@ compute:
     torch_compile_dynamic: true
 
   kernels:
-    router_kernel_mode: auto
-    use_fused_softmax_topk: true
-    router_block_size: 4
-    use_sparse_expert_dispatch: true
+    # NOTE: MoE-related kernel settings moved to model.moe.optimization
+    # Non-MoE kernel settings remain here
     use_fused_activations: true
-    use_selective_expert_loading: true
-    use_vectorized_capacity: true
-    use_fused_moe_kernel: true
     enable_kernel_profiling: false
 
   cuda:
@@ -316,6 +363,7 @@ logging:
     log_training: true
     log_gradients: true
     log_moe: true
+    log_experts: true  # Per-expert metrics (utilization, load, capacity)
     log_validation: true
     log_coherence: true
     log_quality: true
@@ -335,11 +383,11 @@ logging:
 
   frequencies:
     log_interval: 1
-    verbose_log_interval: 0
+    verbose_log_interval: 1  # Enable INFO logs
     metrics: 1
-    memory_check: 0
-    health_summary: 0
-    moe_metrics: 0
+    memory_check: 1000       # Increased from 100 to reduce GPU-CPU sync overhead
+    health_summary: 100
+    # NOTE: moe_metrics moved to model.moe.metrics.moe_metrics_freq
 
   features:
     timing_breakdown: true
@@ -352,7 +400,7 @@ logging:
     log_format: default
 
   diagnostics:
-    enabled: false
+    enabled: true  # Enable diagnostics for memory/timing
 
     per_layer_gradients:
       enabled: false
@@ -362,27 +410,27 @@ logging:
         - experts
 
     routing:
-      enabled: false
-      log_freq: 1000
-      track_per_expert_load: false
-      track_routing_entropy: false
-      track_expert_capacity_usage: false
+      enabled: true  # Enable MoE routing metrics
+      log_freq: 100
+      track_per_expert_load: true
+      track_routing_entropy: true
+      track_expert_capacity_usage: true
 
     memory:
-      enabled: false
-      log_freq: 2000
+      enabled: true  # Enable memory metrics
+      log_freq: 100
       track_activation_memory: false
       track_gradient_memory: false
       track_optimizer_state_memory: false
       track_parameter_memory: false
 
     timing:
-      enabled: false
-      log_freq: 1000
-      profile_forward: false
-      profile_backward: false
-      profile_optimizer_step: false
-      profile_data_loading: false
+      enabled: true  # Enable timing metrics
+      log_freq: 100
+      profile_forward: true
+      profile_backward: true
+      profile_optimizer_step: true
+      profile_data_loading: true
 
 # =============================================================================
 # CHECKPOINTS - Save/load, model selection, output settings

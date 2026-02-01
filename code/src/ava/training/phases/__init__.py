@@ -270,7 +270,7 @@ class PhaseExecutor:
         if torch.cuda.is_available():
             try:
                 # Clear async logger
-                from ava.cuda.metrics import shutdown_async_logger
+                from ava.logging.metrics.async_logger import shutdown_async_logger
                 shutdown_async_logger()
             except Exception:
                 pass

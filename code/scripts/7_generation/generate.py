@@ -92,7 +92,7 @@ sys.path.append('/root/Ava_AI/code')
 sys.path.insert(0, '/root/Ava_AI/code/src')
 
 from ava.models.moe import EnhancedMoEModel, EnhancedMoEConfig  # type: ignore[import-not-found]
-from ava.core.logging import (
+from ava.logging.console.colored import (
     Colors, Icons, supports_color,
     print_header, print_subheader, print_success, print_info,
     print_box, print_metric

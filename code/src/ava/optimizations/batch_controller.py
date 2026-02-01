@@ -58,12 +58,13 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import torch
 import torch.nn as nn
 
-# Unified memory cache for reduced GPU sync overhead
-try:
-    from ava.cuda.memory_cache import get_memory_cache
-    MEMORY_CACHE_AVAILABLE = True
-except ImportError:
-    MEMORY_CACHE_AVAILABLE = False
+# Centralized memory utilities (replaces duplicate memory cache checks)
+from .memory_utils import (
+    get_memory_cache_if_available,
+    is_memory_cache_available,
+    get_memory_stats as _get_memory_stats,
+    get_memory_utilization as _get_memory_utilization,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +93,14 @@ class MemoryMonitor:
     """
     Simple GPU memory monitor with unified caching.
 
-    Provides memory utilization readings by delegating to the unified
-    MemoryMetricsCache. This eliminates duplicate GPU syncs across
+    Provides memory utilization readings by delegating to the centralized
+    memory_utils module. This eliminates duplicate GPU syncs across
     different components (prefetcher, batch_controller, etc.).
 
     All batch size decisions are delegated to BatchSizeController.
+
+    NOTE: This class now delegates to memory_utils.py for all memory queries,
+    providing a consistent interface while eliminating code duplication.
     """
 
     def __init__(self, cache_interval_sec: float = 5.0):
@@ -106,8 +110,8 @@ class MemoryMonitor:
         Args:
             cache_interval_sec: How often to refresh memory stats (seconds).
                 Default increased from 0.5s to 5.0s to reduce GPU sync overhead.
-                PERF: Delegates to unified MemoryMetricsCache which is shared
-                across all components, further reducing redundant syncs.
+                PERF: Delegates to centralized memory_utils which may use
+                unified MemoryMetricsCache if available.
         """
         self._cache_interval: float = cache_interval_sec
         self._device: Optional[int] = None
@@ -126,53 +130,18 @@ class MemoryMonitor:
         return time.monotonic() - self._cache_time > self._cache_interval
 
     def _refresh_cache(self) -> None:
-        """Query GPU memory (causes sync).
+        """Query GPU memory via centralized memory_utils.
 
-        PERF: Delegates to unified MemoryMetricsCache when available.
-        Falls back to local caching if unified cache unavailable.
+        PERF: Delegates to memory_utils which handles caching and
+        optional MemoryMetricsCache integration.
         """
-        if not torch.cuda.is_available() or self._total_memory == 0:
-            self._cache = {'utilization': 0.0, 'reserved_gb': 0.0, 'allocated_gb': 0.0}
-            return
-
-        # OPTIMIZATION: Use unified memory cache shared across all components
-        if MEMORY_CACHE_AVAILABLE:
-            cache = get_memory_cache()
-            self._cache = cache.get_stats()
-            self._cache_time = time.monotonic()
-            return
-
-        # Fallback: Single memory_stats() call instead of 3 separate API calls
-        try:
-            stats = torch.cuda.memory_stats(self._device)
-            reserved = stats.get('reserved_bytes.all.current', 0)
-            allocated = stats.get('allocated_bytes.all.current', 0)
-            peak_allocated = stats.get('allocated_bytes.all.peak', 0)
-        except Exception:
-            # Fallback to individual calls if memory_stats fails
-            reserved = torch.cuda.memory_reserved(self._device)
-            allocated = torch.cuda.memory_allocated(self._device)
-            peak_allocated = torch.cuda.max_memory_allocated(self._device)
-
-        # Use PEAK ALLOCATED as primary metric for calibration accuracy
-        self._cache = {
-            'utilization': peak_allocated / self._total_memory,
-            'utilization_current': allocated / self._total_memory,
-            'utilization_reserved': reserved / self._total_memory,
-            'reserved_gb': reserved / 1e9,
-            'allocated_gb': allocated / 1e9,
-            'peak_allocated_gb': peak_allocated / 1e9,
-            'total_gb': self._total_memory / 1e9,
-        }
+        self._cache = _get_memory_stats(self._device)
         self._cache_time = time.monotonic()
 
     def reset_peak_memory(self) -> None:
         """Reset peak memory tracking before a measurement."""
-        if torch.cuda.is_available() and self._device is not None:
-            torch.cuda.reset_peak_memory_stats(self._device)
-            # Invalidate unified cache as well
-            if MEMORY_CACHE_AVAILABLE:
-                get_memory_cache().reset_peak_memory()
+        from .memory_utils import reset_peak_memory
+        reset_peak_memory(self._device)
 
     def get_utilization(self, force_refresh: bool = False) -> float:
         """
@@ -184,9 +153,13 @@ class MemoryMonitor:
         Returns:
             Memory utilization as fraction (0.0 to 1.0)
         """
-        # OPTIMIZATION: Use unified cache when available
-        if MEMORY_CACHE_AVAILABLE:
-            return get_memory_cache().get_utilization(force_refresh=force_refresh)
+        # OPTIMIZATION: Use centralized memory_utils
+        cache = get_memory_cache_if_available()
+        if cache is not None:
+            try:
+                return cache.get_utilization(force_refresh=force_refresh)
+            except Exception:
+                pass
 
         if force_refresh or self._is_cache_stale():
             self._refresh_cache()
@@ -202,9 +175,13 @@ class MemoryMonitor:
         Returns:
             Dict with utilization, reserved_gb, allocated_gb, total_gb
         """
-        # OPTIMIZATION: Use unified cache when available
-        if MEMORY_CACHE_AVAILABLE:
-            return get_memory_cache().get_stats(force_refresh=force_refresh)
+        # OPTIMIZATION: Use centralized memory_utils
+        cache = get_memory_cache_if_available()
+        if cache is not None:
+            try:
+                return cache.get_stats(force_refresh=force_refresh)
+            except Exception:
+                pass
 
         if force_refresh or self._is_cache_stale():
             self._refresh_cache()

@@ -354,42 +354,6 @@ class TestDataLoaderFixes:
                 assert is_valid is False
 
 
-class TestDataValidation:
-    """Tests for data validation module."""
-
-    def test_validation_result_string_representation(self):
-        """Test ValidationResult string representation."""
-        from ava.data.validation import ValidationResult
-
-        result = ValidationResult(
-            is_valid=True,
-            total_samples_checked=1000,
-            valid_samples=995,
-            invalid_samples=5,
-            errors=["Error 1", "Error 2"],
-            warnings=["Warning 1"],
-        )
-        str_repr = str(result)
-        assert "PASSED" in str_repr
-
-    def test_validator_sequence_validation(self):
-        """Test sequence validation logic."""
-        from ava.data.validation import DataValidator
-
-        validator = DataValidator(
-            max_length=2048,
-            vocab_size=50000,
-            min_sequence_length=10,
-        )
-
-        is_valid, error = validator._validate_sequence([1, 2, 3] * 10)
-        assert is_valid is True
-
-        is_valid, error = validator._validate_sequence([1, 2, 3])
-        assert is_valid is False
-        assert "too short" in error.lower()
-
-
 # =============================================================================
 # Config Validation Tests
 # =============================================================================
@@ -885,8 +849,8 @@ class TestModuleImports:
         assert error_tracking is not None
 
     def test_import_core_logging(self):
-        """Test ava.core.logging imports."""
-        from ava.core import logging as ava_logging
+        """Test ava.logging.console.colored imports (was ava.core.logging)."""
+        from ava.logging.console import colored as ava_logging
         assert ava_logging is not None
 
     def test_import_core_mixed_precision(self):
@@ -943,8 +907,8 @@ class TestModuleImports:
         assert ava.cuda is not None
 
     def test_import_cuda_metrics(self):
-        """Test ava.cuda.metrics imports."""
-        from ava.cuda import metrics
+        """Test ava.logging.metrics.async_logger imports (was ava.cuda.metrics)."""
+        from ava.logging.metrics import async_logger as metrics
         assert metrics is not None
 
     def test_import_cuda_profiler(self):
@@ -981,11 +945,6 @@ class TestModuleImports:
         from ava.data import distributed
         assert distributed is not None
 
-    def test_import_data_factory(self):
-        """Test ava.data.factory imports."""
-        from ava.data import factory
-        assert factory is not None
-
     def test_import_data_indexed(self):
         """Test ava.data.indexed imports."""
         from ava.data import indexed
@@ -1005,11 +964,6 @@ class TestModuleImports:
         """Test ava.data.pretokenized imports."""
         from ava.data import pretokenized
         assert pretokenized is not None
-
-    def test_import_data_validation(self):
-        """Test ava.data.validation imports."""
-        from ava.data import validation
-        assert validation is not None
 
     # -------------------------------------------------------------------------
     # ava.eval subpackage
@@ -1194,8 +1148,8 @@ class TestModuleImports:
         assert deepspeed is not None
 
     def test_import_training_diagnostics(self):
-        """Test ava.training.diagnostics imports."""
-        from ava.training import diagnostics
+        """Test ava.logging.diagnostics.training imports (was ava.training.diagnostics)."""
+        from ava.logging.diagnostics import training as diagnostics
         assert diagnostics is not None
 
     def test_import_training_distributed(self):
@@ -1296,12 +1250,11 @@ class TestKeyClassImports:
     def test_import_data_classes(self):
         """Test key data classes can be imported."""
         from ava.data.pretokenized import UltraFastPretokenizedDataset
-        from ava.data.indexed import IndexedArrowDataset, LengthBinnedSampler
-        from ava.data.factory import create_dataloaders
+        from ava.data.indexed import IndexedArrowDataset, LengthBinnedSampler, create_indexed_dataloaders
         assert UltraFastPretokenizedDataset is not None
         assert IndexedArrowDataset is not None
         assert LengthBinnedSampler is not None
-        assert create_dataloaders is not None
+        assert create_indexed_dataloaders is not None
 
     def test_import_training_classes(self):
         """Test key training classes can be imported."""
@@ -1350,10 +1303,7 @@ class TestKeyClassImports:
 
     def test_import_validation_classes(self):
         """Test key validation classes can be imported."""
-        from ava.data.validation import DataValidator, ValidationResult
         from ava.config.validator import ConfigValidator
-        assert DataValidator is not None
-        assert ValidationResult is not None
         assert ConfigValidator is not None
 
 

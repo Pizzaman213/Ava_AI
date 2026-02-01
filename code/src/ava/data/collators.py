@@ -412,10 +412,21 @@ class ParallelCollatorWrapper:
 
     Thread-safety: The underlying collator must be thread-safe (BaseCollator is).
 
+    Resource Management:
+    - Use as context manager or call shutdown() explicitly to release threads
+    - __del__ provides backup cleanup but is not guaranteed
+
     Example:
         >>> base_collator = DynamicPaddingCollator(pad_token_id=0)
+        >>> # As context manager (recommended)
+        >>> with ParallelCollatorWrapper(base_collator, num_threads=4) as parallel_collator:
+        >>>     batch = parallel_collator(samples)
+        >>> # Or manually manage
         >>> parallel_collator = ParallelCollatorWrapper(base_collator, num_threads=4)
-        >>> batch = parallel_collator(samples)
+        >>> try:
+        >>>     batch = parallel_collator(samples)
+        >>> finally:
+        >>>     parallel_collator.shutdown()
     """
 
     def __init__(
@@ -436,12 +447,24 @@ class ParallelCollatorWrapper:
         self.num_threads = num_threads
         self.chunk_size = chunk_size
         self._executor: Optional[ThreadPoolExecutor] = None
+        self._closed = False
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
         """Lazily create thread pool executor."""
+        if self._closed:
+            raise RuntimeError("ParallelCollatorWrapper has been shutdown")
         if self._executor is None:
             self._executor = ThreadPoolExecutor(max_workers=self.num_threads)
         return self._executor
+
+    def __enter__(self):
+        """Context manager entry - enables 'with' statement usage."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures resources are released."""
+        self.shutdown()
+        return False  # Don't suppress exceptions
 
     def _process_chunk(self, chunk: List[Dict[str, Any]]) -> List[Dict[str, torch.Tensor]]:
         """
@@ -502,14 +525,28 @@ class ParallelCollatorWrapper:
         return self.base_collator(processed_samples)
 
     def shutdown(self) -> None:
-        """Shutdown thread pool executor."""
+        """
+        Shutdown thread pool executor and release resources.
+
+        Safe to call multiple times (idempotent).
+        """
+        if self._closed:
+            return
+        self._closed = True
         if self._executor is not None:
-            self._executor.shutdown(wait=True)
-            self._executor = None
+            try:
+                self._executor.shutdown(wait=True)
+            except Exception as e:
+                logger.debug(f"ThreadPoolExecutor shutdown warning: {e}")
+            finally:
+                self._executor = None
 
     def __del__(self):
-        """Cleanup on garbage collection."""
-        self.shutdown()
+        """Cleanup on garbage collection (backup, not guaranteed)."""
+        try:
+            self.shutdown()
+        except Exception:
+            pass  # Ignore errors during GC cleanup
 
     # Delegate collator properties
     @property

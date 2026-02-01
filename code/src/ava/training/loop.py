@@ -50,15 +50,13 @@ Loss Accumulator:
     _step_losses: List of synced losses for logging (populated at log intervals)
 """
 
-import copy
 import gc
 import logging
-import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -67,11 +65,19 @@ from tqdm import tqdm
 
 from .context import ManagerInterface, TrainingContext
 from .distributed import OverlappedGradientSync
+from .loss_accumulator import KahanAccumulator
 from .overlapped_accumulation import OverlappedGradientAccumulator, create_overlapped_accumulator
 from .pipeline_executor import PipelinedTrainingStep, create_pipeline_executor
+from .protocols import (
+    MetricsLoggerProtocol,
+    GenerationProviderProtocol,
+    CheckpointSaverProtocol,
+    EpisodicMemoryProtocol,
+)
 from ..optimizations.prefetch import AsyncBatchPrefetcher
 from ..optimizations.gradients import check_gradients, check_gradients_deferred
 from ..optimizations.oom_recovery import proactive_memory_cleanup
+from ..optimizations.gpu_sync import MetricsBatcher
 from contextlib import nullcontext
 
 # Unified memory cache for reduced GPU sync overhead
@@ -85,207 +91,8 @@ except ImportError:
 _CACHED_NULLCONTEXT = nullcontext()
 
 
-# ============================================================================
-# Kahan Summation for Numerically Stable Loss Accumulation
-# ============================================================================
-
-class KahanAccumulator:
-    """
-    Kahan summation algorithm for numerically stable loss accumulation.
-
-    Standard floating-point addition accumulates error over many operations.
-    For long training runs with many micro-batches, this can result in
-    noticeable drift in reported loss values.
-
-    Kahan summation tracks the accumulated error and compensates for it,
-    achieving near-full precision regardless of the number of additions.
-
-    Example:
-        >>> accumulator = KahanAccumulator()
-        >>> for loss in losses:
-        ...     accumulator.add(loss)
-        >>> mean_loss = accumulator.get_mean()
-    """
-
-    def __init__(self):
-        """Initialize empty accumulator."""
-        self.sum: Optional[torch.Tensor] = None
-        self.compensation: Optional[torch.Tensor] = None
-        self.count: int = 0
-
-    def add(self, value: torch.Tensor) -> None:
-        """
-        Add a value to the accumulator using Kahan summation.
-
-        Args:
-            value: Tensor value to add (should be scalar or will be summed)
-        """
-        if value.numel() != 1:
-            value = value.mean()
-
-        if self.sum is None:
-            # detach first to disconnect from graph, then clone for safe accumulation
-            self.sum = value.detach().clone()
-            self.compensation = torch.zeros_like(self.sum)
-        else:
-            # Kahan summation algorithm
-            y = value - self.compensation
-            t = self.sum + y
-            self.compensation = (t - self.sum) - y
-            self.sum = t
-        self.count += 1
-
-    def get_sum(self) -> Optional[torch.Tensor]:
-        """Get the accumulated sum."""
-        return self.sum
-
-    def get_mean(self) -> Optional[torch.Tensor]:
-        """Get the mean of accumulated values."""
-        if self.sum is None or self.count == 0:
-            return None
-        return self.sum / self.count
-
-    def get_count(self) -> int:
-        """Get the number of accumulated values."""
-        return self.count
-
-    def reset(self) -> None:
-        """Reset the accumulator to empty state."""
-        self.sum = None
-        self.compensation = None
-        self.count = 0
-
-
-# ============================================================================
-# Protocol Interfaces for Decoupled Dependencies
-# ============================================================================
-
-@runtime_checkable
-class MetricsLoggerProtocol(Protocol):
-    """Protocol for metrics logging during training."""
-
-    def log_training_step(
-        self, step: int, loss: float, lr: float, batch_size: int, **extra_metrics
-    ) -> None:
-        """Log metrics for a training step (includes avg_loss and smoothed_loss)."""
-        ...
-
-    def log_gradients(self, step: int, grad_stats: Dict[str, Any]) -> None:
-        """Log gradient statistics."""
-        ...
-
-    def log_generation(self, step: int, gen_data: Dict[str, Any]) -> None:
-        """Log generated text samples."""
-        ...
-
-    def log_coherence(self, step: int, metrics: Dict[str, Any]) -> None:
-        """Log coherence metrics."""
-        ...
-
-
-@runtime_checkable
-class GenerationProviderProtocol(Protocol):
-    """Protocol for text generation during training."""
-
-    def is_generation_pending(self) -> bool:
-        """Check if a generation is currently running."""
-        ...
-
-    def generate_async(
-        self,
-        model: nn.Module,
-        step: int,
-        vocab_size: int,
-        tokenizer: Any = None,
-        **kwargs: Any,
-    ) -> None:
-        """Start async generation."""
-        ...
-
-    def process_completed_generations(self) -> list:
-        """Get completed generation results."""
-        ...
-
-    def measure_coherence(
-        self, model: nn.Module, step: int, config: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Measure model coherence."""
-        ...
-
-
-@runtime_checkable
-class CheckpointSaverProtocol(Protocol):
-    """Protocol for checkpoint saving during training."""
-
-    def save(
-        self,
-        model: nn.Module,
-        optimizer: torch.optim.Optimizer,
-        epoch: int,
-        step: int,
-        metrics: Dict[str, float],
-    ) -> Any:
-        """Save a checkpoint."""
-        ...
-
-
-@runtime_checkable
-class EpisodicMemoryProtocol(Protocol):
-    """Protocol for episodic memory integration during training.
-
-    Episodic memory enables experience replay for continual learning.
-    Implementations should manage a buffer of past experiences and
-    provide methods to augment training batches with replay samples.
-    """
-
-    def augment_batch(
-        self,
-        batch: Dict[str, torch.Tensor],
-        batch_idx: int,
-        global_step: int,
-        current_phase: str = "training",
-    ) -> Tuple[Dict[str, torch.Tensor], Any]:
-        """
-        Augment current batch with replay samples from memory.
-
-        Args:
-            batch: Current training batch
-            batch_idx: Current batch index
-            global_step: Current global training step
-            current_phase: 'training' or 'accumulating'
-
-        Returns:
-            Tuple of (augmented_batch, replay_indices)
-        """
-        ...
-
-    def get_sample_weights(
-        self,
-        batch_idx: int,
-        outputs: Dict[str, Any],
-        aux_info: List[Dict[str, Any]],
-    ) -> Optional[torch.Tensor]:
-        """Get per-sample weights for importance-weighted loss."""
-        ...
-
-    def store_batch(
-        self,
-        batch: Dict[str, torch.Tensor],
-        losses: torch.Tensor,
-        aux_info: Optional[List[Dict[str, Any]]] = None,
-    ) -> None:
-        """Store current batch samples in memory buffer."""
-        ...
-
-    def update_replay_priorities(
-        self, indices: Any, losses: torch.Tensor
-    ) -> None:
-        """Update priorities for replayed samples."""
-        ...
-
-    def get_metrics(self) -> Dict[str, float]:
-        """Get episodic memory metrics for logging."""
-        ...
+# KahanAccumulator is now imported from loss_accumulator.py
+# Protocol interfaces are now imported from protocols.py
 
 
 # Optional Nsight profiler import
@@ -298,7 +105,7 @@ except ImportError:
 
 # Optional diagnostics manager import
 try:
-    from .diagnostics import DiagnosticsManager
+    from ava.logging.diagnostics.training import DiagnosticsManager
     DIAGNOSTICS_AVAILABLE = True
 except ImportError:
     DIAGNOSTICS_AVAILABLE = False
@@ -319,6 +126,8 @@ class TrainingLoopConfig:
     log_interval: int = 100
     generate_every_n_steps: int = 500
     save_steps: int = 0
+    eval_steps: int = 1000  # Run validation every N steps (0 = disabled)
+    max_val_batches: int = 50  # Max batches per validation (prevents 7+ hour validations)
     max_consecutive_failures: int = 10
     max_steps: Optional[int] = None  # Stop after this many steps (None = no limit)
     # Profiling options (disabled by default - use --enable-profiling to enable)
@@ -369,6 +178,7 @@ class TrainingLoopConfig:
     # When True, uses separate CUDA streams to overlap backward(N) with forward(N+1)
     # during gradient accumulation. Provides 10-20% speedup with minimal overhead.
     # Only effective when gradient_accumulation_steps > 1.
+    # ENABLED by default for performance - gradient stats still collected at accumulation boundaries
     use_overlapped_accumulation: bool = True
 
     # =========================================================================
@@ -380,105 +190,16 @@ class TrainingLoopConfig:
     use_pipeline_microbatching: bool = True  # Enabled: 10-25% speedup for 16+ layer models
     pipeline_overlap_factor: int = 2  # Number of micro-batches to overlap
 
+    # =========================================================================
+    # MoE/Routing metrics logging
+    # =========================================================================
+    # Log MoE routing metrics every N steps (0 = disabled for performance)
+    # Extracts 50+ tensors per layer, so disabled by default
+    routing_metrics_freq: int = 0
 
-class MetricsBatcher:
-    """
-    Batches GPU tensor→scalar conversions to minimize cudaStreamSynchronize overhead.
 
-    Instead of calling .item() on each metric tensor separately (each causing a sync),
-    this class collects all scalar tensors and extracts them in a single .tolist() call.
-
-    Usage:
-        batcher = MetricsBatcher()
-        batcher.add('loss', loss_tensor)
-        batcher.add('grad_norm', grad_norm_tensor)
-        batcher.add('entropy', entropy_tensor)
-
-        # ONE sync for all metrics
-        values = batcher.flush()
-        # values = {'loss': 0.5, 'grad_norm': 1.2, 'entropy': 0.8}
-    """
-
-    def __init__(self):
-        self._pending: List[tuple] = []  # List of (key, tensor) pairs
-
-    def add(self, key: str, tensor: torch.Tensor) -> None:
-        """
-        Queue a scalar tensor for batched extraction.
-
-        Args:
-            key: Identifier for this metric
-            tensor: A scalar tensor (0-dim or 1-element) on GPU
-        """
-        if tensor is None:
-            return
-        # Detach to avoid holding onto computation graph
-        self._pending.append((key, tensor.detach()))
-
-    def add_multi(self, prefix: str, tensors: Dict[str, torch.Tensor]) -> None:
-        """
-        Queue multiple tensors with a common prefix.
-
-        Args:
-            prefix: Prefix for all keys (e.g., 'grad' -> 'grad/norm', 'grad/max')
-            tensors: Dict of name -> tensor pairs
-        """
-        for name, tensor in tensors.items():
-            if tensor is not None:
-                self.add(f"{prefix}/{name}", tensor.detach())
-
-    def flush(self) -> Dict[str, float]:
-        """
-        Extract all queued tensors in a single GPU→CPU sync.
-
-        Returns:
-            Dictionary mapping keys to their scalar float values.
-            Clears the internal queue after extraction.
-        """
-        if not self._pending:
-            return {}
-
-        keys = [k for k, _ in self._pending]
-        # Ensure all tensors are scalar (0-dim) or squeeze to scalar
-        tensors = []
-        for _, t in self._pending:
-            if t.dim() == 0:
-                tensors.append(t.view(1))
-            elif t.numel() == 1:
-                tensors.append(t.view(1))
-            else:
-                # Multi-element tensor - take mean
-                tensors.append(t.mean().view(1))
-
-        # ONE sync point: concatenate and transfer to CPU
-        try:
-            stacked = torch.cat(tensors)
-            values = stacked.tolist()
-            del stacked  # Explicitly free GPU tensor after transfer
-        except Exception:
-            # Fallback: individual extraction if cat fails (mixed devices)
-            # FIX: Handle 0-dim tensors correctly - they can't be indexed with [0]
-            def extract_value(t):
-                if t.dim() == 0:
-                    return t.item()
-                elif t.numel() == 1:
-                    return t.view(-1)[0].item()
-                else:
-                    return t.mean().item()
-            values = [extract_value(t) for _, t in self._pending]
-
-        # Explicitly free tensor references before clearing
-        del tensors
-        self._pending.clear()
-        return dict(zip(keys, values))
-
-    def pending_count(self) -> int:
-        """Return number of pending tensors."""
-        return len(self._pending)
-
-    def clear(self) -> None:
-        """Clear pending tensors without extracting."""
-        self._pending.clear()
+# MetricsBatcher is now imported from ava.optimizations.gpu_sync
+# This provides a shared GPU sync utility across the codebase
 
 
 class TrainingLoopManager(ManagerInterface):
@@ -523,6 +244,8 @@ class TrainingLoopManager(ManagerInterface):
         self._profiler: Optional['NsightProfiler'] = None
         self._diagnostics_manager: Optional['DiagnosticsManager'] = None
         self._episodic_memory_manager: Optional['EpisodicMemoryProtocol'] = None
+        self._validation_manager: Optional['ValidationManager'] = None
+        self._val_loader: Optional[DataLoader] = None
 
         # Episodic memory state tracking
         self._last_replay_indices: Optional[Any] = None
@@ -1259,6 +982,8 @@ class TrainingLoopManager(ManagerInterface):
         profiler: Optional['NsightProfiler'] = None,
         diagnostics_manager: Optional['DiagnosticsManager'] = None,
         episodic_memory_manager: Optional['EpisodicMemoryProtocol'] = None,
+        validation_manager: Optional['ValidationManager'] = None,
+        val_loader: Optional[DataLoader] = None,
     ) -> None:
         """
         Set references to other managers for integration.
@@ -1273,6 +998,8 @@ class TrainingLoopManager(ManagerInterface):
             profiler: NsightProfiler for GPU profiling
             diagnostics_manager: DiagnosticsManager for detailed training diagnostics
             episodic_memory_manager: Any object implementing EpisodicMemoryProtocol
+            validation_manager: ValidationManager for step-based validation
+            val_loader: Validation data loader
         """
         self._metrics_manager = metrics_manager
         self._generation_manager = generation_manager
@@ -1280,6 +1007,8 @@ class TrainingLoopManager(ManagerInterface):
         self._profiler = profiler
         self._diagnostics_manager = diagnostics_manager
         self._episodic_memory_manager = episodic_memory_manager
+        self._validation_manager = validation_manager
+        self._val_loader = val_loader
 
         # Startup diagnostic logged to debug only
         if self._metrics_manager and self._generation_manager:
@@ -1459,11 +1188,28 @@ class TrainingLoopManager(ManagerInterface):
             self.prefetcher = AsyncBatchPrefetcher(
                 train_loader, device, prefetch_count=prefetch_count, memory_threshold=prefetch_memory_threshold
             )
+
+            # PHASE 6 OPTIMIZATION: Pre-warm pinned buffer pools at startup
+            # This eliminates 0.5-2ms per-batch allocation overhead by having buffers ready
+            batch_size = train_loader.batch_size
+            max_seq_len = self.context.config.get('model', {}).get('max_position_embeddings', 512)
+            if batch_size and max_seq_len:
+                warmup_shapes = [
+                    ((batch_size, max_seq_len), torch.long),  # input_ids
+                    ((batch_size, max_seq_len), torch.long),  # attention_mask
+                    ((batch_size, max_seq_len), torch.long),  # labels
+                ]
+                try:
+                    num_warmed = self.prefetcher.warmup_pools(warmup_shapes)
+                    if num_warmed > 0:
+                        logger.debug(f"Pre-warmed {num_warmed} pinned buffers for batch_size={batch_size}, seq_len={max_seq_len}")
+                except Exception as e:
+                    logger.debug(f"Pinned buffer warmup skipped: {e}")
+
             batch_iterator = self.prefetcher
             # FIX: For IterableDataset, get_dynamic_total() returns sample count, not batches
             # Convert to training steps: samples / (batch_size * gradient_accumulation)
             samples_total = self.prefetcher.get_dynamic_total()
-            batch_size = train_loader.batch_size
             grad_accum = config.gradient_accumulation_steps
             initial_total = samples_total // (batch_size * grad_accum) if batch_size and grad_accum else samples_total
 
@@ -1496,7 +1242,9 @@ class TrainingLoopManager(ManagerInterface):
         # (CUDA graphs and overlapped accumulation are mutually exclusive)
         # PERF: Reuse accumulator across epochs to avoid re-initialization overhead (5-10ms/epoch)
         _use_overlapped = False
-        if (getattr(config, 'use_overlapped_accumulation', True) and
+        # DEBUG: Check overlapped config
+        _overlapped_cfg = getattr(config, 'use_overlapped_accumulation', True)
+        if (_overlapped_cfg and
             config.gradient_accumulation_steps > 1 and
             not config.use_cuda_graphs and
             not _is_deepspeed):
@@ -1733,7 +1481,6 @@ class TrainingLoopManager(ManagerInterface):
                         # Queue all deferred gradient tensors for batched extraction
                         for key, tensor in self._deferred_grad_tensors.items():
                             self._metrics_batcher.add(key, tensor)
-                        self._deferred_grad_tensors.clear()
 
                         # Queue loss components for batched extraction (avoids separate .item() calls)
                         if self._last_aux_info is not None and len(self._last_aux_info) > 0:
@@ -1755,39 +1502,69 @@ class TrainingLoopManager(ManagerInterface):
                         if should_log_routing and self._last_aux_info is not None and len(self._last_aux_info) > 0:
                             # PERF: Use running sum/count instead of torch.stack().mean()
                             # This eliminates intermediate tensor creation (5-20ms overhead for deep models)
-                            entropy_sum, entropy_count = None, 0
-                            balance_sum, balance_count = None, 0
-                            confidence_sum, confidence_count = None, 0
+                            entropy_sum, entropy_count = 0.0, 0
+                            balance_sum, balance_count = 0.0, 0
+                            confidence_sum, confidence_count = 0.0, 0
+
+                            # Helper to extract scalar value from tensor or Python type
+                            def _extract_value(val):
+                                if val is None:
+                                    return None
+                                if hasattr(val, 'detach'):
+                                    # PyTorch tensor
+                                    return val.detach().mean().item() if val.numel() > 1 else val.detach().item()
+                                elif isinstance(val, (list, tuple)):
+                                    # List (from _to_cpu conversion)
+                                    return sum(val) / len(val) if val else None
+                                else:
+                                    # Scalar (int, float)
+                                    return float(val)
+
                             for layer_aux in self._last_aux_info:
                                 if 'routing_entropy' in layer_aux and layer_aux['routing_entropy'] is not None:
-                                    val = layer_aux['routing_entropy']
-                                    if hasattr(val, 'detach'):
-                                        v = val.detach().mean() if val.numel() > 1 else val.detach()
-                                        entropy_sum = v if entropy_sum is None else entropy_sum + v
+                                    v = _extract_value(layer_aux['routing_entropy'])
+                                    if v is not None:
+                                        entropy_sum += v
                                         entropy_count += 1
                                 if 'balance_score' in layer_aux and layer_aux['balance_score'] is not None:
-                                    val = layer_aux['balance_score']
-                                    if hasattr(val, 'detach'):
-                                        v = val.detach().mean() if val.numel() > 1 else val.detach()
-                                        balance_sum = v if balance_sum is None else balance_sum + v
+                                    v = _extract_value(layer_aux['balance_score'])
+                                    if v is not None:
+                                        balance_sum += v
                                         balance_count += 1
                                 if 'router_confidence' in layer_aux and layer_aux['router_confidence'] is not None:
-                                    val = layer_aux['router_confidence']
-                                    if hasattr(val, 'detach'):
-                                        v = val.detach().mean() if val.numel() > 1 else val.detach()
-                                        confidence_sum = v if confidence_sum is None else confidence_sum + v
+                                    v = _extract_value(layer_aux['router_confidence'])
+                                    if v is not None:
+                                        confidence_sum += v
                                         confidence_count += 1
                             # Queue aggregated metrics (3 tensors instead of 50+)
                             # PERF: Running mean = sum / count (no intermediate stack tensor)
                             if entropy_count > 0:
-                                self._metrics_batcher.add('routing/avg_entropy', entropy_sum / entropy_count)
+                                self._metrics_batcher.add('moe/avg_entropy', entropy_sum / entropy_count)
                                 routing_tensor_keys.append(('avg_entropy',))
                             if balance_count > 0:
-                                self._metrics_batcher.add('routing/avg_balance', balance_sum / balance_count)
+                                self._metrics_batcher.add('moe/avg_balance', balance_sum / balance_count)
                                 routing_tensor_keys.append(('avg_balance',))
                             if confidence_count > 0:
-                                self._metrics_batcher.add('routing/avg_confidence', confidence_sum / confidence_count)
+                                self._metrics_batcher.add('moe/avg_confidence', confidence_sum / confidence_count)
                                 routing_tensor_keys.append(('avg_confidence',))
+
+                            # Extract per-expert utilization (logged under experts/ prefix)
+                            for layer_idx, layer_aux in enumerate(self._last_aux_info):
+                                if '_expert_utilization_tensor' in layer_aux:
+                                    util_tensor = layer_aux['_expert_utilization_tensor']
+                                    if hasattr(util_tensor, 'detach'):
+                                        util_values = util_tensor.detach().cpu().tolist()
+                                    elif isinstance(util_tensor, (list, tuple)):
+                                        util_values = util_tensor
+                                    else:
+                                        util_values = None
+
+                                    if util_values:
+                                        for expert_id, util_val in enumerate(util_values):
+                                            batch_key = f'experts/util_expert_{expert_id}_l{layer_idx}'
+                                            self._metrics_batcher.add(batch_key, float(util_val))
+                                            routing_tensor_keys.append(('util', f'expert_{expert_id}', layer_idx))
+
                             # Store for post-processing in _log_step_metrics
                             self._routing_tensor_keys = routing_tensor_keys
                             self._num_routing_layers = len(self._last_aux_info)
@@ -1913,12 +1690,19 @@ class TrainingLoopManager(ManagerInterface):
                     # Step-based checkpointing (use last synced loss)
                     self._maybe_checkpoint(model, optimizer, epoch, last_synced_loss, config)
 
+                    # Step-based validation (logs validation/loss to WandB)
+                    self._maybe_validate(model, config, epoch)
+
                     # VRAM optimization
                     self._maybe_clear_cache(model, config)
 
                     # RAM optimization - prevent OOM with persistent workers
-                    # Reduced interval from 1000 to 500 for more aggressive cleanup
-                    self._maybe_clear_ram_cache(ram_cleanup_interval=500)
+                    # Reduced interval from 500 to 250 for more aggressive cleanup
+                    self._maybe_clear_ram_cache(ram_cleanup_interval=250)
+
+                    # MEMORY LEAK FIX: Clear deferred grad tensors every step (not just log steps)
+                    # Prevents CPU tensor accumulation between log intervals (100+ entries)
+                    self._deferred_grad_tensors.clear()
 
                     # Update progress bar at log intervals
                     if is_log_step:
@@ -2393,6 +2177,7 @@ class TrainingLoopManager(ManagerInterface):
 
         # Gradient accumulation step with detailed profiling
         if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
+            # DEBUG: Check accumulation boundary
             with get_range_context("optimizer_step"), get_timing_context("optimizer_step"):
                 if is_deepspeed:
                     # DeepSpeed path - engine.step() handles clipping, optimizer, and scheduler automatically
@@ -2428,6 +2213,7 @@ class TrainingLoopManager(ManagerInterface):
                     # TRAINING HEALTH: Detect gradient issues early
                     # MEMORY FIX: Store on CPU to prevent GPU memory accumulation between log steps
                     # These are scalar values only needed for health warnings, CPU storage is fine
+                    # DEBUG: Check if we get here
                     if hasattr(grad_norm, 'item'):
                         # Move to CPU immediately - scalar values don't need GPU
                         grad_norm_cpu = grad_norm.detach().cpu()
@@ -2752,24 +2538,25 @@ class TrainingLoopManager(ManagerInterface):
                     if metric_name in layer_aux and layer_aux[metric_name] is not None:
                         val = layer_aux[metric_name]
                         if isinstance(val, (int, float)):
-                            metric_key = f'routing/{metric_name.replace("routing_", "")}_layer_{layer_idx}'
+                            metric_key = f'moe/{metric_name.replace("routing_", "")}_layer_{layer_idx}'
                             if metric_key not in extra_metrics:
                                 extra_metrics[metric_key] = val
 
-            # Extract utilization and routing metrics from batched values
+            # Extract utilization and MoE metrics from batched values
             for key_info in routing_keys:
                 if key_info[0] == 'util':
                     _, util_key, layer_idx = key_info
-                    batch_key = f'routing/util_{util_key}_l{layer_idx}'
+                    # Expert utilization metrics go under experts/ prefix
+                    batch_key = f'experts/util_{util_key}_l{layer_idx}'
                     if batch_key in batched_values:
                         if util_key not in total_expert_utilization:
                             total_expert_utilization[util_key] = 0.0
                         total_expert_utilization[util_key] += batched_values[batch_key]
                 elif len(key_info) == 2:
                     metric_name, layer_idx = key_info
-                    batch_key = f'routing/{metric_name}_l{layer_idx}'
+                    batch_key = f'moe/{metric_name}_l{layer_idx}'
                     if batch_key in batched_values:
-                        display_key = f'routing/{metric_name.replace("routing_", "")}_layer_{layer_idx}'
+                        display_key = f'moe/{metric_name.replace("routing_", "")}_layer_{layer_idx}'
                         extra_metrics[display_key] = batched_values[batch_key]
 
             # Log router type(s) being used
@@ -2778,17 +2565,30 @@ class TrainingLoopManager(ManagerInterface):
                 router_type_str = ','.join(sorted(router_types_seen))
                 # WandB doesn't support string metrics directly in log(), so we log it as a tag
                 # Instead, we'll just log the count of router types
-                extra_metrics['routing/num_router_types'] = len(router_types_seen)
+                extra_metrics['moe/num_router_types'] = len(router_types_seen)
                 # Store router type for later reference (could be logged to WandB config)
                 if not hasattr(self, '_router_types_logged'):
                     self._router_types_logged = True
                     self.logger.info(f"Using router type(s): {router_type_str}")
 
-            # Log averaged per-expert utilization across layers
+            # Log averaged per-expert utilization across layers (under experts/ prefix)
             if total_expert_utilization and num_layers_with_routing > 0:
+                all_expert_utils = []
                 for expert_key, total_util in total_expert_utilization.items():
                     avg_util = total_util / num_layers_with_routing
-                    extra_metrics[f'routing/{expert_key}'] = avg_util
+                    extra_metrics[f'experts/{expert_key}'] = avg_util
+                    all_expert_utils.append(avg_util)
+                # Add summary statistics
+                if all_expert_utils:
+                    extra_metrics['experts/avg_utilization'] = sum(all_expert_utils) / len(all_expert_utils)
+                    extra_metrics['experts/utilization_std'] = (
+                        sum((u - extra_metrics['experts/avg_utilization'])**2 for u in all_expert_utils) / len(all_expert_utils)
+                    ) ** 0.5
+
+            # Extract aggregated MoE metrics from batched values
+            for agg_key in ['moe/avg_entropy', 'moe/avg_balance', 'moe/avg_confidence']:
+                if agg_key in batched_values:
+                    extra_metrics[agg_key] = batched_values[agg_key]
 
         # Episodic memory metrics
         if self._episodic_memory_manager is not None:
@@ -2796,14 +2596,36 @@ class TrainingLoopManager(ManagerInterface):
             if episodic_metrics:
                 extra_metrics.update(episodic_metrics)
 
+        # Separate moe/ and experts/ metrics from training metrics
+        # These should be logged directly without 'train/' prefix
+        moe_metrics = {}
+        experts_metrics = {}
+        training_metrics = {}
+        for key, value in extra_metrics.items():
+            if key.startswith('moe/'):
+                moe_metrics[key] = value
+            elif key.startswith('experts/'):
+                experts_metrics[key] = value
+            else:
+                training_metrics[key] = value
+
+        # Log training metrics (these get train/ prefix)
         self._metrics_manager.log_training_step(
             step=self._global_step,
             loss=loss_value,
             lr=lr,
             batch_size=current_bs,
             epoch=epoch,
-            **extra_metrics
+            **training_metrics
         )
+
+        # Log moe/ metrics directly (no train/ prefix)
+        if moe_metrics:
+            self._metrics_manager.accumulate_wandb_metrics(moe_metrics, self._global_step)
+
+        # Log experts/ metrics directly (no train/ prefix)
+        if experts_metrics:
+            self._metrics_manager.accumulate_wandb_metrics(experts_metrics, self._global_step)
 
         # Collect and log diagnostics if enabled
         if self._diagnostics_manager is not None and model is not None:
@@ -3022,6 +2844,55 @@ class TrainingLoopManager(ManagerInterface):
             {'step_loss': loss_value}
         )
 
+    def _maybe_validate(
+        self,
+        model: nn.Module,
+        config: TrainingLoopConfig,
+        epoch: int,
+    ) -> None:
+        """
+        Run validation at step intervals.
+
+        Runs validation every `eval_steps` steps and logs results to WandB.
+
+        Args:
+            model: Model to validate
+            config: Training loop configuration
+            epoch: Current epoch number
+        """
+        if self._validation_manager is None or self._val_loader is None:
+            return
+
+        if config.eval_steps <= 0:
+            return
+
+        if self._global_step == 0 or self._global_step % config.eval_steps != 0:
+            return
+
+        # Run validation (limited to max_val_batches to avoid 7+ hour validations)
+        val_loss = self._validation_manager.validate(
+            model=model,
+            val_loader=self._val_loader,
+            use_amp=config.use_amp,
+            amp_dtype=config.amp_dtype,
+            max_batches=config.max_val_batches,
+        )
+
+        # Log to WandB via metrics manager
+        if self._metrics_manager is not None:
+            # Call log_validation if available (MetricsManager has this method)
+            if hasattr(self._metrics_manager, 'log_validation'):
+                self._metrics_manager.log_validation(
+                    step=self._global_step,
+                    epoch=epoch,
+                    val_loss=val_loss
+                )
+            # Flush metrics to ensure WandB receives the data
+            if hasattr(self._metrics_manager, 'flush_wandb_metrics'):
+                self._metrics_manager.flush_wandb_metrics()
+
+        self.logger.info(f"Step {self._global_step}: validation loss = {val_loss:.4f}")
+
     def _maybe_clear_cache(self, model: nn.Module, config: TrainingLoopConfig) -> None:
         """Clear caches periodically to prevent VRAM fragmentation.
 
@@ -3064,6 +2935,9 @@ class TrainingLoopManager(ManagerInterface):
             elif hasattr(model, 'module') and hasattr(model.module, 'clear_caches'):
                 model.module.clear_caches()
             self._clear_cuda_memory()
+            # MEMORY LEAK FIX: Full gc.collect() on memory pressure (not just gen 0)
+            # This reclaims cyclic references that gen 0 misses
+            gc.collect()
             # Invalidate unified cache since memory state changed significantly
             if MEMORY_CACHE_AVAILABLE:
                 get_memory_cache().invalidate()
@@ -3085,6 +2959,8 @@ class TrainingLoopManager(ManagerInterface):
             # Background threads cannot safely call CUDA operations as they lack context ownership.
             # Use synchronous call instead - the overhead is acceptable at >92% utilization.
             torch.cuda.empty_cache()
+            # MEMORY LEAK FIX: Full gc.collect() at >90% memory pressure
+            gc.collect()
             # Invalidate unified cache since memory state changed
             if MEMORY_CACHE_AVAILABLE:
                 get_memory_cache().invalidate()
